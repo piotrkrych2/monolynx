@@ -24,9 +24,7 @@ class OpenSentryMiddleware:
 
             open_sentry_sdk.init(settings)
         except Exception as e:
-            logger.error(
-                "OpenSentryMiddleware: nie udalo sie zainicjalizowac SDK: %s", e
-            )
+            logger.error("OpenSentryMiddleware: nie udalo sie zainicjalizowac SDK: %s", e)
 
     def __call__(self, request: Any) -> Any:
         return self.get_response(request)
@@ -39,8 +37,6 @@ class OpenSentryMiddleware:
             event_id = open_sentry_sdk.capture_exception(exception, request=request)
             request.open_sentry_event_id = event_id
         except Exception as e:
-            logger.warning(
-                "OpenSentryMiddleware: blad podczas raportowania: %s", e
-            )
+            logger.warning("OpenSentryMiddleware: blad podczas raportowania: %s", e)
 
         return None

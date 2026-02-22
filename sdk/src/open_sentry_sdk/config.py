@@ -35,10 +35,7 @@ class Config:
             api_key = getattr(settings, "OPEN_SENTRY_API_KEY", None)
 
         if not server_url or not api_key:
-            raise ValueError(
-                "Open Sentry SDK wymaga OPEN_SENTRY_DSN "
-                "lub OPEN_SENTRY_URL + OPEN_SENTRY_API_KEY w settings.py"
-            )
+            raise ValueError("Open Sentry SDK wymaga OPEN_SENTRY_DSN lub OPEN_SENTRY_URL + OPEN_SENTRY_API_KEY w settings.py")
 
         return cls(
             server_url=server_url.rstrip("/"),

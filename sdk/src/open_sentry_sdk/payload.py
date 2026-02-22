@@ -128,9 +128,7 @@ class PayloadBuilder:
             try:
                 raw_body = getattr(request, "body", b"")
                 if isinstance(raw_body, bytes):
-                    body = raw_body[: self.config.max_body_size].decode(
-                        "utf-8", errors="replace"
-                    )
+                    body = raw_body[: self.config.max_body_size].decode("utf-8", errors="replace")
             except Exception:
                 pass
 

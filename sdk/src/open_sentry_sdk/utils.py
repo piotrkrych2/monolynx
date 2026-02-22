@@ -25,18 +25,12 @@ SENSITIVE_KEYS = {
 
 def sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
     """Filtruje wrazliwe naglowki."""
-    return {
-        k: "[Filtered]" if k.lower() in SENSITIVE_KEYS else v
-        for k, v in headers.items()
-    }
+    return {k: "[Filtered]" if k.lower() in SENSITIVE_KEYS else v for k, v in headers.items()}
 
 
 def sanitize_data(data: dict[str, object]) -> dict[str, object]:
     """Filtruje wrazliwe pola z danych POST."""
-    return {
-        k: "[Filtered]" if k.lower() in SENSITIVE_KEYS else v
-        for k, v in data.items()
-    }
+    return {k: "[Filtered]" if k.lower() in SENSITIVE_KEYS else v for k, v in data.items()}
 
 
 def extract_user_info(request: object) -> dict[str, str | None] | None:

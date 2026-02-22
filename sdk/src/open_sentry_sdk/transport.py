@@ -18,9 +18,7 @@ class AsyncTransport:
 
     def __init__(self, config: Config) -> None:
         self.config = config
-        self._executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="open-sentry"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="open-sentry")
 
     def send(self, payload: dict[str, object]) -> None:
         self._executor.submit(self._do_send, payload)
@@ -40,9 +38,7 @@ class AsyncTransport:
         try:
             with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
                 if resp.status >= 400:
-                    logger.warning(
-                        "Open Sentry: serwer odpowiedzial kodem %d", resp.status
-                    )
+                    logger.warning("Open Sentry: serwer odpowiedzial kodem %d", resp.status)
         except urllib.error.HTTPError as e:
             logger.warning("Open Sentry: blad HTTP %d: %s", e.code, e.reason)
         except urllib.error.URLError as e:
@@ -52,9 +48,7 @@ class AsyncTransport:
 
     def flush(self, timeout: float = 10.0) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)
-        self._executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="open-sentry"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="open-sentry")
 
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)
