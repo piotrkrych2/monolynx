@@ -85,3 +85,6 @@ script_location = "alembic"
 # --- Setuptools ---
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+open_sentry = ["templates/**/*.html"]

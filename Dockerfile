@@ -38,9 +38,11 @@ RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid 1000 --no-create-home appuser
 
 COPY --from=builder /install /usr/local
-COPY src/open_sentry/templates /app/templates
 
 WORKDIR /app
+COPY alembic.ini .
+COPY alembic/ alembic/
+RUN chown -R appuser:appuser /app
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
