@@ -16,7 +16,5 @@ planning/
 docs/
 *.md
 LICENSE
-sdk/
-tests/
 .agents/
 .claude/
