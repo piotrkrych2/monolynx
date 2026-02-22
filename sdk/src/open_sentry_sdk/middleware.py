@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger("open_sentry")
 
@@ -17,9 +18,9 @@ class OpenSentryMiddleware:
     def __init__(self, get_response: Callable[..., Any]) -> None:
         self.get_response = get_response
         try:
-            import open_sentry_sdk
-
             from django.conf import settings
+
+            import open_sentry_sdk
 
             open_sentry_sdk.init(settings)
         except Exception as e:

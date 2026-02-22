@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from open_sentry_sdk.config import Config
 from open_sentry_sdk.payload import PayloadBuilder

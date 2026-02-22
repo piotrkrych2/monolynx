@@ -8,14 +8,13 @@ Uzycie:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from open_sentry_sdk.client import OpenSentryClient
 from open_sentry_sdk.config import Config
 
 logger = logging.getLogger("open_sentry")
 
-_client: Optional[OpenSentryClient] = None
+_client: OpenSentryClient | None = None
 
 
 def init(settings: object | None = None) -> OpenSentryClient:

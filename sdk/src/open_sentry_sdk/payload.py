@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import platform
 import socket
-import sys
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from open_sentry_sdk.config import Config
@@ -37,7 +36,7 @@ class PayloadBuilder:
 
         payload: dict[str, Any] = {
             "event_id": uuid.uuid4().hex,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "platform": "python",
             "sdk": {"name": SDK_NAME, "version": SDK_VERSION},
             "fingerprint": fingerprint,
@@ -66,7 +65,7 @@ class PayloadBuilder:
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "event_id": uuid.uuid4().hex,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "platform": "python",
             "sdk": {"name": SDK_NAME, "version": SDK_VERSION},
             "level": level,
