@@ -25,6 +25,8 @@ RUN pip install --no-cache-dir -r requirements/dev.txt
 
 COPY pyproject.toml .
 COPY src/ src/
+COPY tests/ tests/
+COPY sdk/ sdk/
 RUN pip install --no-cache-dir -e ".[dev]"
 
 # ============================================================

@@ -5,25 +5,7 @@ stages:
   - push
   - deploy
 
-variables:
-  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
-  POSTGRES_DB: open_sentry_test
-  POSTGRES_USER: sentry
-  POSTGRES_PASSWORD: sentry_ci
-
-.python-base:
-  image: python:3.12-slim
-  cache:
-    key: "${CI_COMMIT_REF_SLUG}-pip"
-    paths:
-      - .pip-cache/
-  before_script:
-    - pip install --cache-dir .pip-cache -r requirements/dev.txt
-
-# --- Build ---
-
-docker-build-test:
-  stage: build
+.docker-dind:
   image: docker:24
   services:
     - docker:24-dind
@@ -31,8 +13,16 @@ docker-build-test:
     DOCKER_TLS_CERTDIR: "/certs"
   before_script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+
+# --- Build ---
+
+docker-build-test:
+  stage: build
+  extends: .docker-dind
   script:
+    - docker build --target dev --tag "$CI_REGISTRY_IMAGE:dev" .
     - docker build --tag "$CI_REGISTRY_IMAGE:test" .
+    - docker push "$CI_REGISTRY_IMAGE:dev"
     - docker push "$CI_REGISTRY_IMAGE:test"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -43,32 +33,49 @@ docker-build-test:
 
 ruff-lint:
   stage: lint
-  extends: .python-base
+  extends: .docker-dind
   script:
-    - ruff check src/ tests/ sdk/
-    - ruff format --check src/ tests/ sdk/
+    - docker pull "$CI_REGISTRY_IMAGE:dev"
+    - docker run --rm "$CI_REGISTRY_IMAGE:dev" ruff check src/ tests/ sdk/
+    - docker run --rm "$CI_REGISTRY_IMAGE:dev" ruff format --check src/ tests/ sdk/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "main"
 
 mypy:
   stage: lint
-  extends: .python-base
+  extends: .docker-dind
   script:
-    - mypy src/
+    - docker pull "$CI_REGISTRY_IMAGE:dev"
+    - docker run --rm "$CI_REGISTRY_IMAGE:dev" mypy src/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "main"
 
 # --- Test ---
 
 pytest:
   stage: test
-  extends: .python-base
-  services:
-    - name: postgres:16-alpine
-      alias: db
-  variables:
-    DATABASE_URL: "postgresql+asyncpg://sentry:sentry_ci@db:5432/open_sentry_test"
-  before_script:
-    - pip install --cache-dir .pip-cache -r requirements/test.txt
-    - pip install -e .
+  extends: .docker-dind
   script:
-    - pytest tests/ --cov=src/open_sentry --cov-report=term --cov-report=xml:coverage.xml
+    - docker network create test-net
+    - docker run -d --name db --network test-net
+        -e POSTGRES_DB=open_sentry_test
+        -e POSTGRES_USER=sentry
+        -e POSTGRES_PASSWORD=sentry_ci
+        postgres:16-alpine
+    - sleep 5
+    - docker pull "$CI_REGISTRY_IMAGE:dev"
+    - TEST_EXIT=0
+    - docker run --name test-runner --network test-net
+        -e DATABASE_URL="postgresql+asyncpg://sentry:sentry_ci@db:5432/open_sentry_test"
+        "$CI_REGISTRY_IMAGE:dev"
+        pytest tests/ --cov=src/open_sentry --cov-report=term --cov-report=xml:coverage.xml
+        || TEST_EXIT=$?
+    - docker cp test-runner:/app/coverage.xml coverage.xml || true
+    - exit $TEST_EXIT
   coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
     reports:
@@ -76,14 +83,15 @@ pytest:
         coverage_format: cobertura
         path: coverage.xml
     expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "main"
 
 trivy-scan:
   stage: test
-  image: docker:24
-  services:
-    - docker:24-dind
+  extends: .docker-dind
   variables:
-    DOCKER_TLS_CERTDIR: "/certs"
     TRIVY_VERSION: "0.58.2"
   before_script:
     - apk add --no-cache curl tar
@@ -93,18 +101,13 @@ trivy-scan:
     - trivy fs --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 requirements/base.txt
     - docker pull "$CI_REGISTRY_IMAGE:test"
     - trivy image --ignore-unfixed --exit-code 0 "$CI_REGISTRY_IMAGE:test"
-  needs:
-    - docker-build-test
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
 dockle-scan:
   stage: test
-  image: docker:24
-  services:
-    - docker:24-dind
+  extends: .docker-dind
   variables:
-    DOCKER_TLS_CERTDIR: "/certs"
     DOCKLE_VERSION: "0.4.14"
   before_script:
     - apk add --no-cache curl tar
@@ -113,8 +116,6 @@ dockle-scan:
   script:
     - docker pull "$CI_REGISTRY_IMAGE:test"
     - dockle --exit-code 1 "$CI_REGISTRY_IMAGE:test"
-  needs:
-    - docker-build-test
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
@@ -124,13 +125,7 @@ dockle-scan:
 
 docker-push-develop:
   stage: push
-  image: docker:24
-  services:
-    - docker:24-dind
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-  before_script:
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  extends: .docker-dind
   script:
     - IMAGE_TAG="$(date +%Y%m%d)"
     - docker pull "$CI_REGISTRY_IMAGE:test"
@@ -143,13 +138,7 @@ docker-push-develop:
 
 docker-push-prod:
   stage: push
-  image: docker:24
-  services:
-    - docker:24-dind
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-  before_script:
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  extends: .docker-dind
   script:
     - docker pull "$CI_REGISTRY_IMAGE:test"
     - docker tag "$CI_REGISTRY_IMAGE:test" "$CI_REGISTRY_IMAGE:latest"
