@@ -1,0 +1,171 @@
+stages:
+  - build
+  - lint
+  - test
+  - push
+  - deploy
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  POSTGRES_DB: open_sentry_test
+  POSTGRES_USER: sentry
+  POSTGRES_PASSWORD: sentry_ci
+
+.python-base:
+  image: python:3.12-slim
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-pip"
+    paths:
+      - .pip-cache/
+  before_script:
+    - pip install --cache-dir .pip-cache -r requirements/dev.txt
+
+# --- Build ---
+
+docker-build-test:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - docker build --tag "$CI_REGISTRY_IMAGE:test" .
+    - docker push "$CI_REGISTRY_IMAGE:test"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# --- Lint ---
+
+ruff-lint:
+  stage: lint
+  extends: .python-base
+  script:
+    - ruff check src/ tests/ sdk/
+    - ruff format --check src/ tests/ sdk/
+
+mypy:
+  stage: lint
+  extends: .python-base
+  script:
+    - mypy src/
+
+# --- Test ---
+
+pytest:
+  stage: test
+  extends: .python-base
+  services:
+    - name: postgres:16-alpine
+      alias: db
+  variables:
+    DATABASE_URL: "postgresql+asyncpg://sentry:sentry_ci@db:5432/open_sentry_test"
+  before_script:
+    - pip install --cache-dir .pip-cache -r requirements/test.txt
+    - pip install -e .
+  script:
+    - pytest tests/ --cov=src/open_sentry --cov-report=term --cov-report=xml:coverage.xml
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    expire_in: 7 days
+
+trivy-scan:
+  stage: test
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    TRIVY_VERSION: "0.58.2"
+  before_script:
+    - apk add --no-cache curl tar
+    - curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar xzf - -C /usr/local/bin trivy
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - trivy fs --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 requirements/base.txt
+    - docker pull "$CI_REGISTRY_IMAGE:test"
+    - trivy image --ignore-unfixed --exit-code 0 "$CI_REGISTRY_IMAGE:test"
+  needs:
+    - docker-build-test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+dockle-scan:
+  stage: test
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKLE_VERSION: "0.4.14"
+  before_script:
+    - apk add --no-cache curl tar
+    - curl -sfL https://github.com/goodwithtech/dockle/releases/download/v${DOCKLE_VERSION}/dockle_${DOCKLE_VERSION}_Linux-64bit.tar.gz | tar xzf - -C /usr/local/bin dockle
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - docker pull "$CI_REGISTRY_IMAGE:test"
+    - dockle --exit-code 1 "$CI_REGISTRY_IMAGE:test"
+  needs:
+    - docker-build-test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - Dockerfile
+
+# --- Push ---
+
+docker-push-develop:
+  stage: push
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - IMAGE_TAG="$(date +%Y%m%d)"
+    - docker pull "$CI_REGISTRY_IMAGE:test"
+    - docker tag "$CI_REGISTRY_IMAGE:test" "$CI_REGISTRY_IMAGE:develop"
+    - docker tag "$CI_REGISTRY_IMAGE:test" "$CI_REGISTRY_IMAGE:$IMAGE_TAG"
+    - docker push "$CI_REGISTRY_IMAGE:develop"
+    - docker push "$CI_REGISTRY_IMAGE:$IMAGE_TAG"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+docker-push-prod:
+  stage: push
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - docker pull "$CI_REGISTRY_IMAGE:test"
+    - docker tag "$CI_REGISTRY_IMAGE:test" "$CI_REGISTRY_IMAGE:latest"
+    - docker tag "$CI_REGISTRY_IMAGE:test" "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# --- Deploy ---
+
+deploy-staging:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - echo "TODO -- deploy to staging"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual

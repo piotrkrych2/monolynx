@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-sentry"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic-settings>=2.0",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "passlib[bcrypt]>=1.7",
+    "itsdangerous>=2.1",
+    "mcp[cli]>=1.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "factory-boy>=3.3",
+]
+
+# --- Ruff ---
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["open_sentry"]
+
+# --- Mypy ---
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# --- Pytest ---
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+addopts = "--strict-markers -v"
+markers = [
+    "unit: unit tests (no DB, no network)",
+    "integration: integration tests (requires DB)",
+    "e2e: end-to-end tests (requires full stack)",
+]
+
+[tool.coverage.run]
+source = ["src/open_sentry"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 50
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
+
+# --- Alembic ---
+[tool.alembic]
+script_location = "alembic"
+"sqlalchemy.url" = "postgresql+asyncpg://sentry:sentry_dev@localhost:5432/open_sentry"
+
+# --- Setuptools ---
+[tool.setuptools.packages.find]
+where = ["src"]

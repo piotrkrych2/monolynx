@@ -1,0 +1,28 @@
+{% set flash_messages = request.session.pop("_flash_messages", []) %}
+{% if flash_messages %}
+<div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-3">
+    {% for msg in flash_messages %}
+    <div class="toast-item px-5 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-opacity duration-300 opacity-0
+        {% if msg.type == 'success' %}bg-green-500
+        {% elif msg.type == 'error' %}bg-red-500
+        {% else %}bg-blue-500{% endif %}"
+    >
+        {{ msg.message }}
+    </div>
+    {% endfor %}
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var toasts = document.querySelectorAll('.toast-item');
+    toasts.forEach(function(toast, index) {
+        // Fade in
+        setTimeout(function() { toast.style.opacity = '1'; }, 50 * index);
+        // Auto-dismiss after 4s
+        setTimeout(function() {
+            toast.style.opacity = '0';
+            setTimeout(function() { toast.remove(); }, 300);
+        }, 4000 + 50 * index);
+    });
+});
+</script>
+{% endif %}

@@ -1,0 +1,94 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}{{ issue.title }} - Open Sentry{% endblock %}
+
+{% block module_content %}
+<div class="mb-6">
+    <a href="/dashboard/{{ project.slug }}/500ki/issues" class="text-gray-400 hover:text-white text-sm">&larr; Issues</a>
+</div>
+
+<div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+    <div class="flex items-start justify-between">
+        <div class="flex-1">
+            <h1 class="text-xl font-bold text-white">{{ issue.title }}</h1>
+            {% if issue.culprit %}
+            <p class="text-gray-400 mt-1">{{ issue.culprit }}</p>
+            {% endif %}
+        </div>
+        <div class="ml-4 flex items-center gap-2" id="status-controls">
+            {% if issue.status == 'unresolved' %}
+            <span class="px-2 py-1 text-xs rounded bg-red-900 text-red-300">unresolved</span>
+            <button hx-patch="/api/v1/issues/{{ issue.id }}/status"
+                    hx-vals='{"status": "resolved"}'
+                    hx-headers='{"Content-Type": "application/json"}'
+                    hx-swap="none"
+                    onclick="this.closest('[id=status-controls]').innerHTML='<span class=\'px-2 py-1 text-xs rounded bg-green-900 text-green-300\'>resolved</span>'"
+                    class="px-3 py-1 text-xs rounded bg-green-700 hover:bg-green-600 text-white transition">
+                Resolve
+            </button>
+            <button hx-patch="/api/v1/issues/{{ issue.id }}/status"
+                    hx-vals='{"status": "ignored"}'
+                    hx-headers='{"Content-Type": "application/json"}'
+                    hx-swap="none"
+                    onclick="this.closest('[id=status-controls]').innerHTML='<span class=\'px-2 py-1 text-xs rounded bg-gray-700 text-gray-300\'>ignored</span>'"
+                    class="px-3 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500 text-white transition">
+                Ignore
+            </button>
+            {% elif issue.status == 'resolved' %}
+            <span class="px-2 py-1 text-xs rounded bg-green-900 text-green-300">resolved</span>
+            {% else %}
+            <span class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300">ignored</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-4 mt-6 text-sm">
+        <div>
+            <span class="text-gray-500">Wystapienia</span>
+            <p class="text-white font-mono text-lg">{{ issue.event_count }}</p>
+        </div>
+        <div>
+            <span class="text-gray-500">Pierwsze</span>
+            <p class="text-white">{{ issue.first_seen.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+        </div>
+        <div>
+            <span class="text-gray-500">Ostatnie</span>
+            <p class="text-white">{{ issue.last_seen.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+        </div>
+    </div>
+</div>
+
+<h2 class="text-lg font-semibold mb-4">Eventy ({{ issue.events|length }})</h2>
+
+<div class="space-y-4">
+    {% for event in issue.events %}
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <div class="flex items-center justify-between mb-3">
+            <span class="text-xs font-mono text-gray-500">{{ event.id }}</span>
+            <span class="text-xs text-gray-400">{{ event.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+        </div>
+
+        {% if event.exception %}
+        <div class="mb-3">
+            <h4 class="text-sm font-semibold text-gray-300 mb-1">Exception</h4>
+            <pre class="bg-gray-900 rounded p-3 text-xs text-gray-300 overflow-x-auto">{{ event.exception | tojson(indent=2) }}</pre>
+        </div>
+        {% endif %}
+
+        {% if event.request_data %}
+        <div class="mb-3">
+            <h4 class="text-sm font-semibold text-gray-300 mb-1">Request</h4>
+            <pre class="bg-gray-900 rounded p-3 text-xs text-gray-300 overflow-x-auto">{{ event.request_data | tojson(indent=2) }}</pre>
+        </div>
+        {% endif %}
+
+        {% if event.environment %}
+        <div>
+            <h4 class="text-sm font-semibold text-gray-300 mb-1">Environment</h4>
+            <pre class="bg-gray-900 rounded p-3 text-xs text-gray-300 overflow-x-auto">{{ event.environment | tojson(indent=2) }}</pre>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

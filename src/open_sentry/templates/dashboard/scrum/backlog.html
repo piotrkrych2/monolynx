@@ -1,0 +1,213 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Backlog - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+{% include "dashboard/scrum/_nav.html" %}
+
+<div class="mb-4">
+    <h2 class="text-lg font-semibold text-white">Backlog &middot; {{ total_count }} {{ 'ticket' if total_count == 1 else 'ticketow' }} &middot; {{ sp_total }} SP</h2>
+</div>
+
+<!-- Filtry -->
+<form method="get" action="/dashboard/{{ project.slug }}/scrum/backlog" class="bg-gray-800 border border-gray-700 rounded-lg p-3 mb-4">
+    <div class="flex items-end gap-3 flex-wrap">
+        <div class="flex-1 min-w-[150px]">
+            <label class="block text-xs text-gray-400 mb-1">Szukaj</label>
+            <input type="text" name="search" value="{{ filters.search }}" placeholder="Tytul ticketu..."
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+            <label class="block text-xs text-gray-400 mb-1">Status</label>
+            <select name="status"
+                class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                <option value="">Wszystkie</option>
+                {% for s in statuses %}
+                <option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ status_labels.get(s, s) }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs text-gray-400 mb-1">Priorytet</label>
+            <select name="priority"
+                class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                <option value="">Wszystkie</option>
+                {% for p in priorities %}
+                <option value="{{ p }}" {% if filters.priority == p %}selected{% endif %}>{{ priority_labels.get(p, p) }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs text-gray-400 mb-1">Przypisany</label>
+            <select name="assignee_id"
+                class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                <option value="">Wszyscy</option>
+                {% for m in members %}
+                <option value="{{ m.user_id }}" {% if filters.assignee_id == m.user_id|string %}selected{% endif %}>{{ m.user.email.split('@')[0] }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs text-gray-400 mb-1">Sprint</label>
+            <select name="sprint_id"
+                class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                <option value="">Wszystkie</option>
+                {% for s in sprints %}
+                <option value="{{ s.id }}" {% if filters.sprint_id == s.id|string %}selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="flex items-center gap-2">
+            <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-1.5 rounded transition">
+                Filtruj
+            </button>
+            <a href="/dashboard/{{ project.slug }}/scrum/backlog" class="text-sm text-gray-400 hover:text-white transition">Wyczysc</a>
+        </div>
+    </div>
+    <div class="mt-2">
+        <label class="inline-flex items-center gap-2 cursor-pointer text-sm text-gray-400 hover:text-white transition">
+            <input type="checkbox" name="show_completed_sprints" value="1"
+                {% if show_completed_sprints %}checked{% endif %}
+                onchange="this.form.submit()"
+                class="rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0">
+            Pokaz tickety z zakonczonych sprintow
+        </label>
+    </div>
+</form>
+
+{% if show_completed_sprints %}
+<div class="bg-indigo-900/30 border border-indigo-700 text-indigo-300 px-4 py-2 rounded mb-4 text-sm">
+    Wyswietlane sa rowniez tickety z zakonczonych sprintow.
+</div>
+{% endif %}
+
+{% if tickets %}
+<div class="space-y-2">
+    {% for ticket in tickets %}
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+        <div class="flex items-center justify-between">
+            <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}" class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                    {% if ticket.priority == 'critical' %}
+                    <span class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"></span>
+                    {% elif ticket.priority == 'high' %}
+                    <span class="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0"></span>
+                    {% elif ticket.priority == 'medium' %}
+                    <span class="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"></span>
+                    {% else %}
+                    <span class="w-2 h-2 rounded-full bg-gray-500 flex-shrink-0"></span>
+                    {% endif %}
+                    <h3 class="text-white font-medium truncate">{{ ticket.title }}</h3>
+                    {% if ticket.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded ml-1 flex-shrink-0">AI</span>{% endif %}
+                </div>
+            </a>
+            <div class="flex items-center gap-3 ml-4 flex-shrink-0">
+                {% if ticket.story_points %}
+                <span class="bg-gray-700 text-gray-300 text-xs font-mono px-2 py-1 rounded">{{ ticket.story_points }} SP</span>
+                {% endif %}
+                <select onchange="updateTicketStatus(this, '{{ project.slug }}', '{{ ticket.id }}', this.value)"
+                    class="text-xs px-2 py-1 rounded border-0 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer
+                    {% if ticket.status == 'done' %}bg-green-900 text-green-300
+                    {% elif ticket.status == 'in_progress' %}bg-blue-900 text-blue-300
+                    {% elif ticket.status == 'in_review' %}bg-purple-900 text-purple-300
+                    {% elif ticket.status == 'todo' %}bg-yellow-900 text-yellow-300
+                    {% else %}bg-gray-700 text-gray-300{% endif %}">
+                    {% for s in statuses %}
+                    <option value="{{ s }}" {% if ticket.status == s %}selected{% endif %}>{{ status_labels.get(s, s) }}</option>
+                    {% endfor %}
+                </select>
+                {% if ticket.assignee %}
+                <span class="text-xs text-gray-400">{{ ticket.assignee.email.split('@')[0] }}</span>
+                {% endif %}
+                <select onchange="updateTicketSprint('{{ project.slug }}', '{{ ticket.id }}', this.value)"
+                    class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500">
+                    <option value="" {% if not ticket.sprint %}selected{% endif %}>Brak sprintu</option>
+                    {% for s in sprints %}
+                    <option value="{{ s.id }}" {% if ticket.sprint and ticket.sprint_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Paginacja -->
+{% if total_pages > 1 %}
+{% set filter_params = "" %}
+{% if filters.status %}{% set filter_params = filter_params ~ "&status=" ~ filters.status %}{% endif %}
+{% if filters.priority %}{% set filter_params = filter_params ~ "&priority=" ~ filters.priority %}{% endif %}
+{% if filters.assignee_id %}{% set filter_params = filter_params ~ "&assignee_id=" ~ filters.assignee_id %}{% endif %}
+{% if filters.sprint_id %}{% set filter_params = filter_params ~ "&sprint_id=" ~ filters.sprint_id %}{% endif %}
+{% if filters.search %}{% set filter_params = filter_params ~ "&search=" ~ filters.search %}{% endif %}
+{% if show_completed_sprints %}{% set filter_params = filter_params ~ "&show_completed_sprints=1" %}{% endif %}
+<div class="flex items-center justify-between mt-6">
+    <div>
+        {% if has_prev %}
+        <a href="/dashboard/{{ project.slug }}/scrum/backlog?page={{ page - 1 }}{{ filter_params }}"
+           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Poprzednia
+        </a>
+        {% endif %}
+    </div>
+    <span class="text-sm text-gray-400">Strona {{ page }} z {{ total_pages }}</span>
+    <div>
+        {% if has_next %}
+        <a href="/dashboard/{{ project.slug }}/scrum/backlog?page={{ page + 1 }}{{ filter_params }}"
+           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Nastepna
+        </a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<div class="text-center py-12 text-gray-500">
+    <p class="text-lg">Brak ticketow</p>
+    <p class="text-sm mt-2"><a href="/dashboard/{{ project.slug }}/scrum/tickets/create" class="text-indigo-400 hover:text-indigo-300">Utworz pierwszy ticket</a></p>
+</div>
+{% endif %}
+
+<script>
+async function updateTicketSprint(slug, ticketId, sprintId) {
+    try {
+        const res = await fetch(`/dashboard/${slug}/scrum/tickets/${ticketId}/sprint`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({sprint_id: sprintId || null})
+        });
+        if (res.ok) {
+            window.location.reload();
+        }
+    } catch (e) {
+        // ignore
+    }
+}
+
+const STATUS_COLORS = {
+    done: 'bg-green-900 text-green-300',
+    in_progress: 'bg-blue-900 text-blue-300',
+    in_review: 'bg-purple-900 text-purple-300',
+    todo: 'bg-yellow-900 text-yellow-300',
+    backlog: 'bg-gray-700 text-gray-300'
+};
+
+async function updateTicketStatus(sel, slug, ticketId, status) {
+    try {
+        const res = await fetch(`/dashboard/${slug}/scrum/tickets/${ticketId}/status`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({status})
+        });
+        if (res.ok) {
+            sel.className = sel.className.replace(/bg-\S+\s+text-\S+/g, '');
+            sel.className += ' ' + (STATUS_COLORS[status] || STATUS_COLORS.backlog);
+        }
+    } catch (e) {
+        // ignore
+    }
+}
+</script>
+{% endblock %}

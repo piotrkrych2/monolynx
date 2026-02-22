@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "open-sentry-scrum": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${OPEN_SENTRY_MCP_TOKEN}"
+      }
+    }
+  }
+}

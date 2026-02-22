@@ -1,0 +1,76 @@
+{% extends "layouts/base.html" %}
+
+{% block main_class %}max-w-7xl{% endblock %}
+
+{% block content %}
+<div class="flex gap-6">
+    <!-- Sidebar -->
+    <aside class="w-56 flex-shrink-0">
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+            <h2 class="text-sm font-semibold text-white mb-1 truncate">{{ project.name }}</h2>
+            <p class="text-xs text-gray-500 mb-4 truncate">{{ project.slug }}</p>
+
+            <nav class="space-y-1">
+                <a href="/dashboard/{{ project.slug }}/500ki/issues"
+                   class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
+                          {% if active_module == '500ki' %}bg-indigo-600 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    500ki
+                    {% if sidebar_badges is defined and sidebar_badges.issues_count > 0 %}
+                    <span class="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-bold text-white bg-red-600 rounded-full{% if sidebar_badges.issues_pulse %} animate-pulse{% endif %}">
+                        {{ sidebar_badges.issues_count }}
+                    </span>
+                    {% endif %}
+                </a>
+                <a href="/dashboard/{{ project.slug }}/scrum/backlog"
+                   class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
+                          {% if active_module == 'scrum' %}bg-indigo-600 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    Scrum
+                </a>
+                <a href="/dashboard/{{ project.slug }}/monitoring/"
+                   class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
+                          {% if active_module == 'monitoring' %}bg-indigo-600 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Monitoring
+                    {% if sidebar_badges is defined and sidebar_badges.monitoring_uptime_24h is not none and sidebar_badges.monitoring_uptime_24h < 97 %}
+                    <span class="ml-auto inline-flex items-center justify-center h-5 px-1.5 text-xs font-bold text-white bg-red-600 rounded-full{% if sidebar_badges.monitoring_uptime_24h < 90 %} animate-pulse{% endif %}"
+                          title="Uptime 24h">
+                        {{ sidebar_badges.monitoring_uptime_24h }}%
+                    </span>
+                    {% endif %}
+                </a>
+                <a href="/dashboard/{{ project.slug }}/settings"
+                   class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
+                          {% if active_module == 'settings' %}bg-indigo-600 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    Ustawienia
+                </a>
+            </nav>
+
+            <div class="mt-4 pt-4 border-t border-gray-700">
+                <a href="/dashboard/" class="flex items-center gap-2 px-3 py-2 rounded text-sm text-gray-400 hover:bg-gray-700 hover:text-white transition">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Projekty
+                </a>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Tresc modulu -->
+    <div class="flex-1 min-w-0">
+        {% block module_content %}{% endblock %}
+    </div>
+</div>
+{% endblock %}

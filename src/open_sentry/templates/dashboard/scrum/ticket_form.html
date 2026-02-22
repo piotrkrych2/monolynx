@@ -1,0 +1,98 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}{% if ticket %}Edytuj ticket{% else %}Nowy ticket{% endif %} - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+{% include "dashboard/scrum/_nav.html" %}
+
+<div class="max-w-lg">
+    <h1 class="text-2xl font-bold mb-6">{% if ticket %}Edytuj ticket{% else %}Nowy ticket{% endif %}</h1>
+
+    {% if error %}
+    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post"
+          action="/dashboard/{{ project.slug }}/scrum/tickets/{% if ticket %}{{ ticket.id }}/edit{% else %}create{% endif %}"
+          class="space-y-4">
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Tytul</label>
+            <input type="text" name="title" value="{{ ticket.title if ticket else '' }}" required
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Opis</label>
+            <textarea name="description" rows="4"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">{{ ticket.description if ticket and ticket.description else '' }}</textarea>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Priorytet</label>
+                <select name="priority"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    {% for p in priorities %}
+                    <option value="{{ p }}" {% if ticket and ticket.priority == p %}selected{% elif not ticket and p == 'medium' %}selected{% endif %}>
+                        {% if p == 'low' %}Niski{% elif p == 'medium' %}Sredni{% elif p == 'high' %}Wysoki{% else %}Krytyczny{% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Story Points</label>
+                <input type="number" name="story_points" min="0" max="100"
+                    value="{{ ticket.story_points if ticket and ticket.story_points is not none else '' }}"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            </div>
+        </div>
+
+        {% if ticket %}
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Status</label>
+            <select name="status"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                {% for s in statuses %}
+                <option value="{{ s }}" {% if ticket.status == s %}selected{% endif %}>
+                    {% if s == 'backlog' %}Backlog{% elif s == 'todo' %}Do zrobienia{% elif s == 'in_progress' %}W trakcie{% elif s == 'in_review' %}Review{% else %}Gotowe{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Sprint</label>
+            <select name="sprint_id"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                <option value="">-- Brak (backlog) --</option>
+                {% for sprint in sprints %}
+                <option value="{{ sprint.id }}" {% if ticket and ticket.sprint_id == sprint.id %}selected{% endif %}>
+                    {{ sprint.name }} ({{ sprint.status }})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Przypisany</label>
+            <select name="assignee_id"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                <option value="">-- Nieprzypisany --</option>
+                {% for member in members %}
+                <option value="{{ member.user_id }}" {% if ticket and ticket.assignee_id == member.user_id %}selected{% endif %}>
+                    {{ member.user.email }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <button type="submit"
+            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded transition">
+            {% if ticket %}Zapisz zmiany{% else %}Utworz ticket{% endif %}
+        </button>
+    </form>
+</div>
+{% endblock %}

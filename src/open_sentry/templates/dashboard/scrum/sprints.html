@@ -1,0 +1,157 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Sprinty - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+{% include "dashboard/scrum/_nav.html" %}
+
+{% if error %}
+<div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+    {{ error }}
+</div>
+{% endif %}
+
+<!-- Filtr statusu -->
+<form method="get" action="/dashboard/{{ project.slug }}/scrum/sprints" class="bg-gray-800 border border-gray-700 rounded-lg p-3 mb-4">
+    <div class="flex items-end gap-3">
+        <div>
+            <label class="block text-xs text-gray-400 mb-1">Status</label>
+            <select name="status"
+                class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                <option value="" {% if not filter_status %}selected{% endif %}>Aktywne i planowane</option>
+                <option value="planning" {% if filter_status == 'planning' %}selected{% endif %}>Planowanie</option>
+                <option value="active" {% if filter_status == 'active' %}selected{% endif %}>Aktywny</option>
+                <option value="completed" {% if filter_status == 'completed' %}selected{% endif %}>Zakonczone</option>
+                <option value="all" {% if filter_status == 'all' %}selected{% endif %}>Wszystkie</option>
+            </select>
+        </div>
+        <div class="flex items-center gap-2">
+            <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-1.5 rounded transition">
+                Filtruj
+            </button>
+            <a href="/dashboard/{{ project.slug }}/scrum/sprints" class="text-sm text-gray-400 hover:text-white transition">Wyczysc</a>
+        </div>
+    </div>
+</form>
+
+<!-- Formularz nowego sprintu -->
+<div class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-6">
+    <h2 class="text-lg font-semibold mb-3">Nowy sprint</h2>
+    <form method="post" action="/dashboard/{{ project.slug }}/scrum/sprints/create" class="space-y-3">
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Nazwa</label>
+                <input type="text" name="name" required placeholder="np. Sprint 1"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Cel (opcjonalny)</label>
+                <input type="text" name="goal" placeholder="Cel sprintu"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            </div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Data rozpoczecia</label>
+                <input type="date" name="start_date" required
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Data zakonczenia (opcjonalna)</label>
+                <input type="date" name="end_date"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            </div>
+        </div>
+        <button type="submit"
+            class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
+            Utworz sprint
+        </button>
+    </form>
+</div>
+
+<!-- Lista sprintow -->
+<div class="mb-4">
+    <h2 class="text-lg font-semibold text-white">Sprinty &middot; {{ total_count }} {{ 'sprint' if total_count == 1 else 'sprintow' }}</h2>
+</div>
+
+{% if sprints %}
+<div class="space-y-3">
+    {% for sprint in sprints %}
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <div class="flex items-center justify-between">
+            <div>
+                <h3 class="text-white font-semibold">{{ sprint.name }}</h3>
+                {% if sprint.goal %}
+                <p class="text-sm text-gray-400 mt-1">{{ sprint.goal }}</p>
+                {% endif %}
+                <div class="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                    <span>{{ sprint.start_date.strftime('%Y-%m-%d') }}</span>
+                    {% if sprint.end_date %}
+                    <span>- {{ sprint.end_date.strftime('%Y-%m-%d') }}</span>
+                    {% endif %}
+                    {% set stats = sprint_stats[sprint.id|string] %}
+                    <span>&middot; {{ stats.ticket_count }} {{ 'ticket' if stats.ticket_count == 1 else 'ticketow' }} &middot; {{ stats.sp_sum }} SP</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="px-2 py-1 text-xs rounded
+                    {% if sprint.status == 'active' %}bg-green-900 text-green-300
+                    {% elif sprint.status == 'completed' %}bg-gray-700 text-gray-300
+                    {% else %}bg-yellow-900 text-yellow-300{% endif %}">
+                    {% if sprint.status == 'planning' %}Planowanie
+                    {% elif sprint.status == 'active' %}Aktywny
+                    {% else %}Zakonczony{% endif %}
+                </span>
+
+                {% if sprint.status == 'planning' %}
+                <form method="post" action="/dashboard/{{ project.slug }}/scrum/sprints/{{ sprint.id }}/start" class="inline">
+                    <button type="submit"
+                        class="bg-green-700 hover:bg-green-600 text-white text-xs font-medium px-3 py-1 rounded transition">
+                        Wystartuj
+                    </button>
+                </form>
+                {% elif sprint.status == 'active' %}
+                <form method="post" action="/dashboard/{{ project.slug }}/scrum/sprints/{{ sprint.id }}/complete" class="inline">
+                    <button type="submit"
+                        class="bg-gray-600 hover:bg-gray-500 text-white text-xs font-medium px-3 py-1 rounded transition"
+                        onclick="return confirm('Niedokonczone tickety wroca do backloga. Kontynuowac?')">
+                        Zakoncz
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Paginacja -->
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between mt-6">
+    <div>
+        {% if has_prev %}
+        <a href="/dashboard/{{ project.slug }}/scrum/sprints?page={{ page - 1 }}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Poprzednia
+        </a>
+        {% endif %}
+    </div>
+    <span class="text-sm text-gray-400">Strona {{ page }} z {{ total_pages }}</span>
+    <div>
+        {% if has_next %}
+        <a href="/dashboard/{{ project.slug }}/scrum/sprints?page={{ page + 1 }}{% if filter_status %}&status={{ filter_status }}{% endif %}"
+           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Nastepna
+        </a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<div class="text-center py-8 text-gray-500">
+    <p>Brak sprintow. Utworz pierwszy sprint powyzej.</p>
+</div>
+{% endif %}
+{% endblock %}

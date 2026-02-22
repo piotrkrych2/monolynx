@@ -1,0 +1,157 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Tablica - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+{% include "dashboard/scrum/_nav.html" %}
+
+{% if not sprint %}
+<div class="text-center py-12 text-gray-500">
+    <p class="text-lg">Brak aktywnego sprintu</p>
+    <p class="text-sm mt-2"><a href="/dashboard/{{ project.slug }}/scrum/sprints" class="text-indigo-400 hover:text-indigo-300">Przejdz do sprintow</a> aby utworzyc i wystartowac sprint</p>
+</div>
+{% else %}
+<!-- Sprint header with progress -->
+<div class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-3">
+            <h2 class="text-white font-semibold">{{ sprint.name }}</h2>
+            <span class="text-xs text-gray-500">{{ sprint.start_date.strftime('%Y-%m-%d') }}{% if sprint.end_date %} - {{ sprint.end_date.strftime('%Y-%m-%d') }}{% endif %}</span>
+        </div>
+        <span class="text-sm text-gray-400">{{ sp_done }} / {{ sp_total }} SP</span>
+    </div>
+    <div class="w-full bg-gray-700 h-2 rounded">
+        <div class="bg-indigo-500 h-2 rounded" style="width: {{ (sp_done / sp_total * 100) if sp_total else 0 }}%"></div>
+    </div>
+</div>
+
+<div class="grid grid-cols-4 gap-4">
+    {% for status in ["todo", "in_progress", "in_review", "done"] %}
+    <div class="bg-gray-800/50 rounded-lg p-3" data-status="{{ status }}">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wider">
+            {{ status_labels.get(status, status) }}
+            <span class="text-gray-600 ml-1 column-count">({{ columns[status]|length }})</span>
+            {% if sp_per_column[status] %}
+            <span class="text-gray-600 column-sp">&middot; {{ sp_per_column[status] }} SP</span>
+            {% else %}
+            <span class="text-gray-600 column-sp" style="display:none">&middot; 0 SP</span>
+            {% endif %}
+        </h3>
+        <div class="ticket-list space-y-2 min-h-[200px]">
+            {% for ticket in columns[status] %}
+            <div data-ticket-id="{{ ticket.id }}" data-sp="{{ ticket.story_points or 0 }}"
+                 class="ticket-card block bg-gray-800 border border-gray-700 rounded p-3 hover:border-indigo-500 transition cursor-grab"
+                 onclick="window.location.href='/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}'">
+                <p class="text-sm text-white font-medium">{{ ticket.title }}</p>
+                <div class="flex items-center justify-between mt-2">
+                    <div class="flex items-center gap-2">
+                        {% if ticket.priority == 'critical' %}
+                        <span class="w-2 h-2 rounded-full bg-red-500"></span>
+                        {% elif ticket.priority == 'high' %}
+                        <span class="w-2 h-2 rounded-full bg-orange-500"></span>
+                        {% elif ticket.priority == 'medium' %}
+                        <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                        {% else %}
+                        <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+                        {% endif %}
+                        {% if ticket.story_points %}
+                        <span class="text-xs font-mono text-gray-400">{{ ticket.story_points }} SP</span>
+                        {% endif %}
+                    </div>
+                    {% if ticket.assignee %}
+                    <span class="text-xs text-gray-500">{{ ticket.assignee.email.split('@')[0] }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<style>
+    .ticket-card.sortable-ghost { opacity: 0.5; }
+    .ticket-card.sortable-drag { cursor: grabbing; }
+    [data-status].drag-over .ticket-list { border: 2px dashed #6366f1; border-radius: 0.5rem; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var dragging = false;
+
+    document.querySelectorAll('[data-status]').forEach(function(column) {
+        var list = column.querySelector('.ticket-list');
+        if (!list) return;
+
+        new Sortable(list, {
+            group: 'kanban',
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            dragClass: 'sortable-drag',
+            onStart: function() { dragging = true; },
+            onEnd: function(evt) {
+                setTimeout(function() { dragging = false; }, 0);
+
+                var ticketId = evt.item.dataset.ticketId;
+                var newStatus = evt.to.closest('[data-status]').dataset.status;
+                var slug = '{{ project.slug }}';
+
+                if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
+
+                fetch('/dashboard/' + slug + '/scrum/tickets/' + ticketId + '/status', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({status: newStatus})
+                }).catch(function() { window.location.reload(); });
+
+                // Update column counts and SP
+                document.querySelectorAll('[data-status]').forEach(function(col) {
+                    var cards = col.querySelectorAll('.ticket-card');
+                    var countEl = col.querySelector('.column-count');
+                    var spEl = col.querySelector('.column-sp');
+                    if (countEl) countEl.textContent = '(' + cards.length + ')';
+                    var sp = 0;
+                    cards.forEach(function(c) { sp += parseInt(c.dataset.sp) || 0; });
+                    if (spEl) {
+                        if (sp > 0) {
+                            spEl.textContent = '\u00B7 ' + sp + ' SP';
+                            spEl.style.display = '';
+                        } else {
+                            spEl.style.display = 'none';
+                        }
+                    }
+                });
+
+                // Update progress bar
+                var totalSp = 0;
+                var doneSp = 0;
+                document.querySelectorAll('[data-status]').forEach(function(col) {
+                    var colSp = 0;
+                    col.querySelectorAll('.ticket-card').forEach(function(c) {
+                        colSp += parseInt(c.dataset.sp) || 0;
+                    });
+                    totalSp += colSp;
+                    if (col.dataset.status === 'done') doneSp = colSp;
+                });
+                var spLabel = document.querySelector('.text-sm.text-gray-400');
+                if (spLabel && spLabel.textContent.includes('SP')) {
+                    spLabel.textContent = doneSp + ' / ' + totalSp + ' SP';
+                }
+                var progressBar = document.querySelector('.bg-indigo-500.h-2');
+                if (progressBar) {
+                    progressBar.style.width = totalSp > 0 ? (doneSp / totalSp * 100) + '%' : '0%';
+                }
+            }
+        });
+    });
+
+    // Prevent navigation on click during drag
+    document.querySelectorAll('.ticket-card').forEach(function(card) {
+        card.addEventListener('click', function(e) {
+            if (dragging) e.stopImmediatePropagation();
+        }, true);
+    });
+});
+</script>
+{% endif %}
+{% endblock %}

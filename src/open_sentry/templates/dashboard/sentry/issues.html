@@ -1,0 +1,52 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}{{ project.name }} - Issues{% endblock %}
+
+{% block module_content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Issues</h1>
+    <div class="flex items-center gap-4">
+        <span class="text-sm text-gray-500">{{ issues|length }} issues</span>
+        <a href="/dashboard/{{ project.slug }}/500ki/setup-guide"
+           class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-400 border border-indigo-500/50 rounded-lg hover:bg-indigo-500/10 transition">
+            Instrukcja instalacji
+        </a>
+    </div>
+</div>
+
+{% if issues %}
+<div class="space-y-2">
+    {% for issue in issues %}
+    <a href="/dashboard/{{ project.slug }}/500ki/issues/{{ issue.id }}"
+       class="block bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+        <div class="flex items-center justify-between">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                    {% if issue.status == 'unresolved' %}
+                    <span class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"></span>
+                    {% elif issue.status == 'resolved' %}
+                    <span class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></span>
+                    {% else %}
+                    <span class="w-2 h-2 rounded-full bg-gray-500 flex-shrink-0"></span>
+                    {% endif %}
+                    <h3 class="text-white font-medium truncate">{{ issue.title }}</h3>
+                </div>
+                {% if issue.culprit %}
+                <p class="text-sm text-gray-400 mt-1 truncate">{{ issue.culprit }}</p>
+                {% endif %}
+            </div>
+            <div class="text-right ml-4 flex-shrink-0">
+                <span class="text-sm font-mono text-gray-300">{{ issue.event_count }}x</span>
+                <p class="text-xs text-gray-500 mt-1">{{ issue.last_seen.strftime('%Y-%m-%d %H:%M') }}</p>
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-12 text-gray-500">
+    <p class="text-lg">Brak bledow</p>
+    <p class="text-sm mt-2">System nie odebral jeszcze zadnych eventow</p>
+</div>
+{% endif %}
+{% endblock %}
