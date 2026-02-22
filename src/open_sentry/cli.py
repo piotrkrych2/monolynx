@@ -61,10 +61,7 @@ COMMANDS = {
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
         available = ", ".join(COMMANDS)
-        print(
-            "Uzycie: python -m open_sentry.cli <komenda>\n"
-            f"Dostepne komendy: {available}"
-        )
+        print(f"Uzycie: python -m open_sentry.cli <komenda>\nDostepne komendy: {available}")
         sys.exit(1)
 
     asyncio.run(COMMANDS[sys.argv[1]]())

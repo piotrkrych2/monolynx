@@ -195,23 +195,17 @@ class TestCompleteSprint:
         assert error is None
 
         # Refresh tickets to see changes
-        result = await db_session.execute(
-            select(Ticket).where(Ticket.id == ticket_done.id)
-        )
+        result = await db_session.execute(select(Ticket).where(Ticket.id == ticket_done.id))
         done = result.scalar_one()
         assert done.status == "done"
         assert done.sprint_id == sprint.id
 
-        result = await db_session.execute(
-            select(Ticket).where(Ticket.id == ticket_todo.id)
-        )
+        result = await db_session.execute(select(Ticket).where(Ticket.id == ticket_todo.id))
         todo = result.scalar_one()
         assert todo.status == "backlog"
         assert todo.sprint_id is None
 
-        result = await db_session.execute(
-            select(Ticket).where(Ticket.id == ticket_in_progress.id)
-        )
+        result = await db_session.execute(select(Ticket).where(Ticket.id == ticket_in_progress.id))
         ip = result.scalar_one()
         assert ip.status == "backlog"
         assert ip.sprint_id is None

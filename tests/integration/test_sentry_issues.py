@@ -2,7 +2,7 @@
 
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -170,9 +170,7 @@ class TestIssueDetail:
         await db_session.flush()
 
         await login_session(client, db_session, email="sd-det@test.com")
-        resp = await client.get(
-            f"/dashboard/{project.slug}/500ki/issues/{issue.id}"
-        )
+        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues/{issue.id}")
         assert resp.status_code == 200
         assert "RuntimeError: something broke" in resp.text
         assert "app/views.py in handle_request" in resp.text
@@ -201,7 +199,7 @@ class TestIssueDetail:
 
         event = Event(
             issue_id=issue.id,
-            timestamp=datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 2, 20, 12, 0, 0, tzinfo=UTC),
             exception={
                 "type": "IndexError",
                 "value": "list index out of range",
@@ -220,9 +218,7 @@ class TestIssueDetail:
         await db_session.flush()
 
         await login_session(client, db_session, email="sd-evt@test.com")
-        resp = await client.get(
-            f"/dashboard/{project.slug}/500ki/issues/{issue.id}"
-        )
+        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues/{issue.id}")
         assert resp.status_code == 200
         assert "IndexError: list index out of range" in resp.text
         assert "IndexError" in resp.text
@@ -241,9 +237,7 @@ class TestIssueDetail:
 
         await login_session(client, db_session, email="sd-nf@test.com")
         fake_id = uuid.uuid4()
-        resp = await client.get(
-            f"/dashboard/{project.slug}/500ki/issues/{fake_id}"
-        )
+        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues/{fake_id}")
         assert resp.status_code == 404
 
     async def test_issue_detail_wrong_project(self, client, db_session):
@@ -275,9 +269,7 @@ class TestIssueDetail:
 
         await login_session(client, db_session, email="sd-wrongproj@test.com")
         # Probujemy otworzyc issue projektu A w kontekscie projektu B
-        resp = await client.get(
-            f"/dashboard/{project_b.slug}/500ki/issues/{issue.id}"
-        )
+        resp = await client.get(f"/dashboard/{project_b.slug}/500ki/issues/{issue.id}")
         assert resp.status_code == 404
 
 
@@ -313,9 +305,7 @@ class TestSetupGuide:
         await db_session.flush()
 
         await login_session(client, db_session, email="sg-load@test.com")
-        resp = await client.get(
-            f"/dashboard/{project.slug}/500ki/setup-guide"
-        )
+        resp = await client.get(f"/dashboard/{project.slug}/500ki/setup-guide")
         assert resp.status_code == 200
         assert "Instrukcja instalacji" in resp.text
         assert "Zainstaluj SDK" in resp.text

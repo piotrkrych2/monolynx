@@ -6,7 +6,6 @@ import pytest
 from sqlalchemy import select
 
 from open_sentry.models.user_api_token import UserApiToken
-from open_sentry.services.mcp_auth import generate_api_token
 from tests.conftest import login_session
 
 
@@ -14,9 +13,7 @@ from tests.conftest import login_session
 class TestTokensList:
     async def test_tokens_list_requires_auth(self, client):
         """GET /dashboard/profile/tokens bez sesji redirectuje na login."""
-        resp = await client.get(
-            "/dashboard/profile/tokens", follow_redirects=False
-        )
+        resp = await client.get("/dashboard/profile/tokens", follow_redirects=False)
         assert resp.status_code == 303
         assert "/auth/login" in resp.headers["location"]
 
@@ -124,9 +121,7 @@ class TestTokenRevoke:
         assert create_resp.status_code == 200
 
         # Pobieramy token z bazy
-        result = await db_session.execute(
-            select(UserApiToken).where(UserApiToken.name == "Do revoke")
-        )
+        result = await db_session.execute(select(UserApiToken).where(UserApiToken.name == "Do revoke"))
         token = result.scalar_one()
         assert token.is_active is True
 
@@ -164,9 +159,7 @@ class TestTokenRevoke:
         )
         assert create_resp.status_code == 200
 
-        result = await db_session.execute(
-            select(UserApiToken).where(UserApiToken.name == "Cudzy token")
-        )
+        result = await db_session.execute(select(UserApiToken).where(UserApiToken.name == "Cudzy token"))
         other_token = result.scalar_one()
 
         # Logujemy drugiego uzytkownika
@@ -188,9 +181,7 @@ class TestTokenRevoke:
 class TestMcpGuide:
     async def test_mcp_guide_requires_auth(self, client):
         """GET /dashboard/profile/mcp-guide bez sesji redirectuje na login."""
-        resp = await client.get(
-            "/dashboard/profile/mcp-guide", follow_redirects=False
-        )
+        resp = await client.get("/dashboard/profile/mcp-guide", follow_redirects=False)
         assert resp.status_code == 303
         assert "/auth/login" in resp.headers["location"]
 

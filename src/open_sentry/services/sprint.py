@@ -11,9 +11,7 @@ from open_sentry.models.sprint import Sprint
 from open_sentry.models.ticket import Ticket
 
 
-async def start_sprint(
-    sprint_id: uuid.UUID, project_id: uuid.UUID, db: AsyncSession
-) -> str | None:
+async def start_sprint(sprint_id: uuid.UUID, project_id: uuid.UUID, db: AsyncSession) -> str | None:
     """Rozpoczyna sprint. Zwraca blad lub None."""
     # Sprawdz czy nie ma innego aktywnego sprintu
     result = await db.execute(
@@ -26,9 +24,7 @@ async def start_sprint(
     if active is not None:
         return f"Projekt ma juz aktywny sprint: {active.name}"
 
-    result = await db.execute(
-        select(Sprint).where(Sprint.id == sprint_id, Sprint.project_id == project_id)
-    )
+    result = await db.execute(select(Sprint).where(Sprint.id == sprint_id, Sprint.project_id == project_id))
     sprint = result.scalar_one_or_none()
     if sprint is None:
         return "Sprint nie istnieje"
@@ -41,16 +37,12 @@ async def start_sprint(
     return None
 
 
-async def complete_sprint(
-    sprint_id: uuid.UUID, project_id: uuid.UUID, db: AsyncSession
-) -> str | None:
+async def complete_sprint(sprint_id: uuid.UUID, project_id: uuid.UUID, db: AsyncSession) -> str | None:
     """Konczy sprint. Niedokonczone tickety wracaja do backloga.
 
     Zwraca blad lub None.
     """
-    result = await db.execute(
-        select(Sprint).where(Sprint.id == sprint_id, Sprint.project_id == project_id)
-    )
+    result = await db.execute(select(Sprint).where(Sprint.id == sprint_id, Sprint.project_id == project_id))
     sprint = result.scalar_one_or_none()
     if sprint is None:
         return "Sprint nie istnieje"

@@ -39,10 +39,6 @@ async def verify_mcp_token(raw_token: str, db: AsyncSession) -> User | None:
     )
     user = result.scalar_one_or_none()
     if user:
-        await db.execute(
-            update(UserApiToken)
-            .where(UserApiToken.token_hash == hashed)
-            .values(last_used_at=func.now())
-        )
+        await db.execute(update(UserApiToken).where(UserApiToken.token_hash == hashed).values(last_used_at=func.now()))
         await db.commit()
     return user

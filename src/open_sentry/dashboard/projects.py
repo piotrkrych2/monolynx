@@ -45,9 +45,7 @@ async def project_list(
     result = await db.execute(query.order_by(Project.name))
     projects = result.scalars().all()
 
-    return templates.TemplateResponse(
-        request, "dashboard/projects.html", {"projects": projects}
-    )
+    return templates.TemplateResponse(request, "dashboard/projects.html", {"projects": projects})
 
 
 @router.get("/create-project", response_class=HTMLResponse, response_model=None)

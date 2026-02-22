@@ -37,9 +37,7 @@ async def login(
 
     user = await authenticate_user(email, password, db)
     if user is None:
-        return templates.TemplateResponse(
-            request, "auth/login.html", {"error": "Nieprawidlowy email lub haslo"}
-        )
+        return templates.TemplateResponse(request, "auth/login.html", {"error": "Nieprawidlowy email lub haslo"})
 
     request.session["user_id"] = str(user.id)
     request.session["is_superuser"] = user.is_superuser
@@ -66,9 +64,7 @@ async def accept_invite_form(
     )
     user = result.scalar_one_or_none()
 
-    if user is None or (
-        user.invitation_expires_at and user.invitation_expires_at < datetime.now(UTC)
-    ):
+    if user is None or (user.invitation_expires_at and user.invitation_expires_at < datetime.now(UTC)):
         return templates.TemplateResponse(
             request,
             "auth/accept_invite.html",
@@ -100,9 +96,7 @@ async def accept_invite(
     )
     user = result.scalar_one_or_none()
 
-    if user is None or (
-        user.invitation_expires_at and user.invitation_expires_at < datetime.now(UTC)
-    ):
+    if user is None or (user.invitation_expires_at and user.invitation_expires_at < datetime.now(UTC)):
         return templates.TemplateResponse(
             request,
             "auth/accept_invite.html",

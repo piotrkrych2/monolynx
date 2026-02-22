@@ -73,9 +73,7 @@ async def _get_auth_header(ctx: Context[Any, Any]) -> str:
     return str(auth_header[7:])
 
 
-async def _get_user_and_project(
-    ctx: Context[Any, Any], project_slug: str
-) -> tuple[User, Project]:
+async def _get_user_and_project(ctx: Context[Any, Any], project_slug: str) -> tuple[User, Project]:
     """Autoryzuj uzytkownika i sprawdz dostep do projektu."""
     raw_token = await _get_auth_header(ctx)
 
@@ -84,11 +82,7 @@ async def _get_user_and_project(
         if user is None:
             raise ValueError("Nieprawidlowy lub nieaktywny token API")
 
-        result = await db.execute(
-            select(Project).where(
-                Project.slug == project_slug, Project.is_active.is_(True)
-            )
-        )
+        result = await db.execute(select(Project).where(Project.slug == project_slug, Project.is_active.is_(True)))
         project = result.scalar_one_or_none()
         if project is None:
             raise ValueError(f"Projekt '{project_slug}' nie istnieje")
@@ -138,9 +132,7 @@ async def list_tickets(
         if search:
             conditions.append(Ticket.title.ilike(f"%{search}%"))
 
-        total = (
-            await db.execute(select(func.count(Ticket.id)).where(*conditions))
-        ).scalar() or 0
+        total = (await db.execute(select(func.count(Ticket.id)).where(*conditions))).scalar() or 0
         total_pages = max(1, (total + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
@@ -338,9 +330,7 @@ async def update_ticket(
             if assignee_email == "":
                 ticket.assignee_id = None
             else:
-                result = await db.execute(
-                    select(User).where(User.email == assignee_email)
-                )
+                result = await db.execute(select(User).where(User.email == assignee_email))
                 assignee = result.scalar_one_or_none()
                 if assignee:
                     ticket.assignee_id = assignee.id
@@ -399,9 +389,7 @@ async def list_sprints(
         if status:
             conditions.append(Sprint.status == status)
 
-        result = await db.execute(
-            select(Sprint).where(*conditions).order_by(Sprint.created_at.desc())
-        )
+        result = await db.execute(select(Sprint).where(*conditions).order_by(Sprint.created_at.desc()))
         sprints = result.scalars().all()
 
         sprint_data = []

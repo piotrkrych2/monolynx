@@ -42,9 +42,7 @@ async def edit_project_form(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
@@ -79,9 +77,7 @@ async def edit_project(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
@@ -132,9 +128,7 @@ async def edit_project(
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        result = await db.execute(
-            select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-        )
+        result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
         project = result.scalar_one_or_none()
         members = await _get_members(project.id, db) if project else []
         return templates.TemplateResponse(
@@ -167,9 +161,7 @@ async def delete_project(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
@@ -196,9 +188,7 @@ async def member_add(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
@@ -211,9 +201,7 @@ async def member_add(
         role = "member"
 
     # Znajdz uzytkownika po emailu
-    result = await db.execute(
-        select(User).where(User.email == email, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.email == email, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
 
     members = await _get_members(project.id, db)
@@ -282,9 +270,7 @@ async def member_remove(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
@@ -316,9 +302,7 @@ async def member_role(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)

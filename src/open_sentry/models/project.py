@@ -23,17 +23,11 @@ if TYPE_CHECKING:
 class Project(Base):
     __tablename__ = "projects"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    api_key: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False, index=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    api_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     issues: Mapped[list[Issue]] = relationship(back_populates="project")

@@ -205,17 +205,13 @@ class TestSprintLifecycle:
         # Sprawdz ze niedokonczony ticket wraca do backloga
         from sqlalchemy import select
 
-        result = await db_session.execute(
-            select(Ticket).where(Ticket.id == ticket_in_progress.id)
-        )
+        result = await db_session.execute(select(Ticket).where(Ticket.id == ticket_in_progress.id))
         ticket = result.scalar_one()
         assert ticket.status == "backlog"
         assert ticket.sprint_id is None
 
         # Zrobiony ticket zostaje w sprincie
-        result = await db_session.execute(
-            select(Ticket).where(Ticket.id == ticket_done.id)
-        )
+        result = await db_session.execute(select(Ticket).where(Ticket.id == ticket_done.id))
         done = result.scalar_one()
         assert done.status == "done"
         assert done.sprint_id == sprint.id

@@ -44,9 +44,7 @@ def _is_url_safe(url: str) -> str | None:
 
     # Rozwiaz DNS i sprawdz czy IP jest prywatne/loopback
     try:
-        addr_infos = socket.getaddrinfo(
-            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-        )
+        addr_infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror:
         return "Nie mozna rozwiazac hosta"
 
@@ -63,20 +61,12 @@ def _is_url_safe(url: str) -> str | None:
 
 
 async def _get_project(slug: str, db: AsyncSession) -> Project | None:
-    result = await db.execute(
-        select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     return result.scalar_one_or_none()
 
 
-async def _get_monitor(
-    monitor_id: uuid.UUID, project_id: uuid.UUID, db: AsyncSession
-) -> Monitor | None:
-    result = await db.execute(
-        select(Monitor).where(
-            Monitor.id == monitor_id, Monitor.project_id == project_id
-        )
-    )
+async def _get_monitor(monitor_id: uuid.UUID, project_id: uuid.UUID, db: AsyncSession) -> Monitor | None:
+    result = await db.execute(select(Monitor).where(Monitor.id == monitor_id, Monitor.project_id == project_id))
     return result.scalar_one_or_none()
 
 
@@ -107,11 +97,7 @@ async def monitor_list(
         .subquery()
     )
 
-    result = await db.execute(
-        select(Monitor)
-        .where(Monitor.project_id == project.id)
-        .order_by(Monitor.is_active.desc(), Monitor.created_at.desc())
-    )
+    result = await db.execute(select(Monitor).where(Monitor.project_id == project.id).order_by(Monitor.is_active.desc(), Monitor.created_at.desc()))
     monitors = list(result.scalars().all())
 
     # Pobierz ostatni check dla kazdego monitora
@@ -123,8 +109,7 @@ async def monitor_list(
             select(MonitorCheck)
             .join(
                 latest_check_sq,
-                (MonitorCheck.monitor_id == latest_check_sq.c.monitor_id)
-                & (MonitorCheck.checked_at == latest_check_sq.c.max_checked_at),
+                (MonitorCheck.monitor_id == latest_check_sq.c.monitor_id) & (MonitorCheck.checked_at == latest_check_sq.c.max_checked_at),
             )
             .where(MonitorCheck.monitor_id.in_(monitor_ids))
         )
@@ -148,9 +133,7 @@ async def monitor_list(
 # --- Tworzenie monitora ---
 
 
-@router.get(
-    "/{slug}/monitoring/create", response_class=HTMLResponse, response_model=None
-)
+@router.get("/{slug}/monitoring/create", response_class=HTMLResponse, response_model=None)
 async def monitor_create_form(
     request: Request,
     slug: str,
@@ -179,9 +162,7 @@ async def monitor_create_form(
     )
 
 
-@router.post(
-    "/{slug}/monitoring/create", response_class=HTMLResponse, response_model=None
-)
+@router.post("/{slug}/monitoring/create", response_class=HTMLResponse, response_model=None)
 async def monitor_create(
     request: Request,
     slug: str,
@@ -228,9 +209,7 @@ async def monitor_create(
 
     # Limit monitorow na projekt
     if error is None:
-        count_result = await db.execute(
-            select(func.count(Monitor.id)).where(Monitor.project_id == project.id)
-        )
+        count_result = await db.execute(select(func.count(Monitor.id)).where(Monitor.project_id == project.id))
         monitor_count = count_result.scalar() or 0
         if monitor_count >= MAX_MONITORS_PER_PROJECT:
             error = f"Osiagnieto limit {MAX_MONITORS_PER_PROJECT} monitorow na projekt"
@@ -271,9 +250,7 @@ async def monitor_create(
 # --- Szczegoly monitora ---
 
 
-async def _compute_uptime(
-    monitor_id: uuid.UUID, days: int, db: AsyncSession
-) -> float | None:
+async def _compute_uptime(monitor_id: uuid.UUID, days: int, db: AsyncSession) -> float | None:
     """Oblicz uptime (%) monitora z ostatnich N dni."""
     since = datetime.now(UTC) - timedelta(days=days)
     result = await db.execute(
@@ -292,9 +269,7 @@ async def _compute_uptime(
     return round((success / total) * 100, 1)
 
 
-async def _compute_avg_response_time(
-    monitor_id: uuid.UUID, db: AsyncSession
-) -> int | None:
+async def _compute_avg_response_time(monitor_id: uuid.UUID, db: AsyncSession) -> int | None:
     """Sredni czas odpowiedzi (ms) z ostatnich 24h."""
     since = datetime.now(UTC) - timedelta(hours=24)
     result = await db.execute(
@@ -340,9 +315,7 @@ async def monitor_detail(
         page = 1
     per_page = 25
 
-    total_count_result = await db.execute(
-        select(func.count(MonitorCheck.id)).where(MonitorCheck.monitor_id == monitor.id)
-    )
+    total_count_result = await db.execute(select(func.count(MonitorCheck.id)).where(MonitorCheck.monitor_id == monitor.id))
     total_count = total_count_result.scalar() or 0
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     page = min(page, total_pages)

@@ -192,9 +192,7 @@ class TestTicketEdit:
         await db_session.flush()
 
         await login_session(client, db_session, email="te-form@test.com")
-        resp = await client.get(
-            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/edit"
-        )
+        resp = await client.get(f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/edit")
         assert resp.status_code == 200
         assert "Edytuj ticket" in resp.text
         assert "Edytuj mnie" in resp.text
@@ -269,9 +267,7 @@ class TestTicketStatusUpdate:
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(
-            project_id=project.id, title="Status test", status="todo", priority="medium"
-        )
+        ticket = Ticket(project_id=project.id, title="Status test", status="todo", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -292,9 +288,7 @@ class TestTicketStatusUpdate:
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(
-            project_id=project.id, title="Inv status", status="todo", priority="medium"
-        )
+        ticket = Ticket(project_id=project.id, title="Inv status", status="todo", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 

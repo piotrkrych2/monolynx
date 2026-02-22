@@ -61,8 +61,7 @@ async def get_sidebar_badges(project_id: uuid.UUID, db: AsyncSession) -> Sidebar
         )
         .join(
             MonitorCheck,
-            (MonitorCheck.monitor_id == latest_check_sq.c.monitor_id)
-            & (MonitorCheck.checked_at == latest_check_sq.c.max_checked_at),
+            (MonitorCheck.monitor_id == latest_check_sq.c.monitor_id) & (MonitorCheck.checked_at == latest_check_sq.c.max_checked_at),
         )
         .where(
             Monitor.project_id == project_id,

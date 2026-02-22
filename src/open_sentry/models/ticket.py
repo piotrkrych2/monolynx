@@ -22,33 +22,19 @@ if TYPE_CHECKING:
 class Ticket(Base):
     __tablename__ = "tickets"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id"), nullable=False, index=True
-    )
-    sprint_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("sprints.id"), nullable=True, index=True
-    )
-    assignee_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True, index=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    sprint_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sprints.id"), nullable=True, index=True)
+    assignee_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="backlog", index=True)
     priority: Mapped[str] = mapped_column(String(20), default="medium")
     story_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
     order: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    created_via_ai: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=text("false")
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_via_ai: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     project: Mapped[Project] = relationship(back_populates="tickets")
     sprint: Mapped[Sprint | None] = relationship(back_populates="tickets")

@@ -94,9 +94,7 @@ class TestCheckUrlSync:
     @patch("open_sentry.services.monitoring._opener")
     def test_url_error_connection_refused(self, mock_opener):
         """URLError (connection refused) -> status_code=None."""
-        mock_opener.open.side_effect = URLError(
-            reason="[Errno 111] Connection refused"
-        )
+        mock_opener.open.side_effect = URLError(reason="[Errno 111] Connection refused")
 
         result = _check_url_sync("https://localhost:9999", timeout=10)
 

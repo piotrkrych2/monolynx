@@ -20,20 +20,14 @@ if TYPE_CHECKING:
 class Sprint(Base):
     __tablename__ = "sprints"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id"), nullable=False, index=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     goal: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="planning")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     project: Mapped[Project] = relationship(back_populates="sprints")
     tickets: Mapped[list[Ticket]] = relationship(back_populates="sprint")

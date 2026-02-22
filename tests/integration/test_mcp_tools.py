@@ -58,9 +58,7 @@ class TestMcpAuth:
         """verify_mcp_token z prawidlowym tokenem -- token istnieje w DB."""
         _user, raw_token, _project = mcp_setup
         hashed = hash_token(raw_token)
-        result = await db_session.execute(
-            select(UserApiToken).where(UserApiToken.token_hash == hashed)
-        )
+        result = await db_session.execute(select(UserApiToken).where(UserApiToken.token_hash == hashed))
         token_obj = result.scalar_one_or_none()
         assert token_obj is not None
         assert token_obj.is_active is True
@@ -69,9 +67,7 @@ class TestMcpAuth:
         """Token jest powiazany z wlasciwym userem."""
         user, raw_token, _project = mcp_setup
         hashed = hash_token(raw_token)
-        result = await db_session.execute(
-            select(UserApiToken).where(UserApiToken.token_hash == hashed)
-        )
+        result = await db_session.execute(select(UserApiToken).where(UserApiToken.token_hash == hashed))
         token_obj = result.scalar_one()
         assert token_obj.user_id == user.id
 

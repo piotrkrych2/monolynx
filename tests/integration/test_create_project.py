@@ -37,9 +37,7 @@ class TestCreateProject:
         assert response.status_code == 303
         assert response.headers["location"] == "/dashboard/"
 
-        result = await db_session.execute(
-            select(Project).where(Project.slug == "moj-projekt")
-        )
+        result = await db_session.execute(select(Project).where(Project.slug == "moj-projekt"))
         project = result.scalar_one_or_none()
         assert project is not None
         assert project.name == "Moj Projekt"
@@ -67,9 +65,7 @@ class TestCreateProject:
 
     async def test_create_project_empty_name(self, client, db_session):
         """Walidacja pustych pol."""
-        client = await login_session(
-            client, db_session, email="create-empty@example.com"
-        )
+        client = await login_session(client, db_session, email="create-empty@example.com")
 
         response = await client.post(
             "/dashboard/create-project",

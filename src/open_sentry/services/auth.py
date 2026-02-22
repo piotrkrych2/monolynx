@@ -60,9 +60,7 @@ async def authenticate_user(
     password: str,
     db: AsyncSession,
 ) -> User | None:
-    result = await db.execute(
-        select(User).where(User.email == email, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.email == email, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user is None or not user.password_hash:
         return None
@@ -83,7 +81,5 @@ async def get_current_user(
         user_id = uuid.UUID(user_id_str)
     except (ValueError, AttributeError):
         return None
-    result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
     return result.scalar_one_or_none()

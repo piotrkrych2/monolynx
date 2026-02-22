@@ -35,9 +35,7 @@ async def engine():
     admin_url = settings.DATABASE_URL.replace("/open_sentry", "/postgres")
     admin_engine = _create(admin_url, isolation_level="AUTOCOMMIT")
     async with admin_engine.connect() as conn:
-        result = await conn.execute(
-            text("SELECT 1 FROM pg_database WHERE datname = 'open_sentry_test'")
-        )
+        result = await conn.execute(text("SELECT 1 FROM pg_database WHERE datname = 'open_sentry_test'"))
         if not result.scalar():
             await conn.execute(text("CREATE DATABASE open_sentry_test"))
     await admin_engine.dispose()

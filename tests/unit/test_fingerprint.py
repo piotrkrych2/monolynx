@@ -9,16 +9,12 @@ class TestFingerprintGeneration:
         exc1 = {
             "type": "ValueError",
             "value": "invalid literal for int()",
-            "stacktrace": {
-                "frames": [{"filename": "app/views.py", "function": "process_order"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/views.py", "function": "process_order"}]},
         }
         exc2 = {
             "type": "ValueError",
             "value": "invalid literal for int()",
-            "stacktrace": {
-                "frames": [{"filename": "app/views.py", "function": "process_order"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/views.py", "function": "process_order"}]},
         }
         assert compute_fingerprint(exc1) == compute_fingerprint(exc2)
 
@@ -26,15 +22,11 @@ class TestFingerprintGeneration:
         """Ten sam typ bledu z innej funkcji -> rozny fingerprint."""
         exc1 = {
             "type": "ValueError",
-            "stacktrace": {
-                "frames": [{"filename": "app/views.py", "function": "process_order"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/views.py", "function": "process_order"}]},
         }
         exc2 = {
             "type": "ValueError",
-            "stacktrace": {
-                "frames": [{"filename": "app/views.py", "function": "process_payment"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/views.py", "function": "process_payment"}]},
         }
         assert compute_fingerprint(exc1) != compute_fingerprint(exc2)
 
@@ -42,15 +34,11 @@ class TestFingerprintGeneration:
         """Rozne typy bledow z tej samej lokalizacji -> rozne fingerprint."""
         exc1 = {
             "type": "ValueError",
-            "stacktrace": {
-                "frames": [{"filename": "app/views.py", "function": "process_order"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/views.py", "function": "process_order"}]},
         }
         exc2 = {
             "type": "TypeError",
-            "stacktrace": {
-                "frames": [{"filename": "app/views.py", "function": "process_order"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/views.py", "function": "process_order"}]},
         }
         assert compute_fingerprint(exc1) != compute_fingerprint(exc2)
 
@@ -59,16 +47,12 @@ class TestFingerprintGeneration:
         exc1 = {
             "type": "ValueError",
             "value": "first error message",
-            "stacktrace": {
-                "frames": [{"filename": "app/views.py", "function": "handler"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/views.py", "function": "handler"}]},
         }
         exc2 = {
             "type": "ValueError",
             "value": "totally different message",
-            "stacktrace": {
-                "frames": [{"filename": "app/views.py", "function": "handler"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/views.py", "function": "handler"}]},
         }
         assert compute_fingerprint(exc1) == compute_fingerprint(exc2)
 
@@ -76,9 +60,7 @@ class TestFingerprintGeneration:
         """Wielokrotne wywolanie -> zawsze ten sam wynik."""
         exc = {
             "type": "RuntimeError",
-            "stacktrace": {
-                "frames": [{"filename": "app/utils.py", "function": "do_work"}]
-            },
+            "stacktrace": {"frames": [{"filename": "app/utils.py", "function": "do_work"}]},
         }
         results = {compute_fingerprint(exc) for _ in range(100)}
         assert len(results) == 1
@@ -97,8 +79,7 @@ class TestFingerprintGeneration:
             "stacktrace": {
                 "frames": [
                     {
-                        "filename": "/venv/lib/python3.12/"
-                        "site-packages/django/views.py",
+                        "filename": "/venv/lib/python3.12/site-packages/django/views.py",
                         "function": "dispatch",
                     },
                     {"filename": "app/views.py", "function": "handler"},

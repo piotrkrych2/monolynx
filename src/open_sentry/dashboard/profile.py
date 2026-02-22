@@ -19,30 +19,20 @@ router = APIRouter(prefix="/dashboard", tags=["profile"])
 
 
 @router.get("/profile/tokens", response_class=HTMLResponse, response_model=None)
-async def tokens_list(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> HTMLResponse | RedirectResponse:
+async def tokens_list(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse | RedirectResponse:
     """Lista tokenow API zalogowanego uzytkownika."""
     user_id = _get_user_id(request)
     if user_id is None:
         return RedirectResponse("/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(UserApiToken)
-        .where(UserApiToken.user_id == user_id)
-        .order_by(UserApiToken.created_at.desc())
-    )
+    result = await db.execute(select(UserApiToken).where(UserApiToken.user_id == user_id).order_by(UserApiToken.created_at.desc()))
     tokens = result.scalars().all()
 
-    return templates.TemplateResponse(
-        request, "dashboard/profile/tokens.html", {"tokens": tokens}
-    )
+    return templates.TemplateResponse(request, "dashboard/profile/tokens.html", {"tokens": tokens})
 
 
 @router.post("/profile/tokens/create", response_class=HTMLResponse, response_model=None)
-async def token_create(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> HTMLResponse | RedirectResponse:
+async def token_create(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse | RedirectResponse:
     """Generowanie nowego tokenu API."""
     user_id = _get_user_id(request)
     if user_id is None:
@@ -67,11 +57,7 @@ async def token_create(
     await db.commit()
 
     # Pobierz liste tokenow do wyswietlenia razem z nowym raw tokenem
-    result = await db.execute(
-        select(UserApiToken)
-        .where(UserApiToken.user_id == user_id)
-        .order_by(UserApiToken.created_at.desc())
-    )
+    result = await db.execute(select(UserApiToken).where(UserApiToken.user_id == user_id).order_by(UserApiToken.created_at.desc()))
     tokens = result.scalars().all()
 
     return templates.TemplateResponse(

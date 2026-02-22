@@ -46,9 +46,7 @@ async def user_list(
             return HTMLResponse("Brak uprawnien", status_code=403)
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(User).where(User.is_active.is_(True)).order_by(User.created_at.desc())
-    )
+    result = await db.execute(select(User).where(User.is_active.is_(True)).order_by(User.created_at.desc()))
     users = result.scalars().all()
 
     return templates.TemplateResponse(
@@ -156,9 +154,7 @@ async def resend_invite(
             return HTMLResponse("Brak uprawnien", status_code=403)
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user is None:
         return HTMLResponse("Uzytkownik nie znaleziony", status_code=404)
@@ -180,11 +176,7 @@ async def resend_invite(
 async def _get_edit_context(user: User, db: AsyncSession) -> dict[str, object]:
     """Wspolny kontekst dla strony edycji uzytkownika."""
     # Projekty przypisane do usera
-    members_result = await db.execute(
-        select(ProjectMember)
-        .where(ProjectMember.user_id == user.id)
-        .options(selectinload(ProjectMember.project))
-    )
+    members_result = await db.execute(select(ProjectMember).where(ProjectMember.user_id == user.id).options(selectinload(ProjectMember.project)))
     memberships = members_result.scalars().all()
 
     # Projekty, do ktorych user jeszcze nie nalezy
@@ -216,9 +208,7 @@ async def user_edit_form(
             return HTMLResponse("Brak uprawnien", status_code=403)
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user is None:
         return HTMLResponse("Uzytkownik nie znaleziony", status_code=404)
@@ -243,9 +233,7 @@ async def user_edit(
             return HTMLResponse("Brak uprawnien", status_code=403)
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user is None:
         return HTMLResponse("Uzytkownik nie znaleziony", status_code=404)
@@ -272,9 +260,7 @@ async def user_edit(
     except IntegrityError:
         await db.rollback()
         # Re-query user after rollback
-        result = await db.execute(
-            select(User).where(User.id == user_id, User.is_active.is_(True))
-        )
+        result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
         user = result.scalar_one_or_none()
         if user is None:
             return HTMLResponse("Uzytkownik nie znaleziony", status_code=404)
@@ -294,9 +280,7 @@ async def user_edit(
     return RedirectResponse(url=f"/dashboard/users/{user_id}", status_code=303)
 
 
-@router.post(
-    "/users/{user_id}/activate", response_class=HTMLResponse, response_model=None
-)
+@router.post("/users/{user_id}/activate", response_class=HTMLResponse, response_model=None)
 async def user_activate(
     request: Request,
     user_id: uuid.UUID,
@@ -308,9 +292,7 @@ async def user_activate(
             return HTMLResponse("Brak uprawnien", status_code=403)
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user is None:
         return HTMLResponse("Uzytkownik nie znaleziony", status_code=404)
@@ -342,9 +324,7 @@ async def user_activate(
     return RedirectResponse(url=f"/dashboard/users/{user_id}", status_code=303)
 
 
-@router.post(
-    "/users/{user_id}/deactivate", response_class=HTMLResponse, response_model=None
-)
+@router.post("/users/{user_id}/deactivate", response_class=HTMLResponse, response_model=None)
 async def user_deactivate(
     request: Request,
     user_id: uuid.UUID,
@@ -360,9 +340,7 @@ async def user_deactivate(
         flash(request, "Nie mozesz dezaktywowac wlasnego konta", "error")
         return RedirectResponse(url=f"/dashboard/users/{user_id}", status_code=303)
 
-    result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user is None:
         return HTMLResponse("Uzytkownik nie znaleziony", status_code=404)
@@ -393,9 +371,7 @@ async def user_project_add(
             return HTMLResponse("Brak uprawnien", status_code=403)
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user is None:
         return HTMLResponse("Uzytkownik nie znaleziony", status_code=404)

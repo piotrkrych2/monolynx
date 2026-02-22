@@ -71,9 +71,7 @@ class TestProcessEvent:
 
         from open_sentry.models.issue import Issue
 
-        result = await db_session.execute(
-            select(Issue).where(Issue.project_id == project.id)
-        )
+        result = await db_session.execute(select(Issue).where(Issue.project_id == project.id))
         issues = result.scalars().all()
         assert len(issues) == 1
         assert issues[0].event_count == 2
@@ -103,9 +101,7 @@ class TestProcessEvent:
 
         from open_sentry.models.issue import Issue
 
-        result = await db_session.execute(
-            select(Issue).where(Issue.project_id == project.id)
-        )
+        result = await db_session.execute(select(Issue).where(Issue.project_id == project.id))
         issue = result.scalar_one()
         assert issue.title == "RuntimeError: something broke"
         assert issue.culprit == "main.py in run"
@@ -127,9 +123,7 @@ class TestProcessEvent:
 
         from open_sentry.models.issue import Issue
 
-        result = await db_session.execute(
-            select(Issue).where(Issue.project_id == project.id)
-        )
+        result = await db_session.execute(select(Issue).where(Issue.project_id == project.id))
         issue = result.scalar_one()
         assert issue.culprit is None
 
@@ -157,9 +151,7 @@ class TestProcessEvent:
 
         from open_sentry.models.issue import Issue
 
-        result = await db_session.execute(
-            select(Issue).where(Issue.project_id == project.id)
-        )
+        result = await db_session.execute(select(Issue).where(Issue.project_id == project.id))
         issue = result.scalar_one()
         assert issue.fingerprint == "custom-fingerprint-123"
 

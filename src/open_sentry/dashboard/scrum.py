@@ -36,20 +36,12 @@ router = APIRouter(prefix="/dashboard", tags=["scrum"])
 
 
 async def _get_project(slug: str, db: AsyncSession) -> Project | None:
-    result = await db.execute(
-        select(Project).where(Project.slug == slug, Project.is_active.is_(True))
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     return result.scalar_one_or_none()
 
 
-async def _get_project_members(
-    project_id: uuid.UUID, db: AsyncSession
-) -> list[ProjectMember]:
-    result = await db.execute(
-        select(ProjectMember)
-        .options(selectinload(ProjectMember.user))
-        .where(ProjectMember.project_id == project_id)
-    )
+async def _get_project_members(project_id: uuid.UUID, db: AsyncSession) -> list[ProjectMember]:
+    result = await db.execute(select(ProjectMember).options(selectinload(ProjectMember.user)).where(ProjectMember.project_id == project_id))
     return list(result.scalars().all())
 
 
@@ -76,9 +68,7 @@ async def backlog(
     f_assignee_id = request.query_params.get("assignee_id", "")
     f_sprint_id = request.query_params.get("sprint_id", "")
     f_search = request.query_params.get("search", "").strip()
-    show_completed_sprints = (
-        request.query_params.get("show_completed_sprints", "") == "1"
-    )
+    show_completed_sprints = request.query_params.get("show_completed_sprints", "") == "1"
 
     try:
         page = max(1, int(request.query_params.get("page", "1")))
@@ -107,17 +97,13 @@ async def backlog(
     # Count total (after filters, before pagination)
     count_q = select(func.count(Ticket.id)).where(*conditions)
     if not show_completed_sprints:
-        count_q = count_q.outerjoin(Sprint, Ticket.sprint_id == Sprint.id).where(
-            sprint_join_filter
-        )
+        count_q = count_q.outerjoin(Sprint, Ticket.sprint_id == Sprint.id).where(sprint_join_filter)
     total_count = (await db.execute(count_q)).scalar() or 0
 
     # SP total across all filtered tickets
     sp_q = select(func.coalesce(func.sum(Ticket.story_points), 0)).where(*conditions)
     if not show_completed_sprints:
-        sp_q = sp_q.outerjoin(Sprint, Ticket.sprint_id == Sprint.id).where(
-            sprint_join_filter
-        )
+        sp_q = sp_q.outerjoin(Sprint, Ticket.sprint_id == Sprint.id).where(sprint_join_filter)
     sp_total = (await db.execute(sp_q)).scalar() or 0
 
     # Pagination
@@ -125,15 +111,9 @@ async def backlog(
     page = min(page, total_pages)
 
     # Main query with eager loads
-    query = (
-        select(Ticket)
-        .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint))
-        .where(*conditions)
-    )
+    query = select(Ticket).options(selectinload(Ticket.assignee), selectinload(Ticket.sprint)).where(*conditions)
     if not show_completed_sprints:
-        query = query.outerjoin(Sprint, Ticket.sprint_id == Sprint.id).where(
-            sprint_join_filter
-        )
+        query = query.outerjoin(Sprint, Ticket.sprint_id == Sprint.id).where(sprint_join_filter)
 
     query = query.order_by(Ticket.order, Ticket.created_at.desc())
     query = query.limit(per_page).offset((page - 1) * per_page)
@@ -142,11 +122,7 @@ async def backlog(
 
     members = await _get_project_members(project.id, db)
 
-    result = await db.execute(
-        select(Sprint)
-        .where(Sprint.project_id == project.id, Sprint.status != "completed")
-        .order_by(Sprint.created_at.desc())
-    )
+    result = await db.execute(select(Sprint).where(Sprint.project_id == project.id, Sprint.status != "completed").order_by(Sprint.created_at.desc()))
     sprints = result.scalars().all()
 
     return await render_project_page(
@@ -199,9 +175,7 @@ async def board(
         return HTMLResponse("Project not found", status_code=404)
 
     # Aktywny sprint
-    result = await db.execute(
-        select(Sprint).where(Sprint.project_id == project.id, Sprint.status == "active")
-    )
+    result = await db.execute(select(Sprint).where(Sprint.project_id == project.id, Sprint.status == "active"))
     active_sprint = result.scalar_one_or_none()
 
     columns: dict[str, list[Ticket]] = {s: [] for s in BOARD_STATUSES}
@@ -211,10 +185,7 @@ async def board(
 
     if active_sprint:
         ticket_result = await db.execute(
-            select(Ticket)
-            .options(selectinload(Ticket.assignee))
-            .where(Ticket.sprint_id == active_sprint.id)
-            .order_by(Ticket.order)
+            select(Ticket).options(selectinload(Ticket.assignee)).where(Ticket.sprint_id == active_sprint.id).order_by(Ticket.order)
         )
         for ticket in ticket_result.scalars().all():
             if ticket.status in columns:
@@ -264,11 +235,7 @@ async def ticket_create_form(
 
     members = await _get_project_members(project.id, db)
 
-    result = await db.execute(
-        select(Sprint)
-        .where(Sprint.project_id == project.id, Sprint.status != "completed")
-        .order_by(Sprint.created_at.desc())
-    )
+    result = await db.execute(select(Sprint).where(Sprint.project_id == project.id, Sprint.status != "completed").order_by(Sprint.created_at.desc()))
     sprints = result.scalars().all()
 
     return await render_project_page(
@@ -431,9 +398,7 @@ async def ticket_comment_create(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id)
-    )
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     if result.scalar_one_or_none() is None:
         return HTMLResponse("Ticket not found", status_code=404)
 
@@ -441,9 +406,7 @@ async def ticket_comment_create(
     content = str(form.get("content", "")).strip()
     if not content:
         flash(request, "Tresc komentarza nie moze byc pusta", "error")
-        return RedirectResponse(
-            url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}#comments", status_code=303
-        )
+        return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}#comments", status_code=303)
 
     comment = TicketComment(
         ticket_id=ticket_id,
@@ -454,9 +417,7 @@ async def ticket_comment_create(
     await db.commit()
 
     flash(request, "Komentarz dodany")
-    return RedirectResponse(
-        url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}#comments", status_code=303
-    )
+    return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}#comments", status_code=303)
 
 
 @router.get(
@@ -532,9 +493,7 @@ async def ticket_edit(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id)
-    )
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
@@ -589,9 +548,7 @@ async def ticket_delete(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id)
-    )
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
@@ -622,9 +579,7 @@ async def ticket_status_update(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id)
-    )
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
@@ -649,9 +604,7 @@ async def ticket_sprint_update(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id)
-    )
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
@@ -688,9 +641,7 @@ async def ticket_sprint_update(
     return HTMLResponse("OK", status_code=200)
 
 
-async def _compute_sprint_stats(
-    sprints: Sequence[Sprint], db: AsyncSession
-) -> dict[str, dict[str, int]]:
+async def _compute_sprint_stats(sprints: Sequence[Sprint], db: AsyncSession) -> dict[str, dict[str, int]]:
     """Compute ticket count and story points sum per sprint."""
     sprint_stats: dict[str, dict[str, int]] = {}
     for sprint in sprints:
@@ -744,20 +695,12 @@ async def sprint_list(
         conditions.append(Sprint.status != "completed")
 
     # Count total
-    total_count = (
-        await db.execute(select(func.count(Sprint.id)).where(*conditions))
-    ).scalar() or 0
+    total_count = (await db.execute(select(func.count(Sprint.id)).where(*conditions))).scalar() or 0
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     page = min(page, total_pages)
 
     # Fetch paginated sprints
-    result = await db.execute(
-        select(Sprint)
-        .where(*conditions)
-        .order_by(Sprint.created_at.desc())
-        .limit(per_page)
-        .offset((page - 1) * per_page)
-    )
+    result = await db.execute(select(Sprint).where(*conditions).order_by(Sprint.created_at.desc()).limit(per_page).offset((page - 1) * per_page))
     sprints = list(result.scalars().all())
 
     sprint_stats = await _compute_sprint_stats(sprints, db)
@@ -807,11 +750,7 @@ async def sprint_create(
     end_date_raw = str(form.get("end_date", "")).strip()
 
     if not name or not start_date_raw:
-        result = await db.execute(
-            select(Sprint)
-            .where(Sprint.project_id == project.id)
-            .order_by(Sprint.created_at.desc())
-        )
+        result = await db.execute(select(Sprint).where(Sprint.project_id == project.id).order_by(Sprint.created_at.desc()))
         sprints = result.scalars().all()
         sprint_stats = await _compute_sprint_stats(sprints, db)
         return templates.TemplateResponse(
@@ -864,11 +803,7 @@ async def sprint_start(
     error = await start_sprint(sprint_id, project.id, db)
     if error:
         flash(request, error, "error")
-        result = await db.execute(
-            select(Sprint)
-            .where(Sprint.project_id == project.id)
-            .order_by(Sprint.created_at.desc())
-        )
+        result = await db.execute(select(Sprint).where(Sprint.project_id == project.id).order_by(Sprint.created_at.desc()))
         sprints = result.scalars().all()
         sprint_stats = await _compute_sprint_stats(sprints, db)
         return templates.TemplateResponse(
@@ -911,11 +846,7 @@ async def sprint_complete(
     error = await complete_sprint(sprint_id, project.id, db)
     if error:
         flash(request, error, "error")
-        result = await db.execute(
-            select(Sprint)
-            .where(Sprint.project_id == project.id)
-            .order_by(Sprint.created_at.desc())
-        )
+        result = await db.execute(select(Sprint).where(Sprint.project_id == project.id).order_by(Sprint.created_at.desc()))
         sprints = result.scalars().all()
         sprint_stats = await _compute_sprint_stats(sprints, db)
         return templates.TemplateResponse(

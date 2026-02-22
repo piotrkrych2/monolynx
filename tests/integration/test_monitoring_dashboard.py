@@ -320,9 +320,7 @@ class TestMonitorDetail:
         await db_session.flush()
 
         await login_session(client, db_session, email="md-det@test.com")
-        resp = await client.get(
-            f"/dashboard/{project.slug}/monitoring/{monitor.id}"
-        )
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/{monitor.id}")
         assert resp.status_code == 200
         assert "Detail Monitor" in resp.text
         assert "https://example.com" in resp.text
@@ -367,9 +365,7 @@ class TestMonitorDetail:
 
         await login_session(client, db_session, email="md-nf@test.com")
         fake_id = uuid.uuid4()
-        resp = await client.get(
-            f"/dashboard/{project.slug}/monitoring/{fake_id}"
-        )
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/{fake_id}")
         assert resp.status_code == 404
 
     async def test_monitor_detail_shows_no_checks_message(self, client, db_session):
@@ -394,9 +390,7 @@ class TestMonitorDetail:
         await db_session.flush()
 
         await login_session(client, db_session, email="md-nochk@test.com")
-        resp = await client.get(
-            f"/dashboard/{project.slug}/monitoring/{monitor.id}"
-        )
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/{monitor.id}")
         assert resp.status_code == 200
         assert "Brak sprawdzen" in resp.text
 

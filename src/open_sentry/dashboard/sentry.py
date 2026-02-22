@@ -34,11 +34,7 @@ async def issue_list(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    result = await db.execute(
-        select(Issue)
-        .where(Issue.project_id == project.id)
-        .order_by(Issue.last_seen.desc())
-    )
+    result = await db.execute(select(Issue).where(Issue.project_id == project.id).order_by(Issue.last_seen.desc()))
     issues = result.scalars().all()
 
     return await render_project_page(
@@ -69,11 +65,7 @@ async def issue_detail(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    result = await db.execute(
-        select(Issue)
-        .options(selectinload(Issue.events))
-        .where(Issue.id == issue_id, Issue.project_id == project.id)
-    )
+    result = await db.execute(select(Issue).options(selectinload(Issue.events)).where(Issue.id == issue_id, Issue.project_id == project.id))
     issue = result.scalar_one_or_none()
     if issue is None:
         return HTMLResponse("Issue not found", status_code=404)

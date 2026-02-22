@@ -42,22 +42,15 @@ async def _monitor_checker_loop() -> None:
             now = datetime.now(UTC)
 
             async with async_session_factory() as db:
-                result = await db.execute(
-                    select(Monitor).where(Monitor.is_active.is_(True))
-                )
+                result = await db.execute(select(Monitor).where(Monitor.is_active.is_(True)))
                 monitors = list(result.scalars().all())
 
                 for monitor in monitors:
                     # Oblicz interwal w sekundach
-                    interval_s = monitor.interval_value * INTERVAL_SECONDS.get(
-                        monitor.interval_unit, 60
-                    )
+                    interval_s = monitor.interval_value * INTERVAL_SECONDS.get(monitor.interval_unit, 60)
                     # Sprawdz ostatni check
                     last_check_result = await db.execute(
-                        select(MonitorCheck.checked_at)
-                        .where(MonitorCheck.monitor_id == monitor.id)
-                        .order_by(MonitorCheck.checked_at.desc())
-                        .limit(1)
+                        select(MonitorCheck.checked_at).where(MonitorCheck.monitor_id == monitor.id).order_by(MonitorCheck.checked_at.desc()).limit(1)
                     )
                     last_checked_at = last_check_result.scalar_one_or_none()
 

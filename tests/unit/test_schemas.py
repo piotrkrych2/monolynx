@@ -9,9 +9,7 @@ from open_sentry.schemas.issues import StatusUpdate
 
 class TestEventPayload:
     def test_valid_minimal_payload(self):
-        payload = EventPayload(
-            exception=ExceptionData(type="ValueError", value="bad value")
-        )
+        payload = EventPayload(exception=ExceptionData(type="ValueError", value="bad value"))
         assert payload.exception.type == "ValueError"
         assert payload.level == "error"
         assert payload.platform == "python"

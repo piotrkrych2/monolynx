@@ -20,20 +20,12 @@ if TYPE_CHECKING:
 class TicketComment(Base):
     __tablename__ = "ticket_comments"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    ticket_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    created_via_ai: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=text("false")
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_via_ai: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     ticket: Mapped[Ticket] = relationship(back_populates="comments")
     author: Mapped[User] = relationship()

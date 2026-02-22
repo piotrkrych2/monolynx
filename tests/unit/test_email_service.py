@@ -132,9 +132,7 @@ class TestSendEmail:
         """send_email zleca zadanie do executora."""
         send_email("to@example.com", "Temat", "<p>Tresc</p>")
 
-        mock_executor.submit.assert_called_once_with(
-            _send_email_sync, "to@example.com", "Temat", "<p>Tresc</p>"
-        )
+        mock_executor.submit.assert_called_once_with(_send_email_sync, "to@example.com", "Temat", "<p>Tresc</p>")
 
     @patch("open_sentry.services.email._executor")
     def test_executor_exception_does_not_crash(self, mock_executor):
@@ -173,10 +171,7 @@ class TestSendInvitationEmail:
         mock_send_email.assert_called_once()
         call_args = mock_send_email.call_args
         body_html = call_args[0][2]
-        expected_link = (
-            "https://sentry.example.com/auth/accept-invite/"
-            "12345678-1234-5678-1234-567812345678"
-        )
+        expected_link = "https://sentry.example.com/auth/accept-invite/12345678-1234-5678-1234-567812345678"
         assert expected_link in body_html
 
     @patch("open_sentry.services.email.send_email")
@@ -191,10 +186,7 @@ class TestSendInvitationEmail:
         call_args = mock_send_email.call_args
         body_html = call_args[0][2]
         assert "//auth" not in body_html
-        expected_link = (
-            "https://sentry.example.com/auth/accept-invite/"
-            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        )
+        expected_link = "https://sentry.example.com/auth/accept-invite/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         assert expected_link in body_html
 
     @patch("open_sentry.services.email.send_email")

@@ -31,9 +31,7 @@ def _get_user_id(request: Request) -> uuid.UUID | None:
 
 def flash(request: Request, message: str, type: str = "success") -> None:
     """Add a flash message to the session for display on next page load."""
-    request.session.setdefault("_flash_messages", []).append(
-        {"message": message, "type": type}
-    )
+    request.session.setdefault("_flash_messages", []).append({"message": message, "type": type})
 
 
 async def render_project_page(

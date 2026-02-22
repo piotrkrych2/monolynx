@@ -57,11 +57,7 @@ def send_invitation_email(to: str, first_name: str, token: uuid.UUID) -> None:
     """Wysyla email z zaproszeniem do ustawienia hasla."""
     link = f"{settings.APP_URL.rstrip('/')}/auth/accept-invite/{token}"
     subject = "Zaproszenie do Open Sentry"
-    btn = (
-        "display:inline-block;padding:10px 24px;"
-        "background:#4f46e5;color:#fff;"
-        "text-decoration:none;border-radius:6px;"
-    )
+    btn = "display:inline-block;padding:10px 24px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;"
     greeting = f" {first_name}" if first_name else ""
     body_html = (
         "<html><body style='font-family:sans-serif;color:#333;'>"

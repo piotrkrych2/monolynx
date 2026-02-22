@@ -26,9 +26,7 @@ class TestEditProject:
     async def test_edit_project_requires_auth(self, client, db_session):
         """GET /dashboard/{slug}/settings bez sesji redirectuje na login."""
         await _create_project(db_session)
-        response = await client.get(
-            "/dashboard/test-projekt/settings", follow_redirects=False
-        )
+        response = await client.get("/dashboard/test-projekt/settings", follow_redirects=False)
         assert response.status_code == 303
         assert "/auth/login" in response.headers["location"]
 
@@ -37,9 +35,7 @@ class TestEditProject:
         await _create_project(db_session)
         client = await login_session(client, db_session, email="edit-test@example.com")
 
-        response = await client.get(
-            "/dashboard/test-projekt/settings", follow_redirects=False
-        )
+        response = await client.get("/dashboard/test-projekt/settings", follow_redirects=False)
         assert response.status_code == 200
         assert "Test Projekt" in response.text
         assert "test-projekt" in response.text
@@ -107,9 +103,7 @@ class TestDeleteProject:
     async def test_delete_project_requires_auth(self, client, db_session):
         """POST /dashboard/{slug}/settings/delete bez sesji redirectuje na login."""
         await _create_project(db_session)
-        response = await client.post(
-            "/dashboard/test-projekt/settings/delete", follow_redirects=False
-        )
+        response = await client.post("/dashboard/test-projekt/settings/delete", follow_redirects=False)
         assert response.status_code == 303
         assert "/auth/login" in response.headers["location"]
 
@@ -118,9 +112,7 @@ class TestDeleteProject:
         project = await _create_project(db_session)
         client = await login_session(client, db_session, email="del-test@example.com")
 
-        response = await client.post(
-            "/dashboard/test-projekt/settings/delete", follow_redirects=False
-        )
+        response = await client.post("/dashboard/test-projekt/settings/delete", follow_redirects=False)
         assert response.status_code == 303
         assert response.headers["location"] == "/dashboard/"
 
@@ -133,9 +125,7 @@ class TestDeleteProject:
         client = await login_session(client, db_session, email="del-test2@example.com")
 
         # Usuwamy projekt
-        await client.post(
-            "/dashboard/test-projekt/settings/delete", follow_redirects=False
-        )
+        await client.post("/dashboard/test-projekt/settings/delete", follow_redirects=False)
 
         # Sprawdzamy liste
         response = await client.get("/dashboard/", follow_redirects=False)

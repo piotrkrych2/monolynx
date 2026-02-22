@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import secrets
-import uuid
 
 import pytest
-from starlette.testclient import TestClient
 
 from open_sentry.models.project import Project
 from open_sentry.models.user import User
 from open_sentry.services.auth import (
     authenticate_user,
-    get_current_user,
     hash_password,
-    verify_api_key,
     verify_password,
 )
 from tests.conftest import login_session

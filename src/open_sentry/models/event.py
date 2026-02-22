@@ -19,15 +19,9 @@ if TYPE_CHECKING:
 class Event(Base):
     __tablename__ = "events"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    issue_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("issues.id"), nullable=False, index=True
-    )
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    issue_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("issues.id"), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     exception: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     request_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     environment: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
