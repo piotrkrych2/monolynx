@@ -10,8 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 def _default_secret_key() -> str:
     warnings.warn(
-        "SECRET_KEY nie jest ustawiony -- wygenerowano losowy klucz. "
-        "Ustaw SECRET_KEY w zmiennych srodowiskowych w produkcji!",
+        "SECRET_KEY nie jest ustawiony -- wygenerowano losowy klucz. Ustaw SECRET_KEY w zmiennych srodowiskowych w produkcji!",
         stacklevel=2,
     )
     return secrets.token_urlsafe(32)
