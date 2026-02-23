@@ -33,9 +33,10 @@
 
         <p class="text-gray-300 text-sm mb-3">Uruchom komendę w terminalu:</p>
         <div class="bg-gray-900 rounded-lg p-4 mb-4 overflow-x-auto">
-            <code class="text-green-400 font-mono text-sm whitespace-pre">claude mcp add monolynx-scrum {{ app_url }}/mcp \
+            <code class="text-green-400 font-mono text-sm whitespace-pre">claude mcp add monolynx-scrum {{ app_url }}/mcp/ \
   --transport http \
-  --header "Authorization: Bearer TWOJ_TOKEN"</code>
+  --header "Authorization: Bearer TWOJ_TOKEN" \
+  --header "X-API-Key: dummy"</code>
         </div>
 
         <p class="text-gray-300 text-sm mb-3">Lub dodaj ręcznie do pliku <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> w katalogu projektu:</p>
@@ -44,9 +45,10 @@
   "mcpServers": {
     "monolynx-scrum": {
       "type": "http",
-      "url": "{{ app_url }}/mcp",
+      "url": "{{ app_url }}/mcp/",
       "headers": {
-        "Authorization": "Bearer ${MONOLYNX_MCP_TOKEN}"
+        "Authorization": "Bearer ${MONOLYNX_MCP_TOKEN}",
+        "X-API-Key": "dummy"
       }
     }
   }
@@ -54,6 +56,40 @@
         </div>
         <p class="text-gray-400 text-sm mt-3">
             W tym wariancie ustaw zmienną środowiskową <code class="text-indigo-300 font-mono text-sm">MONOLYNX_MCP_TOKEN</code> z wartością tokenu.
+        </p>
+    </div>
+
+    <!-- Troubleshooting -->
+    <div class="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <svg class="w-6 h-6 text-yellow-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+            <h2 class="text-lg font-semibold text-yellow-300">Problem z autoryzacją?</h2>
+        </div>
+        <p class="text-gray-300 text-sm mb-3">
+            Claude Code z transportem <code class="text-indigo-300 font-mono text-sm">http</code> może ignorować nagłówek
+            <code class="text-indigo-300 font-mono text-sm">Authorization</code> i próbować autoryzacji przez OAuth,
+            co kończy się błędem <code class="text-indigo-300 font-mono text-sm">HTTP 404: Invalid OAuth error response</code>.
+        </p>
+        <p class="text-gray-300 text-sm mb-3">
+            Rozwiązanie: dodaj nagłówek <code class="text-indigo-300 font-mono text-sm">X-API-Key</code> — blokuje on automatyczne uruchamianie OAuth:
+        </p>
+        <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+            <code class="text-green-400 font-mono text-sm whitespace-pre">{
+  "mcpServers": {
+    "monolynx-scrum": {
+      "type": "http",
+      "url": "{{ app_url }}/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${MONOLYNX_MCP_TOKEN}",
+        "X-API-Key": "dummy"
+      }
+    }
+  }
+}</code>
+        </div>
+        <p class="text-gray-400 text-sm mt-3">
+            Wartość <code class="text-indigo-300 font-mono text-sm">X-API-Key</code> jest nieistotna — liczy się obecność tego nagłówka.
+            Szczegóły: <a href="https://github.com/anthropics/claude-code/issues/7290" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300 underline">claude-code#7290</a>.
         </p>
     </div>
 

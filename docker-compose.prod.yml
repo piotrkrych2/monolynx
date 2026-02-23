@@ -39,6 +39,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-monolynx}:${POSTGRES_PASSWORD:-monolynx_dev}@db:5432/${POSTGRES_DB:-open_monolynx}
       SECRET_KEY: ${SECRET_KEY}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      ENABLE_MONITOR_LOOP: "false"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       APP_URL: ${APP_URL:-http://localhost:8000}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -59,6 +60,27 @@ services:
     networks:
       - appname-net
       - traefik-network
+
+  worker:
+    image: registry.gitlab.com/monolynx/monolynx:latest
+    restart: unless-stopped
+    command: ["python", "-m", "monolynx.worker"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-monolynx}:${POSTGRES_PASSWORD:-monolynx_dev}@db:5432/${POSTGRES_DB:-open_monolynx}
+      SECRET_KEY: ${SECRET_KEY}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/worker-healthy && find /tmp/worker-healthy -mmin -1 | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - appname-net
 
 networks:
   appname-net:

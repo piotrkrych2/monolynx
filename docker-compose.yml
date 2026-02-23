@@ -53,3 +53,22 @@ services:
     profiles:
       - dev
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    command: python -m monolynx.worker
+    volumes:
+      - ./src:/app/src:cached
+      - ./pyproject.toml:/app/pyproject.toml:cached
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry_dev}@db:5432/${POSTGRES_DB:-open_sentry}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - worker
+

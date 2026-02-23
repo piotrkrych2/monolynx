@@ -13,14 +13,15 @@ All commands run inside Docker. Never run Python commands locally — always use
 ```bash
 # Development environment (Docker Compose: PostgreSQL + FastAPI with hot reload)
 make dev                              # Start dev env (port 8000, configurable via APP_PORT)
-make down                             # Stop dev env
+make down                             # Stop dev env (app + worker)
+make worker                           # Start monitor worker separately (dev)
 make logs                             # Tail app logs
 make setup                            # Configure local dev environment
 make help                             # Show available commands
 
 # Code quality
-make lint                             # ruff check + ruff format --check + mypy
-make fmt                              # Auto-fix formatting
+make lint                             # ruff check --fix + ruff format + mypy (auto-fixes!)
+make fmt                              # ruff check --fix + ruff format (same as lint, without mypy)
 
 # Testing (inside Docker)
 make test                             # All tests with coverage
@@ -46,7 +47,7 @@ make build                            # Build production Docker image
 Two separate packages in one repo:
 
 **Backend** (`src/monolynx/`) — FastAPI async server:
-- `main.py` registers routers lazily via `_register_routers()` to avoid circular imports; uses lifespan context manager that starts `_monitor_checker_loop()` background task (checks active monitors every 60s based on their configured intervals)
+- `main.py` registers routers lazily via `_register_routers()` to avoid circular imports; lifespan optionally starts monitor checker loop (controlled by `ENABLE_MONITOR_LOOP`, default true for dev, false in prod)
 - `config.py` uses pydantic-settings, reads from env vars / `.env` file (see `.env.example`)
 - `database.py` provides async SQLAlchemy session via `get_db()` FastAPI dependency
 - `constants.py` — shared constants for Scrum (ticket statuses, priorities, sprint statuses, member roles, label mappings) and Monitoring (interval units, Polish labels)
@@ -72,8 +73,14 @@ Two separate packages in one repo:
 - `services/email.py` — SMTP email delivery via `ThreadPoolExecutor(max_workers=1)`; never crashes application; logs warning if SMTP not configured
 - `services/sprint.py` — sprint lifecycle (start checks no other active sprint; complete moves non-done tickets to backlog)
 - `services/monitoring.py` — async `check_url()` using `ThreadPoolExecutor` with configurable timeout
+- `services/monitor_loop.py` — extracted monitor checker loop with concurrent checks (`asyncio.gather`), proper advisory lock via dedicated connection, reusable by both `main.py` lifespan and standalone `worker.py`
 - `services/mcp_auth.py` — MCP token generation (`osk_<random>` prefix), SHA256 hashing, verification with `last_used_at` tracking
 - `services/sidebar.py` — `SidebarBadges` dataclass providing issue counts, failing monitors, 24h uptime percentage for sidebar indicators
+
+**Worker** (`worker.py`):
+- Standalone entry point (`python -m monolynx.worker`) — runs monitor checker loop without web server
+- Graceful shutdown via `SIGTERM`/`SIGINT`; healthcheck via `/tmp/worker-healthy` file touch
+- In production: separate Docker service; in dev: optional via `make worker` or `--profile worker`
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
@@ -178,7 +185,8 @@ Two separate packages in one repo:
 ## Infrastructure
 
 - **Docker**: Multi-stage Dockerfile (builder → dev → runtime). Dev target has hot reload, runtime uses non-root user with 2 workers
-- **Docker Compose**: `dev` profile with PostgreSQL 16 + app. Mounts `src/`, `alembic/`, `alembic.ini`, `tests/`, `pyproject.toml`
+- **Docker Compose (dev)**: `dev` profile with PostgreSQL 16 + app (monitor loop runs in-process by default). Optional `worker` profile runs monitor loop as separate service (`make worker`)
+- **Docker Compose (prod)**: `app` service with `ENABLE_MONITOR_LOOP=false` + separate `worker` service running `python -m monolynx.worker`. Worker has no ports/Traefik — only DB access. Advisory lock ensures only one worker runs checks at a time
 - **CI**: `.gitlab-ci.yml` — lint → test (coverage goal 50%) → build (main only) → deploy (manual)
 - **Pre-commit**: ruff (check + format) and mypy with pydantic plugin
 

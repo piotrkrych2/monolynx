@@ -1,4 +1,4 @@
-.PHONY: help dev down lint test build migrate createsuperuser shell
+.PHONY: help dev down lint test build migrate createsuperuser shell worker
 
 help: ## Pokaz dostepne komendy
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -9,7 +9,10 @@ dev: ## Uruchom srodowisko deweloperskie
 	docker compose --profile dev up --build -d
 
 down: ## Zatrzymaj srodowisko
-	docker compose --profile dev down
+	docker compose --profile dev --profile worker down
+
+worker: ## Uruchom worker monitoringu (dev)
+	docker compose --profile dev --profile worker up --build -d worker
 
 logs: ## Pokaz logi aplikacji
 	docker compose --profile dev logs -f -n 100 app
