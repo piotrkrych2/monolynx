@@ -1,6 +1,6 @@
 """Testy fingerprintowania -- P0, najwazniejsze!"""
 
-from open_sentry.services.fingerprint import compute_fingerprint
+from monolynx.services.fingerprint import compute_fingerprint
 
 
 class TestFingerprintGeneration:

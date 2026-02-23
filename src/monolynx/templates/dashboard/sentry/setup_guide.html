@@ -1,0 +1,197 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Instrukcja instalacji - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="max-w-3xl">
+    <h1 class="text-2xl font-bold mb-2">Instrukcja instalacji w Django</h1>
+    <p class="text-gray-400 mb-8">Skonfiguruj swoja aplikacje Django, zeby automatycznie raportowala bledy do Monolynx.</p>
+
+    <!-- Krok 1 -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">1. Zainstaluj SDK</h2>
+        <p class="text-sm text-gray-400 mb-3">SDK nie wymaga zadnych zewnetrznych zaleznosci (uzywa tylko stdlib Pythona). Wybierz sposob instalacji:</p>
+
+        <div class="mb-4">
+            <p class="text-sm text-gray-400 mb-2"><strong class="text-gray-300">Z repozytorium git</strong> (jesli masz dostep):</p>
+            <div class="relative">
+                <pre class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-300 overflow-x-auto"><code>pip install "monolynx-sdk @ git+https://github.com/TWOJ-ORG/monolynx.git#subdirectory=sdk"</code></pre>
+                <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-white transition p-1" title="Kopiuj">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 check-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="mb-4">
+            <p class="text-sm text-gray-400 mb-2"><strong class="text-gray-300">Z lokalnej sciezki</strong> (jesli masz sklonowane repo):</p>
+            <div class="relative">
+                <pre class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-300 overflow-x-auto"><code>pip install -e /sciezka/do/monolynx/sdk/</code></pre>
+                <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-white transition p-1" title="Kopiuj">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 check-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div>
+            <p class="text-sm text-gray-400 mb-2"><strong class="text-gray-300">Kopiowanie katalogu</strong> (najprostsza opcja):</p>
+            <div class="relative">
+                <pre class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-300 overflow-x-auto"><code># Skopiuj katalog SDK do swojego projektu Django
+cp -r /sciezka/do/monolynx/sdk/src/monolynx_sdk/ /twoj-projekt/
+
+# Struktura po skopiowaniu:
+# twoj-projekt/
+#   manage.py
+#   monolynx_sdk/    &lt;-- skopiowany katalog
+#   twoja_aplikacja/
+#   ...</code></pre>
+                <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-white transition p-1" title="Kopiuj">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 check-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Krok 2 -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">2. Dodaj middleware do <code class="text-gray-300">settings.py</code></h2>
+        <p class="text-sm text-gray-400 mb-3">Middleware musi byc <strong class="text-gray-300">pierwszym</strong> elementem listy, zeby przechwytywal wszystkie wyjatki.</p>
+        <div class="relative">
+            <pre class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-300 overflow-x-auto"><code>MIDDLEWARE = [
+    "monolynx_sdk.middleware.MonolynxMiddleware",
+    # ... reszta middleware
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    # ...
+]</code></pre>
+            <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-white transition p-1" title="Kopiuj">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 check-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Krok 3 -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">3. Skonfiguruj polaczenie w <code class="text-gray-300">settings.py</code></h2>
+        <p class="text-sm text-gray-400 mb-3">Klucz API znajdziesz na stronie edycji projektu w dashboardzie.</p>
+
+        <div class="mb-4">
+            <p class="text-sm text-gray-400 mb-2"><strong class="text-gray-300">Opcja A</strong> -- DSN (zalecane):</p>
+            <div class="relative">
+                <pre class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-300 overflow-x-auto"><code>MONOLYNX_DSN = "https://&lt;TWOJ_KLUCZ_API&gt;@adres-serwera.pl/api/v1/events"</code></pre>
+                <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-white transition p-1" title="Kopiuj">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 check-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div>
+            <p class="text-sm text-gray-400 mb-2"><strong class="text-gray-300">Opcja B</strong> -- URL + klucz osobno:</p>
+            <div class="relative">
+                <pre class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-300 overflow-x-auto"><code>MONOLYNX_URL = "https://adres-serwera.pl/api/v1/events"
+MONOLYNX_API_KEY = "&lt;TWOJ_KLUCZ_API&gt;"</code></pre>
+                <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-white transition p-1" title="Kopiuj">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 check-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Krok 4 -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">4. Opcjonalnie: srodowisko i release</h2>
+        <div class="relative">
+            <pre class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-300 overflow-x-auto"><code>MONOLYNX_ENVIRONMENT = "production"  # domyslnie "production"
+MONOLYNX_RELEASE = "1.0.0"           # opcjonalne</code></pre>
+            <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-white transition p-1" title="Kopiuj">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 check-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Krok 5 -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">5. Gotowe!</h2>
+        <p class="text-gray-400">Nieobsluzone wyjatki z Twojej aplikacji Django beda automatycznie raportowane do Monolynx. Bledy zobaczysz na dashboardzie w zakladce projektu.</p>
+    </div>
+
+    <!-- Reczne raportowanie -->
+    <div class="mb-8 border border-gray-700 rounded-lg p-5">
+        <h2 class="text-lg font-semibold text-gray-200 mb-3">Reczne raportowanie bledow</h2>
+        <p class="text-sm text-gray-400 mb-3">Mozesz tez recznie wysylac bledy i wiadomosci z dowolnego miejsca w kodzie:</p>
+        <div class="relative">
+            <pre class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-300 overflow-x-auto"><code>import monolynx_sdk
+
+# Przechwycenie wyjatku w bloku try/except
+try:
+    do_something()
+except Exception as e:
+    monolynx_sdk.capture_exception(e)
+
+# Wyslanie wiadomosci tekstowej
+monolynx_sdk.capture_message("Cos poszlo nie tak", level="warning")</code></pre>
+            <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-white transition p-1" title="Kopiuj">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 check-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <div class="text-center">
+        <a href="/dashboard/{{ project.slug }}/500ki/issues" class="text-indigo-400 hover:text-indigo-300 text-sm">Wroc do issues</a>
+    </div>
+</div>
+
+<script>
+function copyBlock(btn) {
+    const code = btn.closest('.relative').querySelector('code').textContent;
+    navigator.clipboard.writeText(code).then(function() {
+        btn.querySelector('.copy-icon').classList.add('hidden');
+        btn.querySelector('.check-icon').classList.remove('hidden');
+        setTimeout(function() {
+            btn.querySelector('.copy-icon').classList.remove('hidden');
+            btn.querySelector('.check-icon').classList.add('hidden');
+        }, 2000);
+    });
+}
+</script>
+{% endblock %}

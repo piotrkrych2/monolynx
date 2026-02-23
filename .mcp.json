@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "open-sentry-scrum": {
+    "monolynx-scrum": {
       "type": "http",
       "url": "http://localhost:8000/mcp",
       "headers": {
-        "Authorization": "Bearer ${OPEN_SENTRY_MCP_TOKEN}"
+        "Authorization": "Bearer ${MONOLYNX_MCP_TOKEN}"
       }
     }
   }

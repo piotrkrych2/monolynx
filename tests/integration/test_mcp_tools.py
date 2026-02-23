@@ -5,13 +5,13 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from open_sentry.models.project import Project
-from open_sentry.models.project_member import ProjectMember
-from open_sentry.models.ticket import Ticket
-from open_sentry.models.user import User
-from open_sentry.models.user_api_token import UserApiToken
-from open_sentry.services.auth import hash_password
-from open_sentry.services.mcp_auth import generate_api_token, hash_token
+from monolynx.models.project import Project
+from monolynx.models.project_member import ProjectMember
+from monolynx.models.ticket import Ticket
+from monolynx.models.user import User
+from monolynx.models.user_api_token import UserApiToken
+from monolynx.services.auth import hash_password
+from monolynx.services.mcp_auth import generate_api_token, hash_token
 
 
 @pytest.fixture

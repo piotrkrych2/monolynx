@@ -3,7 +3,7 @@
 import pytest
 from sqlalchemy import select
 
-from open_sentry.models.project import Project
+from monolynx.models.project import Project
 from tests.conftest import login_session
 
 

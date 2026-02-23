@@ -10,13 +10,13 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from open_sentry.config import settings
-from open_sentry.database import get_db
-from open_sentry.main import app
-from open_sentry.models import Base
-from open_sentry.models.project import Project
-from open_sentry.models.user import User
-from open_sentry.services.auth import hash_password
+from monolynx.config import settings
+from monolynx.database import get_db
+from monolynx.main import app
+from monolynx.models import Base
+from monolynx.models.project import Project
+from monolynx.models.user import User
+from monolynx.services.auth import hash_password
 
 TEST_DATABASE_URL = settings.DATABASE_URL.replace("/open_sentry", "/open_sentry_test")
 

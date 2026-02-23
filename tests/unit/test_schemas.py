@@ -3,8 +3,8 @@
 import pytest
 from pydantic import ValidationError
 
-from open_sentry.schemas.events import EventPayload, ExceptionData
-from open_sentry.schemas.issues import StatusUpdate
+from monolynx.schemas.events import EventPayload, ExceptionData
+from monolynx.schemas.issues import StatusUpdate
 
 
 class TestEventPayload:

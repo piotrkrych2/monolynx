@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from open_sentry.models.user import User
-from open_sentry.services.auth import hash_password
+from monolynx.models.user import User
+from monolynx.services.auth import hash_password
 from tests.conftest import login_session
 
 

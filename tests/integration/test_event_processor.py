@@ -4,9 +4,9 @@ import secrets
 
 import pytest
 
-from open_sentry.models.project import Project
-from open_sentry.schemas.events import EventPayload
-from open_sentry.services.event_processor import process_event
+from monolynx.models.project import Project
+from monolynx.schemas.events import EventPayload
+from monolynx.services.event_processor import process_event
 
 
 async def _create_project(db_session, slug=None):
@@ -69,7 +69,7 @@ class TestProcessEvent:
         # Sprawdz ze Issue ma event_count=2
         from sqlalchemy import select
 
-        from open_sentry.models.issue import Issue
+        from monolynx.models.issue import Issue
 
         result = await db_session.execute(select(Issue).where(Issue.project_id == project.id))
         issues = result.scalars().all()
@@ -99,7 +99,7 @@ class TestProcessEvent:
 
         from sqlalchemy import select
 
-        from open_sentry.models.issue import Issue
+        from monolynx.models.issue import Issue
 
         result = await db_session.execute(select(Issue).where(Issue.project_id == project.id))
         issue = result.scalar_one()
@@ -121,7 +121,7 @@ class TestProcessEvent:
 
         from sqlalchemy import select
 
-        from open_sentry.models.issue import Issue
+        from monolynx.models.issue import Issue
 
         result = await db_session.execute(select(Issue).where(Issue.project_id == project.id))
         issue = result.scalar_one()
@@ -149,7 +149,7 @@ class TestProcessEvent:
 
         from sqlalchemy import select
 
-        from open_sentry.models.issue import Issue
+        from monolynx.models.issue import Issue
 
         result = await db_session.execute(select(Issue).where(Issue.project_id == project.id))
         issue = result.scalar_one()

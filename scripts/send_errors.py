@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Skrypt wysylajacy przykladowe bledy na projekt Open Sentry.
+"""Skrypt wysylajacy przykladowe bledy na projekt Monolynx.
 
 Uzycie:
     python scripts/send_errors.py --url http://localhost:8000 --key TWOJ_API_KEY
@@ -145,7 +145,7 @@ def send_event(url: str, api_key: str, payload: dict) -> bool:
         data=body,
         headers={
             "Content-Type": "application/json",
-            "X-OpenSentry-Key": api_key,
+            "X-Monolynx-Key": api_key,
         },
         method="POST",
     )
@@ -162,7 +162,7 @@ def send_event(url: str, api_key: str, payload: dict) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Wyslij przykladowe bledy do Open Sentry")
+    parser = argparse.ArgumentParser(description="Wyslij przykladowe bledy do Monolynx")
     parser.add_argument("--url", required=True, help="URL serwera (np. http://localhost:8000)")
     parser.add_argument("--key", required=True, help="API key projektu")
     parser.add_argument("--count", type=int, default=10, help="Liczba bledow do wyslania (domyslnie 10)")

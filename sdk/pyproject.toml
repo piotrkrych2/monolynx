@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "open-sentry-sdk"
+name = "monolynx-sdk"
 version = "0.1.0"
 description = "Minimalistyczny error tracker dla Django -- SDK klienckie"
 requires-python = ">=3.10"
@@ -19,4 +19,4 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/open_sentry_sdk"]
+packages = ["src/monolynx_sdk"]

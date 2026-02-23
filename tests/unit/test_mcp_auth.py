@@ -2,7 +2,7 @@
 
 import pytest
 
-from open_sentry.services.mcp_auth import generate_api_token, hash_token
+from monolynx.services.mcp_auth import generate_api_token, hash_token
 
 
 @pytest.mark.unit

@@ -50,7 +50,7 @@ clean-code:
     - docker run --name test-runner --network test-net
         -e DATABASE_URL="postgresql+asyncpg://sentry:sentry_ci@db:5432/open_sentry"
         "$CI_REGISTRY_IMAGE:dev"
-        pytest tests/ --cov=src/open_sentry --cov-report=term --cov-report=xml:coverage.xml
+        pytest tests/ --cov=src/monolynx --cov-report=term --cov-report=xml:coverage.xml
         || TEST_EXIT=$?
     - docker cp test-runner:/app/coverage.xml coverage.xml || true
     - exit $TEST_EXIT

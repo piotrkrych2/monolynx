@@ -6,9 +6,9 @@ import secrets
 
 import pytest
 
-from open_sentry.models.project import Project
-from open_sentry.models.user import User
-from open_sentry.services.auth import (
+from monolynx.models.project import Project
+from monolynx.models.user import User
+from monolynx.services.auth import (
     authenticate_user,
     hash_password,
     verify_password,
@@ -145,7 +145,7 @@ class TestVerifyApiKey:
                 "timestamp": "2026-02-19T10:00:00Z",
                 "level": "error",
             },
-            headers={"X-OpenSentry-Key": api_key},
+            headers={"X-Monolynx-Key": api_key},
         )
         assert resp.status_code == 202
 
@@ -162,7 +162,7 @@ class TestVerifyApiKey:
                 "platform": "python",
                 "level": "error",
             },
-            headers={"X-OpenSentry-Key": "totally-invalid-key-xyz"},
+            headers={"X-Monolynx-Key": "totally-invalid-key-xyz"},
         )
         assert resp.status_code == 401
 
@@ -201,7 +201,7 @@ class TestVerifyApiKey:
         resp1 = await client.post(
             "/api/v1/events",
             json=payload,
-            headers={"X-OpenSentry-Key": api_key},
+            headers={"X-Monolynx-Key": api_key},
         )
         assert resp1.status_code == 202
 
@@ -209,7 +209,7 @@ class TestVerifyApiKey:
         resp2 = await client.post(
             "/api/v1/events",
             json=payload,
-            headers={"X-OpenSentry-Key": api_key},
+            headers={"X-Monolynx-Key": api_key},
         )
         assert resp2.status_code == 202
 

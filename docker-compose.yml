@@ -22,7 +22,7 @@ services:
       dockerfile: Dockerfile
       target: dev
     command: >
-      uvicorn open_sentry.main:app
+      uvicorn monolynx.main:app
       --host 0.0.0.0
       --port ${APP_PORT:-8000}
       --reload
@@ -45,7 +45,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@opensentry.local}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@monolynx.local}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
     depends_on:
       db:

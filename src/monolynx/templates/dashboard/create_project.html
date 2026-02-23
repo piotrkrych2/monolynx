@@ -1,0 +1,52 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Nowy projekt - Monolynx{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto">
+    <h1 class="text-2xl font-bold mb-6">Nowy projekt</h1>
+
+    {% if error %}
+    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/dashboard/create-project" class="space-y-4">
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Nazwa projektu</label>
+            <input type="text" name="name" value="{{ name or '' }}" required
+                id="project-name"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Slug</label>
+            <input type="text" name="slug" value="{{ slug or '' }}" required
+                id="project-slug"
+                pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            <p class="text-xs text-gray-500 mt-1">Tylko male litery, cyfry i myslniki (np. moj-projekt)</p>
+        </div>
+        <button type="submit"
+            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded transition">
+            Utworz projekt
+        </button>
+    </form>
+
+    <div class="mt-4 text-center">
+        <a href="/dashboard/" class="text-indigo-400 hover:text-indigo-300 text-sm">Wroc do listy projektow</a>
+    </div>
+</div>
+
+<script>
+document.getElementById('project-name').addEventListener('input', function() {
+    const slug = this.value
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-');
+    document.getElementById('project-slug').value = slug;
+});
+</script>
+{% endblock %}

@@ -5,8 +5,8 @@ import uuid
 
 import pytest
 
-from open_sentry.models.monitor import Monitor
-from open_sentry.models.project import Project
+from monolynx.models.monitor import Monitor
+from monolynx.models.project import Project
 from tests.conftest import login_session
 
 

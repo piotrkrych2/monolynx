@@ -25,7 +25,7 @@ fmt: ## Auto-formatuj kod (w Docker)
 	docker compose --profile dev exec app ruff format src/ tests/
 
 test: ## Uruchom testy z coverage (w Docker)
-	docker compose --profile dev exec app pytest tests/ --cov=src/open_sentry --cov-report=term
+	docker compose --profile dev exec app pytest tests/ --cov=src/monolynx --cov-report=term
 
 # --- Baza danych ---
 migrate: ## Uruchom migracje Alembic
@@ -36,11 +36,11 @@ migration: ## Stworz migracje (usage: make migration msg="add events table")
 
 # --- Uzytkownicy ---
 createsuperuser: ## Stworz superuzytkownika
-	docker compose --profile dev exec app python -m open_sentry.cli createsuperuser
+	docker compose --profile dev exec app python -m monolynx.cli createsuperuser
 
 # --- Build ---
 build: ## Zbuduj produkcyjny obraz Docker
-	docker build -t open-sentry:latest .
+	docker build -t monolynx:latest .
 
 # --- Setup ---
 setup: ## Skonfiguruj lokalne srodowisko dev

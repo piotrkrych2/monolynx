@@ -1,0 +1,152 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Edycja uzytkownika - Monolynx{% endblock %}
+
+{% block nav_right %}
+<a href="/dashboard/users" class="text-indigo-400 hover:text-indigo-300 text-sm">Uzytkownicy</a>
+<form method="post" action="/auth/logout">
+    <button type="submit" class="text-gray-400 hover:text-white text-sm">Wyloguj</button>
+</form>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold">Edycja uzytkownika</h1>
+        <a href="/dashboard/users"
+           class="text-gray-400 hover:text-white text-sm">Powrot do listy</a>
+    </div>
+
+    {% if error %}
+    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- Sekcja 1: Dane uzytkownika -->
+    <form method="post" action="/dashboard/users/{{ user.id }}" class="bg-gray-800 border border-gray-700 rounded-lg p-6 space-y-4 mb-6">
+        <h2 class="text-lg font-semibold mb-2">Dane uzytkownika</h2>
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Imie</label>
+            <input type="text" name="first_name" value="{{ user.first_name }}"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Nazwisko</label>
+            <input type="text" name="last_name" value="{{ user.last_name }}"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Email *</label>
+            <input type="email" name="email" value="{{ user.email }}" required
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <button type="submit"
+            class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2 rounded transition text-sm">
+            Zapisz zmiany
+        </button>
+    </form>
+
+    <!-- Sekcja 2: Status konta -->
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">Status konta</h2>
+        <div class="flex items-center gap-3 mb-4">
+            {% if user.password_hash %}
+            <span class="bg-green-600/30 text-green-300 text-sm px-3 py-1 rounded">Aktywny</span>
+            {% else %}
+            <span class="bg-yellow-600/30 text-yellow-300 text-sm px-3 py-1 rounded">Oczekuje na aktywacje</span>
+            {% endif %}
+        </div>
+
+        {% if not user.password_hash %}
+        <form method="post" action="/dashboard/users/{{ user.id }}/activate" class="space-y-4">
+            <p class="text-sm text-gray-400">Ustaw haslo, aby recznie aktywowac konto uzytkownika.</p>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Haslo *</label>
+                <input type="password" name="password" required minlength="8"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Powtorz haslo *</label>
+                <input type="password" name="password_confirm" required minlength="8"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            </div>
+            <button type="submit"
+                class="bg-green-600 hover:bg-green-700 text-white font-medium px-4 py-2 rounded transition text-sm">
+                Aktywuj konto
+            </button>
+        </form>
+        {% else %}
+        {% if user.id != current_user.id %}
+        <form method="post" action="/dashboard/users/{{ user.id }}/deactivate">
+            <button type="submit"
+                class="bg-red-600 hover:bg-red-700 text-white font-medium px-4 py-2 rounded transition text-sm"
+                onclick="return confirm('Czy na pewno chcesz dezaktywowac to konto?')">
+                Dezaktywuj konto
+            </button>
+        </form>
+        {% else %}
+        <p class="text-sm text-gray-500">Nie mozesz dezaktywowac wlasnego konta.</p>
+        {% endif %}
+        {% endif %}
+    </div>
+
+    <!-- Sekcja 3: Projekty -->
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+        <h2 class="text-lg font-semibold mb-4">Projekty</h2>
+
+        {% if available_projects %}
+        <form method="post" action="/dashboard/users/{{ user.id }}/projects/add" class="flex items-end gap-3 mb-4">
+            <div class="flex-1">
+                <label class="block text-sm text-gray-400 mb-1">Projekt</label>
+                <select name="project_id" required
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    {% for project in available_projects %}
+                    <option value="{{ project.id }}">{{ project.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Rola</label>
+                <select name="role"
+                    class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    {% for r in roles %}
+                    <option value="{{ r }}" {% if r == 'member' %}selected{% endif %}>
+                        {{ role_labels.get(r, r) }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
+                Dodaj
+            </button>
+        </form>
+        {% endif %}
+
+        {% if memberships %}
+        <div class="space-y-2">
+            {% for membership in memberships %}
+            <div class="flex items-center justify-between bg-gray-900 border border-gray-700 rounded px-4 py-3">
+                <div class="flex items-center gap-3">
+                    <span class="text-white text-sm">{{ membership.project.name }}</span>
+                    <span class="text-xs px-2 py-0.5 rounded
+                        {% if membership.role == 'owner' %}bg-yellow-900 text-yellow-300
+                        {% elif membership.role == 'admin' %}bg-blue-900 text-blue-300
+                        {% else %}bg-gray-700 text-gray-300{% endif %}">
+                        {{ role_labels.get(membership.role, membership.role) }}
+                    </span>
+                </div>
+                <form method="post" action="/dashboard/users/{{ user.id }}/projects/{{ membership.id }}/remove" class="inline">
+                    <button type="submit" class="text-gray-400 hover:text-red-400 text-sm transition"
+                        onclick="return confirm('Usunac z tego projektu?')">Usun</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-500">Uzytkownik nie jest przypisany do zadnego projektu.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

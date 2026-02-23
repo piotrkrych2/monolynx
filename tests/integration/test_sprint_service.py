@@ -7,10 +7,10 @@ from datetime import date
 import pytest
 from sqlalchemy import select
 
-from open_sentry.models.project import Project
-from open_sentry.models.sprint import Sprint
-from open_sentry.models.ticket import Ticket
-from open_sentry.services.sprint import complete_sprint, start_sprint
+from monolynx.models.project import Project
+from monolynx.models.sprint import Sprint
+from monolynx.models.ticket import Ticket
+from monolynx.services.sprint import complete_sprint, start_sprint
 
 
 async def _create_project(db_session, slug=None):

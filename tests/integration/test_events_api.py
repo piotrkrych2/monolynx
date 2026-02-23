@@ -2,7 +2,7 @@
 
 import pytest
 
-from open_sentry.models.issue import Issue
+from monolynx.models.issue import Issue
 
 
 @pytest.mark.integration
@@ -11,7 +11,7 @@ class TestPostEvent:
         response = await client.post(
             "/api/v1/events",
             json=sample_event_payload,
-            headers={"X-OpenSentry-Key": test_project.api_key},
+            headers={"X-Monolynx-Key": test_project.api_key},
         )
         assert response.status_code == 202
         data = response.json()
@@ -21,7 +21,7 @@ class TestPostEvent:
         response = await client.post(
             "/api/v1/events",
             json=sample_event_payload,
-            headers={"X-OpenSentry-Key": "invalid-key-12345"},
+            headers={"X-Monolynx-Key": "invalid-key-12345"},
         )
         assert response.status_code == 401
 
@@ -36,7 +36,7 @@ class TestPostEvent:
         response = await client.post(
             "/api/v1/events",
             json={"invalid": "payload"},
-            headers={"X-OpenSentry-Key": test_project.api_key},
+            headers={"X-Monolynx-Key": test_project.api_key},
         )
         assert response.status_code == 422
 
@@ -44,7 +44,7 @@ class TestPostEvent:
         await client.post(
             "/api/v1/events",
             json=sample_event_payload,
-            headers={"X-OpenSentry-Key": test_project.api_key},
+            headers={"X-Monolynx-Key": test_project.api_key},
         )
 
         from sqlalchemy import select
@@ -59,7 +59,7 @@ class TestPostEvent:
             response = await client.post(
                 "/api/v1/events",
                 json=sample_event_payload,
-                headers={"X-OpenSentry-Key": test_project.api_key},
+                headers={"X-Monolynx-Key": test_project.api_key},
             )
             assert response.status_code == 202
 

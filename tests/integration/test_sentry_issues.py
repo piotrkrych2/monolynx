@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from open_sentry.models.event import Event
-from open_sentry.models.issue import Issue
-from open_sentry.models.project import Project
+from monolynx.models.event import Event
+from monolynx.models.issue import Issue
+from monolynx.models.project import Project
 from tests.conftest import login_session
 
 

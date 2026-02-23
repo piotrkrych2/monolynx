@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this project?
 
-Open Sentry is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points) and a Monitoring module (URL health checks with uptime tracking). The architecture supports adding new modules via the sidebar navigation.
+Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points) and a Monitoring module (URL health checks with uptime tracking). The architecture supports adding new modules via the sidebar navigation.
 
 ## Commands
 
@@ -45,43 +45,53 @@ make build                            # Build production Docker image
 
 Two separate packages in one repo:
 
-**Backend** (`src/open_sentry/`) — FastAPI async server:
+**Backend** (`src/monolynx/`) — FastAPI async server:
 - `main.py` registers routers lazily via `_register_routers()` to avoid circular imports; uses lifespan context manager that starts `_monitor_checker_loop()` background task (checks active monitors every 60s based on their configured intervals)
 - `config.py` uses pydantic-settings, reads from env vars / `.env` file (see `.env.example`)
 - `database.py` provides async SQLAlchemy session via `get_db()` FastAPI dependency
 - `constants.py` — shared constants for Scrum (ticket statuses, priorities, sprint statuses, member roles, label mappings) and Monitoring (interval units, Polish labels)
 
 **Dashboard module system** (`dashboard/`):
-- `dashboard/__init__.py` — combines all sub-routers into one `router`; ordering matters: static routes (users, settings) before dynamic `{slug}` routes to avoid slug collision
+- `dashboard/__init__.py` — combines all sub-routers into one `router`; ordering matters: static routes (users, settings, profile) before dynamic `{slug}` routes to avoid slug collision
 - `dashboard/helpers.py` — shared `_get_user_id()`, `SLUG_PATTERN`, `templates` instance, `flash()` helper for session-based flash messages
 - `dashboard/auth.py` — login/logout (`/auth/*`), invitation acceptance (`/auth/accept-invite/{token}`)
 - `dashboard/projects.py` — project list, create (`/dashboard/`, `/dashboard/create-project`)
+- `dashboard/profile.py` — user API token management for MCP access (`/dashboard/profile/*`)
 - `dashboard/users.py` — user management, superuser-only (`/dashboard/users/*`); invitation system with token generation and email
 - `dashboard/sentry.py` — error tracking module "500ki": issues list, issue detail, SDK setup guide (`/dashboard/{slug}/500ki/*`)
 - `dashboard/scrum.py` — Scrum module: backlog (with pagination + filtering), Kanban board, ticket CRUD with comments, sprints with status filtering (`/dashboard/{slug}/scrum/*`)
 - `dashboard/monitoring.py` — URL monitoring module: monitor CRUD, check history with pagination, toggle on/off (`/dashboard/{slug}/monitoring/*`); includes SSRF protection (blocks localhost, private IPs), limit 20 monitors per project
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
 
-**Models** (`models/`) — 10 SQLAlchemy models: Project, Issue, Event, User, ProjectMember, Sprint, Ticket, TicketComment, Monitor, MonitorCheck
+**Models** (`models/`) — 12 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, Monitor, MonitorCheck + Base
 
 **Services**:
 - `services/fingerprint.py` — SHA256 of exception type + app-frame filenames:functions
 - `services/event_processor.py` — finds-or-creates Issue by fingerprint, increments event_count
-- `services/auth.py` — API key validation with in-memory cache (TTL 60s), bcrypt passwords, `get_current_user()` helper for session-based auth
+- `services/auth.py` — API key validation with in-memory cache (TTL 60s), bcrypt passwords, `get_current_user()` helper for session-based auth; header `X-Monolynx-Key`
 - `services/email.py` — SMTP email delivery via `ThreadPoolExecutor(max_workers=1)`; never crashes application; logs warning if SMTP not configured
 - `services/sprint.py` — sprint lifecycle (start checks no other active sprint; complete moves non-done tickets to backlog)
 - `services/monitoring.py` — async `check_url()` using `ThreadPoolExecutor` with configurable timeout
+- `services/mcp_auth.py` — MCP token generation (`osk_<random>` prefix), SHA256 hashing, verification with `last_used_at` tracking
+- `services/sidebar.py` — `SidebarBadges` dataclass providing issue counts, failing monitors, 24h uptime percentage for sidebar indicators
+
+**MCP Server** (`mcp_server.py`):
+- FastMCP-based server mounted at `/mcp` in the main app
+- 11 tools for Scrum management: ticket CRUD, sprint lifecycle, comments
+- Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
+- `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 
 **Template layout system**:
 - `layouts/base.html` — base layout (login, project list)
-- `layouts/project.html` — extends base, adds sidebar with modules (500ki, Scrum, Ustawienia); uses `active_module` context variable for highlighting
+- `layouts/project.html` — extends base, adds sidebar with modules (500ki, Scrum, Monitoring, Ustawienia); uses `active_module` context variable for highlighting
 - Module templates extend `project.html` and use `{% block module_content %}`
 - `dashboard/scrum/_nav.html` — shared partial with 4 always-visible buttons (Backlog, Tablica, Sprinty, Nowy ticket), included in all Scrum pages
 
-**SDK** (`sdk/src/open_sentry_sdk/`) — standalone Django middleware package:
+**SDK** (`sdk/src/monolynx_sdk/`) — standalone Django middleware package:
 - Zero external dependencies (stdlib only)
 - Rule: SDK must NEVER crash the host application — every public function wrapped in try/except
 - `transport.py` sends events via `ThreadPoolExecutor(max_workers=2)` using `urllib.request`
+- Django settings: `MONOLYNX_DSN` or `MONOLYNX_URL` + `MONOLYNX_API_KEY`
 
 **Data flow**: Django error → SDK middleware `process_exception()` → background thread POST → FastAPI ingests → fingerprint → find/create Issue → store Event (JSONB)
 
@@ -92,6 +102,10 @@ Two separate packages in one repo:
 /auth/accept-invite/{token}                    — set password from invitation
 /dashboard/                                    — project list
 /dashboard/create-project                      — new project form
+/dashboard/profile/tokens                      — user API tokens list
+/dashboard/profile/tokens/create               — generate new token (POST)
+/dashboard/profile/tokens/{id}/revoke          — revoke token (POST)
+/dashboard/profile/mcp-guide                   — MCP setup instructions
 /dashboard/users                               — user list (superuser only)
 /dashboard/users/create                        — invite new user (superuser only)
 /dashboard/users/{id}/resend-invite            — resend invitation email (POST)
@@ -122,6 +136,7 @@ Two separate packages in one repo:
 /api/v1/events                                 — ingest events (POST, API key auth)
 /api/v1/issues/{id}/status                     — update issue status (PATCH)
 /api/v1/health                                 — health check
+/mcp                                           — MCP server (Bearer token auth)
 ```
 
 ## Key technical decisions
@@ -141,6 +156,8 @@ Two separate packages in one repo:
 - Pagination pattern: query param `page` (int, default=1), fixed `per_page`; count total with `func.count()`, then LIMIT/OFFSET; pass `page`, `total_pages`, `has_next`, `has_prev` to template
 - Lists default to hiding completed/closed items (completed sprints, tickets from completed sprints); toggle via query params (`status=all`, `show_completed_sprints=1`)
 - Flash messages via `flash(request, message, type)` stored in `request.session["_flash_messages"]`
+- MCP tokens use `osk_` prefix with SHA256 hash stored in DB; raw token shown only once at creation
+- Database name is `open_sentry` (historical, kept for backwards compatibility)
 
 ## Test patterns
 

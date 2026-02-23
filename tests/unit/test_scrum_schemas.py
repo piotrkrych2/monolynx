@@ -6,7 +6,7 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from open_sentry.schemas.scrum import (
+from monolynx.schemas.scrum import (
     MemberAdd,
     SprintCreate,
     TicketCreate,

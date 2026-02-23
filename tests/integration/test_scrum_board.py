@@ -5,9 +5,9 @@ from datetime import date
 
 import pytest
 
-from open_sentry.models.project import Project
-from open_sentry.models.sprint import Sprint
-from open_sentry.models.ticket import Ticket
+from monolynx.models.project import Project
+from monolynx.models.sprint import Sprint
+from monolynx.models.ticket import Ticket
 from tests.conftest import login_session
 
 

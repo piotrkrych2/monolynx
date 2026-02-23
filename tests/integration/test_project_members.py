@@ -4,10 +4,10 @@ import secrets
 
 import pytest
 
-from open_sentry.models.project import Project
-from open_sentry.models.project_member import ProjectMember
-from open_sentry.models.user import User
-from open_sentry.services.auth import hash_password
+from monolynx.models.project import Project
+from monolynx.models.project_member import ProjectMember
+from monolynx.models.user import User
+from monolynx.services.auth import hash_password
 from tests.conftest import login_session
 
 

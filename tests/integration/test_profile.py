@@ -5,7 +5,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from open_sentry.models.user_api_token import UserApiToken
+from monolynx.models.user_api_token import UserApiToken
 from tests.conftest import login_session
 
 
