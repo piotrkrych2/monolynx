@@ -65,23 +65,16 @@ async def run_monitor_checks(
     now = datetime.now(UTC)
 
     async with session_factory() as db:
-        result = await db.execute(
-            select(Monitor).where(Monitor.is_active.is_(True))
-        )
+        result = await db.execute(select(Monitor).where(Monitor.is_active.is_(True)))
         monitors = list(result.scalars().all())
 
     tasks = []
     for monitor in monitors:
-        interval_s = monitor.interval_value * INTERVAL_SECONDS.get(
-            monitor.interval_unit, 60
-        )
+        interval_s = monitor.interval_value * INTERVAL_SECONDS.get(monitor.interval_unit, 60)
 
         async with session_factory() as db:
             last_check_result = await db.execute(
-                select(MonitorCheck.checked_at)
-                .where(MonitorCheck.monitor_id == monitor.id)
-                .order_by(MonitorCheck.checked_at.desc())
-                .limit(1)
+                select(MonitorCheck.checked_at).where(MonitorCheck.monitor_id == monitor.id).order_by(MonitorCheck.checked_at.desc()).limit(1)
             )
             last_checked_at = last_check_result.scalar_one_or_none()
 
@@ -90,9 +83,7 @@ async def run_monitor_checks(
             if now < next_check:
                 continue
 
-        tasks.append(
-            _check_single_monitor(monitor.id, monitor.url, session_factory)
-        )
+        tasks.append(_check_single_monitor(monitor.id, monitor.url, session_factory))
 
     if tasks:
         await asyncio.gather(*tasks)
@@ -119,14 +110,10 @@ async def monitor_checker_loop(
         if acquire_lock:
             lock_engine = create_async_engine(settings.DATABASE_URL, echo=False)
             lock_conn = await lock_engine.connect()
-            result = await lock_conn.execute(
-                text(f"SELECT pg_try_advisory_lock({MONITOR_ADVISORY_LOCK_ID})")
-            )
+            result = await lock_conn.execute(text(f"SELECT pg_try_advisory_lock({MONITOR_ADVISORY_LOCK_ID})"))
             acquired = bool(result.scalar())
             if not acquired:
-                logger.info(
-                    "Monitor checker loop: inny worker trzyma lock -- pomijam"
-                )
+                logger.info("Monitor checker loop: inny worker trzyma lock -- pomijam")
                 await lock_conn.close()
                 await lock_engine.dispose()
                 return

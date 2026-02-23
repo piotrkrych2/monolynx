@@ -20,9 +20,7 @@ async def main() -> None:
     from monolynx.database import async_session_factory, engine
 
     loop = asyncio.get_running_loop()
-    checker_task = asyncio.create_task(
-        monitor_checker_loop(async_session_factory, acquire_lock=True)
-    )
+    checker_task = asyncio.create_task(monitor_checker_loop(async_session_factory, acquire_lock=True))
 
     stop_event = asyncio.Event()
 

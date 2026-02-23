@@ -29,9 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from monolynx.database import async_session_factory
         from monolynx.services.monitor_loop import monitor_checker_loop
 
-        checker_task = asyncio.create_task(
-            monitor_checker_loop(async_session_factory)
-        )
+        checker_task = asyncio.create_task(monitor_checker_loop(async_session_factory))
     else:
         logger.info("Monitor checker loop disabled (ENABLE_MONITOR_LOOP=false)")
 
