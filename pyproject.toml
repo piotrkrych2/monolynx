@@ -71,6 +71,7 @@ markers = [
 [tool.coverage.run]
 source = ["src/monolynx"]
 branch = true
+concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
 fail_under = 50
