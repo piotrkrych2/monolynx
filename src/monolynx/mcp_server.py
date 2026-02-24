@@ -1,20 +1,24 @@
-"""MCP Server -- narzedzia Scrum dla Claude Code."""
+"""MCP Server -- narzedzia do zarzadzania Monolynx z Claude Code."""
 
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import selectinload
 
 from monolynx.config import settings as app_settings
-from monolynx.constants import PRIORITIES, TICKET_STATUSES
+from monolynx.constants import BOARD_STATUSES, PRIORITIES, TICKET_STATUSES
 from monolynx.database import async_session_factory
+from monolynx.models.event import Event
+from monolynx.models.issue import Issue
+from monolynx.models.monitor import Monitor
+from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
@@ -40,10 +44,12 @@ def _build_allowed_hosts() -> list[str]:
 
 
 mcp = FastMCP(
-    "Monolynx Scrum",
+    "Monolynx",
     instructions=(
-        "Serwer MCP do zarzadzania modulem Scrum w Monolynx. "
-        "Pozwala na CRUD ticketow, sprintow i komentarzy. "
+        "Serwer MCP platformy Monolynx. "
+        "Moduly: Scrum (tickety, sprinty, tablica Kanban), "
+        "500ki (error tracking — issues, eventy), "
+        "Monitoring (URL health checks, uptime). "
         "Wymaga tokenu API (Bearer) w naglowku Authorization."
     ),
     streamable_http_path="/",
@@ -117,6 +123,433 @@ async def _get_user_and_project(ctx: Context[Any, Any], project_slug: str) -> tu
             raise ValueError(f"Uzytkownik nie jest czlonkiem projektu '{project_slug}'")
 
     return user, project
+
+
+# --- Projekty ---
+
+
+@mcp.tool()
+async def list_projects(ctx: Context[Any, Any]) -> list[dict[str, Any]]:
+    """Lista projektow, do ktorych uzytkownik jest przypisany."""
+    user = await _auth(ctx)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Project, ProjectMember.role)
+            .join(ProjectMember, ProjectMember.project_id == Project.id)
+            .where(
+                ProjectMember.user_id == user.id,
+                Project.is_active.is_(True),
+            )
+            .order_by(Project.name)
+        )
+        rows = result.all()
+
+    return [
+        {
+            "name": project.name,
+            "slug": project.slug,
+            "role": role,
+            "created_at": project.created_at.isoformat(),
+        }
+        for project, role in rows
+    ]
+
+
+# --- 500ki (Error Tracking) ---
+
+
+@mcp.tool()
+async def list_issues(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    status: str = "unresolved",
+    search: str | None = None,
+    page: int = 1,
+) -> list[dict[str, Any]]:
+    """Lista bledow (issues) w projekcie.
+
+    Filtrowanie po statusie (unresolved/resolved) i tekscie.
+    Paginacja po 20. Domyslnie tylko nierozwiazane.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+    per_page = 20
+
+    async with async_session_factory() as db:
+        conditions: list[Any] = [Issue.project_id == project.id]
+        if status in ("unresolved", "resolved"):
+            conditions.append(Issue.status == status)
+        if search:
+            conditions.append(Issue.title.ilike(f"%{search}%"))
+
+        total = (await db.execute(select(func.count(Issue.id)).where(*conditions))).scalar() or 0
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+
+        result = await db.execute(select(Issue).where(*conditions).order_by(Issue.last_seen.desc()).limit(per_page).offset((page - 1) * per_page))
+        issues = result.scalars().all()
+
+    return [
+        {
+            "id": str(i.id),
+            "title": i.title,
+            "culprit": i.culprit,
+            "level": i.level,
+            "status": i.status,
+            "event_count": i.event_count,
+            "first_seen": i.first_seen.isoformat(),
+            "last_seen": i.last_seen.isoformat(),
+        }
+        for i in issues
+    ] + [{"_meta": {"page": page, "total_pages": total_pages, "total": total}}]
+
+
+@mcp.tool()
+async def get_issue(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    issue_id: str,
+) -> dict[str, Any]:
+    """Szczegoly bledu z ostatnimi 5 eventami (traceback, request, environment)."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Issue).where(
+                Issue.id == uuid.UUID(issue_id),
+                Issue.project_id == project.id,
+            )
+        )
+        issue = result.scalar_one_or_none()
+        if issue is None:
+            raise ValueError("Issue nie istnieje")
+
+        events_result = await db.execute(select(Event).where(Event.issue_id == issue.id).order_by(Event.timestamp.desc()).limit(5))
+        events = events_result.scalars().all()
+
+    return {
+        "id": str(issue.id),
+        "title": issue.title,
+        "culprit": issue.culprit,
+        "level": issue.level,
+        "status": issue.status,
+        "event_count": issue.event_count,
+        "first_seen": issue.first_seen.isoformat(),
+        "last_seen": issue.last_seen.isoformat(),
+        "events": [
+            {
+                "id": str(e.id),
+                "timestamp": e.timestamp.isoformat(),
+                "exception": e.exception,
+                "request_data": e.request_data,
+                "environment": e.environment,
+            }
+            for e in events
+        ],
+    }
+
+
+@mcp.tool()
+async def update_issue_status(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    issue_id: str,
+    status: str,
+) -> dict[str, Any]:
+    """Zmien status bledu (unresolved/resolved)."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if status not in ("unresolved", "resolved"):
+        raise ValueError("Status musi byc 'unresolved' lub 'resolved'")
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Issue).where(
+                Issue.id == uuid.UUID(issue_id),
+                Issue.project_id == project.id,
+            )
+        )
+        issue = result.scalar_one_or_none()
+        if issue is None:
+            raise ValueError("Issue nie istnieje")
+
+        issue.status = status
+        await db.commit()
+
+    return {
+        "id": str(issue.id),
+        "title": issue.title,
+        "status": status,
+        "message": f"Issue '{issue.title}' — status zmieniony na {status}",
+    }
+
+
+# --- Monitoring ---
+
+
+@mcp.tool()
+async def list_monitors(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> list[dict[str, Any]]:
+    """Lista monitorow URL z aktualnym statusem i uptime 24h."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
+
+    async with async_session_factory() as db:
+        result = await db.execute(select(Monitor).where(Monitor.project_id == project.id).order_by(Monitor.created_at))
+        monitors = result.scalars().all()
+
+        monitor_data = []
+        for m in monitors:
+            # Ostatni check
+            last_check_result = await db.execute(
+                select(MonitorCheck).where(MonitorCheck.monitor_id == m.id).order_by(MonitorCheck.checked_at.desc()).limit(1)
+            )
+            last_check = last_check_result.scalar_one_or_none()
+
+            # Uptime 24h
+            uptime_result = await db.execute(
+                select(
+                    func.count(MonitorCheck.id),
+                    func.count(case((MonitorCheck.is_success.is_(True), 1))),
+                ).where(
+                    MonitorCheck.monitor_id == m.id,
+                    MonitorCheck.checked_at >= twenty_four_hours_ago,
+                )
+            )
+            uptime_row = uptime_result.one()
+            total_checks: int = uptime_row[0]
+            success_checks: int = uptime_row[1]
+            uptime_24h: float | None = None
+            if total_checks > 0:
+                uptime_24h = round((success_checks / total_checks) * 100, 1)
+
+            monitor_data.append(
+                {
+                    "id": str(m.id),
+                    "name": m.name or m.url,
+                    "url": m.url,
+                    "interval": f"{m.interval_value} {m.interval_unit}",
+                    "is_active": m.is_active,
+                    "last_check": {
+                        "is_success": last_check.is_success,
+                        "status_code": last_check.status_code,
+                        "response_time_ms": last_check.response_time_ms,
+                        "checked_at": last_check.checked_at.isoformat(),
+                    }
+                    if last_check
+                    else None,
+                    "uptime_24h": uptime_24h,
+                }
+            )
+
+    return monitor_data
+
+
+@mcp.tool()
+async def get_monitor(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    monitor_id: str,
+) -> dict[str, Any]:
+    """Szczegoly monitora z ostatnimi 20 checkami."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Monitor).where(
+                Monitor.id == uuid.UUID(monitor_id),
+                Monitor.project_id == project.id,
+            )
+        )
+        monitor = result.scalar_one_or_none()
+        if monitor is None:
+            raise ValueError("Monitor nie istnieje")
+
+        checks_result = await db.execute(
+            select(MonitorCheck).where(MonitorCheck.monitor_id == monitor.id).order_by(MonitorCheck.checked_at.desc()).limit(20)
+        )
+        checks = checks_result.scalars().all()
+
+    return {
+        "id": str(monitor.id),
+        "name": monitor.name or monitor.url,
+        "url": monitor.url,
+        "interval_value": monitor.interval_value,
+        "interval_unit": monitor.interval_unit,
+        "is_active": monitor.is_active,
+        "created_at": monitor.created_at.isoformat(),
+        "checks": [
+            {
+                "is_success": c.is_success,
+                "status_code": c.status_code,
+                "response_time_ms": c.response_time_ms,
+                "error_message": c.error_message,
+                "checked_at": c.checked_at.isoformat(),
+            }
+            for c in checks
+        ],
+    }
+
+
+# --- Scrum: Tablica Kanban ---
+
+
+@mcp.tool()
+async def get_board(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> dict[str, Any]:
+    """Tablica Kanban — tickety aktywnego sprintu pogrupowane po statusie.
+
+    Kolumny: todo, in_progress, in_review, done.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        sprint_result = await db.execute(
+            select(Sprint).where(
+                Sprint.project_id == project.id,
+                Sprint.status == "active",
+            )
+        )
+        sprint = sprint_result.scalar_one_or_none()
+        if sprint is None:
+            return {"message": "Brak aktywnego sprintu", "columns": {}}
+
+        result = await db.execute(
+            select(Ticket).options(selectinload(Ticket.assignee)).where(Ticket.sprint_id == sprint.id).order_by(Ticket.order, Ticket.created_at)
+        )
+        tickets = result.scalars().all()
+
+    columns: dict[str, list[dict[str, Any]]] = {s: [] for s in BOARD_STATUSES}
+    for t in tickets:
+        if t.status in columns:
+            columns[t.status].append(
+                {
+                    "id": str(t.id),
+                    "title": t.title,
+                    "priority": t.priority,
+                    "story_points": t.story_points,
+                    "assignee": t.assignee.email if t.assignee else None,
+                }
+            )
+
+    return {
+        "sprint": {
+            "id": str(sprint.id),
+            "name": sprint.name,
+            "goal": sprint.goal,
+            "start_date": sprint.start_date.isoformat(),
+            "end_date": sprint.end_date.isoformat() if sprint.end_date else None,
+        },
+        "columns": columns,
+    }
+
+
+# --- Podsumowanie projektu ---
+
+
+@mcp.tool()
+async def get_project_summary(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> dict[str, Any]:
+    """Zagregowane statystyki projektu: otwarte bledy, monitory, aktywny sprint."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
+
+    async with async_session_factory() as db:
+        # 500ki: nierozwiazane issues
+        issues_count = (
+            await db.execute(
+                select(func.count(Issue.id)).where(
+                    Issue.project_id == project.id,
+                    Issue.status == "unresolved",
+                )
+            )
+        ).scalar() or 0
+
+        # Monitoring: failing + uptime 24h
+        latest_check_sq = (
+            select(
+                MonitorCheck.monitor_id,
+                func.max(MonitorCheck.checked_at).label("max_checked_at"),
+            )
+            .group_by(MonitorCheck.monitor_id)
+            .subquery()
+        )
+        failing_result = await db.execute(
+            select(func.count(Monitor.id))
+            .join(latest_check_sq, Monitor.id == latest_check_sq.c.monitor_id)
+            .join(
+                MonitorCheck,
+                (MonitorCheck.monitor_id == latest_check_sq.c.monitor_id) & (MonitorCheck.checked_at == latest_check_sq.c.max_checked_at),
+            )
+            .where(
+                Monitor.project_id == project.id,
+                Monitor.is_active.is_(True),
+                MonitorCheck.is_success.is_(False),
+            )
+        )
+        monitors_failing = failing_result.scalar() or 0
+
+        uptime_result = await db.execute(
+            select(
+                func.count(MonitorCheck.id),
+                func.count(case((MonitorCheck.is_success.is_(True), 1))),
+            )
+            .join(Monitor, MonitorCheck.monitor_id == Monitor.id)
+            .where(
+                Monitor.project_id == project.id,
+                Monitor.is_active.is_(True),
+                MonitorCheck.checked_at >= twenty_four_hours_ago,
+            )
+        )
+        uptime_row = uptime_result.one()
+        uptime_24h: float | None = None
+        if uptime_row[0] > 0:
+            uptime_24h = round((uptime_row[1] / uptime_row[0]) * 100, 1)
+
+        # Scrum: aktywny sprint
+        sprint_result = await db.execute(
+            select(Sprint).where(
+                Sprint.project_id == project.id,
+                Sprint.status == "active",
+            )
+        )
+        sprint = sprint_result.scalar_one_or_none()
+
+        sprint_summary = None
+        if sprint:
+            ticket_stats = await db.execute(select(Ticket.status, func.count(Ticket.id)).where(Ticket.sprint_id == sprint.id).group_by(Ticket.status))
+            status_counts: dict[str, int] = {row[0]: row[1] for row in ticket_stats.all()}
+            sprint_summary = {
+                "name": sprint.name,
+                "goal": sprint.goal,
+                "tickets_by_status": status_counts,
+                "total_tickets": sum(status_counts.values()),
+            }
+
+        # Backlog count
+        backlog_count = (
+            await db.execute(
+                select(func.count(Ticket.id)).where(
+                    Ticket.project_id == project.id,
+                    Ticket.status == "backlog",
+                )
+            )
+        ).scalar() or 0
+
+    return {
+        "project": {"name": project.name, "slug": project.slug},
+        "issues_unresolved": issues_count,
+        "monitors_failing": monitors_failing,
+        "uptime_24h": uptime_24h,
+        "active_sprint": sprint_summary,
+        "backlog_count": backlog_count,
+    }
 
 
 # --- Tickety ---
