@@ -63,15 +63,15 @@ mcp = FastMCP(
 
 async def _auth(ctx: Context[Any, Any]) -> User:
     """Wyciagnij token z naglowka HTTP i zwaliduj uzytkownika."""
-    request = ctx.request_context
-    if request is None:
+    request_ctx = ctx.request_context
+    if request_ctx is None:
         raise ValueError("Brak kontekstu HTTP — token wymagany")
 
-    transport = getattr(request, "transport", None)
-    if transport is None:
-        raise ValueError("Brak transportu HTTP")
+    starlette_request = getattr(request_ctx, "request", None)
+    if starlette_request is None:
+        raise ValueError("Brak kontekstu HTTP request")
 
-    headers = getattr(transport, "headers", {}) or {}
+    headers = starlette_request.headers
     auth_header = headers.get("authorization", "")
     if not auth_header.lower().startswith("bearer "):
         raise ValueError("Brak tokenu Bearer w naglowku Authorization")
@@ -86,13 +86,13 @@ async def _auth(ctx: Context[Any, Any]) -> User:
 
 async def _get_auth_header(ctx: Context[Any, Any]) -> str:
     """Pobierz raw token z kontekstu."""
-    request = ctx.request_context
-    if request is None:
+    request_ctx = ctx.request_context
+    if request_ctx is None:
         raise ValueError("Brak kontekstu HTTP")
-    transport = getattr(request, "transport", None)
-    if transport is None:
-        raise ValueError("Brak transportu HTTP")
-    headers = getattr(transport, "headers", {}) or {}
+    starlette_request = getattr(request_ctx, "request", None)
+    if starlette_request is None:
+        raise ValueError("Brak kontekstu HTTP request")
+    headers = starlette_request.headers
     auth_header = headers.get("authorization", "")
     if not auth_header.lower().startswith("bearer "):
         raise ValueError("Brak tokenu Bearer")

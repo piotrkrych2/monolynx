@@ -55,8 +55,8 @@ def _make_ctx(token: str = "test-token") -> MagicMock:
     """Mock MCP Context z Bearer token w naglowku."""
     ctx = MagicMock()
     ctx.request_context = MagicMock()
-    ctx.request_context.transport = MagicMock()
-    ctx.request_context.transport.headers = {"authorization": f"Bearer {token}"}
+    ctx.request_context.request = MagicMock()
+    ctx.request_context.request.headers = {"authorization": f"Bearer {token}"}
     return ctx
 
 
@@ -67,11 +67,11 @@ def _make_ctx_no_request() -> MagicMock:
     return ctx
 
 
-def _make_ctx_no_transport() -> MagicMock:
-    """Mock MCP Context bez transportu."""
+def _make_ctx_no_http_request() -> MagicMock:
+    """Mock MCP Context bez HTTP request."""
     ctx = MagicMock()
     ctx.request_context = MagicMock()
-    ctx.request_context.transport = None
+    ctx.request_context.request = None
     return ctx
 
 
@@ -79,8 +79,8 @@ def _make_ctx_no_bearer() -> MagicMock:
     """Mock MCP Context bez tokenu Bearer."""
     ctx = MagicMock()
     ctx.request_context = MagicMock()
-    ctx.request_context.transport = MagicMock()
-    ctx.request_context.transport.headers = {"authorization": "Basic abc"}
+    ctx.request_context.request = MagicMock()
+    ctx.request_context.request.headers = {"authorization": "Basic abc"}
     return ctx
 
 
@@ -247,9 +247,9 @@ class TestAuthHelpers:
         with pytest.raises(ValueError, match="Brak kontekstu HTTP"):
             await _auth(ctx)
 
-    async def test_auth_no_transport(self):
-        ctx = _make_ctx_no_transport()
-        with pytest.raises(ValueError, match="Brak transportu HTTP"):
+    async def test_auth_no_http_request(self):
+        ctx = _make_ctx_no_http_request()
+        with pytest.raises(ValueError, match="Brak kontekstu HTTP request"):
             await _auth(ctx)
 
     async def test_auth_no_bearer(self):
@@ -281,9 +281,9 @@ class TestAuthHelpers:
         with pytest.raises(ValueError, match="Brak kontekstu HTTP"):
             await _get_auth_header(ctx)
 
-    async def test_get_auth_header_no_transport(self):
-        ctx = _make_ctx_no_transport()
-        with pytest.raises(ValueError, match="Brak transportu HTTP"):
+    async def test_get_auth_header_no_http_request(self):
+        ctx = _make_ctx_no_http_request()
+        with pytest.raises(ValueError, match="Brak kontekstu HTTP request"):
             await _get_auth_header(ctx)
 
     async def test_get_auth_header_no_bearer(self):
