@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "noreply@monolynx.local"
     SMTP_USE_TLS: bool = True
 
+    MCP_ALLOWED_HOSTS: str = ""
+
 
 settings = Settings()
 

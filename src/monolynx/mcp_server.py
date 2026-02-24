@@ -8,9 +8,11 @@ from datetime import date
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from monolynx.config import settings as app_settings
 from monolynx.constants import PRIORITIES, TICKET_STATUSES
 from monolynx.database import async_session_factory
 from monolynx.models.project import Project
@@ -25,6 +27,18 @@ from monolynx.services.sprint import start_sprint as svc_start_sprint
 
 logger = logging.getLogger("monolynx.mcp")
 
+
+def _build_allowed_hosts() -> list[str]:
+    """Zbuduj liste dozwolonych hostow z MCP_ALLOWED_HOSTS (env/.env)."""
+    hosts = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"]
+    if app_settings.MCP_ALLOWED_HOSTS:
+        for h in app_settings.MCP_ALLOWED_HOSTS.split(","):
+            h = h.strip()
+            if h:
+                hosts.append(h)
+    return hosts
+
+
 mcp = FastMCP(
     "Monolynx Scrum",
     instructions=(
@@ -33,6 +47,10 @@ mcp = FastMCP(
         "Wymaga tokenu API (Bearer) w naglowku Authorization."
     ),
     streamable_http_path="/",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_build_allowed_hosts(),
+    ),
 )
 
 
