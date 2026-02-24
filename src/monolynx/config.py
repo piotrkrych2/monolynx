@@ -7,20 +7,14 @@ import warnings
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-def _default_secret_key() -> str:
-    warnings.warn(
-        "SECRET_KEY nie jest ustawiony -- wygenerowano losowy klucz. Ustaw SECRET_KEY w zmiennych srodowiskowych w produkcji!",
-        stacklevel=2,
-    )
-    return secrets.token_urlsafe(32)
+_SECRET_KEY_SENTINEL = "__NOT_SET__"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     DATABASE_URL: str = "postgresql+asyncpg://sentry:sentry_dev@localhost:5432/open_sentry"
-    SECRET_KEY: str = _default_secret_key()
+    SECRET_KEY: str = _SECRET_KEY_SENTINEL
     ENVIRONMENT: str = "development"
     ENABLE_MONITOR_LOOP: bool = True
     LOG_LEVEL: str = "info"
@@ -37,3 +31,10 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.SECRET_KEY == _SECRET_KEY_SENTINEL:
+    warnings.warn(
+        "SECRET_KEY nie jest ustawiony -- wygenerowano losowy klucz. Ustaw SECRET_KEY w zmiennych srodowiskowych w produkcji!",
+        stacklevel=1,
+    )
+    settings.SECRET_KEY = secrets.token_urlsafe(32)

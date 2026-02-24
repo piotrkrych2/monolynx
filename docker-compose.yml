@@ -39,6 +39,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry_dev}@db:5432/${POSTGRES_DB:-open_sentry}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      SECRET_KEY: ${SECRET_KEY}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       APP_URL: ${APP_URL:-http://localhost:8000}
       SMTP_HOST: ${SMTP_HOST:-}
