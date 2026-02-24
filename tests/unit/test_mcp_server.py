@@ -1,9 +1,9 @@
-"""Testy jednostkowe MCP Server -- narzedzia Scrum."""
+"""Testy jednostkowe MCP Server -- narzedzia Scrum, 500ki, Monitoring."""
 
 import secrets
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,14 +17,27 @@ from monolynx.mcp_server import (
     create_sprint,
     create_ticket,
     delete_ticket,
+    get_board,
+    get_issue,
+    get_monitor,
+    get_project_summary,
     get_sprint,
     get_ticket,
     list_comments,
+    list_issues,
+    list_monitors,
+    list_projects,
     list_sprints,
     list_tickets,
+    mcp,
     start_sprint,
+    update_issue_status,
     update_ticket,
 )
+from monolynx.models.event import Event
+from monolynx.models.issue import Issue
+from monolynx.models.monitor import Monitor
+from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
@@ -138,6 +151,88 @@ def mock_factory(db_session):
 def mock_verify(mcp_user):
     """AsyncMock verify_mcp_token zwracajacy test usera."""
     return AsyncMock(return_value=mcp_user)
+
+
+# ---------------------------------------------------------------------------
+# Rejestracja narzedzi MCP i konfiguracja serwera
+# ---------------------------------------------------------------------------
+
+EXPECTED_TOOLS = [
+    "list_projects",
+    "list_issues",
+    "get_issue",
+    "update_issue_status",
+    "list_monitors",
+    "get_monitor",
+    "get_board",
+    "get_project_summary",
+    "list_tickets",
+    "get_ticket",
+    "create_ticket",
+    "update_ticket",
+    "delete_ticket",
+    "list_sprints",
+    "get_sprint",
+    "create_sprint",
+    "start_sprint",
+    "complete_sprint",
+    "list_comments",
+    "add_comment",
+]
+
+
+@pytest.mark.unit
+class TestMcpToolRegistration:
+    """Weryfikacja ze wszystkie narzedzia MCP sa poprawnie zarejestrowane."""
+
+    async def test_list_tools_returns_all_tools(self):
+        """list_tools() zwraca wszystkie 20 narzedzi."""
+        tools = await mcp.list_tools()
+        tool_names = [t.name for t in tools]
+        assert len(tools) == len(EXPECTED_TOOLS)
+        for name in EXPECTED_TOOLS:
+            assert name in tool_names, f"Brak narzedzia: {name}"
+
+    async def test_all_tools_have_description(self):
+        """Kazde narzedzie ma opis (description)."""
+        tools = await mcp.list_tools()
+        for tool in tools:
+            assert tool.description, f"{tool.name} nie ma opisu"
+
+    async def test_all_tools_have_input_schema(self):
+        """Kazde narzedzie ma schemat parametrow (inputSchema)."""
+        tools = await mcp.list_tools()
+        for tool in tools:
+            assert tool.inputSchema is not None, f"{tool.name} nie ma schematu"
+            assert "properties" in tool.inputSchema, f"{tool.name} brak properties w schemacie"
+
+    async def test_all_tools_require_project_slug_except_list_projects(self):
+        """Wszystkie narzedzia poza list_projects wymagaja project_slug."""
+        tools = await mcp.list_tools()
+        for tool in tools:
+            props = tool.inputSchema.get("properties", {})
+            if tool.name == "list_projects":
+                assert "project_slug" not in props
+            else:
+                assert "project_slug" in props, f"{tool.name} nie ma parametru project_slug"
+
+
+@pytest.mark.unit
+class TestMcpServerConfig:
+    """Weryfikacja konfiguracji serwera MCP."""
+
+    def test_json_response_enabled(self):
+        """json_response=True -- odpowiedzi JSON zamiast SSE (kompatybilnosc z proxy)."""
+        assert mcp.settings.json_response is True
+
+    def test_streamable_http_path(self):
+        """Sciezka HTTP transportu to /."""
+        assert mcp.settings.streamable_http_path == "/"
+
+    def test_dns_rebinding_protection_enabled(self):
+        """Ochrona DNS rebinding jest wlaczona."""
+        assert mcp.settings.transport_security is not None
+        assert mcp.settings.transport_security.enable_dns_rebinding_protection is True
 
 
 # ---------------------------------------------------------------------------
@@ -1211,3 +1306,362 @@ class TestAddComment:
         ):
             result = await add_comment(ctx, mcp_project.slug, str(ticket.id), "  Trimmed content  ")
         assert "id" in result
+
+
+# ---------------------------------------------------------------------------
+# list_projects
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListProjects:
+    async def test_returns_user_projects(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_projects(ctx)
+        assert len(result) == 1
+        assert result[0]["name"] == mcp_project.name
+        assert result[0]["slug"] == mcp_project.slug
+        assert result[0]["role"] == "owner"
+
+    async def test_excludes_inactive_projects(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        inactive = Project(
+            name="Inactive",
+            slug=f"inactive-{uuid.uuid4().hex[:8]}",
+            api_key=secrets.token_urlsafe(32),
+            is_active=False,
+        )
+        db_session.add(inactive)
+        await db_session.flush()
+        db_session.add(ProjectMember(project_id=inactive.id, user_id=mcp_user.id, role="member"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_projects(ctx)
+        slugs = [p["slug"] for p in result]
+        assert inactive.slug not in slugs
+
+
+# ---------------------------------------------------------------------------
+# 500ki: list_issues, get_issue, update_issue_status
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListIssues:
+    async def test_empty_list(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_issues(ctx, mcp_project.slug)
+        assert len(result) == 1
+        assert result[0]["_meta"]["total"] == 0
+
+    async def test_returns_unresolved_by_default(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        db_session.add(Issue(project_id=mcp_project.id, title="Bug 1", fingerprint="fp1", status="unresolved"))
+        db_session.add(Issue(project_id=mcp_project.id, title="Bug 2", fingerprint="fp2", status="resolved"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_issues(ctx, mcp_project.slug)
+        assert result[-1]["_meta"]["total"] == 1
+        assert result[0]["status"] == "unresolved"
+
+    async def test_filter_resolved(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        db_session.add(Issue(project_id=mcp_project.id, title="Bug", fingerprint="fp1", status="unresolved"))
+        db_session.add(Issue(project_id=mcp_project.id, title="Fixed", fingerprint="fp2", status="resolved"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_issues(ctx, mcp_project.slug, status="resolved")
+        assert result[-1]["_meta"]["total"] == 1
+        assert result[0]["title"] == "Fixed"
+
+    async def test_search_filter(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        db_session.add(Issue(project_id=mcp_project.id, title="ValueError in views", fingerprint="fp1"))
+        db_session.add(Issue(project_id=mcp_project.id, title="TypeError in models", fingerprint="fp2"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_issues(ctx, mcp_project.slug, search="ValueError")
+        assert result[-1]["_meta"]["total"] == 1
+        assert "ValueError" in result[0]["title"]
+
+
+@pytest.mark.unit
+class TestGetIssue:
+    async def test_returns_issue_with_events(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        issue = Issue(project_id=mcp_project.id, title="Test bug", fingerprint="fp1", status="unresolved", event_count=1)
+        db_session.add(issue)
+        await db_session.flush()
+
+        event = Event(issue_id=issue.id, timestamp=datetime.now(UTC), exception={"type": "ValueError"})
+        db_session.add(event)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_issue(ctx, mcp_project.slug, str(issue.id))
+        assert result["title"] == "Test bug"
+        assert result["status"] == "unresolved"
+        assert len(result["events"]) == 1
+        assert result["events"][0]["exception"] == {"type": "ValueError"}
+
+    async def test_issue_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Issue nie istnieje"),
+        ):
+            await get_issue(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+@pytest.mark.unit
+class TestUpdateIssueStatus:
+    async def test_resolve_issue(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        issue = Issue(project_id=mcp_project.id, title="To resolve", fingerprint="fp1", status="unresolved")
+        db_session.add(issue)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_issue_status(ctx, mcp_project.slug, str(issue.id), "resolved")
+        assert result["status"] == "resolved"
+
+    async def test_invalid_status_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        issue = Issue(project_id=mcp_project.id, title="Bad status", fingerprint="fp1")
+        db_session.add(issue)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Status musi byc"),
+        ):
+            await update_issue_status(ctx, mcp_project.slug, str(issue.id), "invalid")
+
+
+# ---------------------------------------------------------------------------
+# Monitoring: list_monitors, get_monitor
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListMonitors:
+    async def test_empty_list(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_monitors(ctx, mcp_project.slug)
+        assert result == []
+
+    async def test_returns_monitors(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        monitor = Monitor(
+            project_id=mcp_project.id,
+            url="https://example.com",
+            name="Example",
+            interval_value=5,
+            interval_unit="minutes",
+        )
+        db_session.add(monitor)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_monitors(ctx, mcp_project.slug)
+        assert len(result) == 1
+        assert result[0]["name"] == "Example"
+        assert result[0]["url"] == "https://example.com"
+        assert result[0]["is_active"] is True
+
+    async def test_monitor_with_checks(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        monitor = Monitor(
+            project_id=mcp_project.id,
+            url="https://test.com",
+            interval_value=1,
+            interval_unit="minutes",
+        )
+        db_session.add(monitor)
+        await db_session.flush()
+
+        check = MonitorCheck(
+            monitor_id=monitor.id,
+            is_success=True,
+            status_code=200,
+            response_time_ms=150,
+        )
+        db_session.add(check)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_monitors(ctx, mcp_project.slug)
+        assert result[0]["last_check"]["is_success"] is True
+        assert result[0]["last_check"]["status_code"] == 200
+
+
+@pytest.mark.unit
+class TestGetMonitor:
+    async def test_returns_monitor_with_checks(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        monitor = Monitor(
+            project_id=mcp_project.id,
+            url="https://example.com",
+            name="Detail",
+            interval_value=5,
+            interval_unit="minutes",
+        )
+        db_session.add(monitor)
+        await db_session.flush()
+
+        check = MonitorCheck(monitor_id=monitor.id, is_success=True, status_code=200, response_time_ms=100)
+        db_session.add(check)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_monitor(ctx, mcp_project.slug, str(monitor.id))
+        assert result["name"] == "Detail"
+        assert result["url"] == "https://example.com"
+        assert len(result["checks"]) == 1
+
+    async def test_monitor_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Monitor nie istnieje"),
+        ):
+            await get_monitor(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+# ---------------------------------------------------------------------------
+# get_board
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetBoard:
+    async def test_no_active_sprint(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_board(ctx, mcp_project.slug)
+        assert result["message"] == "Brak aktywnego sprintu"
+        assert result["columns"] == {}
+
+    async def test_returns_board_with_tickets(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Active sprint",
+            start_date=date(2026, 3, 1),
+            status="active",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        for status in ("todo", "in_progress", "done"):
+            db_session.add(Ticket(project_id=mcp_project.id, title=f"Ticket {status}", sprint_id=sprint.id, status=status))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_board(ctx, mcp_project.slug)
+        assert result["sprint"]["name"] == "Active sprint"
+        assert len(result["columns"]["todo"]) == 1
+        assert len(result["columns"]["in_progress"]) == 1
+        assert len(result["columns"]["done"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# get_project_summary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetProjectSummary:
+    async def test_empty_project(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_project_summary(ctx, mcp_project.slug)
+        assert result["project"]["slug"] == mcp_project.slug
+        assert result["issues_unresolved"] == 0
+        assert result["monitors_failing"] == 0
+        assert result["uptime_24h"] is None
+        assert result["active_sprint"] is None
+        assert result["backlog_count"] == 0
+
+    async def test_counts_unresolved_issues(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        db_session.add(Issue(project_id=mcp_project.id, title="Open 1", fingerprint="fp1", status="unresolved"))
+        db_session.add(Issue(project_id=mcp_project.id, title="Open 2", fingerprint="fp2", status="unresolved"))
+        db_session.add(Issue(project_id=mcp_project.id, title="Fixed", fingerprint="fp3", status="resolved"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_project_summary(ctx, mcp_project.slug)
+        assert result["issues_unresolved"] == 2
+
+    async def test_counts_backlog_tickets(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        db_session.add(Ticket(project_id=mcp_project.id, title="Backlog 1", status="backlog"))
+        db_session.add(Ticket(project_id=mcp_project.id, title="Backlog 2", status="backlog"))
+        db_session.add(Ticket(project_id=mcp_project.id, title="In progress", status="in_progress"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_project_summary(ctx, mcp_project.slug)
+        assert result["backlog_count"] == 2

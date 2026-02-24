@@ -53,6 +53,7 @@ mcp = FastMCP(
         "Wymaga tokenu API (Bearer) w naglowku Authorization."
     ),
     streamable_http_path="/",
+    json_response=True,
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=_build_allowed_hosts(),
