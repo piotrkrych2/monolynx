@@ -33,7 +33,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         logger.info("Monitor checker loop disabled (ENABLE_MONITOR_LOOP=false)")
 
-    yield
+    # Starlette nie wywoluje lifespanow zamontowanych sub-aplikacji,
+    # wiec session_manager MCP musi byc uruchomiony tutaj recznie.
+    async with mcp_server.session_manager.run():
+        yield
 
     if checker_task is not None:
         checker_task.cancel()
