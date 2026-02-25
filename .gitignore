@@ -19,7 +19,6 @@ venv/
 
 # Environment
 .env
-.env.*
 
 # Testing
 .pytest_cache/
@@ -37,6 +36,3 @@ pgdata/
 # OS
 .DS_Store
 Thumbs.db
-
-# Agents
-.agents/
