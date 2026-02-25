@@ -19,7 +19,7 @@ services:
       - appname-net
 
   app:
-    image: registry.gitlab.com/monolynx/monolynx:latest
+    image: registry.gitlab.com/piotrkrych/monolynx:latest
 
     restart: unless-stopped
     labels:
