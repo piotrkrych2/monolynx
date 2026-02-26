@@ -1,0 +1,129 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}{% if page %}Edytuj: {{ page.title }}{% elif parent %}Nowa podstrona: {{ parent.title }}{% else %}Nowa strona wiki{% endif %} - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Wiki</h1>
+    <a href="{% if page %}/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}{% else %}/dashboard/{{ project.slug }}/wiki/{% endif %}"
+       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+        Wstecz
+    </a>
+</div>
+
+<div class="max-w-4xl">
+    <h2 class="text-lg font-semibold text-white mb-4">
+        {% if page %}
+            Edytuj strone
+        {% elif parent %}
+            Nowa podstrona w: {{ parent.title }}
+        {% else %}
+            Nowa strona wiki
+        {% endif %}
+    </h2>
+
+    {% if error %}
+    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post"
+          action="{% if page %}/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/edit{% elif parent %}/dashboard/{{ project.slug }}/wiki/pages/{{ parent.id }}/create{% else %}/dashboard/{{ project.slug }}/wiki/pages/create{% endif %}"
+          class="space-y-4">
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Tytul</label>
+            <input type="text" name="title" value="{{ form_data.title if form_data else '' }}" required
+                   placeholder="Tytul strony"
+                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Pozycja (kolejnosc)</label>
+            <input type="number" name="position" value="{{ form_data.position if form_data else '0' }}" min="0"
+                   class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            <p class="text-xs text-gray-500 mt-1">Mniejsza liczba = wyzej na liscie</p>
+        </div>
+
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Tresc (Markdown)</label>
+            <textarea id="wiki-content" name="content" rows="20">{{ form_data.content if form_data else '' }}</textarea>
+        </div>
+
+        <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded transition">
+            {% if page %}Zapisz zmiany{% else %}Utworz strone{% endif %}
+        </button>
+    </form>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+<script>
+var easyMDE = new EasyMDE({
+    element: document.getElementById('wiki-content'),
+    spellChecker: false,
+    autofocus: false,
+    status: ["lines", "words"],
+    uploadImage: true,
+    imageUploadEndpoint: '/dashboard/{{ project.slug }}/wiki/upload',
+    imagePathAbsolute: true,
+    imageMaxSize: 10 * 1024 * 1024,
+    toolbar: [
+        "bold", "italic", "heading", "|",
+        "quote", "unordered-list", "ordered-list", "|",
+        "link", "image", "table", "code", "|",
+        "preview", "side-by-side", "fullscreen", "|",
+        "guide"
+    ],
+    minHeight: "400px",
+});
+
+/* Dark theme overrides */
+document.querySelectorAll('.EasyMDEContainer .CodeMirror').forEach(function(el) {
+    el.style.backgroundColor = '#374151';
+    el.style.color = '#e5e7eb';
+    el.style.borderColor = '#4b5563';
+});
+document.querySelectorAll('.editor-toolbar').forEach(function(el) {
+    el.style.borderColor = '#4b5563';
+});
+document.querySelectorAll('.editor-toolbar button').forEach(function(el) {
+    el.style.color = '#9ca3af';
+});
+</script>
+
+<style>
+.EasyMDEContainer .CodeMirror {
+    background-color: #374151;
+    color: #e5e7eb;
+    border-color: #4b5563;
+}
+.EasyMDEContainer .CodeMirror-cursor {
+    border-left-color: #e5e7eb;
+}
+.editor-toolbar {
+    border-color: #4b5563;
+    background-color: #1f2937;
+}
+.editor-toolbar button {
+    color: #9ca3af !important;
+}
+.editor-toolbar button:hover,
+.editor-toolbar button.active {
+    color: #fff !important;
+    background-color: #374151;
+}
+.editor-statusbar {
+    color: #6b7280;
+}
+.editor-preview {
+    background-color: #1f2937;
+    color: #e5e7eb;
+}
+.editor-preview pre {
+    background-color: #374151;
+}
+</style>
+{% endblock %}

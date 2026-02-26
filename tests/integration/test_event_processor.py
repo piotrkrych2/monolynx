@@ -15,6 +15,7 @@ async def _create_project(db_session, slug=None):
     project = Project(
         name=f"Event Proc {slug}",
         slug=slug,
+        code="P" + secrets.token_hex(4).upper(),
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )

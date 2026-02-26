@@ -9,7 +9,7 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -28,7 +28,15 @@ from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_comment import TicketComment
+from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.services.sprint import complete_sprint, start_sprint
+from monolynx.services.ticket_numbering import get_next_ticket_number
+from monolynx.services.time_tracking import (
+    add_time_entry,
+    delete_time_entry,
+    get_ticket_total_hours,
+)
+from monolynx.services.wiki import render_markdown_html
 
 from .helpers import _get_user_id, flash, render_project_page, templates
 
@@ -321,8 +329,11 @@ async def ticket_create(
     if priority not in PRIORITIES:
         priority = "medium"
 
+    next_number = await get_next_ticket_number(project.id, db)
+
     ticket = Ticket(
         project_id=project.id,
+        number=next_number,
         title=title,
         description=description,
         priority=priority,
@@ -363,12 +374,18 @@ async def ticket_detail(
             selectinload(Ticket.assignee),
             selectinload(Ticket.sprint),
             selectinload(Ticket.comments).selectinload(TicketComment.author),
+            selectinload(Ticket.time_entries).selectinload(TimeTrackingEntry.user),
         )
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )
     ticket = result.scalar_one_or_none()
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
+
+    total_logged_hours = await get_ticket_total_hours(ticket_id, db)
+
+    rendered_description = render_markdown_html(ticket.description) if ticket.description else ""
+    rendered_comments = [{"comment": c, "html": render_markdown_html(c.content)} for c in ticket.comments]
 
     return await render_project_page(
         request,
@@ -378,6 +395,11 @@ async def ticket_detail(
             "ticket": ticket,
             "active_module": "scrum",
             "status_labels": STATUS_LABELS,
+            "total_logged_hours": total_logged_hours,
+            "time_entries": ticket.time_entries,
+            "current_user_id": user_id,
+            "rendered_description": rendered_description,
+            "rendered_comments": rendered_comments,
         },
         db=db,
     )
@@ -657,6 +679,116 @@ async def _compute_sprint_stats(sprints: Sequence[Sprint], db: AsyncSession) -> 
             "sp_sum": int(row[1]),
         }
     return sprint_stats
+
+
+# --- Time Tracking ---
+
+
+@router.post("/{slug}/scrum/time-tracking/log", response_model=None)
+async def time_tracking_log(
+    request: Request,
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse | RedirectResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    ticket_id_raw = body.get("ticket_id", "")
+    duration_raw = body.get("duration_minutes", 0)
+    date_raw = body.get("date_logged", "")
+    description = body.get("description") or None
+
+    try:
+        ticket_id = uuid.UUID(str(ticket_id_raw))
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "Nieprawidlowy ticket_id"}, status_code=400)
+
+    try:
+        duration_minutes = int(duration_raw)
+        if duration_minutes <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "Czas musi byc wiekszy niz 0"}, status_code=400)
+
+    try:
+        date_logged = date.fromisoformat(str(date_raw))
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "Nieprawidlowa data"}, status_code=400)
+
+    # Walidacja: ticket musi nalezec do projektu z URL
+    ticket_check = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
+    ticket_obj = ticket_check.scalar_one_or_none()
+    if ticket_obj is None:
+        return JSONResponse({"error": "Ticket nie istnieje"}, status_code=404)
+    if ticket_obj.project_id != project.id:
+        return JSONResponse({"error": "Ticket nie nalezy do tego projektu"}, status_code=400)
+
+    result = await add_time_entry(
+        ticket_id=ticket_id,
+        user_id=user_id,
+        duration_minutes=duration_minutes,
+        date_logged=date_logged,
+        description=description,
+        db=db,
+    )
+
+    if isinstance(result, str):
+        return JSONResponse({"error": result}, status_code=400)
+
+    return JSONResponse(
+        {
+            "id": str(result.id),
+            "ticket_id": str(result.ticket_id),
+            "user_id": str(result.user_id),
+            "duration_minutes": result.duration_minutes,
+            "date_logged": result.date_logged.isoformat(),
+            "description": result.description,
+            "status": result.status,
+        },
+        status_code=201,
+    )
+
+
+@router.delete("/{slug}/scrum/time-tracking/{entry_id}", response_model=None)
+async def time_tracking_delete(
+    request: Request,
+    slug: str,
+    entry_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    # Walidacja: wpis musi nalezec do projektu z URL
+    entry_check = await db.execute(select(TimeTrackingEntry).where(TimeTrackingEntry.id == entry_id))
+    entry_obj = entry_check.scalar_one_or_none()
+    if entry_obj is None:
+        return JSONResponse({"error": "Wpis nie istnieje"}, status_code=404)
+    if entry_obj.project_id != project.id:
+        return JSONResponse({"error": "Wpis nie nalezy do tego projektu"}, status_code=403)
+
+    error = await delete_time_entry(entry_id, user_id, db)
+    if error == "Wpis nie istnieje":
+        return JSONResponse({"error": error}, status_code=404)
+    if error:
+        return JSONResponse({"error": error}, status_code=403)
+
+    return JSONResponse({"ok": True}, status_code=200)
 
 
 # --- Sprinty ---

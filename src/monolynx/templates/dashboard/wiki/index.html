@@ -1,0 +1,66 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Wiki - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Wiki</h1>
+    <a href="/dashboard/{{ project.slug }}/wiki/pages/create"
+       class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
+        Dodaj strone
+    </a>
+</div>
+
+<form action="/dashboard/{{ project.slug }}/wiki/search" method="get" class="mb-4">
+    <div class="flex gap-2">
+        <input type="text" name="q" placeholder="Szukaj w wiki..."
+               class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm
+                      focus:outline-none focus:border-indigo-500 placeholder-gray-400">
+        <button type="submit"
+                class="bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm px-4 py-2 rounded transition">
+            Szukaj
+        </button>
+    </div>
+</form>
+
+{% if tree %}
+<div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+    {% macro render_tree(nodes, depth=0) %}
+    <ul class="{% if depth > 0 %}ml-5 mt-1 border-l border-gray-700 pl-3{% endif %} space-y-1">
+        {% for node in nodes %}
+        <li>
+            <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ node.page.id }}"
+               class="flex items-center gap-2 px-3 py-2 rounded text-sm transition text-gray-300 hover:bg-gray-700 hover:text-white group">
+                <svg class="w-4 h-4 text-gray-500 group-hover:text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span class="truncate">{{ node.page.title }}</span>
+                {% if node.page.is_ai_touched %}
+                <span class="ml-auto text-xs bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded flex-shrink-0" title="Edytowane przez AI">AI</span>
+                {% endif %}
+            </a>
+            {% if node.children %}
+            {{ render_tree(node.children, depth + 1) }}
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endmacro %}
+
+    {{ render_tree(tree) }}
+</div>
+
+{% else %}
+<div class="text-center py-12 text-gray-500">
+    <svg class="w-16 h-16 mx-auto mb-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+    </svg>
+    <p class="text-lg">Wiki jest puste</p>
+    <p class="text-sm mt-2">
+        <a href="/dashboard/{{ project.slug }}/wiki/pages/create" class="text-indigo-400 hover:text-indigo-300">
+            Dodaj pierwsza strone
+        </a>
+    </p>
+</div>
+{% endif %}
+{% endblock %}

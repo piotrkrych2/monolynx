@@ -17,6 +17,7 @@ class TestMemberAdd:
         project = Project(
             name="MA Succ",
             slug="ma-succ",
+            code="MAS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -42,6 +43,7 @@ class TestMemberAdd:
         project = Project(
             name="MA NonEx",
             slug="ma-nonex",
+            code="MAN",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -60,6 +62,7 @@ class TestMemberAdd:
         project = Project(
             name="MA Dup",
             slug="ma-dup",
+            code="MAD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -95,6 +98,7 @@ class TestMemberRemove:
         project = Project(
             name="MR Rem",
             slug="mr-rem",
+            code="MRR",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -130,6 +134,7 @@ class TestMemberRole:
         project = Project(
             name="MR Role",
             slug="mr-role",
+            code="MRR",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -162,6 +167,7 @@ class TestMemberRole:
         project = Project(
             name="MR Show",
             slug="mr-show",
+            code="MRS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )

@@ -19,6 +19,7 @@ class TestIssueList:
         project = Project(
             name="SI Auth",
             slug="si-auth",
+            code="SIA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -37,6 +38,7 @@ class TestIssueList:
         project = Project(
             name="SI Empty",
             slug="si-empty",
+            code="SIE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -53,6 +55,7 @@ class TestIssueList:
         project = Project(
             name="SI Show",
             slug="si-show",
+            code="SIS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -80,6 +83,7 @@ class TestIssueList:
         project = Project(
             name="SI Multi",
             slug="si-multi",
+            code="SIM",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -124,6 +128,7 @@ class TestIssueDetail:
         project = Project(
             name="SD Auth",
             slug="sd-auth",
+            code="SDA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -152,6 +157,7 @@ class TestIssueDetail:
         project = Project(
             name="SD Det",
             slug="sd-det",
+            code="SDD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -181,6 +187,7 @@ class TestIssueDetail:
         project = Project(
             name="SD Evt",
             slug="sd-evt",
+            code="SDE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -229,6 +236,7 @@ class TestIssueDetail:
         project = Project(
             name="SD NF",
             slug="sd-nf",
+            code="SDN",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -245,12 +253,14 @@ class TestIssueDetail:
         project_a = Project(
             name="SD ProjA",
             slug="sd-proj-a",
+            code="SDPA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         project_b = Project(
             name="SD ProjB",
             slug="sd-proj-b",
+            code="SDPB",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -280,6 +290,7 @@ class TestSetupGuide:
         project = Project(
             name="SG Auth",
             slug="sg-auth",
+            code="SGA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -298,6 +309,7 @@ class TestSetupGuide:
         project = Project(
             name="SG Load",
             slug="sg-load",
+            code="SGL",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )

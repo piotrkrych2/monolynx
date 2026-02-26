@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: sans-serif;
+            font-size: 11px;
+            color: #1a1a1a;
+            margin: 20mm;
+            line-height: 1.4;
+        }
+        h1 { font-size: 20px; margin-bottom: 4px; }
+        h2 { font-size: 14px; margin-top: 16px; margin-bottom: 8px; color: #333; }
+        .subtitle { color: #666; font-size: 12px; margin-bottom: 16px; }
+        .stats-grid {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .stat-box {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px 12px;
+            flex: 1;
+        }
+        .stat-label { font-size: 9px; color: #666; text-transform: uppercase; }
+        .stat-value { font-size: 18px; font-weight: bold; }
+        .filters-box {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px 12px;
+            margin-bottom: 16px;
+            font-size: 10px;
+            color: #555;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 16px;
+        }
+        th {
+            background: #f0f0f0;
+            text-align: left;
+            padding: 6px 8px;
+            font-size: 9px;
+            text-transform: uppercase;
+            color: #555;
+            border-bottom: 2px solid #ddd;
+        }
+        th.text-right { text-align: right; }
+        td {
+            padding: 5px 8px;
+            border-bottom: 1px solid #eee;
+            vertical-align: top;
+        }
+        td.text-right { text-align: right; }
+        td.mono { font-family: monospace; }
+        tr.totals td {
+            font-weight: bold;
+            border-top: 2px solid #333;
+            padding-top: 8px;
+        }
+        .chart-section {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 16px;
+        }
+        .chart-box {
+            flex: 1;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        .chart-title { font-size: 10px; font-weight: bold; color: #555; margin-bottom: 8px; }
+        .chart-bar {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        .chart-bar-label { width: 100px; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .chart-bar-fill { height: 14px; background: #6366f1; border-radius: 2px; min-width: 2px; }
+        .chart-bar-value { margin-left: 6px; font-size: 10px; color: #555; }
+        .chart-pie-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        .chart-pie-color { width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; flex-shrink: 0; }
+        .chart-pie-label { font-size: 10px; }
+        .footer {
+            margin-top: 20px;
+            padding-top: 8px;
+            border-top: 1px solid #ddd;
+            font-size: 9px;
+            color: #888;
+            text-align: center;
+        }
+        @page {
+            size: A4;
+            margin: 15mm;
+            @bottom-center {
+                content: "Strona " counter(page) " z " counter(pages);
+                font-size: 8px;
+                color: #999;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Raport pracy</h1>
+    <div class="subtitle">
+        {% if project_names %}{{ project_names|join(', ') }}{% else %}Wszystkie projekty{% endif %}
+        {% if filters.date_from and filters.date_to %}
+        &middot; {{ filters.date_from }} &ndash; {{ filters.date_to }}
+        {% endif %}
+        &middot; Wygenerowano: {{ generated_at }}
+    </div>
+
+    {% if filters.project_ids or filters.user_ids or filters.sprint_ids %}
+    <div class="filters-box">
+        <strong>Filtry:</strong>
+        {% if project_names %}Projekty: {{ project_names|join(', ') }}{% endif %}
+        {% if filters.user_ids %}{% if project_names %}, {% endif %}Uzytkownik: {% for uid in filters.user_ids %}{{ user_lookup.get(uid|string, '?') }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+        {% if filters.sprint_ids %}{% if project_names or filters.user_ids %}, {% endif %}Sprint: {% for sid in filters.sprint_ids %}{{ sprint_lookup.get(sid|string, '?') }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="stats-grid">
+        <div class="stat-box">
+            <div class="stat-label">Zalogowane godziny</div>
+            <div class="stat-value">{{ "%.1f"|format(report.total_hours) }}h</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Liczba wpisow</div>
+            <div class="stat-value">{{ report.entry_count }}</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Srednia na wpis</div>
+            <div class="stat-value">{{ "%.1f"|format(avg_hours) }}h</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Osoby</div>
+            <div class="stat-value">{{ unique_users }}</div>
+        </div>
+    </div>
+
+    <h2>Wpisy czasu pracy</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Projekt</th>
+                <th>Ticket</th>
+                <th>Uzytkownik</th>
+                <th class="text-right">Godziny</th>
+                <th>Data</th>
+                <th>Opis</th>
+                <th style="width: 24px; text-align: center;">AI</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in report.entries %}
+            <tr>
+                <td>{{ project_lookup.get(entry.project_id|string, '?') }}</td>
+                <td>{{ ticket_key_lookup.get(entry.ticket_id|string, '?') }}</td>
+                <td>{{ user_lookup.get(entry.user_id|string, '?') }}</td>
+                <td class="text-right mono">{{ "%.1f"|format(entry.duration_minutes / 60) }}h</td>
+                <td>{{ entry.date_logged }}</td>
+                <td>{{ (entry.description or '')|truncate(80) }}</td>
+                <td style="text-align: center;">{% if entry.created_via_ai %}<span style="background: #7c3aed; color: white; padding: 1px 4px; border-radius: 3px; font-size: 8px;">AI</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+            <tr class="totals">
+                <td colspan="3">Razem</td>
+                <td class="text-right mono">{{ "%.1f"|format(report.total_hours) }}h</td>
+                <td colspan="3"></td>
+            </tr>
+        </tbody>
+    </table>
+
+    {% if sprint_chart_data or user_chart_data or project_chart_data %}
+    <h2>Wykresy</h2>
+    <div class="chart-section">
+        {% if sprint_chart_data %}
+        <div class="chart-box">
+            <div class="chart-title">Godziny na sprint</div>
+            {% set max_hours = sprint_chart_data|map(attribute='total_hours')|max or 1 %}
+            {% for item in sprint_chart_data %}
+            <div class="chart-bar">
+                <div class="chart-bar-label">{{ item.sprint_name }}</div>
+                <div class="chart-bar-fill" style="width: {{ (item.total_hours / max_hours * 150)|int }}px;"></div>
+                <div class="chart-bar-value">{{ "%.1f"|format(item.total_hours) }}h</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if user_chart_data %}
+        <div class="chart-box">
+            <div class="chart-title">Godziny na osobe</div>
+            {% set pie_colors = ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd', '#818cf8', '#6d28d9'] %}
+            {% for item in user_chart_data %}
+            <div class="chart-pie-item">
+                <div class="chart-pie-color" style="background: {{ pie_colors[loop.index0 % pie_colors|length] }};"></div>
+                <div class="chart-pie-label">{{ item.user_name }} — {{ "%.1f"|format(item.total_hours) }}h ({{ item.percentage }}%)</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if project_chart_data %}
+        <div class="chart-box">
+            <div class="chart-title">Godziny na projekt</div>
+            {% set max_hours = project_chart_data|map(attribute='total_hours')|max or 1 %}
+            {% for item in project_chart_data %}
+            <div class="chart-bar">
+                <div class="chart-bar-label">{{ item.project_name }}</div>
+                <div class="chart-bar-fill" style="width: {{ (item.total_hours / max_hours * 150)|int }}px;"></div>
+                <div class="chart-bar-value">{{ "%.1f"|format(item.total_hours) }}h</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="footer">
+        Monolynx &middot; {% if project_names %}{{ project_names|join(', ') }}{% else %}Wszystkie projekty{% endif %} &middot; Wygenerowano {{ generated_at }}
+    </div>
+</body>
+</html>

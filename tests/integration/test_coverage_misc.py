@@ -33,6 +33,7 @@ def _make_project(slug: str, name: str | None = None) -> Project:
     return Project(
         name=name or f"Project {slug}",
         slug=slug,
+        code="P" + secrets.token_hex(4).upper(),
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )
@@ -556,6 +557,7 @@ class TestProjectListCoverage:
         inactive_project = Project(
             name="Deleted Project",
             slug="cov-proj-inactive",
+            code="COV",
             api_key=secrets.token_urlsafe(32),
             is_active=False,
         )
@@ -604,7 +606,7 @@ class TestCreateProjectPostCoverage:
     async def test_unauthenticated_redirects_to_login(self, client, db_session):
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "Test", "slug": "test"},
+            data={"name": "Test", "slug": "test", "code": "TST"},
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -616,7 +618,7 @@ class TestCreateProjectPostCoverage:
 
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "Coverage Projekt", "slug": "cov-proj-new"},
+            data={"name": "Coverage Projekt", "slug": "cov-proj-new", "code": "COV"},
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -635,7 +637,7 @@ class TestCreateProjectPostCoverage:
 
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "", "slug": "cov-proj-noname"},
+            data={"name": "", "slug": "cov-proj-noname", "code": "CPN"},
         )
         assert resp.status_code == 200
         assert "wymagane" in resp.text
@@ -646,7 +648,7 @@ class TestCreateProjectPostCoverage:
 
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "Has Name", "slug": ""},
+            data={"name": "Has Name", "slug": "", "code": "HAS"},
         )
         assert resp.status_code == 200
         assert "wymagane" in resp.text
@@ -657,7 +659,7 @@ class TestCreateProjectPostCoverage:
 
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "", "slug": ""},
+            data={"name": "", "slug": "", "code": ""},
         )
         assert resp.status_code == 200
         assert "wymagane" in resp.text
@@ -668,7 +670,7 @@ class TestCreateProjectPostCoverage:
 
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "Test", "slug": "MyProject"},
+            data={"name": "Test", "slug": "MyProject", "code": "TST"},
         )
         assert resp.status_code == 200
         assert "male litery" in resp.text
@@ -679,7 +681,7 @@ class TestCreateProjectPostCoverage:
 
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "Test", "slug": "my project"},
+            data={"name": "Test", "slug": "my project", "code": "TST"},
         )
         assert resp.status_code == 200
         assert "male litery" in resp.text
@@ -690,7 +692,7 @@ class TestCreateProjectPostCoverage:
 
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "Test", "slug": "my_project!"},
+            data={"name": "Test", "slug": "my_project!", "code": "TST"},
         )
         assert resp.status_code == 200
         assert "male litery" in resp.text
@@ -702,14 +704,14 @@ class TestCreateProjectPostCoverage:
         # Pierwszy projekt
         await client.post(
             "/dashboard/create-project",
-            data={"name": "First", "slug": "cov-dup-slug"},
+            data={"name": "First", "slug": "cov-dup-slug", "code": "CDS"},
             follow_redirects=False,
         )
 
         # Proba z tym samym slugiem
         resp = await client.post(
             "/dashboard/create-project",
-            data={"name": "Second", "slug": "cov-dup-slug"},
+            data={"name": "Second", "slug": "cov-dup-slug", "code": "CD2"},
         )
         assert resp.status_code == 200
         assert "juz istnieje" in resp.text
