@@ -15,6 +15,7 @@ class TestBacklog:
         project = Project(
             name="BL Auth",
             slug="bl-auth",
+            code="BLA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -32,6 +33,7 @@ class TestBacklog:
         project = Project(
             name="BL Empty",
             slug="bl-empty",
+            code="BLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -47,6 +49,7 @@ class TestBacklog:
         project = Project(
             name="BL Show",
             slug="bl-show",
+            code="BLS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -55,6 +58,7 @@ class TestBacklog:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Test ticket w backlogu",
             status="backlog",
             priority="high",
@@ -74,6 +78,7 @@ class TestTicketCreate:
         project = Project(
             name="TC Form",
             slug="tc-form",
+            code="TCF",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -89,6 +94,7 @@ class TestTicketCreate:
         project = Project(
             name="TC Succ",
             slug="tc-succ",
+            code="TCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -108,6 +114,7 @@ class TestTicketCreate:
         project = Project(
             name="TC Empty",
             slug="tc-empty",
+            code="TCE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -129,6 +136,7 @@ class TestTicketDetail:
         project = Project(
             name="TD Det",
             slug="td-det",
+            code="TDD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -137,6 +145,7 @@ class TestTicketDetail:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Detale ticketa",
             description="Opis testowy",
             status="backlog",
@@ -156,6 +165,7 @@ class TestTicketDetail:
         project = Project(
             name="TD NF",
             slug="td-nf",
+            code="TDN",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -176,6 +186,7 @@ class TestTicketEdit:
         project = Project(
             name="TE Form",
             slug="te-form",
+            code="TEF",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -184,6 +195,7 @@ class TestTicketEdit:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Edytuj mnie",
             status="backlog",
             priority="medium",
@@ -201,6 +213,7 @@ class TestTicketEdit:
         project = Project(
             name="TE Succ",
             slug="te-succ",
+            code="TES",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -209,6 +222,7 @@ class TestTicketEdit:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Stary tytul",
             status="backlog",
             priority="medium",
@@ -231,6 +245,7 @@ class TestTicketDelete:
         project = Project(
             name="TD Del",
             slug="td-del",
+            code="TDD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -239,6 +254,7 @@ class TestTicketDelete:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Do usuniecia",
             status="backlog",
             priority="low",
@@ -261,13 +277,14 @@ class TestTicketStatusUpdate:
         project = Project(
             name="TS Patch",
             slug="ts-patch",
+            code="TSP",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(project_id=project.id, title="Status test", status="todo", priority="medium")
+        ticket = Ticket(project_id=project.id, number=1, title="Status test", status="todo", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -282,13 +299,14 @@ class TestTicketStatusUpdate:
         project = Project(
             name="TS Inv",
             slug="ts-inv",
+            code="TSI",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(project_id=project.id, title="Inv status", status="todo", priority="medium")
+        ticket = Ticket(project_id=project.id, number=1, title="Inv status", status="todo", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 

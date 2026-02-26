@@ -19,6 +19,7 @@ async def _create_project(db_session, slug=None):
     project = Project(
         name=f"Sprint Svc {slug}",
         slug=slug,
+        code="P" + secrets.token_hex(4).upper(),
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )
@@ -169,6 +170,7 @@ class TestCompleteSprint:
 
         ticket_done = Ticket(
             project_id=project.id,
+            number=1,
             sprint_id=sprint.id,
             title="Zrobiony ticket",
             status="done",
@@ -176,6 +178,7 @@ class TestCompleteSprint:
         )
         ticket_todo = Ticket(
             project_id=project.id,
+            number=2,
             sprint_id=sprint.id,
             title="Todo ticket",
             status="todo",
@@ -183,6 +186,7 @@ class TestCompleteSprint:
         )
         ticket_in_progress = Ticket(
             project_id=project.id,
+            number=3,
             sprint_id=sprint.id,
             title="W trakcie ticket",
             status="in_progress",

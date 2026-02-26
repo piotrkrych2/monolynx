@@ -24,6 +24,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.basicConfig(level=settings.LOG_LEVEL.upper())
     logger.info("Monolynx starting (env=%s)", settings.ENVIRONMENT)
 
+    try:
+        from monolynx.services.minio_client import ensure_bucket
+
+        ensure_bucket()
+    except Exception:
+        logger.exception("Nie udalo sie zainicjalizowac MinIO bucket")
+
     checker_task = None
     if settings.ENABLE_MONITOR_LOOP:
         from monolynx.database import async_session_factory

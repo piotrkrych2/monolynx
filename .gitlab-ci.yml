@@ -43,7 +43,7 @@ clean-code:
     - docker run -d --name db --network test-net
         -e POSTGRES_USER=sentry
         -e POSTGRES_PASSWORD=sentry_ci
-        postgres:16-alpine
+        pgvector/pgvector:pg16
     - sleep 5
     - docker pull "$CI_REGISTRY_IMAGE:dev"
     - TEST_EXIT=0

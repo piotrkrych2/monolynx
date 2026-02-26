@@ -30,6 +30,7 @@ def _make_project(slug: str, name: str | None = None) -> Project:
     return Project(
         name=name or f"Project {slug}",
         slug=slug,
+        code="P" + secrets.token_hex(4).upper(),
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )

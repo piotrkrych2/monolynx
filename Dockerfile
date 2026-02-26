@@ -5,6 +5,11 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+    libcairo2 libgdk-pixbuf-2.0-0 libffi-dev libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements/base.txt requirements/base.txt
 RUN pip install --no-cache-dir --prefix=/install -r requirements/base.txt
 
@@ -18,6 +23,11 @@ RUN pip install --no-cache-dir --prefix=/install .
 FROM python:3.12-slim AS dev
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+    libcairo2 libgdk-pixbuf-2.0-0 libffi-dev libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements/dev.txt requirements/dev.txt
 COPY requirements/base.txt requirements/base.txt
@@ -33,6 +43,11 @@ RUN pip install --no-cache-dir -e ".[dev]"
 # Stage 2: Runtime -- minimalny obraz produkcyjny
 # ============================================================
 FROM python:3.12-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+    libcairo2 libgdk-pixbuf-2.0-0 libffi-dev libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid 1000 --no-create-home appuser

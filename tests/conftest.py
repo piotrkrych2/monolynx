@@ -42,6 +42,7 @@ async def engine():
 
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     yield engine
     async with engine.begin() as conn:
@@ -80,6 +81,7 @@ async def test_project(db_session):
     project = Project(
         name="Test Project",
         slug="test-project",
+        code="TST",
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )

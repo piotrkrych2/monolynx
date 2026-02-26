@@ -25,14 +25,15 @@ class TestBacklogFilters:
         project = Project(
             name="BF Status",
             slug="bf-status",
+            code="BFS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        t1 = Ticket(project_id=project.id, title="Ticket TODO", status="todo", priority="medium")
-        t2 = Ticket(project_id=project.id, title="Ticket Backlog", status="backlog", priority="medium")
+        t1 = Ticket(project_id=project.id, number=1, title="Ticket TODO", status="todo", priority="medium")
+        t2 = Ticket(project_id=project.id, number=2, title="Ticket Backlog", status="backlog", priority="medium")
         db_session.add_all([t1, t2])
         await db_session.flush()
 
@@ -46,14 +47,15 @@ class TestBacklogFilters:
         project = Project(
             name="BF Prio",
             slug="bf-prio",
+            code="BFP",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        t_high = Ticket(project_id=project.id, title="High prio ticket", status="backlog", priority="high")
-        t_low = Ticket(project_id=project.id, title="Low prio ticket", status="backlog", priority="low")
+        t_high = Ticket(project_id=project.id, number=1, title="High prio ticket", status="backlog", priority="high")
+        t_low = Ticket(project_id=project.id, number=2, title="Low prio ticket", status="backlog", priority="low")
         db_session.add_all([t_high, t_low])
         await db_session.flush()
 
@@ -67,14 +69,15 @@ class TestBacklogFilters:
         project = Project(
             name="BF Search",
             slug="bf-search",
+            code="BFS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        t1 = Ticket(project_id=project.id, title="Napraw blad logowania", status="backlog", priority="medium")
-        t2 = Ticket(project_id=project.id, title="Dodaj eksport CSV", status="backlog", priority="medium")
+        t1 = Ticket(project_id=project.id, number=1, title="Napraw blad logowania", status="backlog", priority="medium")
+        t2 = Ticket(project_id=project.id, number=2, title="Dodaj eksport CSV", status="backlog", priority="medium")
         db_session.add_all([t1, t2])
         await db_session.flush()
 
@@ -88,6 +91,7 @@ class TestBacklogFilters:
         project = Project(
             name="BF Assignee",
             slug="bf-assignee",
+            code="BFA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -104,6 +108,7 @@ class TestBacklogFilters:
 
         t_assigned = Ticket(
             project_id=project.id,
+            number=1,
             title="Przypisany ticket",
             status="backlog",
             priority="medium",
@@ -111,6 +116,7 @@ class TestBacklogFilters:
         )
         t_unassigned = Ticket(
             project_id=project.id,
+            number=2,
             title="Nieprzypisany ticket",
             status="backlog",
             priority="medium",
@@ -127,6 +133,7 @@ class TestBacklogFilters:
         project = Project(
             name="BF Sprint",
             slug="bf-sprint",
+            code="BFS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -144,6 +151,7 @@ class TestBacklogFilters:
 
         t_in_sprint = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket w sprincie",
             status="todo",
             priority="medium",
@@ -151,6 +159,7 @@ class TestBacklogFilters:
         )
         t_no_sprint = Ticket(
             project_id=project.id,
+            number=2,
             title="Ticket bez sprintu",
             status="backlog",
             priority="medium",
@@ -168,6 +177,7 @@ class TestBacklogFilters:
         project = Project(
             name="BF CompSpr",
             slug="bf-compspr",
+            code="BFC",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -185,6 +195,7 @@ class TestBacklogFilters:
 
         t_completed = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket z zakonczonym sprintem",
             status="done",
             priority="medium",
@@ -209,6 +220,7 @@ class TestBacklogFilters:
         project = Project(
             name="BF Page",
             slug="bf-page",
+            code="BFP",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -219,6 +231,7 @@ class TestBacklogFilters:
         for i in range(25):
             t = Ticket(
                 project_id=project.id,
+                number=i + 1,
                 title=f"Ticket paginacji {i:03d}",
                 status="backlog",
                 priority="medium",
@@ -241,6 +254,7 @@ class TestBacklogFilters:
         project = Project(
             name="BF InvPage",
             slug="bf-invpage",
+            code="BFI",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -255,14 +269,15 @@ class TestBacklogFilters:
         project = Project(
             name="BF Combo",
             slug="bf-combo",
+            code="BFC",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        t1 = Ticket(project_id=project.id, title="Combo match", status="todo", priority="high")
-        t2 = Ticket(project_id=project.id, title="Combo miss", status="backlog", priority="low")
+        t1 = Ticket(project_id=project.id, number=1, title="Combo match", status="todo", priority="high")
+        t2 = Ticket(project_id=project.id, number=2, title="Combo miss", status="backlog", priority="low")
         db_session.add_all([t1, t2])
         await db_session.flush()
 
@@ -286,6 +301,7 @@ class TestBoardColumns:
         project = Project(
             name="BC AllCol",
             slug="bc-allcol",
+            code="BCA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -302,10 +318,10 @@ class TestBoardColumns:
         await db_session.flush()
 
         tickets = [
-            Ticket(project_id=project.id, sprint_id=sprint.id, title="Kolumna TODO", status="todo", priority="medium"),
-            Ticket(project_id=project.id, sprint_id=sprint.id, title="Kolumna INPROG", status="in_progress", priority="high"),
-            Ticket(project_id=project.id, sprint_id=sprint.id, title="Kolumna REVIEW", status="in_review", priority="low"),
-            Ticket(project_id=project.id, sprint_id=sprint.id, title="Kolumna DONE", status="done", priority="medium", story_points=3),
+            Ticket(project_id=project.id, number=1, sprint_id=sprint.id, title="Kolumna TODO", status="todo", priority="medium"),
+            Ticket(project_id=project.id, number=2, sprint_id=sprint.id, title="Kolumna INPROG", status="in_progress", priority="high"),
+            Ticket(project_id=project.id, number=3, sprint_id=sprint.id, title="Kolumna REVIEW", status="in_review", priority="low"),
+            Ticket(project_id=project.id, number=4, sprint_id=sprint.id, title="Kolumna DONE", status="done", priority="medium", story_points=3),
         ]
         db_session.add_all(tickets)
         await db_session.flush()
@@ -322,6 +338,7 @@ class TestBoardColumns:
         project = Project(
             name="BC SP",
             slug="bc-sp",
+            code="BCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -337,8 +354,8 @@ class TestBoardColumns:
         db_session.add(sprint)
         await db_session.flush()
 
-        t1 = Ticket(project_id=project.id, sprint_id=sprint.id, title="SP ticket", status="todo", priority="medium", story_points=5)
-        t2 = Ticket(project_id=project.id, sprint_id=sprint.id, title="SP done", status="done", priority="low", story_points=3)
+        t1 = Ticket(project_id=project.id, number=1, sprint_id=sprint.id, title="SP ticket", status="todo", priority="medium", story_points=5)
+        t2 = Ticket(project_id=project.id, number=2, sprint_id=sprint.id, title="SP done", status="done", priority="low", story_points=3)
         db_session.add_all([t1, t2])
         await db_session.flush()
 
@@ -366,6 +383,7 @@ class TestTicketComments:
         project = Project(
             name="TC Comment",
             slug="tc-comment",
+            code="TCC",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -374,6 +392,7 @@ class TestTicketComments:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket z komentarzem",
             status="backlog",
             priority="medium",
@@ -394,6 +413,7 @@ class TestTicketComments:
         project = Project(
             name="TC EmptyC",
             slug="tc-emptyc",
+            code="TCE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -402,6 +422,7 @@ class TestTicketComments:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket pusty komentarz",
             status="backlog",
             priority="medium",
@@ -422,6 +443,7 @@ class TestTicketComments:
         project = Project(
             name="TC WhitespC",
             slug="tc-whitspc",
+            code="TCW",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -430,6 +452,7 @@ class TestTicketComments:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket whitespace komentarz",
             status="backlog",
             priority="medium",
@@ -450,6 +473,7 @@ class TestTicketComments:
         project = Project(
             name="TC CNoT",
             slug="tc-cnot",
+            code="TCC",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -468,6 +492,7 @@ class TestTicketComments:
         project = Project(
             name="TC CAuth",
             slug="tc-cauth",
+            code="TCC",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -476,6 +501,7 @@ class TestTicketComments:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket auth komentarz",
             status="backlog",
             priority="medium",
@@ -514,6 +540,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU Assign",
             slug="tsu-assign",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -531,6 +558,7 @@ class TestTicketSprintUpdate:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Do przypisania",
             status="backlog",
             priority="medium",
@@ -557,6 +585,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU Remove",
             slug="tsu-remove",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -574,6 +603,7 @@ class TestTicketSprintUpdate:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Do usuniecia ze sprintu",
             status="todo",
             priority="medium",
@@ -601,6 +631,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU NoChg",
             slug="tsu-nochg",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -618,6 +649,7 @@ class TestTicketSprintUpdate:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="In progress ticket",
             status="in_progress",
             priority="medium",
@@ -643,6 +675,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU NoChg2",
             slug="tsu-nochg2",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -660,6 +693,7 @@ class TestTicketSprintUpdate:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Done ticket usun sprint",
             status="done",
             priority="medium",
@@ -687,6 +721,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU InvSpr",
             slug="tsu-invspr",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -695,6 +730,7 @@ class TestTicketSprintUpdate:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket invalid sprint",
             status="backlog",
             priority="medium",
@@ -713,6 +749,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU CompSpr",
             slug="tsu-compspr",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -730,6 +767,7 @@ class TestTicketSprintUpdate:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket do zakonczoneog sprintu",
             status="backlog",
             priority="medium",
@@ -749,6 +787,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU Auth",
             slug="tsu-auth",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -757,6 +796,7 @@ class TestTicketSprintUpdate:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket auth sprint",
             status="backlog",
             priority="medium",
@@ -774,6 +814,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU TNF",
             slug="tsu-tnf",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -801,6 +842,7 @@ class TestTicketSprintUpdate:
         project = Project(
             name="TSU NoSpr",
             slug="tsu-nospr",
+            code="TSU",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -809,6 +851,7 @@ class TestTicketSprintUpdate:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket nospr",
             status="backlog",
             priority="medium",
@@ -838,6 +881,7 @@ class TestSprintListExtended:
         project = Project(
             name="SLE All",
             slug="sle-all",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -867,6 +911,7 @@ class TestSprintListExtended:
         project = Project(
             name="SLE Filt",
             slug="sle-filt",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -888,6 +933,7 @@ class TestSprintListExtended:
         project = Project(
             name="SLE Page",
             slug="sle-page",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -917,6 +963,7 @@ class TestSprintListExtended:
         project = Project(
             name="SLE InvPg",
             slug="sle-invpg",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -931,6 +978,7 @@ class TestSprintListExtended:
         project = Project(
             name="SLE Auth",
             slug="sle-auth",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -963,6 +1011,7 @@ class TestSprintCreateExtended:
         project = Project(
             name="SCE NoDate",
             slug="sce-nodate",
+            code="SCE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -981,6 +1030,7 @@ class TestSprintCreateExtended:
         project = Project(
             name="SCE EndDate",
             slug="sce-enddate",
+            code="SCE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1005,6 +1055,7 @@ class TestSprintCreateExtended:
         project = Project(
             name="SCE NoGoal",
             slug="sce-nogoal",
+            code="SCE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1027,6 +1078,7 @@ class TestSprintCreateExtended:
         project = Project(
             name="SCE Auth",
             slug="sce-auth",
+            code="SCE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1063,6 +1115,7 @@ class TestSprintLifecycleExtended:
         project = Project(
             name="SLE StartNF",
             slug="sle-startnf",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1082,6 +1135,7 @@ class TestSprintLifecycleExtended:
         project = Project(
             name="SLE StartAct",
             slug="sle-startact",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1109,6 +1163,7 @@ class TestSprintLifecycleExtended:
         project = Project(
             name="SLE ComplNF",
             slug="sle-complnf",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1127,6 +1182,7 @@ class TestSprintLifecycleExtended:
         project = Project(
             name="SLE ComplPl",
             slug="sle-complpl",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1153,6 +1209,7 @@ class TestSprintLifecycleExtended:
         project = Project(
             name="SLE SAuth",
             slug="sle-sauth",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1179,6 +1236,7 @@ class TestSprintLifecycleExtended:
         project = Project(
             name="SLE CAuth",
             slug="sle-cauth",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1236,6 +1294,7 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TCAuth",
             slug="ec-tcauth",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1266,6 +1325,7 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TDAuth",
             slug="ec-tdauth",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1274,6 +1334,7 @@ class TestScrumEdgeCases:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Auth detail",
             status="backlog",
             priority="medium",
@@ -1298,13 +1359,14 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TEAuth",
             slug="ec-teauth",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(project_id=project.id, title="Auth edit", status="backlog", priority="medium")
+        ticket = Ticket(project_id=project.id, number=1, title="Auth edit", status="backlog", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1325,6 +1387,7 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TENotF",
             slug="ec-tenotf",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1340,13 +1403,14 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TEPAuth",
             slug="ec-tepauth",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(project_id=project.id, title="Auth edit post", status="backlog", priority="medium")
+        ticket = Ticket(project_id=project.id, number=1, title="Auth edit post", status="backlog", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1371,6 +1435,7 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TEPNotF",
             slug="ec-tepnotf",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1389,13 +1454,14 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TEPNoT",
             slug="ec-tepnot",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(project_id=project.id, title="Edytuj tytul", status="backlog", priority="medium")
+        ticket = Ticket(project_id=project.id, number=1, title="Edytuj tytul", status="backlog", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1412,13 +1478,14 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TDlAuth",
             slug="ec-tdlauth",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(project_id=project.id, title="Auth delete", status="backlog", priority="medium")
+        ticket = Ticket(project_id=project.id, number=1, title="Auth delete", status="backlog", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1441,6 +1508,7 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TDlNotF",
             slug="ec-tdlnotf",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1458,13 +1526,14 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TSUAuth",
             slug="ec-tsuauth",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
         db_session.add(project)
         await db_session.flush()
 
-        ticket = Ticket(project_id=project.id, title="Auth status", status="todo", priority="medium")
+        ticket = Ticket(project_id=project.id, number=1, title="Auth status", status="todo", priority="medium")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1487,6 +1556,7 @@ class TestScrumEdgeCases:
         project = Project(
             name="EC TSUNotF",
             slug="ec-tsunotf",
+            code="ECT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1515,6 +1585,7 @@ class TestTicketCreateWithSprint:
         project = Project(
             name="TCS Todo",
             slug="tcs-todo",
+            code="TCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1547,6 +1618,7 @@ class TestTicketCreateWithSprint:
         project = Project(
             name="TCS Assignee",
             slug="tcs-assignee",
+            code="TCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1576,6 +1648,7 @@ class TestTicketCreateWithSprint:
         project = Project(
             name="TCS InvPrio",
             slug="tcs-invprio",
+            code="TCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -1594,6 +1667,7 @@ class TestTicketCreateWithSprint:
         project = Project(
             name="TCS Auth",
             slug="tcs-auth",
+            code="TCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )

@@ -291,6 +291,7 @@ class TestUserEditForm:
         project = Project(
             name="Avail Proj",
             slug="avail-proj-ef",
+            code="AVA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -655,6 +656,7 @@ class TestUserProjectAdd:
         project = Project(
             name="PA Succ",
             slug="pa-succ",
+            code="PAS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -691,6 +693,7 @@ class TestUserProjectAdd:
         project = Project(
             name="PA Admin",
             slug="pa-admin",
+            code="PAA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -725,6 +728,7 @@ class TestUserProjectAdd:
         project = Project(
             name="PA BadRole",
             slug="pa-badrole",
+            code="PAB",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -759,6 +763,7 @@ class TestUserProjectAdd:
         project = Project(
             name="PA Dup",
             slug="pa-dup",
+            code="PAD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -839,6 +844,7 @@ class TestUserProjectRemove:
         project = Project(
             name="PR Succ",
             slug="pr-succ",
+            code="PRS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -882,6 +888,7 @@ class TestUserProjectRemove:
         project = Project(
             name="PR Wrong",
             slug="pr-wrong",
+            code="PRW",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )

@@ -17,6 +17,7 @@ class TestSprintList:
         project = Project(
             name="SL Empty",
             slug="sl-empty",
+            code="SLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -32,6 +33,7 @@ class TestSprintList:
         project = Project(
             name="SL Show",
             slug="sl-show",
+            code="SLS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -59,6 +61,7 @@ class TestSprintCreate:
         project = Project(
             name="SC Succ",
             slug="sc-succ",
+            code="SCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -82,6 +85,7 @@ class TestSprintCreate:
         project = Project(
             name="SC Miss",
             slug="sc-miss",
+            code="SCM",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -103,6 +107,7 @@ class TestSprintLifecycle:
         project = Project(
             name="SL Start",
             slug="sl-start",
+            code="SLS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -130,6 +135,7 @@ class TestSprintLifecycle:
         project = Project(
             name="SL Two",
             slug="sl-two",
+            code="SLT",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -162,6 +168,7 @@ class TestSprintLifecycle:
         project = Project(
             name="SL Compl",
             slug="sl-compl",
+            code="SLC",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -179,6 +186,7 @@ class TestSprintLifecycle:
 
         ticket_done = Ticket(
             project_id=project.id,
+            number=1,
             sprint_id=sprint.id,
             title="Zrobiony",
             status="done",
@@ -186,6 +194,7 @@ class TestSprintLifecycle:
         )
         ticket_in_progress = Ticket(
             project_id=project.id,
+            number=2,
             sprint_id=sprint.id,
             title="Niedokonczony",
             status="in_progress",

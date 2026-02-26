@@ -1,4 +1,4 @@
-"""Testy jednostkowe MCP Server -- narzedzia Scrum, 500ki, Monitoring."""
+"""Testy jednostkowe MCP Server -- narzedzia Scrum, 500ki, Monitoring, Wiki."""
 
 import secrets
 import uuid
@@ -29,11 +29,18 @@ from monolynx.mcp_server import (
     list_projects,
     list_sprints,
     list_tickets,
+    log_time,
     mcp,
     start_sprint,
     update_issue_status,
     update_ticket,
 )
+from monolynx.mcp_server import create_wiki_page as mcp_create_wiki_page
+from monolynx.mcp_server import delete_wiki_page as mcp_delete_wiki_page
+from monolynx.mcp_server import get_wiki_page as mcp_get_wiki_page
+from monolynx.mcp_server import list_wiki_pages as mcp_list_wiki_pages
+from monolynx.mcp_server import search_wiki as mcp_search_wiki
+from monolynx.mcp_server import update_wiki_page as mcp_update_wiki_page
 from monolynx.models.event import Event
 from monolynx.models.issue import Issue
 from monolynx.models.monitor import Monitor
@@ -44,6 +51,7 @@ from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
+from monolynx.models.wiki_page import WikiPage
 from monolynx.services.auth import hash_password
 
 # ---------------------------------------------------------------------------
@@ -99,9 +107,11 @@ async def mcp_user(db_session):
 @pytest.fixture
 async def mcp_project(db_session):
     """Testowy projekt."""
+    _slug = f"mcp-unit-{uuid.uuid4().hex[:8]}"
     project = Project(
         name="MCP Unit Project",
-        slug=f"mcp-unit-{uuid.uuid4().hex[:8]}",
+        slug=_slug,
+        code=_slug.replace("-", "").upper()[:5],
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )
@@ -178,6 +188,13 @@ EXPECTED_TOOLS = [
     "complete_sprint",
     "list_comments",
     "add_comment",
+    "log_time",
+    "list_wiki_pages",
+    "get_wiki_page",
+    "create_wiki_page",
+    "update_wiki_page",
+    "delete_wiki_page",
+    "search_wiki",
 ]
 
 
@@ -186,12 +203,12 @@ class TestMcpToolRegistration:
     """Weryfikacja ze wszystkie narzedzia MCP sa poprawnie zarejestrowane."""
 
     async def test_list_tools_returns_all_tools(self):
-        """list_tools() zwraca wszystkie 20 narzedzi."""
+        """list_tools() zwraca wszystkie 27 narzedzi."""
         tools = await mcp.list_tools()
         tool_names = [t.name for t in tools]
-        assert len(tools) == len(EXPECTED_TOOLS)
         for name in EXPECTED_TOOLS:
             assert name in tool_names, f"Brak narzedzia: {name}"
+        assert len(tools) == len(EXPECTED_TOOLS)
 
     async def test_all_tools_have_description(self):
         """Kazde narzedzie ma opis (description)."""
@@ -335,9 +352,11 @@ class TestGetUserAndProject:
 
     async def test_inactive_project_not_found(self, db_session, mcp_user, mock_factory, mock_verify):
         """Projekt z is_active=False nie powinien byc dostepny."""
+        _slug = f"inactive-{uuid.uuid4().hex[:8]}"
         project = Project(
             name="Inactive Project",
-            slug=f"inactive-{uuid.uuid4().hex[:8]}",
+            slug=_slug,
+            code=_slug.replace("-", "").upper()[:5],
             api_key=secrets.token_urlsafe(32),
             is_active=False,
         )
@@ -384,6 +403,7 @@ class TestListTickets:
     async def test_returns_tickets(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Test ticket",
             status="backlog",
             priority="medium",
@@ -404,10 +424,11 @@ class TestListTickets:
         assert result[1]["_meta"]["total"] == 1
 
     async def test_filter_by_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        for status in ("backlog", "todo", "done"):
+        for i, status in enumerate(("backlog", "todo", "done"), start=1):
             db_session.add(
                 Ticket(
                     project_id=mcp_project.id,
+                    number=i,
                     title=f"Ticket {status}",
                     status=status,
                 )
@@ -424,8 +445,8 @@ class TestListTickets:
         assert result[0]["status"] == "done"
 
     async def test_filter_by_priority(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        db_session.add(Ticket(project_id=mcp_project.id, title="High", priority="high"))
-        db_session.add(Ticket(project_id=mcp_project.id, title="Low", priority="low"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="High", priority="high"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Low", priority="low"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -438,8 +459,8 @@ class TestListTickets:
         assert result[0]["priority"] == "high"
 
     async def test_filter_by_search(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        db_session.add(Ticket(project_id=mcp_project.id, title="Login bug"))
-        db_session.add(Ticket(project_id=mcp_project.id, title="Dashboard feature"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Login bug"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Dashboard feature"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -460,8 +481,8 @@ class TestListTickets:
         db_session.add(sprint)
         await db_session.flush()
 
-        db_session.add(Ticket(project_id=mcp_project.id, title="In sprint", sprint_id=sprint.id))
-        db_session.add(Ticket(project_id=mcp_project.id, title="No sprint"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="In sprint", sprint_id=sprint.id))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="No sprint"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -475,7 +496,7 @@ class TestListTickets:
 
     async def test_invalid_status_ignored(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         """Nieprawidlowy status jest ignorowany -- zwraca wszystkie tickety."""
-        db_session.add(Ticket(project_id=mcp_project.id, title="Any ticket"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Any ticket"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -497,6 +518,7 @@ class TestGetTicket:
     async def test_returns_ticket_details(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Detail ticket",
             description="Some description",
             status="todo",
@@ -529,7 +551,7 @@ class TestGetTicket:
             await get_ticket(ctx, mcp_project.slug, str(uuid.uuid4()))
 
     async def test_ticket_with_comments(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Commented ticket")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Commented ticket")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -554,6 +576,7 @@ class TestGetTicket:
     async def test_ticket_with_assignee(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Assigned ticket",
             assignee_id=mcp_user.id,
         )
@@ -677,7 +700,7 @@ class TestCreateTicket:
 @pytest.mark.unit
 class TestUpdateTicket:
     async def test_update_title(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Old title")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Old title")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -690,7 +713,7 @@ class TestUpdateTicket:
         assert result["title"] == "New title"
 
     async def test_update_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Status ticket", status="backlog")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Status ticket", status="backlog")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -712,7 +735,7 @@ class TestUpdateTicket:
             await update_ticket(ctx, mcp_project.slug, str(uuid.uuid4()), title="X")
 
     async def test_update_empty_title_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Keep me")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Keep me")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -725,7 +748,7 @@ class TestUpdateTicket:
             await update_ticket(ctx, mcp_project.slug, str(ticket.id), title="   ")
 
     async def test_update_invalid_status_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Status err")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Status err")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -738,7 +761,7 @@ class TestUpdateTicket:
             await update_ticket(ctx, mcp_project.slug, str(ticket.id), status="nonexistent")
 
     async def test_update_invalid_priority_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Priority err")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Priority err")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -756,7 +779,7 @@ class TestUpdateTicket:
         db_session.add(sprint)
         await db_session.flush()
 
-        ticket = Ticket(project_id=mcp_project.id, title="In sprint", sprint_id=sprint.id)
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="In sprint", sprint_id=sprint.id)
         db_session.add(ticket)
         await db_session.flush()
 
@@ -772,6 +795,7 @@ class TestUpdateTicket:
         """assignee_email="" czyści assignee."""
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Assigned",
             assignee_id=mcp_user.id,
         )
@@ -787,7 +811,7 @@ class TestUpdateTicket:
         assert "id" in result
 
     async def test_update_story_points(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="SP ticket")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="SP ticket")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -808,7 +832,7 @@ class TestUpdateTicket:
 @pytest.mark.unit
 class TestDeleteTicket:
     async def test_delete_existing(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Delete me")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Delete me")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -859,6 +883,7 @@ class TestListSprints:
 
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Sprint ticket",
             sprint_id=sprint.id,
             story_points=5,
@@ -920,6 +945,7 @@ class TestGetSprint:
 
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Sprint ticket",
             sprint_id=sprint.id,
             priority="high",
@@ -1164,12 +1190,14 @@ class TestCompleteSprint:
 
         done_ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Done ticket",
             sprint_id=sprint.id,
             status="done",
         )
         undone_ticket = Ticket(
             project_id=mcp_project.id,
+            number=2,
             title="Undone ticket",
             sprint_id=sprint.id,
             status="in_progress",
@@ -1203,7 +1231,7 @@ class TestCompleteSprint:
 @pytest.mark.unit
 class TestListComments:
     async def test_empty_comments(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="No comments")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="No comments")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1216,7 +1244,7 @@ class TestListComments:
         assert result == []
 
     async def test_returns_comments(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="With comments")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="With comments")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1258,7 +1286,7 @@ class TestListComments:
 @pytest.mark.unit
 class TestAddComment:
     async def test_add_comment(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Comment target")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Comment target")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1273,7 +1301,7 @@ class TestAddComment:
         assert "id" in result
 
     async def test_add_empty_comment_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Empty comment target")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Empty comment target")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1295,7 +1323,7 @@ class TestAddComment:
             await add_comment(ctx, mcp_project.slug, str(uuid.uuid4()), "Lost comment")
 
     async def test_add_comment_strips_whitespace(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Strip target")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Strip target")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1328,9 +1356,11 @@ class TestListProjects:
         assert result[0]["role"] == "owner"
 
     async def test_excludes_inactive_projects(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        _slug = f"inactive-{uuid.uuid4().hex[:8]}"
         inactive = Project(
             name="Inactive",
-            slug=f"inactive-{uuid.uuid4().hex[:8]}",
+            slug=_slug,
+            code=_slug.replace("-", "").upper()[:5],
             api_key=secrets.token_urlsafe(32),
             is_active=False,
         )
@@ -1601,8 +1631,8 @@ class TestGetBoard:
         db_session.add(sprint)
         await db_session.flush()
 
-        for status in ("todo", "in_progress", "done"):
-            db_session.add(Ticket(project_id=mcp_project.id, title=f"Ticket {status}", sprint_id=sprint.id, status=status))
+        for i, status in enumerate(("todo", "in_progress", "done"), start=1):
+            db_session.add(Ticket(project_id=mcp_project.id, number=i, title=f"Ticket {status}", sprint_id=sprint.id, status=status))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -1653,9 +1683,9 @@ class TestGetProjectSummary:
         assert result["issues_unresolved"] == 2
 
     async def test_counts_backlog_tickets(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        db_session.add(Ticket(project_id=mcp_project.id, title="Backlog 1", status="backlog"))
-        db_session.add(Ticket(project_id=mcp_project.id, title="Backlog 2", status="backlog"))
-        db_session.add(Ticket(project_id=mcp_project.id, title="In progress", status="in_progress"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Backlog 1", status="backlog"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Backlog 2", status="backlog"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=3, title="In progress", status="in_progress"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -1665,3 +1695,359 @@ class TestGetProjectSummary:
         ):
             result = await get_project_summary(ctx, mcp_project.slug)
         assert result["backlog_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# log_time
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestLogTime:
+    async def test_log_time_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Time ticket")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await log_time(ctx, mcp_project.slug, str(ticket.id), 90, "2026-02-20", "Praca dev")
+        assert result["duration_minutes"] == 90
+        assert result["created_via_ai"] is True
+        assert result["description"] == "Praca dev"
+        assert "id" in result
+
+    async def test_log_time_zero_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="wiekszy niz 0"),
+        ):
+            await log_time(ctx, mcp_project.slug, str(uuid.uuid4()), 0, "2026-02-20")
+
+    async def test_log_time_negative_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="wiekszy niz 0"),
+        ):
+            await log_time(ctx, mcp_project.slug, str(uuid.uuid4()), -10, "2026-02-20")
+
+    async def test_log_time_ticket_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Ticket nie istnieje"),
+        ):
+            await log_time(ctx, mcp_project.slug, str(uuid.uuid4()), 60, "2026-02-20")
+
+    async def test_log_time_no_description(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="No desc ticket")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await log_time(ctx, mcp_project.slug, str(ticket.id), 30, "2026-02-20")
+        assert result["description"] is None
+
+
+# ---------------------------------------------------------------------------
+# Wiki: list_wiki_pages, get_wiki_page, create, update, delete, search
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListWikiPages:
+    async def test_empty_wiki(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await mcp_list_wiki_pages(ctx, mcp_project.slug)
+        assert result == []
+
+    async def test_returns_pages(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Strona testowa",
+            slug="strona-testowa",
+            position=0,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await mcp_list_wiki_pages(ctx, mcp_project.slug)
+        assert len(result) == 1
+        assert result[0]["title"] == "Strona testowa"
+        assert result[0]["depth"] == 0
+        assert result[0]["created_by"] == mcp_user.email
+
+    async def test_returns_nested_pages(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        parent = WikiPage(
+            project_id=mcp_project.id,
+            title="Parent",
+            slug="parent",
+            position=0,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(parent)
+        await db_session.flush()
+
+        child = WikiPage(
+            project_id=mcp_project.id,
+            title="Child",
+            slug="child",
+            position=0,
+            parent_id=parent.id,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(child)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await mcp_list_wiki_pages(ctx, mcp_project.slug)
+        assert len(result) == 2
+        assert result[0]["title"] == "Parent"
+        assert result[0]["depth"] == 0
+        assert result[1]["title"] == "Child"
+        assert result[1]["depth"] == 1
+        assert result[1]["parent_id"] == str(parent.id)
+
+
+@pytest.mark.unit
+class TestGetWikiPage:
+    async def test_returns_page_with_content(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Detail page",
+            slug="detail-page",
+            position=0,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.get_page_content", return_value="# Hello World"),
+        ):
+            result = await mcp_get_wiki_page(ctx, mcp_project.slug, str(page.id))
+        assert result["title"] == "Detail page"
+        assert result["content"] == "# Hello World"
+        assert result["created_by"] == mcp_user.email
+
+    async def test_page_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Strona wiki nie istnieje"),
+        ):
+            await mcp_get_wiki_page(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+@pytest.mark.unit
+class TestCreateWikiPage:
+    async def test_create_page(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.services.wiki.upload_markdown", return_value=f"{mcp_project.slug}/test.md"),
+            patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock),
+        ):
+            result = await mcp_create_wiki_page(ctx, mcp_project.slug, "Nowa strona", "Tresc strony")
+        assert result["title"] == "Nowa strona"
+        assert result["is_ai_touched"] is True
+        assert "id" in result
+
+    async def test_create_page_empty_title_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Tytul jest wymagany"),
+        ):
+            await mcp_create_wiki_page(ctx, mcp_project.slug, "   ", "content")
+
+    async def test_create_child_page(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        parent = WikiPage(
+            project_id=mcp_project.id,
+            title="Parent page",
+            slug="parent-page",
+            position=0,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(parent)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.services.wiki.upload_markdown", return_value=f"{mcp_project.slug}/child.md"),
+            patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock),
+        ):
+            result = await mcp_create_wiki_page(ctx, mcp_project.slug, "Child page", "content", parent_id=str(parent.id))
+        assert result["title"] == "Child page"
+
+
+@pytest.mark.unit
+class TestUpdateWikiPage:
+    async def test_update_title_and_content(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Old title",
+            slug="old-title",
+            position=0,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.services.wiki.upload_markdown", return_value=f"{mcp_project.slug}/updated.md"),
+            patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock),
+        ):
+            result = await mcp_update_wiki_page(ctx, mcp_project.slug, str(page.id), title="New title", content="New content")
+        assert result["title"] == "New title"
+        assert result["is_ai_touched"] is True
+
+    async def test_update_page_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Strona wiki nie istnieje"),
+        ):
+            await mcp_update_wiki_page(ctx, mcp_project.slug, str(uuid.uuid4()), title="X")
+
+    async def test_update_position_only(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Position page",
+            slug="position-page",
+            position=0,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await mcp_update_wiki_page(ctx, mcp_project.slug, str(page.id), position=5)
+        assert result["title"] == "Position page"
+
+
+@pytest.mark.unit
+class TestDeleteWikiPage:
+    async def test_delete_page(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Delete me",
+            slug="delete-me",
+            position=0,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.services.wiki.delete_object"),
+        ):
+            result = await mcp_delete_wiki_page(ctx, mcp_project.slug, str(page.id))
+        assert "Delete me" in result["message"]
+
+    async def test_delete_page_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Strona wiki nie istnieje"),
+        ):
+            await mcp_delete_wiki_page(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+@pytest.mark.unit
+class TestSearchWiki:
+    async def test_search_returns_results(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        mock_results = [{"id": str(uuid.uuid4()), "title": "Test page", "slug": "test", "snippet": "fragment", "similarity": 0.85}]
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.services.embeddings.search_wiki_pages", new_callable=AsyncMock, return_value=mock_results),
+        ):
+            result = await mcp_search_wiki(ctx, mcp_project.slug, "test query")
+        assert len(result) == 1
+        assert result[0]["title"] == "Test page"
+
+    async def test_search_empty_results(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.services.embeddings.search_wiki_pages", new_callable=AsyncMock, return_value=[]),
+        ):
+            result = await mcp_search_wiki(ctx, mcp_project.slug, "nonexistent")
+        assert result == []
+
+    async def test_search_with_limit(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.services.embeddings.search_wiki_pages", new_callable=AsyncMock, return_value=[]) as mock_search,
+        ):
+            await mcp_search_wiki(ctx, mcp_project.slug, "query", limit=5)
+        mock_search.assert_called_once()
+        call_args = mock_search.call_args
+        assert call_args.kwargs.get("limit") == 5

@@ -118,6 +118,7 @@ class TestVerifyApiKey:
         project = Project(
             name="API Key Test",
             slug="api-key-test",
+            code="API",
             api_key=api_key,
             is_active=True,
         )
@@ -172,6 +173,7 @@ class TestVerifyApiKey:
         project = Project(
             name="API Cache Test",
             slug="api-cache-test",
+            code="API",
             api_key=api_key,
             is_active=True,
         )
@@ -221,6 +223,7 @@ class TestProjectListSuperuser:
         project = Project(
             name="Superuser Project View",
             slug="su-proj-view",
+            code="SUP",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -253,6 +256,7 @@ class TestProjectListSuperuser:
         project = Project(
             name="Hidden Project",
             slug="hidden-proj",
+            code="HID",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )

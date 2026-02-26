@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this project?
 
-Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points) and a Monitoring module (URL health checks with uptime tracking). The architecture supports adding new modules via the sidebar navigation.
+Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), and a Wiki module (markdown pages with semantic RAG search via pgvector). The architecture supports adding new modules via the sidebar navigation.
 
 ## Commands
 
@@ -36,6 +36,9 @@ make migration msg="description"      # Generate new migration
 # Admin
 make createsuperuser                  # Create admin user (interactive prompt)
 
+# Wiki RAG
+make backfill-embeddings              # Generate embeddings for existing wiki pages
+
 # Build
 make build                            # Build production Docker image
 ```
@@ -50,7 +53,7 @@ Two separate packages in one repo:
 - `main.py` registers routers lazily via `_register_routers()` to avoid circular imports; lifespan optionally starts monitor checker loop (controlled by `ENABLE_MONITOR_LOOP`, default true for dev, false in prod)
 - `config.py` uses pydantic-settings, reads from env vars / `.env` file (see `.env.example`)
 - `database.py` provides async SQLAlchemy session via `get_db()` FastAPI dependency
-- `constants.py` — shared constants for Scrum (ticket statuses, priorities, sprint statuses, member roles, label mappings) and Monitoring (interval units, Polish labels)
+- `constants.py` — shared constants for Scrum (ticket statuses, priorities, sprint statuses, member roles, label mappings), Monitoring (interval units, Polish labels), and Time Tracking (entry statuses, report defaults)
 
 **Dashboard module system** (`dashboard/`):
 - `dashboard/__init__.py` — combines all sub-routers into one `router`; ordering matters: static routes (users, settings, profile) before dynamic `{slug}` routes to avoid slug collision
@@ -62,9 +65,11 @@ Two separate packages in one repo:
 - `dashboard/sentry.py` — error tracking module "500ki": issues list, issue detail, SDK setup guide (`/dashboard/{slug}/500ki/*`)
 - `dashboard/scrum.py` — Scrum module: backlog (with pagination + filtering), Kanban board, ticket CRUD with comments, sprints with status filtering (`/dashboard/{slug}/scrum/*`)
 - `dashboard/monitoring.py` — URL monitoring module: monitor CRUD, check history with pagination, toggle on/off (`/dashboard/{slug}/monitoring/*`); includes SSRF protection (blocks localhost, private IPs), limit 20 monitors per project
+- `dashboard/wiki.py` — Wiki module: page CRUD, tree hierarchy, markdown rendering, image upload to MinIO, semantic search via pgvector (`/dashboard/{slug}/wiki/*`)
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
+- `dashboard/reports.py` — global cross-project work reports with multi-select filtering (project, user, sprint), date range, and PDF export via weasyprint (`/dashboard/reports`)
 
-**Models** (`models/`) — 12 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, Monitor, MonitorCheck + Base
+**Models** (`models/`) — 14 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, Monitor, MonitorCheck, TimeTrackingEntry, WikiPage, WikiEmbedding + Base
 
 **Services**:
 - `services/fingerprint.py` — SHA256 of exception type + app-frame filenames:functions
@@ -76,6 +81,11 @@ Two separate packages in one repo:
 - `services/monitor_loop.py` — extracted monitor checker loop with concurrent checks (`asyncio.gather`), proper advisory lock via dedicated connection, reusable by both `main.py` lifespan and standalone `worker.py`
 - `services/mcp_auth.py` — MCP token generation (`osk_<random>` prefix), SHA256 hashing, verification with `last_used_at` tracking
 - `services/sidebar.py` — `SidebarBadges` dataclass providing issue counts, failing monitors, 24h uptime percentage for sidebar indicators
+- `services/time_tracking.py` — time tracking CRUD and aggregation for work reports
+- `services/ticket_numbering.py` — auto-incrementing ticket numbers per project
+- `services/wiki.py` — Wiki CRUD, markdown rendering (`render_markdown_html()`), page tree, breadcrumbs; content stored in MinIO, metadata in DB
+- `services/embeddings.py` — RAG search: text chunking via tiktoken, OpenAI embeddings (`text-embedding-3-small`), pgvector cosine similarity search; ThreadPoolExecutor for async; graceful degradation when `OPENAI_API_KEY` not set
+- `services/minio_client.py` — MinIO object storage for wiki markdown files and attachments
 
 **Worker** (`worker.py`):
 - Standalone entry point (`python -m monolynx.worker`) — runs monitor checker loop without web server
@@ -84,13 +94,14 @@ Two separate packages in one repo:
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
-- 11 tools for Scrum management: ticket CRUD, sprint lifecycle, comments
+- 20+ tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 
 **Template layout system**:
 - `layouts/base.html` — base layout (login, project list)
-- `layouts/project.html` — extends base, adds sidebar with modules (500ki, Scrum, Monitoring, Ustawienia); uses `active_module` context variable for highlighting
+- `layouts/base.html` uses Tailwind CDN with typography plugin (`?plugins=typography`) for markdown `prose` styling
+- `layouts/project.html` — extends base, adds sidebar with modules (500ki, Scrum, Monitoring, Wiki, Ustawienia); uses `active_module` context variable for highlighting
 - Module templates extend `project.html` and use `{% block module_content %}`
 - `dashboard/scrum/_nav.html` — shared partial with 4 always-visible buttons (Backlog, Tablica, Sprinty, Nowy ticket), included in all Scrum pages
 
@@ -99,6 +110,8 @@ Two separate packages in one repo:
 - Rule: SDK must NEVER crash the host application — every public function wrapped in try/except
 - `transport.py` sends events via `ThreadPoolExecutor(max_workers=2)` using `urllib.request`
 - Django settings: `MONOLYNX_DSN` or `MONOLYNX_URL` + `MONOLYNX_API_KEY`
+
+**Schemas** (`schemas/`) — Pydantic models for validation: `events.py`, `issues.py`, `scrum.py`, `time_tracking.py` (includes `WorkReportResult` for aggregated reports)
 
 **Data flow**: Django error → SDK middleware `process_exception()` → background thread POST → FastAPI ingests → fingerprint → find/create Issue → store Event (JSONB)
 
@@ -143,6 +156,17 @@ Two separate packages in one repo:
 /api/v1/events                                 — ingest events (POST, API key auth)
 /api/v1/issues/{id}/status                     — update issue status (PATCH)
 /api/v1/health                                 — health check
+/dashboard/{slug}/wiki/                         — wiki page tree
+/dashboard/{slug}/wiki/search?q=               — semantic wiki search (RAG)
+/dashboard/{slug}/wiki/pages/create            — new wiki page
+/dashboard/{slug}/wiki/pages/{id}              — wiki page detail (rendered markdown)
+/dashboard/{slug}/wiki/pages/{id}/edit         — edit wiki page (EasyMDE editor)
+/dashboard/{slug}/wiki/pages/{id}/create       — new child page
+/dashboard/{slug}/wiki/pages/{id}/delete       — delete page + children (POST)
+/dashboard/{slug}/wiki/upload                  — image upload for EasyMDE (POST)
+/dashboard/{slug}/wiki/attachments/{filename}  — serve wiki attachments
+/dashboard/reports                              — global work reports (cross-project)
+/dashboard/reports/pdf                          — PDF export of work reports
 /mcp                                           — MCP server (Bearer token auth)
 ```
 
@@ -165,6 +189,13 @@ Two separate packages in one repo:
 - Flash messages via `flash(request, message, type)` stored in `request.session["_flash_messages"]`
 - MCP tokens use `osk_` prefix with SHA256 hash stored in DB; raw token shown only once at creation
 - Database name is `open_sentry` (historical, kept for backwards compatibility)
+- Time tracking entries have a status workflow: draft → submitted → approved/rejected
+- PDF reports generated server-side with weasyprint
+- Wiki content stored in MinIO (markdown files), metadata in PostgreSQL; `minio_path` column links to object storage
+- Wiki RAG search uses pgvector extension (HNSW index, cosine similarity); chunked embeddings (~500 tokens per chunk with overlap) via OpenAI `text-embedding-3-small`; `OPENAI_API_KEY=""` disables embeddings gracefully
+- Markdown rendering shared via `render_markdown_html()` from `services/wiki.py` — used in wiki pages, ticket descriptions, and comments; frontend uses Tailwind `prose prose-invert` classes
+- EasyMDE (WYSIWYG markdown editor) used in wiki page forms and ticket create/edit forms; dark theme via inline CSS overrides
+- Docker uses `pgvector/pgvector:pg16` image for PostgreSQL with vector extension support
 
 ## Test patterns
 
@@ -185,7 +216,7 @@ Two separate packages in one repo:
 ## Infrastructure
 
 - **Docker**: Multi-stage Dockerfile (builder → dev → runtime). Dev target has hot reload, runtime uses non-root user with 2 workers
-- **Docker Compose (dev)**: `dev` profile with PostgreSQL 16 + app (monitor loop runs in-process by default). Optional `worker` profile runs monitor loop as separate service (`make worker`)
+- **Docker Compose (dev)**: `dev` profile with PostgreSQL 16 (pgvector/pgvector:pg16) + MinIO + app (monitor loop runs in-process by default). Optional `worker` profile runs monitor loop as separate service (`make worker`)
 - **Docker Compose (prod)**: `app` service with `ENABLE_MONITOR_LOOP=false` + separate `worker` service running `python -m monolynx.worker`. Worker has no ports/Traefik — only DB access. Advisory lock ensures only one worker runs checks at a time
 - **CI**: `.gitlab-ci.yml` — lint → test (coverage goal 50%) → build (main only) → deploy (manual)
 - **Pre-commit**: ruff (check + format) and mypy with pydantic plugin

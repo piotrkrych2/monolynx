@@ -16,6 +16,7 @@ class TestMonitorList:
         project = Project(
             name="ML Auth",
             slug="ml-auth",
+            code="MLA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -33,6 +34,7 @@ class TestMonitorList:
         project = Project(
             name="ML Empty",
             slug="ml-empty",
+            code="MLE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -48,6 +50,7 @@ class TestMonitorList:
         project = Project(
             name="ML Show",
             slug="ml-show",
+            code="MLS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -83,6 +86,7 @@ class TestMonitorCreateForm:
         project = Project(
             name="MCF Auth",
             slug="mcf-auth",
+            code="MCF",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -100,6 +104,7 @@ class TestMonitorCreateForm:
         project = Project(
             name="MCF Load",
             slug="mcf-load",
+            code="MCF",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -123,6 +128,7 @@ class TestMonitorCreate:
         project = Project(
             name="MC Succ",
             slug="mc-succ",
+            code="MCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -147,6 +153,7 @@ class TestMonitorCreate:
         project = Project(
             name="MC Intv",
             slug="mc-intv",
+            code="MCI",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -171,6 +178,7 @@ class TestMonitorCreate:
         project = Project(
             name="MC Empty",
             slug="mc-empty",
+            code="MCE",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -194,6 +202,7 @@ class TestMonitorCreate:
         project = Project(
             name="MC NoScheme",
             slug="mc-noscheme",
+            code="MCN",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -217,6 +226,7 @@ class TestMonitorCreate:
         project = Project(
             name="MC SSRF",
             slug="mc-ssrf",
+            code="MCS",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -240,6 +250,7 @@ class TestMonitorCreate:
         project = Project(
             name="MC Auth",
             slug="mc-auth",
+            code="MCA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -263,6 +274,7 @@ class TestMonitorCreate:
         project = Project(
             name="MC InvIntv",
             slug="mc-invintv",
+            code="MCI",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -302,6 +314,7 @@ class TestMonitorDetail:
         project = Project(
             name="MD Det",
             slug="md-det",
+            code="MDD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -329,6 +342,7 @@ class TestMonitorDetail:
         project = Project(
             name="MD Auth",
             slug="md-auth",
+            code="MDA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -357,6 +371,7 @@ class TestMonitorDetail:
         project = Project(
             name="MD NF",
             slug="md-nf",
+            code="MDN",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -372,6 +387,7 @@ class TestMonitorDetail:
         project = Project(
             name="MD NoChk",
             slug="md-nochk",
+            code="MDN",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -401,6 +417,7 @@ class TestMonitorToggle:
         project = Project(
             name="MT Off",
             slug="mt-off",
+            code="MTO",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -433,6 +450,7 @@ class TestMonitorToggle:
         project = Project(
             name="MT On",
             slug="mt-on",
+            code="MTO",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -465,6 +483,7 @@ class TestMonitorToggle:
         project = Project(
             name="MT Auth",
             slug="mt-auth",
+            code="MTA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -493,6 +512,7 @@ class TestMonitorToggle:
         project = Project(
             name="MT NF",
             slug="mt-nf",
+            code="MTN",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -514,6 +534,7 @@ class TestMonitorDelete:
         project = Project(
             name="MD Del",
             slug="md-del",
+            code="MDD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -544,6 +565,7 @@ class TestMonitorDelete:
         project = Project(
             name="MD DelAuth",
             slug="md-delauth",
+            code="MDD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -572,6 +594,7 @@ class TestMonitorDelete:
         project = Project(
             name="MD DelNF",
             slug="md-delnf",
+            code="MDD",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )

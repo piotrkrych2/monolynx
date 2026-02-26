@@ -25,9 +25,25 @@ from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
+from monolynx.models.wiki_page import WikiPage
 from monolynx.services.mcp_auth import verify_mcp_token
 from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
+from monolynx.services.ticket_numbering import get_next_ticket_number
+from monolynx.services.time_tracking import add_time_entry
+from monolynx.services.wiki import (
+    create_wiki_page as svc_create_wiki_page,
+)
+from monolynx.services.wiki import (
+    delete_wiki_page as svc_delete_wiki_page,
+)
+from monolynx.services.wiki import (
+    get_page_content,
+    get_page_tree,
+)
+from monolynx.services.wiki import (
+    update_wiki_page as svc_update_wiki_page,
+)
 
 logger = logging.getLogger("monolynx.mcp")
 
@@ -49,7 +65,8 @@ mcp = FastMCP(
         "Serwer MCP platformy Monolynx. "
         "Moduly: Scrum (tickety, sprinty, tablica Kanban), "
         "500ki (error tracking — issues, eventy), "
-        "Monitoring (URL health checks, uptime). "
+        "Monitoring (URL health checks, uptime), "
+        "Wiki (strony markdown z hierarchia). "
         "Wymaga tokenu API (Bearer) w naglowku Authorization."
     ),
     streamable_http_path="/",
@@ -430,6 +447,7 @@ async def get_board(
             columns[t.status].append(
                 {
                     "id": str(t.id),
+                    "key": f"{project.code}-{t.number}",
                     "title": t.title,
                     "priority": t.priority,
                     "story_points": t.story_points,
@@ -602,6 +620,7 @@ async def list_tickets(
     return [
         {
             "id": str(t.id),
+            "key": f"{project.code}-{t.number}",
             "title": t.title,
             "description": t.description,
             "status": t.status,
@@ -645,6 +664,7 @@ async def get_ticket(
 
     return {
         "id": str(ticket.id),
+        "key": f"{project.code}-{ticket.number}",
         "title": ticket.title,
         "description": ticket.description,
         "status": ticket.status,
@@ -700,8 +720,11 @@ async def create_ticket(
         if sprint_id:
             resolved_sprint_id = uuid.UUID(sprint_id)
 
+        next_number = await get_next_ticket_number(project.id, db)
+
         ticket = Ticket(
             project_id=project.id,
+            number=next_number,
             title=title.strip(),
             description=description.strip() if description else None,
             priority=priority,
@@ -717,6 +740,7 @@ async def create_ticket(
 
     return {
         "id": str(ticket.id),
+        "key": f"{project.code}-{ticket.number}",
         "title": ticket.title,
         "status": ticket.status,
         "created_via_ai": True,
@@ -792,6 +816,7 @@ async def update_ticket(
 
     return {
         "id": str(ticket.id),
+        "key": f"{project.code}-{ticket.number}",
         "title": ticket.title,
         "status": ticket.status,
         "message": f"Ticket '{ticket.title}' zaktualizowany",
@@ -904,6 +929,7 @@ async def get_sprint(
         "tickets": [
             {
                 "id": str(t.id),
+                "key": f"{project.code}-{t.number}",
                 "title": t.title,
                 "status": t.status,
                 "priority": t.priority,
@@ -1067,3 +1093,258 @@ async def add_comment(
         "message": "Komentarz dodany",
         "created_via_ai": True,
     }
+
+
+# --- Time Tracking ---
+
+
+@mcp.tool()
+async def log_time(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_id: str,
+    duration_minutes: int,
+    date_logged: str,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Zaloguj czas pracy na tickecie. Oznaczany jako created_via_ai=True.
+
+    date_logged w formacie YYYY-MM-DD. duration_minutes musi byc > 0.
+    """
+    user, _project = await _get_user_and_project(ctx, project_slug)
+
+    if duration_minutes <= 0:
+        raise ValueError("Czas musi byc wiekszy niz 0")
+
+    parsed_date = date.fromisoformat(date_logged)
+
+    async with async_session_factory() as db:
+        result = await add_time_entry(
+            ticket_id=uuid.UUID(ticket_id),
+            user_id=user.id,
+            duration_minutes=duration_minutes,
+            date_logged=parsed_date,
+            description=description.strip() if description else None,
+            db=db,
+            created_via_ai=True,
+        )
+
+        if isinstance(result, str):
+            raise ValueError(result)
+
+    return {
+        "id": str(result.id),
+        "ticket_id": str(result.ticket_id),
+        "duration_minutes": result.duration_minutes,
+        "date_logged": result.date_logged.isoformat(),
+        "description": result.description,
+        "created_via_ai": True,
+        "message": f"Zalogowano {duration_minutes} min na tickecie",
+    }
+
+
+# --- Wiki ---
+
+
+@mcp.tool()
+async def list_wiki_pages(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> list[dict[str, Any]]:
+    """Lista stron wiki w projekcie (drzewo z hierarchia).
+
+    Zwraca plaska liste stron z informacja o parent_id i glebokosci.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        tree = await get_page_tree(project.id, db)
+
+    def _flatten(nodes: list[dict[str, Any]], depth: int = 0) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for node in nodes:
+            p = node["page"]
+            result.append(
+                {
+                    "id": str(p.id),
+                    "title": p.title,
+                    "slug": p.slug,
+                    "parent_id": str(p.parent_id) if p.parent_id else None,
+                    "position": p.position,
+                    "depth": depth,
+                    "is_ai_touched": p.is_ai_touched,
+                    "created_by": p.created_by.email,
+                    "last_edited_by": p.last_edited_by.email,
+                    "created_at": p.created_at.isoformat(),
+                    "updated_at": p.updated_at.isoformat(),
+                }
+            )
+            result.extend(_flatten(node["children"], depth + 1))
+        return result
+
+    return _flatten(tree)
+
+
+@mcp.tool()
+async def get_wiki_page(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Szczegoly strony wiki z pelna trescia markdown."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        from sqlalchemy.orm import selectinload
+
+        result = await db.execute(
+            select(WikiPage)
+            .options(selectinload(WikiPage.created_by), selectinload(WikiPage.last_edited_by))
+            .where(WikiPage.id == uuid.UUID(page_id), WikiPage.project_id == project.id)
+        )
+        page = result.scalar_one_or_none()
+        if page is None:
+            raise ValueError("Strona wiki nie istnieje")
+
+        content = get_page_content(page)
+
+    return {
+        "id": str(page.id),
+        "title": page.title,
+        "slug": page.slug,
+        "parent_id": str(page.parent_id) if page.parent_id else None,
+        "position": page.position,
+        "content": content,
+        "is_ai_touched": page.is_ai_touched,
+        "created_by": page.created_by.email,
+        "last_edited_by": page.last_edited_by.email,
+        "created_at": page.created_at.isoformat(),
+        "updated_at": page.updated_at.isoformat(),
+    }
+
+
+@mcp.tool()
+async def create_wiki_page(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    title: str,
+    content: str,
+    parent_id: str | None = None,
+    position: int = 0,
+) -> dict[str, Any]:
+    """Utworz nowa strone wiki. Oznaczana jako is_ai_touched=True.
+
+    parent_id -- UUID strony nadrzednej (opcjonalnie, dla podstron).
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not title.strip():
+        raise ValueError("Tytul jest wymagany")
+
+    async with async_session_factory() as db:
+        page = await svc_create_wiki_page(
+            project_id=project.id,
+            project_slug=project.slug,
+            title=title,
+            content=content,
+            user_id=user.id,
+            parent_id=uuid.UUID(parent_id) if parent_id else None,
+            position=position,
+            is_ai=True,
+            db=db,
+        )
+
+    return {
+        "id": str(page.id),
+        "title": page.title,
+        "slug": page.slug,
+        "is_ai_touched": True,
+        "message": f"Strona wiki '{page.title}' utworzona",
+    }
+
+
+@mcp.tool()
+async def update_wiki_page(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+    title: str | None = None,
+    content: str | None = None,
+    position: int | None = None,
+) -> dict[str, Any]:
+    """Aktualizuj strone wiki. Oznaczana jako is_ai_touched=True.
+
+    Podaj tylko pola do zmiany.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        from sqlalchemy.orm import selectinload
+
+        result = await db.execute(
+            select(WikiPage)
+            .options(selectinload(WikiPage.created_by), selectinload(WikiPage.last_edited_by))
+            .where(WikiPage.id == uuid.UUID(page_id), WikiPage.project_id == project.id)
+        )
+        page = result.scalar_one_or_none()
+        if page is None:
+            raise ValueError("Strona wiki nie istnieje")
+
+        page = await svc_update_wiki_page(
+            page=page,
+            project_slug=project.slug,
+            title=title,
+            content=content,
+            position=position,
+            user_id=user.id,
+            is_ai=True,
+            db=db,
+        )
+
+    return {
+        "id": str(page.id),
+        "title": page.title,
+        "is_ai_touched": True,
+        "message": f"Strona wiki '{page.title}' zaktualizowana",
+    }
+
+
+@mcp.tool()
+async def search_wiki(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    query: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Wyszukaj semantycznie w wiki projektu (RAG).
+
+    query -- zapytanie w jezyku naturalnym
+    limit -- maksymalna liczba wynikow (domyslnie 10)
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    from monolynx.services.embeddings import search_wiki_pages
+
+    async with async_session_factory() as db:
+        return await search_wiki_pages(project.id, query, db, limit=limit)
+
+
+@mcp.tool()
+async def delete_wiki_page(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Usun strone wiki wraz z podstronami."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(select(WikiPage).where(WikiPage.id == uuid.UUID(page_id), WikiPage.project_id == project.id))
+        page = result.scalar_one_or_none()
+        if page is None:
+            raise ValueError("Strona wiki nie istnieje")
+
+        title = page.title
+        await svc_delete_wiki_page(page, db)
+
+    return {"message": f"Strona wiki '{title}' usunieta"}

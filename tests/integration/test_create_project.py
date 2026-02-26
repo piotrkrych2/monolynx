@@ -19,7 +19,7 @@ class TestCreateProject:
         """POST /dashboard/create-project bez sesji redirectuje na login."""
         response = await client.post(
             "/dashboard/create-project",
-            data={"name": "Test", "slug": "test"},
+            data={"name": "Test", "slug": "test", "code": "TST"},
             follow_redirects=False,
         )
         assert response.status_code == 303
@@ -31,7 +31,7 @@ class TestCreateProject:
 
         response = await client.post(
             "/dashboard/create-project",
-            data={"name": "Moj Projekt", "slug": "moj-projekt"},
+            data={"name": "Moj Projekt", "slug": "moj-projekt", "code": "MOJ"},
             follow_redirects=False,
         )
         assert response.status_code == 303
@@ -41,6 +41,7 @@ class TestCreateProject:
         project = result.scalar_one_or_none()
         assert project is not None
         assert project.name == "Moj Projekt"
+        assert project.code == "MOJ"
         assert project.api_key is not None
 
     async def test_create_project_duplicate_slug(self, client, db_session):
@@ -50,14 +51,14 @@ class TestCreateProject:
         # Tworzymy pierwszy projekt
         await client.post(
             "/dashboard/create-project",
-            data={"name": "Projekt 1", "slug": "duplikat"},
+            data={"name": "Projekt 1", "slug": "duplikat", "code": "DUP"},
             follow_redirects=False,
         )
 
         # Proba stworzenia drugiego z tym samym slugiem
         response = await client.post(
             "/dashboard/create-project",
-            data={"name": "Projekt 2", "slug": "duplikat"},
+            data={"name": "Projekt 2", "slug": "duplikat", "code": "DU2"},
             follow_redirects=False,
         )
         assert response.status_code == 200
@@ -69,7 +70,7 @@ class TestCreateProject:
 
         response = await client.post(
             "/dashboard/create-project",
-            data={"name": "", "slug": "test-slug"},
+            data={"name": "", "slug": "test-slug", "code": "TSL"},
             follow_redirects=False,
         )
         assert response.status_code == 200
@@ -81,7 +82,7 @@ class TestCreateProject:
 
         response = await client.post(
             "/dashboard/create-project",
-            data={"name": "Test", "slug": "Invalid Slug!"},
+            data={"name": "Test", "slug": "Invalid Slug!", "code": "TST"},
             follow_redirects=False,
         )
         assert response.status_code == 200

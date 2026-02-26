@@ -13,6 +13,7 @@ async def _create_project(db_session, name="Test Projekt", slug="test-projekt"):
     project = Project(
         name=name,
         slug=slug,
+        code="P" + secrets.token_hex(4).upper(),
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )
@@ -47,7 +48,7 @@ class TestEditProject:
 
         response = await client.post(
             "/dashboard/test-projekt/settings",
-            data={"name": "Nowa Nazwa", "slug": "nowy-slug"},
+            data={"name": "Nowa Nazwa", "slug": "nowy-slug", "code": "NON"},
             follow_redirects=False,
         )
         assert response.status_code == 303
@@ -65,7 +66,7 @@ class TestEditProject:
 
         response = await client.post(
             "/dashboard/dup-edit-b/settings",
-            data={"name": "Projekt B", "slug": "dup-edit-a"},
+            data={"name": "Projekt B", "slug": "dup-edit-a", "code": "DUP"},
             follow_redirects=False,
         )
         assert response.status_code == 200
@@ -78,7 +79,7 @@ class TestEditProject:
 
         response = await client.post(
             "/dashboard/test-projekt/settings",
-            data={"name": "", "slug": "test-projekt"},
+            data={"name": "", "slug": "test-projekt", "code": "TST"},
             follow_redirects=False,
         )
         assert response.status_code == 200
@@ -91,7 +92,7 @@ class TestEditProject:
 
         response = await client.post(
             "/dashboard/test-projekt/settings",
-            data={"name": "Test", "slug": "Invalid Slug!"},
+            data={"name": "Test", "slug": "Invalid Slug!", "code": "TST"},
             follow_redirects=False,
         )
         assert response.status_code == 200

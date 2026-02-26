@@ -33,9 +33,11 @@ async def mcp_setup(db_session):
     )
     db_session.add(api_token)
 
+    _slug = f"mcp-test-{uuid.uuid4().hex[:8]}"
     project = Project(
         name="MCP Test Project",
-        slug=f"mcp-test-{uuid.uuid4().hex[:8]}",
+        slug=_slug,
+        code=_slug.replace("-", "").upper()[:5],
         api_key=f"key-{uuid.uuid4().hex}",
     )
     db_session.add(project)
@@ -101,6 +103,7 @@ class TestTicketAiFlag:
         _user, _, project = mcp_setup
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="AI Ticket",
             created_via_ai=True,
         )
@@ -116,6 +119,7 @@ class TestTicketAiFlag:
         _user, _, project = mcp_setup
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Normal Ticket",
         )
         db_session.add(ticket)
