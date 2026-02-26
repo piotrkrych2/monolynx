@@ -36,3 +36,6 @@ pgdata/
 # OS
 .DS_Store
 Thumbs.db
+
+# our dev data
+.data/

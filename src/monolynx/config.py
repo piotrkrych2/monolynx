@@ -31,6 +31,19 @@ class Settings(BaseSettings):
 
     MCP_ALLOWED_HOSTS: str = ""
 
+    MINIO_ENDPOINT: str = "minio:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET: str = "monolynx-wiki"
+    MINIO_USE_SSL: bool = False
+
+    # Embeddings (RAG search for Wiki)
+    OPENAI_API_KEY: str = ""
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_DIMENSIONS: int = 1536
+    EMBEDDING_CHUNK_SIZE: int = 500
+    EMBEDDING_CHUNK_OVERLAP: int = 50
+
 
 settings = Settings()
 

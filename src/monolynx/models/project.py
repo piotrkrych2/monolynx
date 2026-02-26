@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from monolynx.models.project_member import ProjectMember
     from monolynx.models.sprint import Sprint
     from monolynx.models.ticket import Ticket
+    from monolynx.models.wiki_page import WikiPage
 
 
 class Project(Base):
@@ -36,3 +37,4 @@ class Project(Base):
     monitors: Mapped[list[Monitor]] = relationship(back_populates="project")
     sprints: Mapped[list[Sprint]] = relationship(back_populates="project")
     tickets: Mapped[list[Ticket]] = relationship(back_populates="project")
+    wiki_pages: Mapped[list[WikiPage]] = relationship(back_populates="project")

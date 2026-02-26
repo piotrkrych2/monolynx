@@ -1,4 +1,4 @@
-.PHONY: help dev down lint test build migrate createsuperuser shell worker
+.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings
 
 help: ## Pokaz dostepne komendy
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -40,6 +40,24 @@ migration: ## Stworz migracje (usage: make migration msg="add events table")
 # --- Uzytkownicy ---
 createsuperuser: ## Stworz superuzytkownika
 	docker compose --profile dev exec app python -m monolynx.cli createsuperuser
+
+# --- Wiki RAG ---
+backfill-embeddings: ## Wygeneruj embeddingi dla istniejacych stron wiki
+	docker compose --profile dev exec app python -c "\
+import asyncio; \
+from monolynx.services.embeddings import update_page_embeddings; \
+from monolynx.services.wiki import get_page_content; \
+from monolynx.database import async_session_factory; \
+from monolynx.models.wiki_page import WikiPage; \
+from sqlalchemy import select, text; \
+async def backfill(): \
+    async with async_session_factory() as db: \
+        result = await db.execute(select(WikiPage)); \
+        pages = list(result.scalars().all()); \
+        [print(f'Generuje embeddingi: {p.title}') or await update_page_embeddings(p.id, get_page_content(p), db) for p in pages]; \
+        count = (await db.execute(text('SELECT count(*) FROM wiki_embeddings'))).scalar(); \
+        print(f'Gotowe! Laczna liczba embeddingow: {count}'); \
+asyncio.run(backfill())"
 
 # --- Build ---
 build: ## Zbuduj produkcyjny obraz Docker

@@ -1,0 +1,65 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Szukaj w Wiki - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Szukaj w Wiki</h1>
+    <a href="/dashboard/{{ project.slug }}/wiki/"
+       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+        Wszystkie strony
+    </a>
+</div>
+
+<form action="/dashboard/{{ project.slug }}/wiki/search" method="get" class="mb-6">
+    <div class="flex gap-2">
+        <input type="text" name="q" placeholder="Wpisz zapytanie..."
+               class="flex-1 bg-gray-700 border border-gray-600 rounded px-4 py-2.5 text-white text-sm
+                      focus:outline-none focus:border-indigo-500 placeholder-gray-400"
+               value="{{ query }}" autofocus>
+        <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-6 py-2.5 rounded transition">
+            Szukaj
+        </button>
+    </div>
+</form>
+
+{% if not embeddings_enabled %}
+<div class="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 text-sm text-yellow-300">
+    Wyszukiwanie semantyczne jest wylaczone. Skonfiguruj <code class="bg-gray-700 px-1 rounded">OPENAI_API_KEY</code> w zmiennych srodowiskowych.
+</div>
+
+{% elif query and results %}
+<div class="space-y-3">
+    <p class="text-sm text-gray-400 mb-4">Znaleziono {{ results|length }} wynikow dla "{{ query }}"</p>
+    {% for result in results %}
+    <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ result.id }}"
+       class="block bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+        <div class="flex items-center justify-between mb-2">
+            <h3 class="text-white font-medium">{{ result.title }}</h3>
+            <span class="text-xs text-gray-500 ml-4 flex-shrink-0">{{ (result.similarity * 100)|round(1) }}% trafnosc</span>
+        </div>
+        <p class="text-sm text-gray-400 line-clamp-3">{{ result.snippet }}</p>
+    </a>
+    {% endfor %}
+</div>
+
+{% elif query %}
+<div class="text-center py-12 text-gray-500">
+    <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+    <p>Brak wynikow dla "{{ query }}"</p>
+    <p class="text-sm mt-1">Sprobuj innego zapytania</p>
+</div>
+
+{% else %}
+<div class="text-center py-12 text-gray-500">
+    <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+    <p>Wpisz zapytanie, aby wyszukac w wiki</p>
+    <p class="text-sm mt-1">Wyszukiwanie semantyczne rozumie znaczenie, nie tylko slowa kluczowe</p>
+</div>
+{% endif %}
+{% endblock %}

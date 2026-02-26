@@ -2,9 +2,9 @@
   "mcpServers": {
     "monolynx-scrum": {
       "type": "http",
-      "url": "http://localhost:8000/mcp/",
+      "url": "http://localhost:8077/mcp/",
       "headers": {
-        "Authorization": "Bearer ${MONOLYNX_MCP_TOKEN}",
+        "Authorization": "Bearer osk_m9T0vJVvuKvjJe_ff8QvTIxs8A12lM66YpA3evJDVGY",
         "X-API-Key": "dummy"
       }
     }

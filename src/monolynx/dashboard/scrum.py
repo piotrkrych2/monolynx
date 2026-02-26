@@ -36,6 +36,7 @@ from monolynx.services.time_tracking import (
     delete_time_entry,
     get_ticket_total_hours,
 )
+from monolynx.services.wiki import render_markdown_html
 
 from .helpers import _get_user_id, flash, render_project_page, templates
 
@@ -383,6 +384,9 @@ async def ticket_detail(
 
     total_logged_hours = await get_ticket_total_hours(ticket_id, db)
 
+    rendered_description = render_markdown_html(ticket.description) if ticket.description else ""
+    rendered_comments = [{"comment": c, "html": render_markdown_html(c.content)} for c in ticket.comments]
+
     return await render_project_page(
         request,
         "dashboard/scrum/ticket_detail.html",
@@ -394,6 +398,8 @@ async def ticket_detail(
             "total_logged_hours": total_logged_hours,
             "time_entries": ticket.time_entries,
             "current_user_id": user_id,
+            "rendered_description": rendered_description,
+            "rendered_comments": rendered_comments,
         },
         db=db,
     )

@@ -19,6 +19,11 @@ dependencies = [
     "itsdangerous>=2.1",
     "mcp[cli]>=1.26.0",
     "weasyprint>=62.0",
+    "minio>=7.2",
+    "markdown>=3.5",
+    "openai>=1.30",
+    "pgvector>=0.3",
+    "tiktoken>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +63,26 @@ disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
 module = "weasyprint.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "minio.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "markdown.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "openai.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pgvector.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tiktoken.*"
 ignore_missing_imports = true
 
 # --- Pytest ---

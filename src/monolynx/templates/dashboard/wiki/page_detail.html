@@ -1,0 +1,140 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}{{ page.title }} - Wiki - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Wiki</h1>
+    <div class="flex items-center gap-2">
+        <a href="/dashboard/{{ project.slug }}/wiki/"
+           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Wszystkie strony
+        </a>
+    </div>
+</div>
+
+<!-- Breadcrumbs -->
+{% if breadcrumbs|length > 1 %}
+<nav class="mb-4">
+    <ol class="flex items-center gap-1 text-sm text-gray-400">
+        <li>
+            <a href="/dashboard/{{ project.slug }}/wiki/" class="hover:text-indigo-400 transition">Wiki</a>
+        </li>
+        {% for crumb in breadcrumbs %}
+        <li class="flex items-center gap-1">
+            <svg class="w-3 h-3 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+            {% if crumb.id == page.id %}
+            <span class="text-white">{{ crumb.title }}</span>
+            {% else %}
+            <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ crumb.id }}" class="hover:text-indigo-400 transition">{{ crumb.title }}</a>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ol>
+</nav>
+{% endif %}
+
+<div class="grid grid-cols-3 gap-6">
+    <!-- Glowna tresc -->
+    <div class="col-span-2">
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+            <div class="flex items-start justify-between mb-4">
+                <h2 class="text-xl font-bold text-white">{{ page.title }}</h2>
+                <div class="flex items-center gap-2 ml-4 flex-shrink-0">
+                    <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/edit"
+                       class="text-sm text-gray-400 hover:text-indigo-400 transition">Edytuj</a>
+                    <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/create"
+                       class="text-sm text-gray-400 hover:text-green-400 transition">Dodaj podstrone</a>
+                    <form method="post" action="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/delete" class="inline">
+                        <button type="submit" class="text-sm text-gray-400 hover:text-red-400 transition"
+                                onclick="return confirm('Czy na pewno chcesz usunac te strone? Wszystkie podstrony rowniez zostana usuniete.')">
+                            Usun
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Rendered markdown -->
+            <div class="prose prose-invert prose-sm max-w-none
+                        prose-headings:text-white prose-headings:border-b prose-headings:border-gray-700 prose-headings:pb-2
+                        prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:text-indigo-300
+                        prose-code:text-indigo-300 prose-code:bg-gray-700 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                        prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-700
+                        prose-img:rounded-lg prose-img:border prose-img:border-gray-700
+                        prose-table:border-collapse
+                        prose-th:bg-gray-700 prose-th:text-gray-200 prose-th:px-3 prose-th:py-2 prose-th:border prose-th:border-gray-600
+                        prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-gray-700">
+                {{ rendered_html | safe }}
+            </div>
+        </div>
+
+        <!-- Podstrony -->
+        {% if children %}
+        <div class="mt-6">
+            <h3 class="text-lg font-semibold text-white mb-3">Podstrony</h3>
+            <div class="space-y-1">
+                {% for child in children %}
+                <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ child.id }}"
+                   class="flex items-center gap-2 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg hover:border-indigo-500 transition text-sm">
+                    <svg class="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span class="text-gray-300 hover:text-white">{{ child.title }}</span>
+                    {% if child.is_ai_touched %}
+                    <span class="ml-auto text-xs bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded" title="Edytowane przez AI">AI</span>
+                    {% endif %}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Sidebar z metadanymi -->
+    <div class="space-y-4">
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-400 mb-3">Szczegoly</h3>
+
+            <div class="space-y-3 text-sm">
+                <div>
+                    <span class="text-gray-500">Utworzona przez</span>
+                    <p class="text-white mt-1">{{ page.created_by.email }}</p>
+                </div>
+
+                <div>
+                    <span class="text-gray-500">Ostatnia edycja</span>
+                    <p class="text-white mt-1">{{ page.last_edited_by.email }}</p>
+                </div>
+
+                <div>
+                    <span class="text-gray-500">Utworzona</span>
+                    <p class="text-white mt-1">{{ page.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                </div>
+
+                <div>
+                    <span class="text-gray-500">Zaktualizowana</span>
+                    <p class="text-white mt-1">{{ page.updated_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                </div>
+
+                <div>
+                    <span class="text-gray-500">Pozycja</span>
+                    <p class="text-white mt-1">{{ page.position }}</p>
+                </div>
+
+                {% if page.is_ai_touched %}
+                <div>
+                    <span class="inline-flex items-center gap-1.5 bg-purple-900/50 text-purple-300 px-2.5 py-1.5 rounded text-xs font-medium">
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        Edytowane przez AI
+                    </span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -3,9 +3,10 @@
 {% block title %}{% if ticket %}Edytuj ticket{% else %}Nowy ticket{% endif %} - {{ project.name }}{% endblock %}
 
 {% block module_content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
 {% include "dashboard/scrum/_nav.html" %}
 
-<div class="max-w-lg">
+<div class="max-w-2xl">
     <h1 class="text-2xl font-bold mb-6">{% if ticket %}<span class="text-indigo-400 font-mono text-lg mr-2">{{ project.code }}-{{ ticket.number }}</span>Edytuj ticket{% else %}Nowy ticket{% endif %}</h1>
 
     {% if error %}
@@ -24,9 +25,8 @@
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Opis</label>
-            <textarea name="description" rows="4"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">{{ ticket.description if ticket and ticket.description else '' }}</textarea>
+            <label class="block text-sm text-gray-400 mb-1">Opis (Markdown)</label>
+            <textarea id="ticket-description" name="description" rows="4">{{ ticket.description if ticket and ticket.description else '' }}</textarea>
         </div>
 
         <div class="grid grid-cols-2 gap-4">
@@ -95,4 +95,52 @@
         </button>
     </form>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+<script>
+var easyMDE = new EasyMDE({
+    element: document.getElementById('ticket-description'),
+    spellChecker: false,
+    autofocus: false,
+    status: false,
+    toolbar: [
+        "bold", "italic", "heading", "|",
+        "quote", "unordered-list", "ordered-list", "|",
+        "link", "code", "table", "|",
+        "preview", "side-by-side", "|",
+        "guide"
+    ],
+    minHeight: "200px",
+});
+</script>
+
+<style>
+.EasyMDEContainer .CodeMirror {
+    background-color: #374151;
+    color: #e5e7eb;
+    border-color: #4b5563;
+}
+.EasyMDEContainer .CodeMirror-cursor {
+    border-left-color: #e5e7eb;
+}
+.editor-toolbar {
+    border-color: #4b5563;
+    background-color: #1f2937;
+}
+.editor-toolbar button {
+    color: #9ca3af !important;
+}
+.editor-toolbar button:hover,
+.editor-toolbar button.active {
+    color: #fff !important;
+    background-color: #374151;
+}
+.editor-preview {
+    background-color: #1f2937;
+    color: #e5e7eb;
+}
+.editor-preview pre {
+    background-color: #374151;
+}
+</style>
 {% endblock %}

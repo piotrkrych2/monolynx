@@ -26,7 +26,16 @@
             </div>
 
             {% if ticket.description %}
-            <div class="text-gray-300 text-sm whitespace-pre-wrap">{{ ticket.description }}</div>
+            <div class="prose prose-invert prose-sm max-w-none
+                        prose-headings:text-white prose-headings:border-b prose-headings:border-gray-700 prose-headings:pb-2
+                        prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:text-indigo-300
+                        prose-code:text-indigo-300 prose-code:bg-gray-700 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                        prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-700
+                        prose-table:border-collapse
+                        prose-th:bg-gray-700 prose-th:text-gray-200 prose-th:px-3 prose-th:py-2 prose-th:border prose-th:border-gray-600
+                        prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-gray-700">
+                {{ rendered_description | safe }}
+            </div>
             {% else %}
             <p class="text-gray-500 text-sm italic">Brak opisu</p>
             {% endif %}
@@ -131,16 +140,22 @@
 <div id="comments" class="mt-6">
     <h3 class="text-lg font-semibold text-white mb-4">Komentarze ({{ ticket.comments|length }})</h3>
 
-    {% if ticket.comments %}
+    {% if rendered_comments %}
     <div class="space-y-3 mb-6">
-        {% for comment in ticket.comments %}
+        {% for item in rendered_comments %}
         <div class="bg-gray-800 border-l-4 border-indigo-500 rounded-r-lg p-4">
             <div class="flex items-center justify-between mb-2">
-                <span class="text-sm font-medium text-indigo-400">{{ comment.author.email.split('@')[0] }}</span>
-                {% if comment.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded ml-1">AI</span>{% endif %}
-                <span class="text-xs text-gray-500">{{ comment.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                <span class="text-sm font-medium text-indigo-400">{{ item.comment.author.email.split('@')[0] }}</span>
+                {% if item.comment.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded ml-1">AI</span>{% endif %}
+                <span class="text-xs text-gray-500">{{ item.comment.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
             </div>
-            <p class="text-gray-300 text-sm whitespace-pre-wrap">{{ comment.content }}</p>
+            <div class="prose prose-invert prose-sm max-w-none
+                        prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:text-indigo-300
+                        prose-code:text-indigo-300 prose-code:bg-gray-700 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                        prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-700
+                        prose-p:my-1">
+                {{ item.html | safe }}
+            </div>
         </div>
         {% endfor %}
     </div>
