@@ -33,6 +33,7 @@ def _make_project(slug: str, name: str | None = None) -> Project:
     return Project(
         name=name or f"Project {slug}",
         slug=slug,
+        code="P" + secrets.token_hex(4).upper(),
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )
@@ -176,7 +177,7 @@ class TestEditProjectExtended:
         await login_session(client, db_session, email="spe-sameslug@test.com")
         resp = await client.post(
             f"/dashboard/{project.slug}/settings",
-            data={"name": "Brand New Name", "slug": "spe-sameslug"},
+            data={"name": "Brand New Name", "slug": "spe-sameslug", "code": project.code},
             follow_redirects=False,
         )
         assert resp.status_code == 303

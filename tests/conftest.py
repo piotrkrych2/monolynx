@@ -80,6 +80,7 @@ async def test_project(db_session):
     project = Project(
         name="Test Project",
         slug="test-project",
+        code="TST",
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )

@@ -50,7 +50,7 @@ Two separate packages in one repo:
 - `main.py` registers routers lazily via `_register_routers()` to avoid circular imports; lifespan optionally starts monitor checker loop (controlled by `ENABLE_MONITOR_LOOP`, default true for dev, false in prod)
 - `config.py` uses pydantic-settings, reads from env vars / `.env` file (see `.env.example`)
 - `database.py` provides async SQLAlchemy session via `get_db()` FastAPI dependency
-- `constants.py` — shared constants for Scrum (ticket statuses, priorities, sprint statuses, member roles, label mappings) and Monitoring (interval units, Polish labels)
+- `constants.py` — shared constants for Scrum (ticket statuses, priorities, sprint statuses, member roles, label mappings), Monitoring (interval units, Polish labels), and Time Tracking (entry statuses, report defaults)
 
 **Dashboard module system** (`dashboard/`):
 - `dashboard/__init__.py` — combines all sub-routers into one `router`; ordering matters: static routes (users, settings, profile) before dynamic `{slug}` routes to avoid slug collision
@@ -63,8 +63,9 @@ Two separate packages in one repo:
 - `dashboard/scrum.py` — Scrum module: backlog (with pagination + filtering), Kanban board, ticket CRUD with comments, sprints with status filtering (`/dashboard/{slug}/scrum/*`)
 - `dashboard/monitoring.py` — URL monitoring module: monitor CRUD, check history with pagination, toggle on/off (`/dashboard/{slug}/monitoring/*`); includes SSRF protection (blocks localhost, private IPs), limit 20 monitors per project
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
+- `dashboard/reports.py` — global cross-project work reports with multi-select filtering (project, user, sprint), date range, and PDF export via weasyprint (`/dashboard/reports`)
 
-**Models** (`models/`) — 12 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, Monitor, MonitorCheck + Base
+**Models** (`models/`) — 13 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, Monitor, MonitorCheck, TimeTrackingEntry + Base
 
 **Services**:
 - `services/fingerprint.py` — SHA256 of exception type + app-frame filenames:functions
@@ -76,6 +77,8 @@ Two separate packages in one repo:
 - `services/monitor_loop.py` — extracted monitor checker loop with concurrent checks (`asyncio.gather`), proper advisory lock via dedicated connection, reusable by both `main.py` lifespan and standalone `worker.py`
 - `services/mcp_auth.py` — MCP token generation (`osk_<random>` prefix), SHA256 hashing, verification with `last_used_at` tracking
 - `services/sidebar.py` — `SidebarBadges` dataclass providing issue counts, failing monitors, 24h uptime percentage for sidebar indicators
+- `services/time_tracking.py` — time tracking CRUD and aggregation for work reports
+- `services/ticket_numbering.py` — auto-incrementing ticket numbers per project
 
 **Worker** (`worker.py`):
 - Standalone entry point (`python -m monolynx.worker`) — runs monitor checker loop without web server
@@ -84,7 +87,7 @@ Two separate packages in one repo:
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
-- 11 tools for Scrum management: ticket CRUD, sprint lifecycle, comments
+- 20 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 
@@ -99,6 +102,8 @@ Two separate packages in one repo:
 - Rule: SDK must NEVER crash the host application — every public function wrapped in try/except
 - `transport.py` sends events via `ThreadPoolExecutor(max_workers=2)` using `urllib.request`
 - Django settings: `MONOLYNX_DSN` or `MONOLYNX_URL` + `MONOLYNX_API_KEY`
+
+**Schemas** (`schemas/`) — Pydantic models for validation: `events.py`, `issues.py`, `scrum.py`, `time_tracking.py` (includes `WorkReportResult` for aggregated reports)
 
 **Data flow**: Django error → SDK middleware `process_exception()` → background thread POST → FastAPI ingests → fingerprint → find/create Issue → store Event (JSONB)
 
@@ -143,6 +148,8 @@ Two separate packages in one repo:
 /api/v1/events                                 — ingest events (POST, API key auth)
 /api/v1/issues/{id}/status                     — update issue status (PATCH)
 /api/v1/health                                 — health check
+/dashboard/reports                              — global work reports (cross-project)
+/dashboard/reports/pdf                          — PDF export of work reports
 /mcp                                           — MCP server (Bearer token auth)
 ```
 
@@ -165,6 +172,8 @@ Two separate packages in one repo:
 - Flash messages via `flash(request, message, type)` stored in `request.session["_flash_messages"]`
 - MCP tokens use `osk_` prefix with SHA256 hash stored in DB; raw token shown only once at creation
 - Database name is `open_sentry` (historical, kept for backwards compatibility)
+- Time tracking entries have a status workflow: draft → submitted → approved/rejected
+- PDF reports generated server-side with weasyprint
 
 ## Test patterns
 

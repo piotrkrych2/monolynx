@@ -12,6 +12,7 @@
         <a href="/dashboard/" class="text-xl font-bold text-indigo-400">Monolynx</a>
         <div class="flex items-center gap-4">
             {% block nav_right %}
+            <a href="/dashboard/reports" class="text-indigo-400 hover:text-indigo-300 text-sm">Raporty</a>
             {% if request.session.get('is_superuser') %}
             <a href="/dashboard/users" class="text-indigo-400 hover:text-indigo-300 text-sm">Uzytkownicy</a>
             {% endif %}

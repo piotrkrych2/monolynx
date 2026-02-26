@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from monolynx.constants import MEMBER_ROLES, ROLE_LABELS
+from monolynx.dashboard.projects import CODE_PATTERN
 from monolynx.database import get_db
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
@@ -57,6 +58,7 @@ async def edit_project_form(
             "error": None,
             "name": None,
             "slug": None,
+            "code": None,
             "members": members,
             "member_error": None,
             "roles": MEMBER_ROLES,
@@ -85,18 +87,20 @@ async def edit_project(
     form = await request.form()
     new_name = str(form.get("name", "")).strip()
     new_slug = str(form.get("slug", "")).strip()
+    new_code = str(form.get("code", "")).strip().upper()
 
     members = await _get_members(project.id, db)
 
-    if not new_name or not new_slug:
+    def _error_response(error_msg: str) -> HTMLResponse:
         return templates.TemplateResponse(
             request,
             "dashboard/settings/index.html",
             {
                 "project": project,
-                "error": "Nazwa i slug sa wymagane",
+                "error": error_msg,
                 "name": new_name,
                 "slug": new_slug,
+                "code": new_code,
                 "members": members,
                 "member_error": None,
                 "roles": MEMBER_ROLES,
@@ -105,25 +109,18 @@ async def edit_project(
             },
         )
 
+    if not new_name or not new_slug or not new_code:
+        return _error_response("Nazwa, slug i kod sa wymagane")
+
     if not SLUG_PATTERN.match(new_slug):
-        return templates.TemplateResponse(
-            request,
-            "dashboard/settings/index.html",
-            {
-                "project": project,
-                "error": "Slug moze zawierac tylko male litery, cyfry i myslniki",
-                "name": new_name,
-                "slug": new_slug,
-                "members": members,
-                "member_error": None,
-                "roles": MEMBER_ROLES,
-                "role_labels": ROLE_LABELS,
-                "active_module": "settings",
-            },
-        )
+        return _error_response("Slug moze zawierac tylko male litery, cyfry i myslniki")
+
+    if not CODE_PATTERN.match(new_code):
+        return _error_response("Kod musi miec 2-10 znakow: wielkie litery i cyfry, zaczynac sie od litery (np. PIM, PROJ2)")
 
     project.name = new_name
     project.slug = new_slug
+    project.code = new_code
     try:
         await db.flush()
     except IntegrityError:
@@ -136,9 +133,10 @@ async def edit_project(
             "dashboard/settings/index.html",
             {
                 "project": project,
-                "error": "Projekt z takim slugiem juz istnieje",
+                "error": "Projekt z takim slugiem lub kodem juz istnieje",
                 "name": new_name,
                 "slug": new_slug,
+                "code": new_code,
                 "members": members,
                 "member_error": None,
                 "roles": MEMBER_ROLES,
@@ -215,6 +213,7 @@ async def member_add(
                 "error": None,
                 "name": None,
                 "slug": None,
+                "code": None,
                 "members": members,
                 "member_error": f"Uzytkownik z emailem {email} nie istnieje",
                 "roles": MEMBER_ROLES,
@@ -240,6 +239,7 @@ async def member_add(
                 "error": None,
                 "name": None,
                 "slug": None,
+                "code": None,
                 "members": members,
                 "member_error": "Ten uzytkownik jest juz czlonkiem projektu",
                 "roles": MEMBER_ROLES,

@@ -39,6 +39,7 @@ def _make_project(name: str, slug: str) -> Project:
     return Project(
         name=name,
         slug=slug,
+        code="P" + secrets.token_hex(4).upper(),
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )
@@ -308,6 +309,7 @@ class TestTicketDetailWithComments:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket z komentarzami",
             description="Opis ticketa z komentarzem",
             status="in_progress",
@@ -365,6 +367,7 @@ class TestTicketDetailWithComments:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket pelny detail",
             description="Opis pelny",
             status="todo",
@@ -424,6 +427,7 @@ class TestTicketEditFormWithContext:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket do edycji z kontekstem",
             description="Opis do edycji",
             status="todo",
@@ -476,6 +480,7 @@ class TestTicketEditAllFields:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Stary tytul edycja",
             description="Stary opis",
             status="backlog",
@@ -538,6 +543,7 @@ class TestTicketEditAllFields:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket do wyczyszczenia",
             description="Opis do usuniecia",
             status="todo",
@@ -583,6 +589,7 @@ class TestTicketEditAllFields:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket inv SP edit",
             status="backlog",
             priority="medium",
@@ -616,6 +623,7 @@ class TestTicketEditAllFields:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket inv prio edit",
             status="backlog",
             priority="high",
@@ -646,6 +654,7 @@ class TestTicketEditAllFields:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket inv status edit",
             status="todo",
             priority="medium",
@@ -688,6 +697,7 @@ class TestTicketDeleteVerifyDB:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket do usuniecia DB",
             status="backlog",
             priority="low",
@@ -725,6 +735,7 @@ class TestTicketStatusUpdateVerifyDB:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket status persist",
             status="todo",
             priority="medium",
@@ -753,6 +764,7 @@ class TestTicketStatusUpdateVerifyDB:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket review status",
             status="in_progress",
             priority="high",
@@ -798,6 +810,7 @@ class TestBoardSPComputation:
 
         t_todo = Ticket(
             project_id=project.id,
+            number=1,
             sprint_id=sprint.id,
             title="Board SP Todo",
             status="todo",
@@ -806,6 +819,7 @@ class TestBoardSPComputation:
         )
         t_progress = Ticket(
             project_id=project.id,
+            number=2,
             sprint_id=sprint.id,
             title="Board SP InProgress",
             status="in_progress",
@@ -814,6 +828,7 @@ class TestBoardSPComputation:
         )
         t_review = Ticket(
             project_id=project.id,
+            number=3,
             sprint_id=sprint.id,
             title="Board SP Review",
             status="in_review",
@@ -822,6 +837,7 @@ class TestBoardSPComputation:
         )
         t_done = Ticket(
             project_id=project.id,
+            number=4,
             sprint_id=sprint.id,
             title="Board SP Done",
             status="done",
@@ -859,6 +875,7 @@ class TestBoardSPComputation:
 
         t_with_sp = Ticket(
             project_id=project.id,
+            number=1,
             sprint_id=sprint.id,
             title="Board ticket z SP",
             status="todo",
@@ -867,6 +884,7 @@ class TestBoardSPComputation:
         )
         t_without_sp = Ticket(
             project_id=project.id,
+            number=2,
             sprint_id=sprint.id,
             title="Board ticket bez SP",
             status="in_progress",
@@ -976,6 +994,7 @@ class TestSprintCompleteSuccess:
 
         t_done = Ticket(
             project_id=project.id,
+            number=1,
             sprint_id=sprint.id,
             title="Ticket done complete",
             status="done",
@@ -983,6 +1002,7 @@ class TestSprintCompleteSuccess:
         )
         t_in_progress = Ticket(
             project_id=project.id,
+            number=2,
             sprint_id=sprint.id,
             title="Ticket in_progress complete",
             status="in_progress",
@@ -990,6 +1010,7 @@ class TestSprintCompleteSuccess:
         )
         t_todo = Ticket(
             project_id=project.id,
+            number=3,
             sprint_id=sprint.id,
             title="Ticket todo complete",
             status="todo",
@@ -1043,6 +1064,7 @@ class TestBacklogSPAndFilters:
 
         t1 = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket SP 3",
             status="backlog",
             priority="medium",
@@ -1050,6 +1072,7 @@ class TestBacklogSPAndFilters:
         )
         t2 = Ticket(
             project_id=project.id,
+            number=2,
             title="Ticket SP 5",
             status="todo",
             priority="high",
@@ -1057,6 +1080,7 @@ class TestBacklogSPAndFilters:
         )
         t3 = Ticket(
             project_id=project.id,
+            number=3,
             title="Ticket no SP",
             status="backlog",
             priority="low",
@@ -1091,6 +1115,7 @@ class TestBacklogSPAndFilters:
 
         t_completed = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket completed sprint SP",
             status="done",
             priority="medium",
@@ -1099,6 +1124,7 @@ class TestBacklogSPAndFilters:
         )
         t_backlog = Ticket(
             project_id=project.id,
+            number=2,
             title="Ticket backlog SP",
             status="backlog",
             priority="low",
@@ -1145,6 +1171,7 @@ class TestBacklogSPAndFilters:
         # Ticket that should match all filters
         t_match = Ticket(
             project_id=project.id,
+            number=1,
             title="Filtrowany ticket match",
             status="done",
             priority="high",
@@ -1155,6 +1182,7 @@ class TestBacklogSPAndFilters:
         # Ticket that should NOT match (different status)
         t_miss = Ticket(
             project_id=project.id,
+            number=2,
             title="Filtrowany ticket miss",
             status="backlog",
             priority="low",
@@ -1198,6 +1226,7 @@ class TestTicketSprintUpdateStatusChange:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket backlog assign verify",
             status="backlog",
             priority="medium",
@@ -1234,6 +1263,7 @@ class TestTicketSprintUpdateStatusChange:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket todo remove verify",
             status="todo",
             priority="medium",
@@ -1272,6 +1302,7 @@ class TestTicketCommentVerifyDB:
 
         ticket = Ticket(
             project_id=project.id,
+            number=1,
             title="Ticket komentarz DB",
             status="backlog",
             priority="medium",

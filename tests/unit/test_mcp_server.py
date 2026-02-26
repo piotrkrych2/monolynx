@@ -99,9 +99,11 @@ async def mcp_user(db_session):
 @pytest.fixture
 async def mcp_project(db_session):
     """Testowy projekt."""
+    _slug = f"mcp-unit-{uuid.uuid4().hex[:8]}"
     project = Project(
         name="MCP Unit Project",
-        slug=f"mcp-unit-{uuid.uuid4().hex[:8]}",
+        slug=_slug,
+        code=_slug.replace("-", "").upper()[:5],
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )
@@ -178,6 +180,7 @@ EXPECTED_TOOLS = [
     "complete_sprint",
     "list_comments",
     "add_comment",
+    "log_time",
 ]
 
 
@@ -189,9 +192,9 @@ class TestMcpToolRegistration:
         """list_tools() zwraca wszystkie 20 narzedzi."""
         tools = await mcp.list_tools()
         tool_names = [t.name for t in tools]
-        assert len(tools) == len(EXPECTED_TOOLS)
         for name in EXPECTED_TOOLS:
             assert name in tool_names, f"Brak narzedzia: {name}"
+        assert len(tools) == len(EXPECTED_TOOLS)
 
     async def test_all_tools_have_description(self):
         """Kazde narzedzie ma opis (description)."""
@@ -335,9 +338,11 @@ class TestGetUserAndProject:
 
     async def test_inactive_project_not_found(self, db_session, mcp_user, mock_factory, mock_verify):
         """Projekt z is_active=False nie powinien byc dostepny."""
+        _slug = f"inactive-{uuid.uuid4().hex[:8]}"
         project = Project(
             name="Inactive Project",
-            slug=f"inactive-{uuid.uuid4().hex[:8]}",
+            slug=_slug,
+            code=_slug.replace("-", "").upper()[:5],
             api_key=secrets.token_urlsafe(32),
             is_active=False,
         )
@@ -384,6 +389,7 @@ class TestListTickets:
     async def test_returns_tickets(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Test ticket",
             status="backlog",
             priority="medium",
@@ -404,10 +410,11 @@ class TestListTickets:
         assert result[1]["_meta"]["total"] == 1
 
     async def test_filter_by_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        for status in ("backlog", "todo", "done"):
+        for i, status in enumerate(("backlog", "todo", "done"), start=1):
             db_session.add(
                 Ticket(
                     project_id=mcp_project.id,
+                    number=i,
                     title=f"Ticket {status}",
                     status=status,
                 )
@@ -424,8 +431,8 @@ class TestListTickets:
         assert result[0]["status"] == "done"
 
     async def test_filter_by_priority(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        db_session.add(Ticket(project_id=mcp_project.id, title="High", priority="high"))
-        db_session.add(Ticket(project_id=mcp_project.id, title="Low", priority="low"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="High", priority="high"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Low", priority="low"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -438,8 +445,8 @@ class TestListTickets:
         assert result[0]["priority"] == "high"
 
     async def test_filter_by_search(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        db_session.add(Ticket(project_id=mcp_project.id, title="Login bug"))
-        db_session.add(Ticket(project_id=mcp_project.id, title="Dashboard feature"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Login bug"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Dashboard feature"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -460,8 +467,8 @@ class TestListTickets:
         db_session.add(sprint)
         await db_session.flush()
 
-        db_session.add(Ticket(project_id=mcp_project.id, title="In sprint", sprint_id=sprint.id))
-        db_session.add(Ticket(project_id=mcp_project.id, title="No sprint"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="In sprint", sprint_id=sprint.id))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="No sprint"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -475,7 +482,7 @@ class TestListTickets:
 
     async def test_invalid_status_ignored(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         """Nieprawidlowy status jest ignorowany -- zwraca wszystkie tickety."""
-        db_session.add(Ticket(project_id=mcp_project.id, title="Any ticket"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Any ticket"))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -497,6 +504,7 @@ class TestGetTicket:
     async def test_returns_ticket_details(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Detail ticket",
             description="Some description",
             status="todo",
@@ -529,7 +537,7 @@ class TestGetTicket:
             await get_ticket(ctx, mcp_project.slug, str(uuid.uuid4()))
 
     async def test_ticket_with_comments(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Commented ticket")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Commented ticket")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -554,6 +562,7 @@ class TestGetTicket:
     async def test_ticket_with_assignee(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Assigned ticket",
             assignee_id=mcp_user.id,
         )
@@ -677,7 +686,7 @@ class TestCreateTicket:
 @pytest.mark.unit
 class TestUpdateTicket:
     async def test_update_title(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Old title")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Old title")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -690,7 +699,7 @@ class TestUpdateTicket:
         assert result["title"] == "New title"
 
     async def test_update_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Status ticket", status="backlog")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Status ticket", status="backlog")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -712,7 +721,7 @@ class TestUpdateTicket:
             await update_ticket(ctx, mcp_project.slug, str(uuid.uuid4()), title="X")
 
     async def test_update_empty_title_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Keep me")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Keep me")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -725,7 +734,7 @@ class TestUpdateTicket:
             await update_ticket(ctx, mcp_project.slug, str(ticket.id), title="   ")
 
     async def test_update_invalid_status_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Status err")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Status err")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -738,7 +747,7 @@ class TestUpdateTicket:
             await update_ticket(ctx, mcp_project.slug, str(ticket.id), status="nonexistent")
 
     async def test_update_invalid_priority_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Priority err")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Priority err")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -756,7 +765,7 @@ class TestUpdateTicket:
         db_session.add(sprint)
         await db_session.flush()
 
-        ticket = Ticket(project_id=mcp_project.id, title="In sprint", sprint_id=sprint.id)
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="In sprint", sprint_id=sprint.id)
         db_session.add(ticket)
         await db_session.flush()
 
@@ -772,6 +781,7 @@ class TestUpdateTicket:
         """assignee_email="" czyści assignee."""
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Assigned",
             assignee_id=mcp_user.id,
         )
@@ -787,7 +797,7 @@ class TestUpdateTicket:
         assert "id" in result
 
     async def test_update_story_points(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="SP ticket")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="SP ticket")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -808,7 +818,7 @@ class TestUpdateTicket:
 @pytest.mark.unit
 class TestDeleteTicket:
     async def test_delete_existing(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Delete me")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Delete me")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -859,6 +869,7 @@ class TestListSprints:
 
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Sprint ticket",
             sprint_id=sprint.id,
             story_points=5,
@@ -920,6 +931,7 @@ class TestGetSprint:
 
         ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Sprint ticket",
             sprint_id=sprint.id,
             priority="high",
@@ -1164,12 +1176,14 @@ class TestCompleteSprint:
 
         done_ticket = Ticket(
             project_id=mcp_project.id,
+            number=1,
             title="Done ticket",
             sprint_id=sprint.id,
             status="done",
         )
         undone_ticket = Ticket(
             project_id=mcp_project.id,
+            number=2,
             title="Undone ticket",
             sprint_id=sprint.id,
             status="in_progress",
@@ -1203,7 +1217,7 @@ class TestCompleteSprint:
 @pytest.mark.unit
 class TestListComments:
     async def test_empty_comments(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="No comments")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="No comments")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1216,7 +1230,7 @@ class TestListComments:
         assert result == []
 
     async def test_returns_comments(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="With comments")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="With comments")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1258,7 +1272,7 @@ class TestListComments:
 @pytest.mark.unit
 class TestAddComment:
     async def test_add_comment(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Comment target")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Comment target")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1273,7 +1287,7 @@ class TestAddComment:
         assert "id" in result
 
     async def test_add_empty_comment_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Empty comment target")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Empty comment target")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1295,7 +1309,7 @@ class TestAddComment:
             await add_comment(ctx, mcp_project.slug, str(uuid.uuid4()), "Lost comment")
 
     async def test_add_comment_strips_whitespace(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        ticket = Ticket(project_id=mcp_project.id, title="Strip target")
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Strip target")
         db_session.add(ticket)
         await db_session.flush()
 
@@ -1328,9 +1342,11 @@ class TestListProjects:
         assert result[0]["role"] == "owner"
 
     async def test_excludes_inactive_projects(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        _slug = f"inactive-{uuid.uuid4().hex[:8]}"
         inactive = Project(
             name="Inactive",
-            slug=f"inactive-{uuid.uuid4().hex[:8]}",
+            slug=_slug,
+            code=_slug.replace("-", "").upper()[:5],
             api_key=secrets.token_urlsafe(32),
             is_active=False,
         )
@@ -1601,8 +1617,8 @@ class TestGetBoard:
         db_session.add(sprint)
         await db_session.flush()
 
-        for status in ("todo", "in_progress", "done"):
-            db_session.add(Ticket(project_id=mcp_project.id, title=f"Ticket {status}", sprint_id=sprint.id, status=status))
+        for i, status in enumerate(("todo", "in_progress", "done"), start=1):
+            db_session.add(Ticket(project_id=mcp_project.id, number=i, title=f"Ticket {status}", sprint_id=sprint.id, status=status))
         await db_session.flush()
 
         ctx = _make_ctx()
@@ -1653,9 +1669,9 @@ class TestGetProjectSummary:
         assert result["issues_unresolved"] == 2
 
     async def test_counts_backlog_tickets(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        db_session.add(Ticket(project_id=mcp_project.id, title="Backlog 1", status="backlog"))
-        db_session.add(Ticket(project_id=mcp_project.id, title="Backlog 2", status="backlog"))
-        db_session.add(Ticket(project_id=mcp_project.id, title="In progress", status="in_progress"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Backlog 1", status="backlog"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Backlog 2", status="backlog"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=3, title="In progress", status="in_progress"))
         await db_session.flush()
 
         ctx = _make_ctx()

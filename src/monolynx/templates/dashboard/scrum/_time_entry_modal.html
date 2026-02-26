@@ -1,0 +1,88 @@
+<!-- Modal: Zaloguj czas -->
+<dialog id="time-entry-modal" class="bg-gray-800 border border-gray-700 rounded-lg p-6 text-white max-w-md w-full backdrop:bg-black/50">
+    <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">Zaloguj czas</h3>
+        <button onclick="document.getElementById('time-entry-modal').close()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+    </div>
+    <form id="time-entry-form" class="space-y-4">
+        <input type="hidden" id="te-ticket-id" value="{{ ticket.id }}">
+        <div>
+            <label for="te-duration" class="block text-sm text-gray-400 mb-1">Czas (minuty)</label>
+            <input type="number" id="te-duration" min="1" required
+                   class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
+                   placeholder="np. 90">
+        </div>
+        <div>
+            <label for="te-date" class="block text-sm text-gray-400 mb-1">Data pracy</label>
+            <input type="date" id="te-date" required
+                   class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+            <label for="te-description" class="block text-sm text-gray-400 mb-1">Opis (opcjonalny)</label>
+            <textarea id="te-description" rows="2"
+                      class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500 resize-y"
+                      placeholder="Co zostalo zrobione..."></textarea>
+        </div>
+        <div id="te-error" class="text-red-400 text-sm hidden"></div>
+        <div class="flex justify-end gap-3">
+            <button type="button" onclick="document.getElementById('time-entry-modal').close()"
+                    class="px-4 py-2 text-sm text-gray-400 hover:text-white transition">Anuluj</button>
+            <button type="submit"
+                    class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+                Zaloguj czas
+            </button>
+        </div>
+    </form>
+</dialog>
+
+<script>
+(function() {
+    const form = document.getElementById('time-entry-form');
+    const errorEl = document.getElementById('te-error');
+    const modal = document.getElementById('time-entry-modal');
+
+    // Set default date to today
+    document.getElementById('te-date').value = new Date().toISOString().split('T')[0];
+
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        errorEl.classList.add('hidden');
+
+        const ticketId = document.getElementById('te-ticket-id').value;
+        const duration = parseInt(document.getElementById('te-duration').value);
+        const dateLogged = document.getElementById('te-date').value;
+        const description = document.getElementById('te-description').value.trim() || null;
+
+        if (!duration || duration <= 0) {
+            errorEl.textContent = 'Czas musi byc wiekszy niz 0';
+            errorEl.classList.remove('hidden');
+            return;
+        }
+
+        try {
+            const resp = await fetch('/dashboard/{{ project.slug }}/scrum/time-tracking/log', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    ticket_id: ticketId,
+                    duration_minutes: duration,
+                    date_logged: dateLogged,
+                    description: description
+                })
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                errorEl.textContent = data.error || 'Wystapil blad';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            // Success - reload page to show new entry
+            modal.close();
+            window.location.reload();
+        } catch (err) {
+            errorEl.textContent = 'Blad polaczenia';
+            errorEl.classList.remove('hidden');
+        }
+    });
+})();
+</script>

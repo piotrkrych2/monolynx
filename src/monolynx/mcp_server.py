@@ -28,6 +28,8 @@ from monolynx.models.user import User
 from monolynx.services.mcp_auth import verify_mcp_token
 from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
+from monolynx.services.ticket_numbering import get_next_ticket_number
+from monolynx.services.time_tracking import add_time_entry
 
 logger = logging.getLogger("monolynx.mcp")
 
@@ -430,6 +432,7 @@ async def get_board(
             columns[t.status].append(
                 {
                     "id": str(t.id),
+                    "key": f"{project.code}-{t.number}",
                     "title": t.title,
                     "priority": t.priority,
                     "story_points": t.story_points,
@@ -602,6 +605,7 @@ async def list_tickets(
     return [
         {
             "id": str(t.id),
+            "key": f"{project.code}-{t.number}",
             "title": t.title,
             "description": t.description,
             "status": t.status,
@@ -645,6 +649,7 @@ async def get_ticket(
 
     return {
         "id": str(ticket.id),
+        "key": f"{project.code}-{ticket.number}",
         "title": ticket.title,
         "description": ticket.description,
         "status": ticket.status,
@@ -700,8 +705,11 @@ async def create_ticket(
         if sprint_id:
             resolved_sprint_id = uuid.UUID(sprint_id)
 
+        next_number = await get_next_ticket_number(project.id, db)
+
         ticket = Ticket(
             project_id=project.id,
+            number=next_number,
             title=title.strip(),
             description=description.strip() if description else None,
             priority=priority,
@@ -717,6 +725,7 @@ async def create_ticket(
 
     return {
         "id": str(ticket.id),
+        "key": f"{project.code}-{ticket.number}",
         "title": ticket.title,
         "status": ticket.status,
         "created_via_ai": True,
@@ -792,6 +801,7 @@ async def update_ticket(
 
     return {
         "id": str(ticket.id),
+        "key": f"{project.code}-{ticket.number}",
         "title": ticket.title,
         "status": ticket.status,
         "message": f"Ticket '{ticket.title}' zaktualizowany",
@@ -904,6 +914,7 @@ async def get_sprint(
         "tickets": [
             {
                 "id": str(t.id),
+                "key": f"{project.code}-{t.number}",
                 "title": t.title,
                 "status": t.status,
                 "priority": t.priority,
@@ -1066,4 +1077,52 @@ async def add_comment(
         "id": str(comment.id),
         "message": "Komentarz dodany",
         "created_via_ai": True,
+    }
+
+
+# --- Time Tracking ---
+
+
+@mcp.tool()
+async def log_time(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_id: str,
+    duration_minutes: int,
+    date_logged: str,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Zaloguj czas pracy na tickecie. Oznaczany jako created_via_ai=True.
+
+    date_logged w formacie YYYY-MM-DD. duration_minutes musi byc > 0.
+    """
+    user, _project = await _get_user_and_project(ctx, project_slug)
+
+    if duration_minutes <= 0:
+        raise ValueError("Czas musi byc wiekszy niz 0")
+
+    parsed_date = date.fromisoformat(date_logged)
+
+    async with async_session_factory() as db:
+        result = await add_time_entry(
+            ticket_id=uuid.UUID(ticket_id),
+            user_id=user.id,
+            duration_minutes=duration_minutes,
+            date_logged=parsed_date,
+            description=description.strip() if description else None,
+            db=db,
+            created_via_ai=True,
+        )
+
+        if isinstance(result, str):
+            raise ValueError(result)
+
+    return {
+        "id": str(result.id),
+        "ticket_id": str(result.ticket_id),
+        "duration_minutes": result.duration_minutes,
+        "date_logged": result.date_logged.isoformat(),
+        "description": result.description,
+        "created_via_ai": True,
+        "message": f"Zalogowano {duration_minutes} min na tickecie",
     }

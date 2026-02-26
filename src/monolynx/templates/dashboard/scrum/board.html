@@ -42,7 +42,10 @@
             <div data-ticket-id="{{ ticket.id }}" data-sp="{{ ticket.story_points or 0 }}"
                  class="ticket-card block bg-gray-800 border border-gray-700 rounded p-3 hover:border-indigo-500 transition cursor-grab"
                  onclick="window.location.href='/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}'">
-                <p class="text-sm text-white font-medium">{{ ticket.title }}</p>
+                <div class="flex items-center gap-1.5">
+                    <span class="text-indigo-400 font-mono text-xs flex-shrink-0">{{ project.code }}-{{ ticket.number }}</span>
+                    <p class="text-sm text-white font-medium truncate">{{ ticket.title }}</p>
+                </div>
                 <div class="flex items-center justify-between mt-2">
                     <div class="flex items-center gap-2">
                         {% if ticket.priority == 'critical' %}

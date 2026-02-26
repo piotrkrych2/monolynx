@@ -1,0 +1,424 @@
+{% extends "layouts/base.html" %}
+{% block title %}Raporty pracy - Monolynx{% endblock %}
+{% block main_class %}max-w-7xl{% endblock %}
+{% block content %}
+
+<div class="mb-6">
+    <h2 class="text-xl font-bold text-white">Raporty pracy</h2>
+</div>
+
+<style>
+    .ts-wrapper { background: rgb(55, 65, 81); border-color: rgb(75, 85, 99); border-radius: 0.25rem; }
+    .ts-wrapper .ts-control { background: rgb(55, 65, 81); border: none; color: white; padding: 4px 8px; min-height: 34px; }
+    .ts-wrapper .ts-control input { color: white; }
+    .ts-wrapper .ts-control input::placeholder { color: rgb(156, 163, 175); }
+    .ts-wrapper .ts-control .item { background: rgb(79, 70, 229); color: white; border-radius: 4px; padding: 1px 6px; font-size: 0.8rem; }
+    .ts-wrapper .ts-control .item .remove { color: rgba(255,255,255,0.6); border-left-color: rgba(255,255,255,0.2); }
+    .ts-wrapper .ts-dropdown { background: rgb(55, 65, 81); border-color: rgb(75, 85, 99); color: white; }
+    .ts-wrapper .ts-dropdown .active { background: rgb(79, 70, 229); color: white; }
+    .ts-wrapper .ts-dropdown .option:hover { background: rgb(75, 85, 99); }
+    .ts-wrapper.focus .ts-control { border-color: rgb(99, 102, 241); box-shadow: none; }
+</style>
+<form method="get" action="/dashboard/reports" class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-6">
+    <div class="flex flex-wrap gap-3 items-end">
+        <div class="min-w-[200px]">
+            <label class="block text-xs text-gray-400 mb-1">Projekt</label>
+            <select id="filter-project" name="project_id" multiple placeholder="Szukaj projektu...">
+                {% for p in projects %}
+                {% if p.id|string in selected_project_ids %}
+                <option value="{{ p.id }}" selected>{{ p.name }}</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+        </div>
+        <div class="min-w-[200px]">
+            <label class="block text-xs text-gray-400 mb-1">Uzytkownik</label>
+            <select id="filter-user" name="user_id" multiple placeholder="Szukaj uzytkownika...">
+                {% if filters.user_ids %}
+                {% for uid in filters.user_ids %}
+                <option value="{{ uid }}" selected>{{ user_lookup.get(uid|string, '?') }}</option>
+                {% endfor %}
+                {% endif %}
+            </select>
+        </div>
+        <div class="min-w-[200px]">
+            <label class="block text-xs text-gray-400 mb-1">Sprint</label>
+            <select id="filter-sprint" name="sprint_id" multiple placeholder="Szukaj sprintu...">
+                {% if filters.sprint_ids %}
+                {% for sid in filters.sprint_ids %}
+                <option value="{{ sid }}" selected>{{ sprint_lookup.get(sid|string, '?') }}</option>
+                {% endfor %}
+                {% endif %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs text-gray-400 mb-1">Data od</label>
+            <input type="date" name="date_from" value="{{ filters.date_from if filters.date_from else '' }}"
+                   class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+            <label class="block text-xs text-gray-400 mb-1">Data do</label>
+            <input type="date" name="date_to" value="{{ filters.date_to if filters.date_to else '' }}"
+                   class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+            <label class="block text-xs text-gray-400 mb-1">Zrodlo</label>
+            <select name="ai" class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                <option value="">Wszystkie</option>
+                <option value="1" {% if filters.created_via_ai == true %}selected{% endif %}>AI</option>
+                <option value="0" {% if filters.created_via_ai == false %}selected{% endif %}>Reczne</option>
+            </select>
+        </div>
+        <div class="flex items-center gap-2">
+            <button type="submit"
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-1.5 rounded transition">
+                Filtruj
+            </button>
+            <a href="/dashboard/reports"
+               class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-1.5 rounded transition">
+                Wyczysc
+            </a>
+        </div>
+    </div>
+</form>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <div class="text-xs text-gray-400 mb-1">Zalogowane godziny</div>
+        <div class="text-2xl font-bold text-white">{{ "%.1f"|format(report.total_hours) }}h</div>
+    </div>
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <div class="text-xs text-gray-400 mb-1">Liczba wpisow</div>
+        <div class="text-2xl font-bold text-white">{{ report.entry_count }}</div>
+    </div>
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <div class="text-xs text-gray-400 mb-1">Srednia na wpis</div>
+        <div class="text-2xl font-bold text-white">{{ "%.1f"|format(avg_hours) }}h</div>
+    </div>
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <div class="text-xs text-gray-400 mb-1">Osoby</div>
+        <div class="text-2xl font-bold text-white">{{ unique_users }}</div>
+    </div>
+</div>
+
+{% set filter_parts = [] %}
+{% if filters.project_ids %}{% for pid in filters.project_ids %}{% set _ = filter_parts.append("project_id=" ~ pid) %}{% endfor %}{% endif %}
+{% if filters.user_ids %}{% for uid in filters.user_ids %}{% set _ = filter_parts.append("user_id=" ~ uid) %}{% endfor %}{% endif %}
+{% if filters.sprint_ids %}{% for sid in filters.sprint_ids %}{% set _ = filter_parts.append("sprint_id=" ~ sid) %}{% endfor %}{% endif %}
+{% if filters.date_from %}{% set _ = filter_parts.append("date_from=" ~ filters.date_from) %}{% endif %}
+{% if filters.date_to %}{% set _ = filter_parts.append("date_to=" ~ filters.date_to) %}{% endif %}
+{% if filters.created_via_ai == true %}{% set _ = filter_parts.append("ai=1") %}{% elif filters.created_via_ai == false %}{% set _ = filter_parts.append("ai=0") %}{% endif %}
+{% set filter_params_nosort = filter_parts|join("&") %}
+{% set fp_nosort = ("&" ~ filter_params_nosort) if filter_params_nosort else "" %}
+{% if sort and sort != 'date' %}{% set _ = filter_parts.append("sort=" ~ sort) %}{% endif %}
+{% set filter_params = filter_parts|join("&") %}
+{% set fp_amp = ("&" ~ filter_params) if filter_params else "" %}
+
+<div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden mb-6">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-gray-700 text-gray-400 text-xs uppercase">
+                <th class="px-4 py-3 text-left">Projekt</th>
+                <th class="px-4 py-3 text-left">Ticket</th>
+                <th class="px-4 py-3 text-left">
+                    <a href="/dashboard/reports?sort=user{{ fp_nosort }}" class="hover:text-white transition">Uzytkownik {% if sort == 'user' %}&darr;{% endif %}</a>
+                </th>
+                <th class="px-4 py-3 text-right">
+                    <a href="/dashboard/reports?sort=hours{{ fp_nosort }}" class="hover:text-white transition">Godziny {% if sort == 'hours' %}&darr;{% endif %}</a>
+                </th>
+                <th class="px-4 py-3 text-left">
+                    <a href="/dashboard/reports?sort=date{{ fp_nosort }}" class="hover:text-white transition">Data {% if sort == 'date' and request.query_params.get('sort') %}&darr;{% endif %}</a>
+                </th>
+                <th class="px-4 py-3 text-left">Opis</th>
+                <th class="px-4 py-3 text-center w-12"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in report.entries %}
+            <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
+                <td class="px-4 py-3 text-white">{{ project_lookup.get(entry.project_id|string, '?') }}</td>
+                <td class="px-4 py-3">
+                    <a href="/dashboard/{{ project_slug_lookup.get(entry.project_id|string, '') }}/scrum/tickets/{{ entry.ticket_id }}" class="text-indigo-400 hover:text-indigo-300 font-mono text-xs">
+                        {{ ticket_key_lookup.get(entry.ticket_id|string, '?') }}
+                    </a>
+                </td>
+                <td class="px-4 py-3 text-white">{{ user_lookup.get(entry.user_id|string, '?') }}</td>
+                <td class="px-4 py-3 text-right text-white font-mono">{{ "%.1f"|format(entry.duration_minutes / 60) }}h</td>
+                <td class="px-4 py-3 text-gray-300">{{ entry.date_logged }}</td>
+                <td class="px-4 py-3 text-gray-400">{{ (entry.description or '')|truncate(100) }}</td>
+                <td class="px-4 py-3 text-center">{% if entry.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded" title="Zalogowano przez AI">AI</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+            {% if not report.entries %}
+            <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">Brak wpisow dla wybranych filtrow</td></tr>
+            {% endif %}
+            <tr class="bg-gray-700/50 font-semibold">
+                <td class="px-4 py-3 text-white" colspan="3">Razem</td>
+                <td class="px-4 py-3 text-right text-white font-mono">{{ "%.1f"|format(report.total_hours) }}h</td>
+                <td class="px-4 py-3" colspan="2"></td>
+                <td class="px-4 py-3 text-center text-xs text-purple-400">{% if ai_entry_count > 0 %}{{ ai_hours }}h AI{% endif %}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3">Godziny na sprint</h3>
+        <div class="h-64">
+            <canvas id="chart-sprint-hours"></canvas>
+        </div>
+    </div>
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3">Godziny na osobe</h3>
+        <div class="h-64">
+            <canvas id="chart-user-hours"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 gap-6 mb-6">
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3">Godziny na projekt</h3>
+        <div class="h-64">
+            <canvas id="chart-project-hours"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="flex items-center gap-3 mb-6">
+    <a href="/dashboard/reports/export?format=csv{{ fp_amp }}"
+       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+        Eksportuj jako CSV
+    </a>
+    <a href="/dashboard/reports/export?format=pdf{{ fp_amp }}"
+       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+        Eksportuj jako PDF
+    </a>
+</div>
+
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between mt-6">
+    <div>
+        {% if has_prev %}
+        <a href="/dashboard/reports?page={{ page - 1 }}{{ fp_amp }}"
+           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Poprzednia
+        </a>
+        {% endif %}
+    </div>
+    <span class="text-sm text-gray-400">Strona {{ page }} z {{ total_pages }}</span>
+    <div>
+        {% if has_next %}
+        <a href="/dashboard/reports?page={{ page + 1 }}{{ fp_amp }}"
+           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Nastepna
+        </a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.4.3/dist/css/tom-select.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.4.3/dist/js/tom-select.complete.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const FILTER_PARAMS = '{{ filter_params|safe }}';
+
+let sprintChart = null;
+let userChart = null;
+let projectChart = null;
+
+const CHART_COLORS = [
+    '#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd',
+    '#818cf8', '#6d28d9', '#5b21b6', '#4c1d95',
+    '#7c3aed', '#9333ea', '#a855f7', '#c084fc'
+];
+
+async function loadSprintChart() {
+    try {
+        const resp = await fetch(`/dashboard/reports/data/sprint-hours?${FILTER_PARAMS}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        const ctx = document.getElementById('chart-sprint-hours');
+        if (sprintChart) sprintChart.destroy();
+
+        sprintChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.map(d => d.sprint_name),
+                datasets: [{
+                    label: 'Godziny',
+                    data: data.map(d => d.total_hours),
+                    backgroundColor: '#6366f1',
+                    borderColor: '#818cf8',
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#9ca3af' },
+                        grid: { color: 'rgba(75, 85, 99, 0.3)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#9ca3af' },
+                        grid: { color: 'rgba(75, 85, 99, 0.3)' }
+                    }
+                }
+            }
+        });
+    } catch (e) {
+        // ignore chart errors
+    }
+}
+
+async function loadUserChart() {
+    try {
+        const resp = await fetch(`/dashboard/reports/data/user-hours?${FILTER_PARAMS}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        const ctx = document.getElementById('chart-user-hours');
+        if (userChart) userChart.destroy();
+
+        userChart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: data.map(d => `${d.user_name} (${d.percentage}%)`),
+                datasets: [{
+                    data: data.map(d => d.total_hours),
+                    backgroundColor: data.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
+                    borderColor: '#1f2937',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            color: '#d1d5db',
+                            padding: 12,
+                            font: { size: 12 }
+                        }
+                    }
+                }
+            }
+        });
+    } catch (e) {
+        // ignore chart errors
+    }
+}
+
+async function loadProjectChart() {
+    try {
+        const resp = await fetch(`/dashboard/reports/data/project-hours?${FILTER_PARAMS}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        const ctx = document.getElementById('chart-project-hours');
+        if (projectChart) projectChart.destroy();
+
+        projectChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.map(d => d.project_name),
+                datasets: [{
+                    label: 'Godziny',
+                    data: data.map(d => d.total_hours),
+                    backgroundColor: data.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
+                    borderColor: '#1f2937',
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#9ca3af' },
+                        grid: { color: 'rgba(75, 85, 99, 0.3)' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#9ca3af' },
+                        grid: { color: 'rgba(75, 85, 99, 0.3)' }
+                    }
+                }
+            }
+        });
+    } catch (e) {
+        // ignore chart errors
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadSprintChart();
+    loadUserChart();
+    loadProjectChart();
+});
+</script>
+
+<script>
+// Tom Select initialization
+function initTomSelect(elementId, searchUrl, extraParams) {
+    new TomSelect('#' + elementId, {
+        plugins: ['remove_button'],
+        valueField: 'value',
+        labelField: 'text',
+        searchField: 'text',
+        maxItems: null,
+        preload: true,
+        shouldLoad: function(query) { return true; },
+        load: function(query, callback) {
+            const params = new URLSearchParams();
+            if (query) params.set('q', query);
+            // Dodaj project_id z aktualnego wyboru (dla user/sprint search)
+            if (extraParams) {
+                const projectSelect = document.getElementById('filter-project');
+                if (projectSelect && projectSelect.tomselect) {
+                    projectSelect.tomselect.getValue().forEach(pid => params.append('project_id', pid));
+                }
+            }
+            fetch(searchUrl + '?' + params.toString())
+                .then(r => r.json())
+                .then(data => callback(data))
+                .catch(() => callback());
+        },
+        render: {
+            option: function(data, escape) {
+                return '<div class="py-1 px-2">' + escape(data.text) + '</div>';
+            },
+            item: function(data, escape) {
+                return '<div>' + escape(data.text) + '</div>';
+            },
+            no_results: function() {
+                return '<div class="no-results py-2 px-3 text-gray-400 text-sm">Brak wynikow</div>';
+            }
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    initTomSelect('filter-project', '/dashboard/reports/search/projects', false);
+    initTomSelect('filter-user', '/dashboard/reports/search/users', true);
+    initTomSelect('filter-sprint', '/dashboard/reports/search/sprints', true);
+});
+</script>
+
+{% endblock %}

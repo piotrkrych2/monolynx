@@ -17,6 +17,7 @@ class TestBoard:
         project = Project(
             name="Board NoSpr",
             slug="board-nospr",
+            code="BOA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -32,6 +33,7 @@ class TestBoard:
         project = Project(
             name="Board Act",
             slug="board-act",
+            code="BOA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )
@@ -49,6 +51,7 @@ class TestBoard:
 
         ticket_todo = Ticket(
             project_id=project.id,
+            number=1,
             sprint_id=sprint.id,
             title="Ticket TODO",
             status="todo",
@@ -56,6 +59,7 @@ class TestBoard:
         )
         ticket_done = Ticket(
             project_id=project.id,
+            number=2,
             sprint_id=sprint.id,
             title="Ticket DONE",
             status="done",
@@ -74,6 +78,7 @@ class TestBoard:
         project = Project(
             name="Board Auth",
             slug="board-auth",
+            code="BOA",
             api_key=secrets.token_urlsafe(32),
             is_active=True,
         )

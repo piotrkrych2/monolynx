@@ -10,6 +10,7 @@ from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_comment import TicketComment
+from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.models.user import User
 from monolynx.models.user_api_token import UserApiToken
 
@@ -24,6 +25,7 @@ __all__ = [
     "Sprint",
     "Ticket",
     "TicketComment",
+    "TimeTrackingEntry",
     "User",
     "UserApiToken",
 ]

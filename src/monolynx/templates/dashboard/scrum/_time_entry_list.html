@@ -1,0 +1,64 @@
+<!-- Lista wpisow czasu pracy -->
+<div id="time-entries">
+    {% if time_entries %}
+    <div class="space-y-2">
+        {% for entry in time_entries %}
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-3 flex items-center justify-between" id="te-{{ entry.id }}">
+            <div class="flex items-center gap-4 flex-1 min-w-0">
+                <div class="flex-shrink-0">
+                    <div class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white">
+                        {{ entry.user.email[0]|upper }}
+                    </div>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-indigo-400">{{ entry.user.email.split('@')[0] }}</span>
+                        {% if entry.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded">AI</span>{% endif %}
+                        <span class="text-sm font-mono text-green-400">
+                            {% set hours = entry.duration_minutes // 60 %}
+                            {% set mins = entry.duration_minutes % 60 %}
+                            {% if hours > 0 %}{{ hours }}h {% endif %}{{ mins }}m
+                        </span>
+                        <span class="text-xs text-gray-500">{{ entry.date_logged.strftime('%Y-%m-%d') }}</span>
+                    </div>
+                    {% if entry.description %}
+                    <p class="text-gray-400 text-xs mt-1 truncate">{{ entry.description }}</p>
+                    {% endif %}
+                </div>
+            </div>
+            {% if entry.user_id == current_user_id %}
+            <button onclick="deleteTimeEntry('{{ entry.id }}')"
+                    class="text-gray-500 hover:text-red-400 text-sm ml-2 flex-shrink-0 transition"
+                    title="Usun">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+            </button>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-gray-500 text-sm italic">Brak wpisow czasu pracy</p>
+    {% endif %}
+</div>
+
+<script>
+async function deleteTimeEntry(entryId) {
+    if (!confirm('Czy na pewno chcesz usunac ten wpis?')) return;
+
+    try {
+        const resp = await fetch('/dashboard/{{ project.slug }}/scrum/time-tracking/' + entryId, {
+            method: 'DELETE'
+        });
+        if (resp.ok) {
+            window.location.reload();
+        } else {
+            const data = await resp.json();
+            alert(data.error || 'Wystapil blad');
+        }
+    } catch (err) {
+        alert('Blad polaczenia');
+    }
+}
+</script>

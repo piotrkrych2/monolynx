@@ -9,3 +9,4 @@ python-multipart>=0.0.9
 passlib[bcrypt]>=1.7
 itsdangerous>=2.1
 mcp[cli]>=1.26.0
+weasyprint>=62.0

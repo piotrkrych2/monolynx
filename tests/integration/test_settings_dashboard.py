@@ -19,6 +19,7 @@ async def _create_project(db_session, name="Settings Proj", slug=None):
     project = Project(
         name=name,
         slug=slug,
+        code="P" + secrets.token_hex(4).upper(),
         api_key=secrets.token_urlsafe(32),
         is_active=True,
     )
@@ -89,7 +90,7 @@ class TestEditProject:
 
         resp = await client.post(
             f"/dashboard/{project.slug}/settings",
-            data={"name": "Nowa Nazwa Edycja", "slug": "sp-edit-ok-new"},
+            data={"name": "Nowa Nazwa Edycja", "slug": "sp-edit-ok-new", "code": "SPE"},
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -104,7 +105,7 @@ class TestEditProject:
         project = await _create_project(db_session, slug="sp-edit-noauth")
         resp = await client.post(
             f"/dashboard/{project.slug}/settings",
-            data={"name": "X", "slug": "x"},
+            data={"name": "X", "slug": "x", "code": "XX"},
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -115,7 +116,7 @@ class TestEditProject:
         await login_session(client, db_session, email="sp-edit-nop@test.com")
         resp = await client.post(
             "/dashboard/no-such-proj-edit/settings",
-            data={"name": "X", "slug": "x"},
+            data={"name": "X", "slug": "x", "code": "XX"},
         )
         assert resp.status_code == 404
 
@@ -126,7 +127,7 @@ class TestEditProject:
 
         resp = await client.post(
             f"/dashboard/{project.slug}/settings",
-            data={"name": "", "slug": ""},
+            data={"name": "", "slug": "", "code": ""},
         )
         assert resp.status_code == 200
         assert "wymagane" in resp.text
@@ -138,7 +139,7 @@ class TestEditProject:
 
         resp = await client.post(
             f"/dashboard/{project.slug}/settings",
-            data={"name": "Test", "slug": "INVALID SLUG!"},
+            data={"name": "Test", "slug": "INVALID SLUG!", "code": "TST"},
         )
         assert resp.status_code == 200
         assert "male litery" in resp.text
@@ -151,7 +152,7 @@ class TestEditProject:
 
         resp = await client.post(
             f"/dashboard/{project.slug}/settings",
-            data={"name": "Kopia", "slug": "sp-dup-target"},
+            data={"name": "Kopia", "slug": "sp-dup-target", "code": "KOP"},
         )
         assert resp.status_code == 200
         assert "juz istnieje" in resp.text

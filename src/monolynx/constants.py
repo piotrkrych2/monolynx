@@ -51,3 +51,16 @@ INTERVAL_UNIT_LABELS = {
     "hours": "godz.",
     "days": "dni",
 }
+
+# Time tracking
+TIME_TRACKING_STATUSES = ("draft", "submitted", "approved", "rejected")
+
+TIME_TRACKING_STATUS_LABELS = {
+    "draft": "Projekt",
+    "submitted": "Wysłany",
+    "approved": "Zatwierdzony",
+    "rejected": "Odrzucony",
+}
+
+DEFAULT_REPORT_DATE_RANGE_DAYS = 30
+DEFAULT_REPORT_PAGE_SIZE = 20

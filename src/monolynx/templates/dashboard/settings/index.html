@@ -36,6 +36,14 @@
                 class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div>
+            <label class="block text-sm text-gray-400 mb-1">Kod projektu</label>
+            <input type="text" name="code" value="{{ code or project.code }}" required
+                pattern="[A-Z][A-Z0-9]{1,9}"
+                maxlength="10"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white uppercase focus:outline-none focus:border-indigo-500">
+            <p class="text-xs text-gray-500 mt-1">Wielkie litery i cyfry, 2-10 znakow (np. PIM, LEP). Uzywany w numeracji ticketow.</p>
+        </div>
+        <div>
             <label class="block text-sm text-gray-400 mb-1">Slug</label>
             <input type="text" name="slug" value="{{ slug or project.slug }}" required
                 pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
