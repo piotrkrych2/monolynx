@@ -1,0 +1,60 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Node'y - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Node'y</h1>
+    <a href="/dashboard/{{ project.slug }}/connections/nodes/create"
+       class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
+        Dodaj node
+    </a>
+</div>
+
+<!-- Filtry -->
+<div class="flex gap-4 mb-4">
+    <form method="get" class="flex gap-2 items-center">
+        <select name="type" class="bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2">
+            <option value="">Wszystkie typy</option>
+            {% for t in node_types %}
+            <option value="{{ t }}" {% if current_type == t %}selected{% endif %}>{{ node_labels.get(t, t) }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" name="search" value="{{ current_search }}" placeholder="Szukaj po nazwie..."
+               class="bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2 w-64">
+        <button type="submit" class="bg-gray-700 hover:bg-gray-600 text-white text-sm px-4 py-2 rounded transition">Filtruj</button>
+    </form>
+</div>
+
+{% if not graph_enabled %}
+<div class="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 mb-4">
+    <p class="text-yellow-300 text-sm">Neo4j nie jest dostępne.</p>
+</div>
+{% elif nodes %}
+<div class="space-y-2">
+    {% for node in nodes %}
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3 min-w-0">
+                <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded bg-indigo-900 text-indigo-300">{{ node.type }}</span>
+                <div class="min-w-0">
+                    <h3 class="text-white font-medium truncate">{{ node.name }}</h3>
+                    {% if node.file_path %}
+                    <p class="text-xs text-gray-500 truncate">{{ node.file_path }}{% if node.line_number %}:{{ node.line_number }}{% endif %}</p>
+                    {% endif %}
+                </div>
+            </div>
+            <form method="post" action="/dashboard/{{ project.slug }}/connections/nodes/{{ node.id }}/delete"
+                  onsubmit="return confirm('Na pewno usunąć ten node i jego krawędzie?')">
+                <button type="submit" class="text-red-400 hover:text-red-300 text-sm transition">Usuń</button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="bg-gray-800 border border-gray-700 rounded-lg p-8 text-center">
+    <p class="text-gray-400 text-sm">Brak node'ów{% if current_type %} typu {{ node_labels.get(current_type, current_type) }}{% endif %}{% if current_search %} pasujących do "{{ current_search }}"{% endif %}.</p>
+</div>
+{% endif %}
+{% endblock %}
