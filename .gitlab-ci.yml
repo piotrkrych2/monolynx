@@ -136,3 +136,16 @@ deploy-staging:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       when: manual
+
+sync-graph:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - apk add --no-cache openssh-client
+    - ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST
+        "cd $DEPLOY_PATH && docker compose exec -T app python cicd/sync_graph.py --project-id $GRAPH_PROJECT_ID"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  needs:
+    - deploy-staging

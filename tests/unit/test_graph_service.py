@@ -25,6 +25,29 @@ from monolynx.services.graph import (
 # ---------------------------------------------------------------------------
 
 
+class AsyncIterMock:
+    """Async iterator wrapper for mocking Neo4j result iteration."""
+
+    def __init__(self, items: list):
+        self._items = iter(items)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._items)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+def _make_result_with_records(*records) -> AsyncMock:
+    """Creates a mock Neo4j result that supports async iteration."""
+    result_mock = AsyncMock()
+    result_mock.__aiter__ = lambda self: AsyncIterMock(list(records))
+    return result_mock
+
+
 def _make_record(data: dict) -> MagicMock:
     """Tworzy mock rekordu Neo4j (dict-like)."""
     record = MagicMock()
@@ -173,9 +196,7 @@ class TestListNodes:
         # Mock async iteration: session.run returns result, iterating yields records
         record1 = _make_record({"n": node1, "labels": ["File"]})
         record2 = _make_record({"n": node2, "labels": ["Class"]})
-        result_mock = AsyncMock()
-        result_mock.__aiter__ = MagicMock(return_value=iter([record1, record2]))
-        session.run.return_value = result_mock
+        session.run.return_value = _make_result_with_records(record1, record2)
 
         result = await list_nodes(project_id)
 
@@ -188,9 +209,7 @@ class TestListNodes:
         project_id = uuid.uuid4()
         node = _make_node_props(name="FilteredNode")
         record = _make_record({"n": node, "labels": ["File"]})
-        result_mock = AsyncMock()
-        result_mock.__aiter__ = MagicMock(return_value=iter([record]))
-        session.run.return_value = result_mock
+        session.run.return_value = _make_result_with_records(record)
 
         result = await list_nodes(project_id, type_filter="File")
 
@@ -386,8 +405,7 @@ class TestGetStats:
         # Edge result -- async iterable
         edge_record1 = _make_record({"type": "CALLS", "count": 5})
         edge_record2 = _make_record({"type": "IMPORTS", "count": 2})
-        edge_result = AsyncMock()
-        edge_result.__aiter__ = MagicMock(return_value=iter([edge_record1, edge_record2]))
+        edge_result = _make_result_with_records(edge_record1, edge_record2)
 
         session.run.side_effect = [*node_results, edge_result]
 
@@ -410,21 +428,20 @@ class TestGetGraph:
         _driver, session = mock_driver
         project_id = uuid.uuid4()
 
-        node = _make_node_props(name="GraphNode")
+        node_id = uuid.uuid4().hex
+        node = _make_node_props(node_id=node_id, name="GraphNode")
         node_record = _make_record({"n": node, "labels": ["File"]})
-        node_result = AsyncMock()
-        node_result.__aiter__ = MagicMock(return_value=iter([node_record]))
+        node_result = _make_result_with_records(node_record)
 
         edge_record = _make_record(
             {
-                "source_id": "s1",
-                "target_id": "t1",
+                "source_id": node_id,
+                "target_id": node_id,
                 "type": "CALLS",
                 "metadata": "{}",
             }
         )
-        edge_result = AsyncMock()
-        edge_result.__aiter__ = MagicMock(return_value=iter([edge_record]))
+        edge_result = _make_result_with_records(edge_record)
 
         session.run.side_effect = [node_result, edge_result]
 
@@ -471,9 +488,7 @@ class TestFindPath:
             }
         )
 
-        result_mock = AsyncMock()
-        result_mock.__aiter__ = MagicMock(return_value=iter([record1, record2]))
-        session.run.return_value = result_mock
+        session.run.return_value = _make_result_with_records(record1, record2)
 
         result = await find_path(project_id, "a1", "b1")
 

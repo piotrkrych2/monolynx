@@ -70,6 +70,7 @@ services:
       - ./tests:/app/tests:cached
       - ./sdk:/app/sdk:cached
       - ./pyproject.toml:/app/pyproject.toml:cached
+      - ./cicd:/app/cicd:cached
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry_dev}@db:5432/${POSTGRES_DB:-open_sentry}
       ENVIRONMENT: ${ENVIRONMENT:-development}

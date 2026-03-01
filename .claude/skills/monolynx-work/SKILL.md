@@ -15,10 +15,11 @@ Jestes **Team Managerem**. Koordynujesz prace zespolu agentow nad zadaniem z pro
 
 ## KROK 1: Zaladuj narzedzia i pobierz zadanie
 
-Najpierw zaladuj narzedzia Monolynx przez ToolSearch:
+Zaladuj narzedzia Monolynx przez ToolSearch (dwa wywolania rownolegle):
 
 ```
 ToolSearch(query="+monolynx ticket board comment")
+ToolSearch(query="+monolynx graph")
 ```
 
 Nastepnie pobierz zadanie:
@@ -32,7 +33,61 @@ Nastepnie pobierz zadanie:
   3. Zapytaj: **"Ktory ticket chcesz podjac? Podaj ID."**
   4. Poczekaj na odpowiedz uzytkownika — NIE kontynuuj bez wyboru
 
-## KROK 2: Przeczytaj i zrozum zadanie
+## KROK 2: Odczytaj kontekst z grafu kodu
+
+**CEL**: Zbuduj mape zaleznosci kodu, ktory bedzie modyfikowany. Dzieki temu agenci beda wiedzieli jakie pliki/funkcje sa powiazane i co moze wymagac zmian.
+
+### 2a. Wyodrebnij elementy kodu z ticketa
+
+Przeanalizuj tytul i opis ticketa. Zidentyfikuj:
+- Nazwy plikow (np. `services/graph.py`, `dashboard/scrum.py`)
+- Nazwy funkcji/klas/modulow (np. `create_ticket`, `SprintService`)
+- Moduly systemu (np. "Scrum", "Wiki", "Monitoring")
+
+### 2b. Odpytaj graf
+
+Dla kazdego zidentyfikowanego elementu:
+
+1. **Wyszukaj node'y** powiazane z zadaniem:
+
+```
+mcp__monolynx-scrum__query_graph(
+  project_slug="monolynx",
+  node_type="File",       // lub Class, Function, Method, Const, Module
+  search="<nazwa pliku lub funkcji>"
+)
+```
+
+2. **Pobierz sasiadow** kluczowych node'ow (max 3-5 najwazniejszych):
+
+```
+mcp__monolynx-scrum__get_graph_node(
+  project_slug="monolynx",
+  node_id="<id node'a>"
+)
+```
+
+### 2c. Zbuduj mape kontekstu
+
+Na podstawie wynikow z grafu, zbuduj zwiezla mape:
+
+```
+MAPA KONTEKSTU Z GRAFU:
+- Plik: src/monolynx/services/wiki.py
+  - Zawiera: svc:create_wiki_page, svc:update_wiki_page, svc:render_markdown_html
+  - Importowany przez: dashboard/wiki.py, mcp_server.py
+  - Wywoluje: emb:generate_embedding, minio:upload_markdown
+
+- Plik: src/monolynx/dashboard/wiki.py
+  - Zawiera: wiki:page_create, wiki:page_edit, wiki:page_detail
+  - Importuje: services/wiki.py, services/embeddings.py
+```
+
+Ta mapa bedzie przekazana agentom w KROK 5b.
+
+**UWAGA**: Jesli graf nie jest dostepny (Neo4j wylaczony) lub brak wynikow — pomin ten krok i kontynuuj bez kontekstu grafu.
+
+## KROK 3: Przeczytaj i zrozum zadanie
 
 1. Pobierz pelne szczegoly ticketa: `mcp__monolynx__get_ticket(...)` (jesli jeszcze nie pobrane)
 2. Przeczytaj opis, komentarze, priorytet, story points
@@ -48,7 +103,7 @@ date +%s
 mcp__monolynx__update_ticket(project_slug="monolynx", ticket_id="<ID>", status="in_progress")
 ```
 
-## KROK 3: Dobierz agentow
+## KROK 4: Dobierz agentow
 
 ### Dostepni agenci
 
@@ -76,38 +131,39 @@ Po wyborze agentow, ZANIM zaczniesz prace, dodaj komentarz do ticketa:
 mcp__monolynx__add_comment(
   project_slug="monolynx",
   ticket_id="<ID>",
-  content="**Team Manager — Plan pracy**\n\nDobrani agenci:\n- [agent 1] — [uzasadnienie]\n- [agent 2] — [uzasadnienie]\n- critic — obowiazkowy quality gate\n\nPlan realizacji:\n1. [krok 1 — ktory agent]\n2. [krok 2 — ktory agent]\n..."
+  content="**Team Manager — Plan pracy**\n\nDobrani agenci:\n- [agent 1] — [uzasadnienie]\n- [agent 2] — [uzasadnienie]\n- critic — obowiazkowy quality gate\n\nKontekst z grafu kodu:\n- [krotkie podsumowanie powiazanych plikow/funkcji z KROK 2]\n\nPlan realizacji:\n1. [krok 1 — ktory agent]\n2. [krok 2 — ktory agent]\n..."
 )
 ```
 
-## KROK 4: Wykonaj prace — petla agent + krytyk
+## KROK 5: Wykonaj prace — petla agent + krytyk
 
 Dla kazdego agenta roboczego (NIE krytyka) wykonaj nastepujacy cykl:
 
-### 4a. Zmierz czas startu agenta
+### 5a. Zmierz czas startu agenta
 
 ```bash
 date +%s
 ```
 
-### 4b. Uruchom agenta
+### 5b. Uruchom agenta
 
 Uzyj `Task` tool z odpowiednim `subagent_type`. W prompcie ZAWSZE zawrzyj:
 
 - Pelna tresc ticketa (tytul + opis)
 - Konkretny zakres pracy dla TEGO agenta (co dokladnie ma zrobic)
 - Odwolanie do odpowiednich plikow planu w `agile/plan-1/`
+- **Kontekst z grafu kodu** (mapa z KROK 2c) — lista powiazanych plikow, funkcji i ich zaleznosci
 
 Przyklad:
 
 ```
 Task(
   subagent_type="backend-python",
-  prompt="Ticket: [tytul]\n\nOpis: [tresc]\n\nTwoje zadanie: [konkretny zakres]\n\nPlan ref: agile/plan-1/02-database-schema.md"
+  prompt="Ticket: [tytul]\n\nOpis: [tresc]\n\nTwoje zadanie: [konkretny zakres]\n\nPlan ref: agile/plan-1/02-database-schema.md\n\nKontekst z grafu kodu:\n- Plik services/wiki.py zawiera: svc:create_wiki_page, svc:render_markdown_html\n- svc:create_wiki_page jest wywolywana przez: wiki:page_create (dashboard/wiki.py), mcp:create_wiki_page (mcp_server.py)\n- svc:create_wiki_page wywoluje: emb:generate_embedding, minio:upload_markdown\n\nUWAGA: Jesli zmieniasz sygnatury funkcji, sprawdz wszystkich callerow wymienionych powyzej."
 )
 ```
 
-### 4c. Review przez krytyka
+### 5c. Review przez krytyka
 
 Po zakonczeniu pracy agenta, **ZAWSZE** uruchom krytyka:
 
@@ -118,13 +174,13 @@ Task(
 )
 ```
 
-### 4d. Petla poprawek
+### 5d. Petla poprawek
 
 - **Krytyk dal < 80%**: Wez feedback krytyka, uruchom tego samego agenta ponownie z instrukcja poprawek. Potem ponownie krytyk. **Maksymalnie 3 iteracje.**
-- **Krytyk dal >= 80%**: Praca zaakceptowana. Przejdz do kroku 4e.
+- **Krytyk dal >= 80%**: Praca zaakceptowana. Przejdz do kroku 5e.
 - **Po 3 nieudanych iteracjach**: Przerwij i zapytaj uzytkownika o decyzje.
 
-### 4e. Zmierz czas konca agenta i dodaj komentarz
+### 5e. Zmierz czas konca agenta i dodaj komentarz
 
 ```bash
 date +%s
@@ -142,7 +198,7 @@ mcp__monolynx__add_comment(
 )
 ```
 
-### 4f. Zaloguj czas pracy agenta
+### 5f. Zaloguj czas pracy agenta
 
 ```
 mcp__monolynx__log_time(
@@ -154,25 +210,25 @@ mcp__monolynx__log_time(
 )
 ```
 
-### 4g. Rownolegle vs sekwencyjnie
+### 5g. Rownolegle vs sekwencyjnie
 
 - **Agenci NIEZALEZNI** (np. backend i frontend, jesli nie maja wspolnych zaleznosci) — uruchamiaj ROWNOLEGLE przez wiele Task w jednej wiadomosci
 - **Agenci ZALEZNI** (np. backend musi byc gotowy zanim MCP server) — uruchamiaj SEKWENCYJNIE
 - **Krytyk ZAWSZE po agencie** — nigdy rownolegle z agentem ktorego ocenia
 
-## KROK 5: Podsumowanie Team Managera
+## KROK 6: Podsumowanie Team Managera
 
 Po zakonczeniu pracy WSZYSTKICH agentow:
 
-### 5a. Zmierz calkowity czas
+### 6a. Zmierz calkowity czas
 
 ```bash
 date +%s
 ```
 
-Oblicz laczny czas Team Managera (od kroku 2 do teraz).
+Oblicz laczny czas Team Managera (od kroku 3 do teraz).
 
-### 5b. Dodaj komentarz podsumowujacy
+### 6b. Dodaj komentarz podsumowujacy
 
 ```
 mcp__monolynx__add_comment(
@@ -182,7 +238,7 @@ mcp__monolynx__add_comment(
 )
 ```
 
-### 5c. Zaloguj czas pracy Team Managera
+### 6c. Zaloguj czas pracy Team Managera
 
 ```
 mcp__monolynx__log_time(
@@ -194,13 +250,13 @@ mcp__monolynx__log_time(
 )
 ```
 
-### 5d. Zmien status ticketa
+### 6d. Zmien status ticketa
 
 ```
 mcp__monolynx__update_ticket(project_slug="monolynx", ticket_id="<ID>", status="in_review")
 ```
 
-### 5e. Podsumowanie dla uzytkownika
+### 6e. Podsumowanie dla uzytkownika
 
 Wyswietl uzytkownikowi krotkie podsumowanie:
 - Co zostalo zrobione
@@ -213,9 +269,11 @@ Wyswietl uzytkownikowi krotkie podsumowanie:
 ## WAZNE ZASADY
 
 1. **Krytyk NIGDY nie pisze kodu** — tylko ocenia prace innych
-2. **Komentarze do ticketa sa OBOWIAZKOWE** — plan (krok 3), kazdy agent (krok 4e), podsumowanie (krok 5b)
+2. **Komentarze do ticketa sa OBOWIAZKOWE** — plan (krok 4), kazdy agent (krok 5e), podsumowanie (krok 6b)
 3. **Czas pracy logowany ZAWSZE** — mierz `date +%s` przed i po kazdym agencie
 4. **Jezyk komentarzy**: polski
 5. **Zawsze czytaj plan** z `agile/plan-1/` przed rozpoczeciem pracy
 6. **Nie zgaduj** — jesli cos jest niejasne w tickecie, zapytaj uzytkownika
 7. **Nie pomijaj krytyka** — kazdy agent MUSI przejsc review, nawet jesli zadanie wydaje sie proste
+8. **Graf kodu jest opcjonalny** — jesli Neo4j niedostepny, kontynuuj bez grafu (krok 2)
+9. **Graf jest aktualizowany automatycznie** — skrypt `cicd/sync_graph.py` synchronizuje graf z kodem po merge do main. Nie trzeba reczenie aktualizowac grafu w trakcie pracy

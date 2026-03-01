@@ -1,4 +1,4 @@
-.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings
+.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings sync-graph
 
 help: ## Pokaz dostepne komendy
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -58,6 +58,13 @@ async def backfill(): \
         count = (await db.execute(text('SELECT count(*) FROM wiki_embeddings'))).scalar(); \
         print(f'Gotowe! Laczna liczba embeddingow: {count}'); \
 asyncio.run(backfill())"
+
+# --- Graf kodu ---
+sync-graph: ## Synchronizuj graf zaleznosci kodu (AST -> Neo4j)
+	docker compose --profile dev exec app python cicd/sync_graph.py
+
+sync-graph-dry: ## Pokaz zmiany w grafie bez zapisu
+	docker compose --profile dev exec app python cicd/sync_graph.py --dry-run --verbose
 
 # --- Build ---
 build: ## Zbuduj produkcyjny obraz Docker

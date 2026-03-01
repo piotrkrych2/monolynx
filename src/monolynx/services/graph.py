@@ -363,7 +363,7 @@ async def get_neighbors(
 async def get_graph(
     project_id: uuid.UUID,
     type_filter: str | None = None,
-    limit: int = 200,
+    limit: int = 1000,
 ) -> dict[str, Any]:
     """Pobierz cały graf lub podgraf dla wizualizacji. Zwraca GraphSearchResult."""
     if type_filter and type_filter in GRAPH_NODE_TYPES:
@@ -384,17 +384,19 @@ async def get_graph(
         # Pobierz krawędzie między node'ami projektu
         edge_result = await session.run(
             "MATCH (a {project_id: $project_id})-[r]->(b {project_id: $project_id}) "
-            "RETURN a.id AS source_id, b.id AS target_id, type(r) AS type, r.metadata AS metadata "
-            "LIMIT $limit",
+            "RETURN a.id AS source_id, b.id AS target_id, type(r) AS type, r.metadata AS metadata",
             **params,
         )
         edge_records = [record async for record in edge_result]
 
     nodes = []
+    node_ids: set[str] = set()
     for record in node_records:
         labels = [lbl for lbl in record["labels"] if lbl in GRAPH_NODE_TYPES]
         node_type = labels[0] if labels else "Unknown"
-        nodes.append(_node_to_dict(record["n"], node_type))
+        node = _node_to_dict(record["n"], node_type)
+        nodes.append(node)
+        node_ids.add(node["id"])
 
     edges = [
         {
@@ -404,6 +406,7 @@ async def get_graph(
             "metadata": _parse_metadata(record.get("metadata", "{}")),
         }
         for record in edge_records
+        if record["source_id"] in node_ids and record["target_id"] in node_ids
     ]
 
     return {"nodes": nodes, "edges": edges}
