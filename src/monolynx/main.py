@@ -31,6 +31,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.exception("Nie udalo sie zainicjalizowac MinIO bucket")
 
+    # Neo4j graph database
+    try:
+        from monolynx.services.graph import init_driver, init_schema
+
+        await init_driver()
+        await init_schema()
+    except Exception:
+        logger.exception("Nie udalo sie zainicjalizowac Neo4j")
+
     checker_task = None
     if settings.ENABLE_MONITOR_LOOP:
         from monolynx.database import async_session_factory
@@ -49,6 +58,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         checker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await checker_task
+
+    # Close Neo4j
+    try:
+        from monolynx.services.graph import close_driver
+
+        await close_driver()
+    except Exception:
+        logger.exception("Blad zamykania Neo4j")
+
     logger.info("Monolynx shutting down")
 
 

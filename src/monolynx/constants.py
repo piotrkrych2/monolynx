@@ -64,3 +64,26 @@ TIME_TRACKING_STATUS_LABELS = {
 
 DEFAULT_REPORT_DATE_RANGE_DAYS = 30
 DEFAULT_REPORT_PAGE_SIZE = 20
+
+# Graph (modul polaczen — baza grafowa)
+GRAPH_NODE_TYPES = ("File", "Class", "Method", "Function", "Const", "Module")
+
+GRAPH_EDGE_TYPES = ("CONTAINS", "CALLS", "IMPORTS", "INHERITS", "USES", "IMPLEMENTS")
+
+GRAPH_NODE_LABELS = {
+    "File": "Plik",
+    "Class": "Klasa",
+    "Method": "Metoda",
+    "Function": "Funkcja",
+    "Const": "Stała",
+    "Module": "Moduł",
+}
+
+GRAPH_EDGE_LABELS = {
+    "CONTAINS": "Zawiera",
+    "CALLS": "Wywołuje",
+    "IMPORTS": "Importuje",
+    "INHERITS": "Dziedziczy",
+    "USES": "Używa",
+    "IMPLEMENTS": "Implementuje",
+}

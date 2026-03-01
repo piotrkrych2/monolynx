@@ -1,0 +1,52 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Nowy node - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold">Nowy node</h1>
+</div>
+
+{% if not graph_enabled %}
+<div class="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4">
+    <p class="text-yellow-300 text-sm">Neo4j nie jest dostępne. Nie można tworzyć node'ów.</p>
+</div>
+{% else %}
+<form method="post" class="max-w-lg space-y-4">
+    <div>
+        <label class="block text-sm font-medium text-gray-300 mb-1">Typ</label>
+        <select name="type" required class="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2">
+            {% for t in node_types %}
+            <option value="{{ t }}">{{ node_labels.get(t, t) }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="block text-sm font-medium text-gray-300 mb-1">Nazwa</label>
+        <input type="text" name="name" required maxlength="512"
+               class="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2"
+               placeholder="np. main.py, UserService, get_users">
+    </div>
+    <div>
+        <label class="block text-sm font-medium text-gray-300 mb-1">Ścieżka pliku <span class="text-gray-500">(opcjonalne)</span></label>
+        <input type="text" name="file_path"
+               class="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2"
+               placeholder="src/monolynx/main.py">
+    </div>
+    <div>
+        <label class="block text-sm font-medium text-gray-300 mb-1">Numer linii <span class="text-gray-500">(opcjonalne)</span></label>
+        <input type="number" name="line_number" min="1"
+               class="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2">
+    </div>
+    <div class="flex gap-3 pt-2">
+        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-6 py-2 rounded transition">
+            Utwórz
+        </button>
+        <a href="/dashboard/{{ project.slug }}/connections/nodes"
+           class="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-6 py-2 rounded transition">
+            Anuluj
+        </a>
+    </div>
+</form>
+{% endif %}
+{% endblock %}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this project?
 
-Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), and a Wiki module (markdown pages with semantic RAG search via pgvector). The architecture supports adding new modules via the sidebar navigation.
+Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), a Wiki module (markdown pages with semantic RAG search via pgvector), and a Connections module (code dependency graph visualization using Neo4j). The architecture supports adding new modules via the sidebar navigation.
 
 ## Commands
 
@@ -53,7 +53,7 @@ Two separate packages in one repo:
 - `main.py` registers routers lazily via `_register_routers()` to avoid circular imports; lifespan optionally starts monitor checker loop (controlled by `ENABLE_MONITOR_LOOP`, default true for dev, false in prod)
 - `config.py` uses pydantic-settings, reads from env vars / `.env` file (see `.env.example`)
 - `database.py` provides async SQLAlchemy session via `get_db()` FastAPI dependency
-- `constants.py` — shared constants for Scrum (ticket statuses, priorities, sprint statuses, member roles, label mappings), Monitoring (interval units, Polish labels), and Time Tracking (entry statuses, report defaults)
+- `constants.py` — shared constants for Scrum (ticket statuses, priorities, sprint statuses, member roles, label mappings), Monitoring (interval units, Polish labels), Time Tracking (entry statuses, report defaults), and Graph (node types, edge types, Polish labels)
 
 **Dashboard module system** (`dashboard/`):
 - `dashboard/__init__.py` — combines all sub-routers into one `router`; ordering matters: static routes (users, settings, profile) before dynamic `{slug}` routes to avoid slug collision
@@ -66,6 +66,7 @@ Two separate packages in one repo:
 - `dashboard/scrum.py` — Scrum module: backlog (with pagination + filtering), Kanban board, ticket CRUD with comments, sprints with status filtering (`/dashboard/{slug}/scrum/*`)
 - `dashboard/monitoring.py` — URL monitoring module: monitor CRUD, check history with pagination, toggle on/off (`/dashboard/{slug}/monitoring/*`); includes SSRF protection (blocks localhost, private IPs), limit 20 monitors per project
 - `dashboard/wiki.py` — Wiki module: page CRUD, tree hierarchy, markdown rendering, image upload to MinIO, semantic search via pgvector (`/dashboard/{slug}/wiki/*`)
+- `dashboard/connections.py` — Connections module: graph visualization with Cytoscape.js, node/edge CRUD forms, graph API endpoint (`/dashboard/{slug}/connections/*`); graceful degradation when Neo4j unavailable
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
 - `dashboard/reports.py` — global cross-project work reports with multi-select filtering (project, user, sprint), date range, and PDF export via weasyprint (`/dashboard/reports`)
 
@@ -86,6 +87,7 @@ Two separate packages in one repo:
 - `services/wiki.py` — Wiki CRUD, markdown rendering (`render_markdown_html()`), page tree, breadcrumbs; content stored in MinIO, metadata in DB
 - `services/embeddings.py` — RAG search: text chunking via tiktoken, OpenAI embeddings (`text-embedding-3-small`), pgvector cosine similarity search; ThreadPoolExecutor for async; graceful degradation when `OPENAI_API_KEY` not set
 - `services/minio_client.py` — MinIO object storage for wiki markdown files and attachments
+- `services/graph.py` — Neo4j graph database: async driver singleton, CRUD for nodes/edges, query operations (get_graph, find_path, get_neighbors, get_stats); graceful degradation pattern (like embeddings.py) — `is_enabled()`, try/except, None fallback when `ENABLE_GRAPH_DB=false`
 
 **Worker** (`worker.py`):
 - Standalone entry point (`python -m monolynx.worker`) — runs monitor checker loop without web server
@@ -94,14 +96,14 @@ Two separate packages in one repo:
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
-- 20+ tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), project summary
+- 30+ tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Graph (node/edge CRUD, bulk operations, query, path finding, stats), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 
 **Template layout system**:
 - `layouts/base.html` — base layout (login, project list)
 - `layouts/base.html` uses Tailwind CDN with typography plugin (`?plugins=typography`) for markdown `prose` styling
-- `layouts/project.html` — extends base, adds sidebar with modules (500ki, Scrum, Monitoring, Wiki, Ustawienia); uses `active_module` context variable for highlighting
+- `layouts/project.html` — extends base, adds sidebar with modules (500ki, Scrum, Monitoring, Wiki, Połączenia, Ustawienia); uses `active_module` context variable for highlighting
 - Module templates extend `project.html` and use `{% block module_content %}`
 - `dashboard/scrum/_nav.html` — shared partial with 4 always-visible buttons (Backlog, Tablica, Sprinty, Nowy ticket), included in all Scrum pages
 
@@ -111,7 +113,7 @@ Two separate packages in one repo:
 - `transport.py` sends events via `ThreadPoolExecutor(max_workers=2)` using `urllib.request`
 - Django settings: `MONOLYNX_DSN` or `MONOLYNX_URL` + `MONOLYNX_API_KEY`
 
-**Schemas** (`schemas/`) — Pydantic models for validation: `events.py`, `issues.py`, `scrum.py`, `time_tracking.py` (includes `WorkReportResult` for aggregated reports)
+**Schemas** (`schemas/`) — Pydantic models for validation: `events.py`, `issues.py`, `scrum.py`, `time_tracking.py` (includes `WorkReportResult` for aggregated reports), `graph.py` (GraphNodeCreate/Update/Response, GraphEdgeCreate/Response, GraphSearchResult)
 
 **Data flow**: Django error → SDK middleware `process_exception()` → background thread POST → FastAPI ingests → fingerprint → find/create Issue → store Event (JSONB)
 
@@ -156,6 +158,12 @@ Two separate packages in one repo:
 /api/v1/events                                 — ingest events (POST, API key auth)
 /api/v1/issues/{id}/status                     — update issue status (PATCH)
 /api/v1/health                                 — health check
+/dashboard/{slug}/connections/                   — graph visualization (Cytoscape.js)
+/dashboard/{slug}/connections/nodes              — node list with type/search filtering
+/dashboard/{slug}/connections/nodes/create       — create node form (GET) + create (POST)
+/dashboard/{slug}/connections/nodes/{id}/delete  — delete node (POST)
+/dashboard/{slug}/connections/edges/create       — create edge form (GET) + create (POST)
+/dashboard/{slug}/connections/api/graph          — graph data JSON API (for Cytoscape.js)
 /dashboard/{slug}/wiki/                         — wiki page tree
 /dashboard/{slug}/wiki/search?q=               — semantic wiki search (RAG)
 /dashboard/{slug}/wiki/pages/create            — new wiki page
@@ -196,6 +204,8 @@ Two separate packages in one repo:
 - Markdown rendering shared via `render_markdown_html()` from `services/wiki.py` — used in wiki pages, ticket descriptions, and comments; frontend uses Tailwind `prose prose-invert` classes
 - EasyMDE (WYSIWYG markdown editor) used in wiki page forms and ticket create/edit forms; dark theme via inline CSS overrides
 - Docker uses `pgvector/pgvector:pg16` image for PostgreSQL with vector extension support
+- Neo4j graph database for Connections module; node types: File, Class, Method, Function, Const, Module; edge types: CONTAINS, CALLS, IMPORTS, INHERITS, USES, IMPLEMENTS; data isolated per project via `project_id` property; graceful degradation when `ENABLE_GRAPH_DB=false`
+- Cytoscape.js (CDN v3.30.4) for interactive graph visualization; force-directed layout (cose); node/edge coloring by type; filtering via checkboxes; side panel with node details on click
 
 ## Test patterns
 
@@ -216,7 +226,7 @@ Two separate packages in one repo:
 ## Infrastructure
 
 - **Docker**: Multi-stage Dockerfile (builder → dev → runtime). Dev target has hot reload, runtime uses non-root user with 2 workers
-- **Docker Compose (dev)**: `dev` profile with PostgreSQL 16 (pgvector/pgvector:pg16) + MinIO + app (monitor loop runs in-process by default). Optional `worker` profile runs monitor loop as separate service (`make worker`)
+- **Docker Compose (dev)**: `dev` profile with PostgreSQL 16 (pgvector/pgvector:pg16) + Neo4j 5 (neo4j:5-community) + MinIO + app (monitor loop runs in-process by default). Optional `worker` profile runs monitor loop as separate service (`make worker`)
 - **Docker Compose (prod)**: `app` service with `ENABLE_MONITOR_LOOP=false` + separate `worker` service running `python -m monolynx.worker`. Worker has no ports/Traefik — only DB access. Advisory lock ensures only one worker runs checks at a time
 - **CI**: `.gitlab-ci.yml` — lint → test (coverage goal 50%) → build (main only) → deploy (manual)
 - **Pre-commit**: ruff (check + format) and mypy with pydantic plugin

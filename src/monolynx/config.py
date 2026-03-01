@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "monolynx-wiki"
     MINIO_USE_SSL: bool = False
 
+    # Neo4j
+    NEO4J_URI: str = "bolt://neo4j:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = "neo4j_dev"
+    ENABLE_GRAPH_DB: bool = True
+
     # Embeddings (RAG search for Wiki)
     OPENAI_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"

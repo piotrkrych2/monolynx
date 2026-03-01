@@ -16,6 +16,22 @@ services:
       timeout: 3s
       retries: 5
 
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j_dev}
+    # ports:
+    #   - "${NEO4J_BOLT_PORT:-7687}:7687"
+    #   - "${NEO4J_HTTP_PORT:-7474}:7474"
+    volumes:
+      - ./.data/neo4j:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -54,6 +70,7 @@ services:
       - ./tests:/app/tests:cached
       - ./sdk:/app/sdk:cached
       - ./pyproject.toml:/app/pyproject.toml:cached
+      - ./cicd:/app/cicd:cached
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry_dev}@db:5432/${POSTGRES_DB:-open_sentry}
       ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -73,10 +90,16 @@ services:
       MINIO_USE_SSL: "false"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_dev}
+      ENABLE_GRAPH_DB: ${ENABLE_GRAPH_DB:-true}
     depends_on:
       db:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      neo4j:
         condition: service_healthy
     profiles:
       - dev

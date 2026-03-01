@@ -1,0 +1,610 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Połączenia - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Połączenia</h1>
+    <div class="flex gap-2">
+        <a href="/dashboard/{{ project.slug }}/connections/nodes"
+           class="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded transition">
+            Lista node'ow
+        </a>
+        <a href="/dashboard/{{ project.slug }}/connections/nodes/create"
+           class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
+            Dodaj node
+        </a>
+        <a href="/dashboard/{{ project.slug }}/connections/edges/create"
+           class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
+            Dodaj krawedz
+        </a>
+    </div>
+</div>
+
+{% if not graph_enabled %}
+<div class="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 mb-6">
+    <p class="text-yellow-300 text-sm">Neo4j nie jest dostepne. Sprawdz konfiguracje ENABLE_GRAPH_DB i polaczenie z baza grafowa.</p>
+</div>
+{% endif %}
+
+{% if stats %}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <p class="text-xs text-gray-400">Node'y</p>
+        <p class="text-2xl font-bold text-white">{{ stats.total_nodes }}</p>
+    </div>
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <p class="text-xs text-gray-400">Krawedzie</p>
+        <p class="text-2xl font-bold text-white">{{ stats.total_edges }}</p>
+    </div>
+    {% for type, count in stats.nodes_by_type.items() %}
+    {% if count > 0 %}
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <p class="text-xs text-gray-400">{{ type }}</p>
+        <p class="text-2xl font-bold text-white">{{ count }}</p>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Panel filtrow -->
+<div class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-4">
+    <div class="flex flex-wrap items-start gap-6">
+        <!-- Filtry node'ow -->
+        <div>
+            <p class="text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wider">Typy node'ow</p>
+            <div class="flex flex-wrap gap-3">
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="node-type-filter rounded" data-type="File" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#3B82F6"></span>
+                    <span class="text-gray-300">File</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="node-type-filter rounded" data-type="Class" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#10B981"></span>
+                    <span class="text-gray-300">Class</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="node-type-filter rounded" data-type="Method" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#F59E0B"></span>
+                    <span class="text-gray-300">Method</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="node-type-filter rounded" data-type="Function" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#EAB308"></span>
+                    <span class="text-gray-300">Function</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="node-type-filter rounded" data-type="Const" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#8B5CF6"></span>
+                    <span class="text-gray-300">Const</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="node-type-filter rounded" data-type="Module" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#EC4899"></span>
+                    <span class="text-gray-300">Module</span>
+                </label>
+            </div>
+        </div>
+        <!-- Filtry krawedzi -->
+        <div>
+            <p class="text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wider">Typy krawedzi</p>
+            <div class="flex flex-wrap gap-3">
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="edge-type-filter rounded" data-type="CONTAINS" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#6B7280"></span>
+                    <span class="text-gray-300">CONTAINS</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="edge-type-filter rounded" data-type="CALLS" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#EF4444"></span>
+                    <span class="text-gray-300">CALLS</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="edge-type-filter rounded" data-type="IMPORTS" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#9CA3AF"></span>
+                    <span class="text-gray-300">IMPORTS</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="edge-type-filter rounded" data-type="INHERITS" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#3B82F6"></span>
+                    <span class="text-gray-300">INHERITS</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="edge-type-filter rounded" data-type="USES" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#F59E0B"></span>
+                    <span class="text-gray-300">USES</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="checkbox" class="edge-type-filter rounded" data-type="IMPLEMENTS" checked>
+                    <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#10B981"></span>
+                    <span class="text-gray-300">IMPLEMENTS</span>
+                </label>
+            </div>
+        </div>
+        <!-- Przycisk resetu -->
+        <div class="ml-auto self-end">
+            <button id="btn-reset-view" class="bg-gray-700 hover:bg-gray-600 text-white text-sm px-4 py-2 rounded transition">
+                Resetuj widok
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Kontener grafu z panelem bocznym -->
+<div class="flex gap-4" style="min-height:500px">
+    <!-- Canvas Cytoscape -->
+    <div class="flex-1 relative">
+        <div id="cy" class="w-full rounded-lg border border-gray-700" style="min-height:500px;height:65vh;background:#1F2937"></div>
+        <!-- Empty state overlay -->
+        <div id="cy-empty" class="absolute inset-0 flex items-center justify-center rounded-lg border border-gray-700" style="background:#1F2937;display:none">
+            <div class="text-center">
+                <svg class="w-12 h-12 mx-auto text-gray-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+                </svg>
+                <p class="text-gray-400 text-sm">Brak danych do wyswietlenia</p>
+            </div>
+        </div>
+        <!-- Loading overlay -->
+        <div id="cy-loading" class="absolute inset-0 flex items-center justify-center rounded-lg border border-gray-700" style="background:#1F2937">
+            <div class="text-center">
+                <svg class="w-8 h-8 mx-auto text-indigo-400 animate-spin mb-3" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+                <p class="text-gray-400 text-sm">Ladowanie grafu...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel boczny (szczegoly node'a) -->
+    <div id="node-detail-panel" class="w-72 flex-shrink-0 bg-gray-800 border border-gray-700 rounded-lg p-4 overflow-y-auto" style="min-height:500px;max-height:65vh;display:none">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Szczegoly node'a</h3>
+            <button id="btn-close-panel" class="text-gray-500 hover:text-gray-300 transition">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <div id="node-detail-content">
+            <!-- Wypelniane dynamicznie przez JS -->
+        </div>
+    </div>
+</div>
+
+<!-- Cytoscape.js CDN -->
+<script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+
+<script>
+(function() {
+    'use strict';
+
+    // --- Konfiguracja kolorow ---
+    var NODE_COLORS = {
+        'File':     '#3B82F6',
+        'Class':    '#10B981',
+        'Method':   '#F59E0B',
+        'Function': '#EAB308',
+        'Const':    '#8B5CF6',
+        'Module':   '#EC4899'
+    };
+
+    var EDGE_COLORS = {
+        'CONTAINS':   '#6B7280',
+        'CALLS':      '#EF4444',
+        'IMPORTS':    '#9CA3AF',
+        'INHERITS':   '#3B82F6',
+        'USES':       '#F59E0B',
+        'IMPLEMENTS': '#10B981'
+    };
+
+    var NODE_LABELS = {
+        'File': 'Plik',
+        'Class': 'Klasa',
+        'Method': 'Metoda',
+        'Function': 'Funkcja',
+        'Const': 'Stala',
+        'Module': 'Modul'
+    };
+
+    var EDGE_LABELS = {
+        'CONTAINS': 'Zawiera',
+        'CALLS': 'Wywoluje',
+        'IMPORTS': 'Importuje',
+        'INHERITS': 'Dziedziczy',
+        'USES': 'Uzywa',
+        'IMPLEMENTS': 'Implementuje'
+    };
+
+    // --- Elementy DOM ---
+    var cyContainer = document.getElementById('cy');
+    var emptyState = document.getElementById('cy-empty');
+    var loadingState = document.getElementById('cy-loading');
+    var detailPanel = document.getElementById('node-detail-panel');
+    var detailContent = document.getElementById('node-detail-content');
+    var btnClosePanel = document.getElementById('btn-close-panel');
+    var btnResetView = document.getElementById('btn-reset-view');
+
+    // --- Inicjalizacja Cytoscape ---
+    var cy = cytoscape({
+        container: cyContainer,
+        elements: [],
+        style: [
+            {
+                selector: 'node',
+                style: {
+                    'label': 'data(label)',
+                    'text-valign': 'bottom',
+                    'text-halign': 'center',
+                    'text-margin-y': 6,
+                    'font-size': '11px',
+                    'color': '#E5E7EB',
+                    'text-outline-color': '#1F2937',
+                    'text-outline-width': 2,
+                    'background-color': function(ele) {
+                        return NODE_COLORS[ele.data('type')] || '#6B7280';
+                    },
+                    'width': 36,
+                    'height': 36,
+                    'border-width': 2,
+                    'border-color': function(ele) {
+                        var c = NODE_COLORS[ele.data('type')] || '#6B7280';
+                        return c;
+                    },
+                    'border-opacity': 0.4,
+                    'overlay-opacity': 0,
+                    'transition-property': 'border-width, border-opacity, width, height',
+                    'transition-duration': '0.15s'
+                }
+            },
+            {
+                selector: 'node:active',
+                style: {
+                    'overlay-opacity': 0
+                }
+            },
+            {
+                selector: 'node.hover',
+                style: {
+                    'border-width': 3,
+                    'border-opacity': 0.8,
+                    'width': 40,
+                    'height': 40,
+                    'cursor': 'pointer'
+                }
+            },
+            {
+                selector: 'node.selected-node',
+                style: {
+                    'border-width': 3,
+                    'border-color': '#FFFFFF',
+                    'border-opacity': 1,
+                    'width': 42,
+                    'height': 42
+                }
+            },
+            {
+                selector: 'node.dimmed',
+                style: {
+                    'opacity': 0.2
+                }
+            },
+            {
+                selector: 'edge',
+                style: {
+                    'width': 2,
+                    'line-color': function(ele) {
+                        return EDGE_COLORS[ele.data('type')] || '#6B7280';
+                    },
+                    'target-arrow-color': function(ele) {
+                        return EDGE_COLORS[ele.data('type')] || '#6B7280';
+                    },
+                    'target-arrow-shape': 'triangle',
+                    'arrow-scale': 0.8,
+                    'curve-style': 'bezier',
+                    'opacity': 0.7,
+                    'overlay-opacity': 0,
+                    'transition-property': 'opacity',
+                    'transition-duration': '0.15s'
+                }
+            },
+            {
+                selector: 'edge:active',
+                style: {
+                    'overlay-opacity': 0
+                }
+            },
+            {
+                selector: 'edge.highlighted',
+                style: {
+                    'opacity': 1,
+                    'width': 3
+                }
+            },
+            {
+                selector: 'edge.dimmed',
+                style: {
+                    'opacity': 0.1
+                }
+            }
+        ],
+        layout: { name: 'grid' },
+        minZoom: 0.2,
+        maxZoom: 5,
+        wheelSensitivity: 0.3
+    });
+
+    // --- Zmienne stanu ---
+    var selectedNode = null;
+    var graphData = null;
+
+    // --- Pobranie danych z API ---
+    var apiUrl = '/dashboard/{{ project.slug }}/connections/api/graph';
+
+    fetch(apiUrl, { credentials: 'same-origin' })
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.json();
+        })
+        .then(function(data) {
+            graphData = data;
+            loadingState.style.display = 'none';
+
+            if (!data.nodes || data.nodes.length === 0) {
+                emptyState.style.display = 'flex';
+                return;
+            }
+
+            // Konwertuj dane na format Cytoscape
+            var elements = [];
+
+            data.nodes.forEach(function(n) {
+                elements.push({
+                    group: 'nodes',
+                    data: {
+                        id: n.id,
+                        label: n.name,
+                        type: n.type,
+                        file_path: n.file_path || null,
+                        line_number: n.line_number || null,
+                        metadata: n.metadata || {}
+                    }
+                });
+            });
+
+            data.edges.forEach(function(e) {
+                elements.push({
+                    group: 'edges',
+                    data: {
+                        id: e.source_id + '-' + e.target_id + '-' + e.type,
+                        source: e.source_id,
+                        target: e.target_id,
+                        type: e.type,
+                        metadata: e.metadata || {}
+                    }
+                });
+            });
+
+            cy.add(elements);
+
+            // Uzyj layoutu cose
+            cy.layout({
+                name: 'cose',
+                animate: true,
+                animationDuration: 500,
+                nodeRepulsion: function() { return 8000; },
+                idealEdgeLength: function() { return 100; },
+                edgeElasticity: function() { return 100; },
+                gravity: 0.25,
+                numIter: 1000,
+                padding: 30,
+                randomize: true
+            }).run();
+        })
+        .catch(function(err) {
+            loadingState.style.display = 'none';
+            emptyState.style.display = 'flex';
+            console.error('Blad ladowania grafu:', err);
+        });
+
+    // --- Interakcje: hover na node'ach ---
+    cy.on('mouseover', 'node', function(evt) {
+        evt.target.addClass('hover');
+        cyContainer.style.cursor = 'pointer';
+    });
+
+    cy.on('mouseout', 'node', function(evt) {
+        evt.target.removeClass('hover');
+        cyContainer.style.cursor = 'default';
+    });
+
+    // --- Interakcje: klikniecie node'a ---
+    cy.on('tap', 'node', function(evt) {
+        var node = evt.target;
+
+        // Usun poprzednie zaznaczenie
+        cy.elements().removeClass('selected-node highlighted dimmed');
+
+        // Zaznacz klikniety node
+        selectedNode = node;
+        node.addClass('selected-node');
+
+        // Podswietl polaczone krawedzie i sasiadow
+        var connectedEdges = node.connectedEdges(':visible');
+        var neighbors = node.neighborhood(':visible').nodes();
+
+        connectedEdges.addClass('highlighted');
+        neighbors.addClass('selected-node');
+
+        // Przyciem pozostale elementy
+        cy.elements(':visible').not(node).not(connectedEdges).not(neighbors).addClass('dimmed');
+
+        // Pokaz panel boczny
+        showNodeDetail(node, connectedEdges);
+    });
+
+    // --- Interakcje: klikniecie w puste miejsce ---
+    cy.on('tap', function(evt) {
+        if (evt.target === cy) {
+            clearSelection();
+        }
+    });
+
+    // --- Panel boczny: pokaz szczegoly ---
+    function showNodeDetail(node, connectedEdges) {
+        var data = node.data();
+        var html = '';
+
+        // Nazwa
+        html += '<div class="mb-3">';
+        html += '<p class="text-white font-medium text-lg break-words">' + escapeHtml(data.label) + '</p>';
+        html += '</div>';
+
+        // Typ
+        html += '<div class="mb-3">';
+        html += '<p class="text-xs text-gray-500 mb-0.5">Typ</p>';
+        html += '<span class="inline-flex items-center gap-1.5 text-sm">';
+        html += '<span class="inline-block w-2.5 h-2.5 rounded-full" style="background:' + (NODE_COLORS[data.type] || '#6B7280') + '"></span>';
+        html += '<span class="text-gray-200">' + escapeHtml(NODE_LABELS[data.type] || data.type) + '</span>';
+        html += '</span>';
+        html += '</div>';
+
+        // Sciezka pliku
+        if (data.file_path) {
+            html += '<div class="mb-3">';
+            html += '<p class="text-xs text-gray-500 mb-0.5">Sciezka pliku</p>';
+            html += '<p class="text-sm text-gray-300 break-all font-mono">' + escapeHtml(data.file_path);
+            if (data.line_number) {
+                html += '<span class="text-gray-500">:' + escapeHtml(String(data.line_number)) + '</span>';
+            }
+            html += '</p>';
+            html += '</div>';
+        }
+
+        // Numer linii (jesli brak sciezki ale jest numer)
+        if (!data.file_path && data.line_number) {
+            html += '<div class="mb-3">';
+            html += '<p class="text-xs text-gray-500 mb-0.5">Linia</p>';
+            html += '<p class="text-sm text-gray-300">' + escapeHtml(String(data.line_number)) + '</p>';
+            html += '</div>';
+        }
+
+        // Sasiedzi (connected edges)
+        if (connectedEdges.length > 0) {
+            html += '<div class="mt-4 pt-3 border-t border-gray-700">';
+            html += '<p class="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wider">Polaczenia (' + connectedEdges.length + ')</p>';
+            html += '<div class="space-y-1.5 max-h-48 overflow-y-auto">';
+
+            connectedEdges.forEach(function(edge) {
+                var edgeData = edge.data();
+                var isOutgoing = edgeData.source === data.id;
+                var otherNode = isOutgoing ? edge.target() : edge.source();
+                var otherData = otherNode.data();
+                var edgeColor = EDGE_COLORS[edgeData.type] || '#6B7280';
+                var arrow = isOutgoing ? '&rarr;' : '&larr;';
+
+                html += '<div class="flex items-center gap-1.5 text-xs">';
+                html += '<span class="inline-block w-2 h-2 rounded-full flex-shrink-0" style="background:' + edgeColor + '"></span>';
+                html += '<span class="text-gray-500">' + escapeHtml(EDGE_LABELS[edgeData.type] || edgeData.type) + '</span>';
+                html += '<span class="text-gray-600">' + arrow + '</span>';
+                html += '<span class="text-gray-300 truncate" title="' + escapeHtml(otherData.label) + '">' + escapeHtml(otherData.label) + '</span>';
+                html += '</div>';
+            });
+
+            html += '</div>';
+            html += '</div>';
+        }
+
+        detailContent.innerHTML = html;
+        detailPanel.style.display = 'block';
+    }
+
+    // --- Wyczysc zaznaczenie ---
+    function clearSelection() {
+        selectedNode = null;
+        cy.elements().removeClass('selected-node highlighted dimmed');
+        detailPanel.style.display = 'none';
+    }
+
+    // --- Zamknij panel boczny ---
+    btnClosePanel.addEventListener('click', function() {
+        clearSelection();
+    });
+
+    // --- Resetuj widok ---
+    btnResetView.addEventListener('click', function() {
+        clearSelection();
+        cy.fit(cy.elements(':visible'), 30);
+    });
+
+    // --- Filtrowanie node'ow ---
+    var nodeFilters = document.querySelectorAll('.node-type-filter');
+    var edgeFilters = document.querySelectorAll('.edge-type-filter');
+
+    function applyFilters() {
+        clearSelection();
+
+        // Zbierz aktywne typy node'ow
+        var activeNodeTypes = {};
+        nodeFilters.forEach(function(cb) {
+            activeNodeTypes[cb.getAttribute('data-type')] = cb.checked;
+        });
+
+        // Zbierz aktywne typy edge'ow
+        var activeEdgeTypes = {};
+        edgeFilters.forEach(function(cb) {
+            activeEdgeTypes[cb.getAttribute('data-type')] = cb.checked;
+        });
+
+        // Filtruj node'y
+        cy.nodes().forEach(function(node) {
+            var nodeType = node.data('type');
+            if (activeNodeTypes[nodeType]) {
+                node.style('display', 'element');
+            } else {
+                node.style('display', 'none');
+            }
+        });
+
+        // Filtruj krawedzie — widoczna tylko jesli typ krawedzi aktywny I oba node'y widoczne
+        cy.edges().forEach(function(edge) {
+            var edgeType = edge.data('type');
+            var srcVisible = edge.source().style('display') !== 'none';
+            var tgtVisible = edge.target().style('display') !== 'none';
+            if (activeEdgeTypes[edgeType] && srcVisible && tgtVisible) {
+                edge.style('display', 'element');
+            } else {
+                edge.style('display', 'none');
+            }
+        });
+
+        // Sprawdz empty state
+        var visibleNodes = cy.nodes().filter(function(n) { return n.style('display') !== 'none'; });
+        if (visibleNodes.length === 0 && graphData && graphData.nodes && graphData.nodes.length > 0) {
+            emptyState.style.display = 'flex';
+        } else if (graphData && graphData.nodes && graphData.nodes.length > 0) {
+            emptyState.style.display = 'none';
+        }
+    }
+
+    nodeFilters.forEach(function(cb) {
+        cb.addEventListener('change', applyFilters);
+    });
+
+    edgeFilters.forEach(function(cb) {
+        cb.addEventListener('change', applyFilters);
+    });
+
+    // --- Helper: escape HTML ---
+    function escapeHtml(str) {
+        if (!str) return '';
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+    }
+
+})();
+</script>
+{% endblock %}

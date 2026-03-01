@@ -13,7 +13,13 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import selectinload
 
 from monolynx.config import settings as app_settings
-from monolynx.constants import BOARD_STATUSES, PRIORITIES, TICKET_STATUSES
+from monolynx.constants import (
+    BOARD_STATUSES,
+    GRAPH_EDGE_TYPES,
+    GRAPH_NODE_TYPES,
+    PRIORITIES,
+    TICKET_STATUSES,
+)
 from monolynx.database import async_session_factory
 from monolynx.models.event import Event
 from monolynx.models.issue import Issue
@@ -26,6 +32,7 @@ from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
+from monolynx.services import graph as graph_service
 from monolynx.services.mcp_auth import verify_mcp_token
 from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
@@ -1348,3 +1355,289 @@ async def delete_wiki_page(
         await svc_delete_wiki_page(page, db)
 
     return {"message": f"Strona wiki '{title}' usunieta"}
+
+
+# --- Graf (polaczenia) ---
+
+
+@mcp.tool()
+async def create_graph_node(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    type: str,
+    name: str,
+    file_path: str | None = None,
+    line_number: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Utworz node w grafie polaczen. type: File, Class, Method, Function, Const, Module."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    if type not in GRAPH_NODE_TYPES:
+        raise ValueError(f"Nieznany typ node'a: {type}. Dozwolone: {', '.join(GRAPH_NODE_TYPES)}")
+
+    node = await graph_service.create_node(
+        project.id,
+        {
+            "type": type,
+            "name": name,
+            "file_path": file_path,
+            "line_number": line_number,
+            "metadata": metadata or {},
+        },
+    )
+
+    return {**node, "message": f"Node '{name}' ({type}) utworzony"}
+
+
+@mcp.tool()
+async def list_graph_nodes(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    type: str | None = None,
+    search: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Lista node'ow w grafie polaczen z opcjonalnym filtrowaniem po typie i nazwie."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    return await graph_service.list_nodes(project.id, type_filter=type, search=search, limit=limit)
+
+
+@mcp.tool()
+async def get_graph_node(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    node_id: str,
+) -> dict[str, Any]:
+    """Szczegoly node'a z relacjami."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    node = await graph_service.get_node(project.id, node_id)
+    if node is None:
+        raise ValueError("Node nie istnieje")
+
+    neighbors = await graph_service.get_neighbors(project.id, node_id, depth=1)
+
+    return {**node, "neighbors": neighbors}
+
+
+@mcp.tool()
+async def delete_graph_node(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    node_id: str,
+) -> dict[str, Any]:
+    """Usun node i wszystkie jego krawedzie."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    deleted = await graph_service.delete_node(project.id, node_id)
+    if not deleted:
+        raise ValueError("Node nie istnieje")
+
+    return {"message": "Node usuniety", "node_id": node_id}
+
+
+@mcp.tool()
+async def create_graph_edge(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    source_id: str,
+    target_id: str,
+    type: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Utworz krawedz miedzy node'ami. type: CONTAINS, CALLS, IMPORTS, INHERITS, USES, IMPLEMENTS."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    if type not in GRAPH_EDGE_TYPES:
+        raise ValueError(f"Nieznany typ krawedzi: {type}. Dozwolone: {', '.join(GRAPH_EDGE_TYPES)}")
+
+    edge = await graph_service.create_edge(project.id, source_id, target_id, type, metadata)
+    if edge is None:
+        raise ValueError("Nie znaleziono node'ow zrodlowego lub docelowego")
+
+    return {**edge, "message": f"Krawedz {type} utworzona"}
+
+
+@mcp.tool()
+async def delete_graph_edge(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    source_id: str,
+    target_id: str,
+    type: str,
+) -> dict[str, Any]:
+    """Usun krawedz miedzy node'ami."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    deleted = await graph_service.delete_edge(project.id, source_id, target_id, type)
+    if not deleted:
+        raise ValueError("Krawedz nie istnieje")
+
+    return {
+        "message": "Krawedz usunieta",
+        "source_id": source_id,
+        "target_id": target_id,
+        "type": type,
+    }
+
+
+@mcp.tool()
+async def query_graph(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    node_type: str | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Pobierz graf lub podgraf projektu (node'y + krawedzie). Opcjonalnie filtruj po typie node'a."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    return await graph_service.get_graph(project.id, type_filter=node_type, limit=limit)
+
+
+@mcp.tool()
+async def find_graph_path(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    source_id: str,
+    target_id: str,
+) -> dict[str, Any]:
+    """Znajdz najkrotsza sciezke miedzy dwoma node'ami."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    return await graph_service.find_path(project.id, source_id, target_id)
+
+
+@mcp.tool()
+async def get_graph_stats(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> dict[str, Any]:
+    """Statystyki grafu: liczba node'ow i krawedzi per typ."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    return await graph_service.get_stats(project.id)
+
+
+@mcp.tool()
+async def bulk_create_graph_nodes(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    nodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Masowe tworzenie node'ow. Kazdy element: {type, name, file_path?, line_number?, metadata?}."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    created_nodes: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    for i, node_data in enumerate(nodes):
+        try:
+            if "name" not in node_data or "type" not in node_data:
+                errors.append(f"[{i}] Wymagane pola: type, name")
+                continue
+
+            node_type = node_data.get("type", "")
+            if node_type not in GRAPH_NODE_TYPES:
+                errors.append(f"[{i}] Nieznany typ node'a: {node_type}")
+                continue
+
+            node = await graph_service.create_node(
+                project.id,
+                {
+                    "type": node_type,
+                    "name": node_data["name"],
+                    "file_path": node_data.get("file_path"),
+                    "line_number": node_data.get("line_number"),
+                    "metadata": node_data.get("metadata", {}),
+                },
+            )
+            created_nodes.append(node)
+        except Exception as e:
+            errors.append(f"[{i}] {e}")
+
+    return {
+        "created": len(created_nodes),
+        "errors": errors,
+        "nodes": created_nodes,
+    }
+
+
+@mcp.tool()
+async def bulk_create_graph_edges(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    edges: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Masowe tworzenie krawedzi. Kazdy element: {source_id, target_id, type, metadata?}."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    created = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for i, edge_data in enumerate(edges):
+        try:
+            if not all(k in edge_data for k in ("source_id", "target_id", "type")):
+                errors.append(f"[{i}] Wymagane pola: source_id, target_id, type")
+                continue
+
+            edge_type = edge_data.get("type", "")
+            if edge_type not in GRAPH_EDGE_TYPES:
+                errors.append(f"[{i}] Nieznany typ krawedzi: {edge_type}")
+                continue
+
+            edge = await graph_service.create_edge(
+                project.id,
+                edge_data["source_id"],
+                edge_data["target_id"],
+                edge_type,
+                edge_data.get("metadata"),
+            )
+            if edge is None:
+                skipped += 1
+                errors.append(f"[{i}] Nie znaleziono node'ow zrodlowego lub docelowego")
+            else:
+                created += 1
+        except Exception as e:
+            errors.append(f"[{i}] {e}")
+
+    return {
+        "created": created,
+        "skipped": skipped,
+        "errors": errors,
+    }

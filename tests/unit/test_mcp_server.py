@@ -195,6 +195,17 @@ EXPECTED_TOOLS = [
     "update_wiki_page",
     "delete_wiki_page",
     "search_wiki",
+    "create_graph_node",
+    "list_graph_nodes",
+    "get_graph_node",
+    "delete_graph_node",
+    "create_graph_edge",
+    "delete_graph_edge",
+    "query_graph",
+    "find_graph_path",
+    "get_graph_stats",
+    "bulk_create_graph_nodes",
+    "bulk_create_graph_edges",
 ]
 
 
@@ -203,7 +214,7 @@ class TestMcpToolRegistration:
     """Weryfikacja ze wszystkie narzedzia MCP sa poprawnie zarejestrowane."""
 
     async def test_list_tools_returns_all_tools(self):
-        """list_tools() zwraca wszystkie 27 narzedzi."""
+        """list_tools() zwraca wszystkie 38 narzedzi."""
         tools = await mcp.list_tools()
         tool_names = [t.name for t in tools]
         for name in EXPECTED_TOOLS:
