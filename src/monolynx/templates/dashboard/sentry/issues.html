@@ -7,6 +7,7 @@
     <h1 class="text-2xl font-bold">Issues</h1>
     <div class="flex items-center gap-4">
         <span class="text-sm text-gray-500">{{ issues|length }} issues</span>
+        {% set mcp_module = "500ki" %}{% include "partials/_mcp_modal.html" %}
         <a href="/dashboard/{{ project.slug }}/500ki/setup-guide"
            class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-400 border border-indigo-500/50 rounded-lg hover:bg-indigo-500/10 transition">
             Instrukcja instalacji

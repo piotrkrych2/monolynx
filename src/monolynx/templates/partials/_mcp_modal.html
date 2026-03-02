@@ -1,0 +1,166 @@
+<button onclick="document.getElementById('mcp-modal').showModal()"
+        class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-400 border border-indigo-500/50 rounded-lg hover:bg-indigo-500/10 transition">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+    </svg>
+    Uzywaj z MCP
+</button>
+
+<dialog id="mcp-modal" class="bg-gray-800 border border-gray-700 rounded-lg p-6 text-white max-w-lg w-full backdrop:bg-black/50">
+    <div class="flex items-center justify-between mb-5">
+        <h3 class="text-lg font-semibold flex items-center gap-2">
+            <svg class="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            Uzywaj z MCP —
+            {% if mcp_module == "500ki" %}500ki
+            {% elif mcp_module == "scrum" %}Scrum
+            {% elif mcp_module == "wiki" %}Wiki
+            {% elif mcp_module == "connections" %}Polaczenia
+            {% endif %}
+        </h3>
+        <button onclick="document.getElementById('mcp-modal').close()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+    </div>
+
+    <p class="text-sm text-gray-400 mb-4">Dostepne narzedzia MCP w tym module:</p>
+
+    <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
+        {% if mcp_module == "500ki" %}
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_issues</code>
+            <span class="text-sm text-gray-300">Pokaz bledy w projekcie</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_issue</code>
+            <span class="text-sm text-gray-300">Sprawdz szczegoly bledu z tracebackiem</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_issue_status</code>
+            <span class="text-sm text-gray-300">Oznacz blad jako rozwiazany</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_ticket_from_issue</code>
+            <span class="text-sm text-gray-300">Utworz ticket Scrum prosto z bledu</span>
+        </div>
+
+        {% elif mcp_module == "scrum" %}
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_tickets</code>
+            <span class="text-sm text-gray-300">Przejrzyj liste ticketow</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_ticket</code>
+            <span class="text-sm text-gray-300">Sprawdz szczegoly ticketu</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_ticket</code>
+            <span class="text-sm text-gray-300">Utworz nowy ticket</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_ticket</code>
+            <span class="text-sm text-gray-300">Zmien status, priorytet lub opis</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_ticket</code>
+            <span class="text-sm text-gray-300">Usun ticket</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_board</code>
+            <span class="text-sm text-gray-300">Pokaz tablice Kanban</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_sprints / get_sprint</code>
+            <span class="text-sm text-gray-300">Przejrzyj sprinty</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_sprint / start / complete</code>
+            <span class="text-sm text-gray-300">Zarzadzaj cyklem sprintu</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_comments / add_comment</code>
+            <span class="text-sm text-gray-300">Czytaj i dodawaj komentarze</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">log_time</code>
+            <span class="text-sm text-gray-300">Zaloguj czas pracy</span>
+        </div>
+
+        {% elif mcp_module == "wiki" %}
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_wiki_pages</code>
+            <span class="text-sm text-gray-300">Pokaz drzewo stron</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_wiki_page</code>
+            <span class="text-sm text-gray-300">Przeczytaj strone</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_wiki_page</code>
+            <span class="text-sm text-gray-300">Napisz nowa strone</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_wiki_page</code>
+            <span class="text-sm text-gray-300">Edytuj istniejaca strone</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_wiki_page</code>
+            <span class="text-sm text-gray-300">Usun strone z podstronami</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">search_wiki</code>
+            <span class="text-sm text-gray-300">Szukaj semantycznie (RAG)</span>
+        </div>
+
+        {% elif mcp_module == "connections" %}
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_graph_node / bulk</code>
+            <span class="text-sm text-gray-300">Dodaj node'y</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_graph_nodes / get</code>
+            <span class="text-sm text-gray-300">Przegladaj node'y</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_graph_node</code>
+            <span class="text-sm text-gray-300">Usun node</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_graph_edge / bulk</code>
+            <span class="text-sm text-gray-300">Dodaj krawedzie</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_graph_edge</code>
+            <span class="text-sm text-gray-300">Usun krawedz</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">query_graph</code>
+            <span class="text-sm text-gray-300">Pobierz graf lub podgraf</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">find_graph_path</code>
+            <span class="text-sm text-gray-300">Znajdz sciezke miedzy elementami</span>
+        </div>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_graph_stats</code>
+            <span class="text-sm text-gray-300">Statystyki grafu</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="mt-5 pt-4 border-t border-gray-700 flex items-center justify-between">
+        <a href="/dashboard/profile/mcp-guide" class="text-sm text-indigo-400 hover:text-indigo-300 transition">
+            Pelny przewodnik MCP &rarr;
+        </a>
+        <button onclick="document.getElementById('mcp-modal').close()"
+                class="px-4 py-2 text-sm text-gray-400 hover:text-white transition">Zamknij</button>
+    </div>
+</dialog>
+
+<script>
+(function() {
+    var modal = document.getElementById('mcp-modal');
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) modal.close();
+    });
+})();
+</script>

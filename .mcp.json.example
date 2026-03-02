@@ -1,16 +1,18 @@
 #local
-{
-  "mcpServers": {
-    "monolynx": {
-      "type": "http",
-      "url": "http://localhost:8077/mcp/",
-      "headers": {
-        "Authorization": "Bearer osk_m9T0vJVvuKvjJe_ff8QvTIxs8A12lM66YpA3evJDVGY",
-        "X-API-Key": "dummy"
+  {
+    "mcpServers": {
+      "monolynx": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "mcp-remote",
+          "https://open.monolynx.com/mcp/",
+          "--header",
+          "Authorization: Bearer osk_<...>"
+        ]
       }
     }
   }
-}
 
 # prod
   {
@@ -22,7 +24,7 @@
           "mcp-remote",
           "https://open.monolynx.com/mcp/",
           "--header",
-          "Authorization: Bearer osk_Sb2PuGTUFwoxE93HYBn1d-PB42IgEdpmKH6-SfHkYc"
+          "Authorization: Bearer osk_<...>"
         ]
       }
     }
