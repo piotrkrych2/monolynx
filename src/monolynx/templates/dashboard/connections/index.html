@@ -5,7 +5,8 @@
 {% block module_content %}
 <div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl font-bold">Połączenia</h1>
-    <div class="flex gap-2">
+    <div class="flex gap-2 items-center">
+        {% set mcp_module = "connections" %}{% include "partials/_mcp_modal.html" %}
         <a href="/dashboard/{{ project.slug }}/connections/nodes"
            class="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded transition">
             Lista node'ow

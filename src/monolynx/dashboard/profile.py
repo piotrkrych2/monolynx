@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import uuid
+import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,6 +81,38 @@ async def mcp_guide(
         return RedirectResponse("/auth/login", status_code=303)
 
     return templates.TemplateResponse(request, "dashboard/profile/mcp_guide.html", {"app_url": settings.APP_URL})
+
+
+_SKILLS_DIR = Path(__file__).resolve().parent.parent / "data" / "skills"
+
+_SKILL_FILES = [
+    ("monolynx-work/SKILL.md", ".claude/skills/monolynx-work/SKILL.md"),
+    ("monolynx-search/SKILL.md", ".claude/skills/monolynx-search/SKILL.md"),
+    ("monolynx-create-graph-ci-script/SKILL.md", ".claude/skills/monolynx-create-graph-ci-script/SKILL.md"),
+    ("README.md", ".claude/skills/README.md"),
+]
+
+
+@router.get("/profile/skills/download", response_model=None)
+async def skills_download(request: Request) -> Response | RedirectResponse:
+    """Pobierz skille Claude Code jako ZIP."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse("/auth/login", status_code=303)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for src_name, arc_name in _SKILL_FILES:
+            file_path = _SKILLS_DIR / src_name
+            if file_path.is_file():
+                zf.writestr(arc_name, file_path.read_text(encoding="utf-8"))
+    buf.seek(0)
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=monolynx-skills.zip"},
+    )
 
 
 @router.post("/profile/tokens/{token_id}/revoke", response_model=None)
