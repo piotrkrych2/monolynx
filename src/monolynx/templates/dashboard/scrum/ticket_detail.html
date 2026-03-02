@@ -119,6 +119,41 @@
                 </div>
             </div>
         </div>
+
+        {% if ticket.issue %}
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-400 mb-3">Powiazany blad 500ki</h3>
+            <a href="/dashboard/{{ project.slug }}/500ki/issues/{{ ticket.issue.id }}"
+               class="block text-sm text-indigo-400 hover:text-indigo-300 transition break-words leading-snug mb-3">
+                {{ ticket.issue.title | truncate(80) }}
+            </a>
+            <div class="space-y-2 text-xs text-gray-400">
+                <div class="flex items-center justify-between">
+                    <span>Wystapien</span>
+                    <span class="font-mono text-white">{{ ticket.issue.event_count }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span>Ostatnio</span>
+                    <span class="text-white">
+                        {% if ticket.issue.last_seen %}
+                            {{ ticket.issue.last_seen.strftime("%Y-%m-%d %H:%M") }}
+                        {% else %}
+                            &mdash;
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span>Status</span>
+                    <span class="px-2 py-0.5 rounded text-xs
+                        {% if ticket.issue.status == 'unresolved' %}bg-red-900 text-red-300
+                        {% elif ticket.issue.status == 'resolved' %}bg-green-900 text-green-300
+                        {% else %}bg-gray-700 text-gray-300{% endif %}">
+                        {{ ticket.issue.status }}
+                    </span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 

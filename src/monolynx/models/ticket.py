@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from monolynx.models.base import Base
 
 if TYPE_CHECKING:
+    from monolynx.models.issue import Issue
     from monolynx.models.project import Project
     from monolynx.models.sprint import Sprint
     from monolynx.models.ticket_comment import TicketComment
@@ -29,6 +30,7 @@ class Ticket(Base):
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     sprint_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sprints.id"), nullable=True, index=True)
     assignee_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    issue_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("issues.id", ondelete="SET NULL"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="backlog", index=True)
@@ -41,6 +43,7 @@ class Ticket(Base):
 
     project: Mapped[Project] = relationship(back_populates="tickets")
     sprint: Mapped[Sprint | None] = relationship(back_populates="tickets")
+    issue: Mapped[Issue | None] = relationship(back_populates="tickets", lazy="selectin")
     assignee: Mapped[User | None] = relationship()
     comments: Mapped[list[TicketComment]] = relationship(
         back_populates="ticket",

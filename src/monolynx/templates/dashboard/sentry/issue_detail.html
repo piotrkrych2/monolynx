@@ -15,7 +15,31 @@
             <p class="text-gray-400 mt-1">{{ issue.culprit }}</p>
             {% endif %}
         </div>
-        <div class="ml-4 flex items-center gap-2" id="status-controls">
+        <div class="ml-4 flex items-center gap-3">
+            {% if issue.tickets %}
+            {% set linked_ticket = issue.tickets[0] %}
+            <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ linked_ticket.id }}"
+               class="px-3 py-1 text-xs rounded border border-indigo-600 text-indigo-400 hover:bg-indigo-900 hover:text-indigo-300 transition">
+                &rarr; {{ project.code }}-{{ linked_ticket.number }} &mdash; {{ linked_ticket.title | truncate(40) }}
+            </a>
+            <span class="px-2 py-0.5 rounded text-xs
+                {% if linked_ticket.status == 'done' %}bg-green-900 text-green-300
+                {% elif linked_ticket.status == 'in_progress' %}bg-blue-900 text-blue-300
+                {% elif linked_ticket.status == 'in_review' %}bg-yellow-900 text-yellow-300
+                {% elif linked_ticket.status == 'todo' %}bg-gray-700 text-gray-300
+                {% elif linked_ticket.status == 'backlog' %}bg-gray-700 text-gray-400
+                {% else %}bg-gray-700 text-gray-300{% endif %}">
+                {{ linked_ticket.status }}
+            </span>
+            {% else %}
+            <form method="POST" action="/dashboard/{{ project.slug }}/scrum/tickets/create-from-issue/{{ issue.id }}">
+                <button type="submit"
+                        class="px-3 py-1 text-xs rounded bg-indigo-700 hover:bg-indigo-600 text-white transition">
+                    Utwórz ticket Scrum
+                </button>
+            </form>
+            {% endif %}
+            <div class="flex items-center gap-2" id="status-controls">
             {% if issue.status == 'unresolved' %}
             <span class="px-2 py-1 text-xs rounded bg-red-900 text-red-300">unresolved</span>
             <button hx-patch="/api/v1/issues/{{ issue.id }}/status"
@@ -39,6 +63,7 @@
             {% else %}
             <span class="px-2 py-1 text-xs rounded bg-gray-700 text-gray-300">ignored</span>
             {% endif %}
+            </div>
         </div>
     </div>
 

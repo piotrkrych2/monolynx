@@ -22,6 +22,7 @@ from monolynx.models.base import Base
 if TYPE_CHECKING:
     from monolynx.models.event import Event
     from monolynx.models.project import Project
+    from monolynx.models.ticket import Ticket
 
 
 class Issue(Base):
@@ -40,5 +41,6 @@ class Issue(Base):
 
     project: Mapped[Project] = relationship(back_populates="issues")
     events: Mapped[list[Event]] = relationship(back_populates="issue", order_by="desc(Event.timestamp)")
+    tickets: Mapped[list[Ticket]] = relationship(back_populates="issue", lazy="selectin", passive_deletes=True)
 
     __table_args__ = (UniqueConstraint("project_id", "fingerprint", name="uq_project_fingerprint"),)

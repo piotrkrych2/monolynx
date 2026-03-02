@@ -23,6 +23,8 @@ from monolynx.constants import (
     TICKET_STATUSES,
 )
 from monolynx.database import get_db
+from monolynx.models.event import Event
+from monolynx.models.issue import Issue
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
@@ -349,6 +351,131 @@ async def ticket_create(
     return RedirectResponse(url=f"/dashboard/{slug}/scrum/backlog", status_code=303)
 
 
+@router.post(
+    "/{slug}/scrum/tickets/create-from-issue/{issue_id}",
+    response_class=HTMLResponse,
+    response_model=None,
+)
+async def ticket_create_from_issue(
+    request: Request,
+    slug: str,
+    issue_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    # Pobierz issue i sprawdz czy nalezy do projektu
+    result = await db.execute(select(Issue).options(selectinload(Issue.tickets)).where(Issue.id == issue_id, Issue.project_id == project.id))
+    issue = result.scalar_one_or_none()
+    if issue is None:
+        return HTMLResponse("Issue not found", status_code=404)
+
+    # Sprawdz czy issue juz ma powiazany ticket
+    if issue.tickets:
+        existing_ticket = issue.tickets[0]
+        flash(request, "Ticket juz istnieje dla tego bledu", "warning")
+        return RedirectResponse(
+            url=f"/dashboard/{slug}/scrum/tickets/{existing_ticket.id}",
+            status_code=303,
+        )
+
+    # Pobierz ostatni event dla tracebacku
+    event_result = await db.execute(select(Event).where(Event.issue_id == issue.id).order_by(Event.timestamp.desc()).limit(1))
+    last_event = event_result.scalar_one_or_none()
+
+    # Wyciagnij typ wyjatku z tytulu issue (format: "ExceptionType: message")
+    issue_title_parts = issue.title.split(": ", 1)
+    exception_type = issue_title_parts[0] if issue_title_parts else issue.title
+
+    # Auto-generuj tytul ticketu
+    ticket_title = f"[500ki] {issue.title}"
+    if len(ticket_title) > 512:
+        ticket_title = ticket_title[:509] + "..."
+
+    # Auto-generuj opis w Markdown
+    traceback_text = ""
+    request_url = "—"
+    request_method = "—"
+    environment_name = "—"
+
+    if last_event is not None:
+        exc_data = last_event.exception or {}
+        if isinstance(exc_data, dict):
+            stacktrace = exc_data.get("stacktrace") or {}
+            frames = stacktrace.get("frames", []) if isinstance(stacktrace, dict) else []
+            if frames:
+                lines = []
+                for frame in frames:
+                    if isinstance(frame, dict):
+                        filename = frame.get("filename", "")
+                        function = frame.get("function", "?")
+                        lineno = frame.get("lineno")
+                        lineno_str = f":{lineno}" if lineno is not None else ""
+                        lines.append(f'  File "{filename}"{lineno_str}, in {function}')
+                        ctx = frame.get("context_line")
+                        if ctx:
+                            lines.append(f"    {ctx.strip()}")
+                traceback_text = "\n".join(lines)
+            elif "traceback" in exc_data:
+                traceback_text = str(exc_data["traceback"])
+            else:
+                exc_type = exc_data.get("type", "")
+                exc_value = exc_data.get("value", "")
+                traceback_text = f"{exc_type}: {exc_value}" if exc_type else str(exc_data)
+
+        request_data = last_event.request_data or {}
+        if isinstance(request_data, dict):
+            request_url = request_data.get("url") or "—"
+            request_method = request_data.get("method") or "—"
+
+        env_data = last_event.environment or {}
+        if isinstance(env_data, dict):
+            environment_name = env_data.get("environment") or env_data.get("hostname") or "—"
+
+    fingerprint_short = issue.fingerprint[:8] if issue.fingerprint else "?"
+    first_seen_str = issue.first_seen.strftime("%Y-%m-%d %H:%M") if issue.first_seen else "—"
+    last_seen_str = issue.last_seen.strftime("%Y-%m-%d %H:%M") if issue.last_seen else "—"
+
+    description = (
+        f"## Powiazany blad 500ki\n\n"
+        f"**Issue:** [#{fingerprint_short}](/dashboard/{slug}/500ki/issues/{issue.id})"
+        f" — {issue.title}\n"
+        f"**Typ wyjatku:** `{exception_type}`\n"
+        f"**Liczba wystapien:** {issue.event_count}\n"
+        f"**Pierwsze wystapienie:** {first_seen_str}\n"
+        f"**Ostatnie wystapienie:** {last_seen_str}\n\n"
+        f"## Traceback\n\n"
+        f"```\n{traceback_text}\n```\n\n"
+        f"## Srodowisko\n\n"
+        f"- **URL zadania:** {request_url}\n"
+        f"- **Metoda:** {request_method}\n"
+        f"- **Srodowisko:** {environment_name}\n"
+    )
+
+    next_number = await get_next_ticket_number(project.id, db)
+
+    ticket = Ticket(
+        project_id=project.id,
+        number=next_number,
+        title=ticket_title,
+        description=description,
+        priority="medium",
+        status="backlog",
+        issue_id=issue.id,
+    )
+    db.add(ticket)
+    await db.commit()
+
+    flash(request, "Ticket zostal utworzony na podstawie bledu 500ki")
+    return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket.id}", status_code=303)
+
+
 @router.get(
     "/{slug}/scrum/tickets/{ticket_id}",
     response_class=HTMLResponse,
@@ -375,6 +502,7 @@ async def ticket_detail(
             selectinload(Ticket.sprint),
             selectinload(Ticket.comments).selectinload(TicketComment.author),
             selectinload(Ticket.time_entries).selectinload(TimeTrackingEntry.user),
+            selectinload(Ticket.issue),
         )
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )

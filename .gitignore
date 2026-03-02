@@ -39,3 +39,4 @@ Thumbs.db
 
 # our dev data
 .data/
+.mcp.json
