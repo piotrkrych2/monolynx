@@ -70,7 +70,7 @@ trivy-scan:
   stage: test
   extends: .docker-dind
   variables:
-    TRIVY_VERSION: "0.58.2"
+    TRIVY_VERSION: "0.69.2"
   before_script:
     - apk add --no-cache curl tar
     - curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar xzf - -C /usr/local/bin trivy
@@ -139,13 +139,13 @@ deploy-staging:
 
 sync-graph:
   stage: deploy
-  image: alpine:latest
+  image: python:3.12-slim
   script:
-    - apk add --no-cache openssh-client
-    - ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST
-        "cd $DEPLOY_PATH && docker compose exec -T app python cicd/sync_graph.py --project-id $GRAPH_PROJECT_ID"
+    - python cicd/sync_graph.py
+  variables:
+    MONOLYNX_URL: "${MONOLYNX_URL}"
+    MONOLYNX_GRAPH_TOKEN: "${MONOLYNX_GRAPH_TOKEN}"
+    MONOLYNX_PROJECT_SLUG: "${MONOLYNX_PROJECT_SLUG}"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-      when: manual
-  needs:
-    - deploy-staging
+      when: on_success

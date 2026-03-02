@@ -60,11 +60,11 @@ async def backfill(): \
 asyncio.run(backfill())"
 
 # --- Graf kodu ---
-sync-graph: ## Synchronizuj graf zaleznosci kodu (AST -> Neo4j)
-	docker compose --profile dev exec app python cicd/sync_graph.py
+sync-graph: ## Synchronizuj graf zaleznosci kodu z Monolynx
+	python cicd/sync_graph.py
 
 sync-graph-dry: ## Pokaz zmiany w grafie bez zapisu
-	docker compose --profile dev exec app python cicd/sync_graph.py --dry-run --verbose
+	python cicd/sync_graph.py --dry-run --verbose
 
 # --- Build ---
 build: ## Zbuduj produkcyjny obraz Docker

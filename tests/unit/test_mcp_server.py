@@ -206,6 +206,7 @@ EXPECTED_TOOLS = [
     "get_graph_stats",
     "bulk_create_graph_nodes",
     "bulk_create_graph_edges",
+    "create_ticket_from_issue",
 ]
 
 
