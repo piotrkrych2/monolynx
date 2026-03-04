@@ -239,7 +239,7 @@ class TestFullOAuthFlow:
         assert "access_token" in tokens
         assert "refresh_token" in tokens
         assert tokens["token_type"] == "bearer"
-        assert tokens["expires_in"] == 3600
+        assert tokens["expires_in"] == 2592000
 
     async def test_deny_access(self, client, db_session):
         """Odmowa dostepu -- redirect z error=access_denied."""

@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     ENABLE_GRAPH_DB: bool = True
 
     # OAuth 2.1
-    OAUTH_ACCESS_TOKEN_TTL: int = 3600  # 1h
+    OAUTH_ACCESS_TOKEN_TTL: int = 2592000  # 30 dni
     OAUTH_REFRESH_TOKEN_TTL: int = 2592000  # 30 dni
     OAUTH_AUTH_CODE_TTL: int = 600  # 10 min
 
