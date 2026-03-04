@@ -53,6 +53,57 @@
         </p>
     </div>
 
+    <!-- Krok 2b -->
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">2b</span>
+            <h2 class="text-lg font-semibold text-white">Alternatywa: Claude Desktop (OAuth)</h2>
+            <span class="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">zamiast 2</span>
+        </div>
+
+        <p class="text-gray-300 text-sm mb-4">
+            Claude Desktop obsługuje MCP przez OAuth — nie potrzebujesz tokenu API. Otwórz
+            <strong class="text-white">Settings → Integrations → Add</strong> i wypełnij pola:
+        </p>
+
+        <div class="bg-gray-900 rounded-lg overflow-hidden mb-4">
+            <table class="w-full text-sm">
+                <tbody>
+                    <tr class="border-b border-gray-700">
+                        <td class="px-4 py-3 text-gray-400 font-medium whitespace-nowrap w-48">Nazwa connectora</td>
+                        <td class="px-4 py-3"><code class="text-green-400 font-mono">Monolynx</code></td>
+                    </tr>
+                    <tr class="border-b border-gray-700">
+                        <td class="px-4 py-3 text-gray-400 font-medium whitespace-nowrap">URL connectora</td>
+                        <td class="px-4 py-3"><code class="text-green-400 font-mono">{{ app_url }}/</code></td>
+                    </tr>
+                    <tr class="border-b border-gray-700">
+                        <td class="px-4 py-3 text-gray-400 font-medium whitespace-nowrap">OAuth Client ID</td>
+                        <td class="px-4 py-3 text-gray-400 italic">zostaw puste</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3 text-gray-400 font-medium whitespace-nowrap">OAuth Client Secret</td>
+                        <td class="px-4 py-3 text-gray-400 italic">zostaw puste</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p class="text-gray-300 text-sm mb-2">
+            Claude Desktop automatycznie zarejestruje się jako klient OAuth i przekieruje Cię do strony logowania Monolynx.
+            Zaloguj się swoimi danymi (email + hasło) i zatwierdź dostęp.
+        </p>
+
+        <div class="bg-gray-700/30 border border-gray-600 rounded-lg p-3 mt-3">
+            <p class="text-gray-400 text-xs">
+                <strong class="text-gray-300">Jak to działa?</strong>
+                Claude Desktop odkrywa endpointy OAuth przez <code class="text-indigo-300 font-mono text-xs">/.well-known/oauth-authorization-server</code>,
+                rejestruje klienta (Dynamic Client Registration), a następnie przeprowadza flow PKCE.
+                Pola Client ID i Secret są opcjonalne — wypełniaj je tylko jeśli masz wcześniej zarejestrowanego klienta.
+            </p>
+        </div>
+    </div>
+
     <!-- Krok 3 -->
     <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
         <div class="flex items-center gap-3 mb-4">

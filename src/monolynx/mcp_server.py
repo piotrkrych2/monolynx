@@ -102,13 +102,16 @@ async def _auth(ctx: Context[Any, Any]) -> User:
 
     raw_token = auth_header[7:]
 
-    # Sprobuj najpierw OAuth access token
-    from monolynx.services.oauth import verify_oauth_access_token
+    # Sprobuj najpierw OAuth access token (graceful gdy tabele nie istnieja)
+    try:
+        from monolynx.services.oauth import verify_oauth_access_token
 
-    async with async_session_factory() as db:
-        user = await verify_oauth_access_token(raw_token, db)
-    if user is not None:
-        return user
+        async with async_session_factory() as db:
+            user = await verify_oauth_access_token(raw_token, db)
+        if user is not None:
+            return user
+    except Exception:
+        logger.debug("OAuth verification skipped (tables may not exist)")
 
     # Fallback na legacy osk_* token
     async with async_session_factory() as db:

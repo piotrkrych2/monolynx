@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx.config import settings
@@ -28,6 +29,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["oauth"])
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+
+@router.get("/.well-known/oauth-protected-resource")
+async def oauth_protected_resource() -> JSONResponse:
+    """RFC 9728 -- metadata chronionego zasobu (MCP server)."""
+    return JSONResponse(
+        {
+            "resource": settings.APP_URL,
+            "authorization_servers": [settings.APP_URL],
+            "bearer_methods_supported": ["header"],
+        }
+    )
 
 
 @router.get("/.well-known/oauth-authorization-server")
@@ -67,6 +80,13 @@ async def register_oauth_client(
     try:
         result = await register_client(client_name, redirect_uris, grant_types, db)
         await db.commit()
+    except ProgrammingError:
+        logger.warning("OAuth tables not found — run 'make migrate'")
+        await db.rollback()
+        return JSONResponse(
+            {"error": "server_error", "error_description": "OAuth not configured — migration pending"},
+            status_code=503,
+        )
     except ValueError as e:
         return JSONResponse(
             {"error": "invalid_client_metadata", "error_description": str(e)},
@@ -97,7 +117,12 @@ async def authorize_get(
         return HTMLResponse("Wymagana metoda PKCE: S256", status_code=400)
 
     # Sprawdz czy klient istnieje
-    result = await db.execute(select(OAuthClient).where(OAuthClient.client_id == client_id))
+    try:
+        result = await db.execute(select(OAuthClient).where(OAuthClient.client_id == client_id))
+    except ProgrammingError:
+        logger.warning("OAuth tables not found — run 'make migrate'")
+        await db.rollback()
+        return HTMLResponse("OAuth not configured — migration pending", status_code=503)
     client = result.scalar_one_or_none()
     if client is None:
         return HTMLResponse("Nieznany client_id", status_code=400)
@@ -142,7 +167,12 @@ async def authorize_post(
 ) -> RedirectResponse | HTMLResponse:
     """Przetworzenie formularza autoryzacji -- logowanie lub consent."""
     # Sprawdz czy klient istnieje
-    result = await db.execute(select(OAuthClient).where(OAuthClient.client_id == client_id))
+    try:
+        result = await db.execute(select(OAuthClient).where(OAuthClient.client_id == client_id))
+    except ProgrammingError:
+        logger.warning("OAuth tables not found — run 'make migrate'")
+        await db.rollback()
+        return HTMLResponse("OAuth not configured — migration pending", status_code=503)
     client = result.scalar_one_or_none()
     if client is None:
         return HTMLResponse("Nieznany client_id", status_code=400)
@@ -246,7 +276,15 @@ async def token_endpoint(
         )
 
     # Sprawdz czy klient istnieje
-    result = await db.execute(select(OAuthClient).where(OAuthClient.client_id == str(client_id)))
+    try:
+        result = await db.execute(select(OAuthClient).where(OAuthClient.client_id == str(client_id)))
+    except ProgrammingError:
+        logger.warning("OAuth tables not found — run 'make migrate'")
+        await db.rollback()
+        return JSONResponse(
+            {"error": "server_error", "error_description": "OAuth not configured — migration pending"},
+            status_code=503,
+        )
     client = result.scalar_one_or_none()
     if client is None:
         return JSONResponse(
