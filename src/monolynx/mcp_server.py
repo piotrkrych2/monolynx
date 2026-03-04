@@ -87,22 +87,28 @@ mcp = FastMCP(
 
 async def _auth(ctx: Context[Any, Any]) -> User:
     """Wyciagnij token z naglowka HTTP i zwaliduj uzytkownika (OAuth + legacy)."""
+    raw_token = await _get_auth_header(ctx)
+    return await _verify_token(raw_token)
+
+
+async def _get_auth_header(ctx: Context[Any, Any]) -> str:
+    """Pobierz raw token z kontekstu."""
     request_ctx = ctx.request_context
     if request_ctx is None:
-        raise ValueError("Brak kontekstu HTTP — token wymagany")
-
+        raise ValueError("Brak kontekstu HTTP")
     starlette_request = getattr(request_ctx, "request", None)
     if starlette_request is None:
         raise ValueError("Brak kontekstu HTTP request")
-
     headers = starlette_request.headers
     auth_header = headers.get("authorization", "")
     if not auth_header.lower().startswith("bearer "):
-        raise ValueError("Brak tokenu Bearer w naglowku Authorization")
+        raise ValueError("Brak tokenu Bearer")
+    return str(auth_header[7:])
 
-    raw_token = auth_header[7:]
 
-    # Sprobuj najpierw OAuth access token (graceful gdy tabele nie istnieja)
+async def _verify_token(raw_token: str) -> User:
+    """Zwaliduj token (OAuth + legacy) i zwroc uzytkownika."""
+    # Sprobuj najpierw OAuth access token
     try:
         from monolynx.services.oauth import verify_oauth_access_token
 
@@ -121,30 +127,12 @@ async def _auth(ctx: Context[Any, Any]) -> User:
     return user
 
 
-async def _get_auth_header(ctx: Context[Any, Any]) -> str:
-    """Pobierz raw token z kontekstu."""
-    request_ctx = ctx.request_context
-    if request_ctx is None:
-        raise ValueError("Brak kontekstu HTTP")
-    starlette_request = getattr(request_ctx, "request", None)
-    if starlette_request is None:
-        raise ValueError("Brak kontekstu HTTP request")
-    headers = starlette_request.headers
-    auth_header = headers.get("authorization", "")
-    if not auth_header.lower().startswith("bearer "):
-        raise ValueError("Brak tokenu Bearer")
-    return str(auth_header[7:])
-
-
 async def _get_user_and_project(ctx: Context[Any, Any], project_slug: str) -> tuple[User, Project]:
     """Autoryzuj uzytkownika i sprawdz dostep do projektu."""
     raw_token = await _get_auth_header(ctx)
+    user = await _verify_token(raw_token)
 
     async with async_session_factory() as db:
-        user = await verify_mcp_token(raw_token, db)
-        if user is None:
-            raise ValueError("Nieprawidlowy lub nieaktywny token API")
-
         result = await db.execute(select(Project).where(Project.slug == project_slug, Project.is_active.is_(True)))
         project = result.scalar_one_or_none()
         if project is None:
