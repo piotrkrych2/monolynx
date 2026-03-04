@@ -2063,3 +2063,982 @@ class TestSearchWiki:
         mock_search.assert_called_once()
         call_args = mock_search.call_args
         assert call_args.kwargs.get("limit") == 5
+
+
+# ---------------------------------------------------------------------------
+# _auth: OAuth access token path (line 111)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAuthOAuth:
+    """Testy sciezki OAuth w _auth (verify_oauth_access_token)."""
+
+    async def test_auth_oauth_token_success(self, mcp_user, mock_factory):
+        """Jesli verify_oauth_access_token zwraca usera, _auth zwraca go od razu."""
+        ctx = _make_ctx("oauth-access-token")
+        mock_verify_oauth = AsyncMock(return_value=mcp_user)
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_oauth_access_token", mock_verify_oauth, create=True),
+            patch("monolynx.services.oauth.verify_oauth_access_token", mock_verify_oauth),
+        ):
+            user = await _auth(ctx)
+        assert user.id == mcp_user.id
+
+    async def test_auth_oauth_returns_none_falls_back_to_legacy(self, mcp_user, mock_factory, mock_verify):
+        """Jesli OAuth zwraca None, fallback na verify_mcp_token."""
+        ctx = _make_ctx("legacy-token")
+        mock_verify_oauth = AsyncMock(return_value=None)
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.services.oauth.verify_oauth_access_token", mock_verify_oauth),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            user = await _auth(ctx)
+        assert user.id == mcp_user.id
+
+    async def test_auth_both_return_none_raises(self, mock_factory):
+        """Jesli oba OAuth i legacy zwracaja None, rzuca ValueError."""
+        ctx = _make_ctx("bad-token")
+        mock_verify_oauth = AsyncMock(return_value=None)
+        mock_verify_legacy = AsyncMock(return_value=None)
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.services.oauth.verify_oauth_access_token", mock_verify_oauth),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify_legacy),
+            pytest.raises(ValueError, match="Nieprawidlowy lub nieaktywny token"),
+        ):
+            await _auth(ctx)
+
+
+# ---------------------------------------------------------------------------
+# _get_auth_header edge cases (lines 62-65)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetAuthHeaderEdgeCases:
+    """Dodatkowe testy _get_auth_header -- puste Authorization, brak naglowka."""
+
+    async def test_no_authorization_header(self):
+        """Headers bez klucza 'authorization' -- zwraca pusty string, brak Bearer prefix."""
+        ctx = MagicMock()
+        ctx.request_context = MagicMock()
+        ctx.request_context.request = MagicMock()
+        ctx.request_context.request.headers = {}
+        with pytest.raises(ValueError, match="Brak tokenu Bearer"):
+            await _get_auth_header(ctx)
+
+    async def test_empty_authorization_header(self):
+        """Pusty naglowek authorization."""
+        ctx = MagicMock()
+        ctx.request_context = MagicMock()
+        ctx.request_context.request = MagicMock()
+        ctx.request_context.request.headers = {"authorization": ""}
+        with pytest.raises(ValueError, match="Brak tokenu Bearer"):
+            await _get_auth_header(ctx)
+
+    async def test_non_bearer_scheme(self):
+        """Inny scheme niz Bearer (np. Token, Basic)."""
+        ctx = MagicMock()
+        ctx.request_context = MagicMock()
+        ctx.request_context.request = MagicMock()
+        ctx.request_context.request.headers = {"authorization": "Token abc123"}
+        with pytest.raises(ValueError, match="Brak tokenu Bearer"):
+            await _get_auth_header(ctx)
+
+
+# ---------------------------------------------------------------------------
+# update_issue_status: issue nie istnieje (line 309)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestUpdateIssueStatusNotFound:
+    async def test_update_nonexistent_issue(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Issue nie istnieje"),
+        ):
+            await update_issue_status(ctx, mcp_project.slug, str(uuid.uuid4()), "resolved")
+
+
+# ---------------------------------------------------------------------------
+# create_ticket_from_issue (lines 884-997)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCreateTicketFromIssue:
+    """Testy narzedzia create_ticket_from_issue."""
+
+    async def test_create_ticket_from_issue_basic(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Podstawowe tworzenie ticketa z issue bez eventow."""
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        issue = Issue(
+            project_id=mcp_project.id,
+            title="ValueError: invalid literal",
+            fingerprint="fp-create-1",
+            status="unresolved",
+            event_count=3,
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket_from_issue(ctx, mcp_project.slug, str(issue.id))
+        assert "ticket_id" in result
+        assert "ticket_key" in result
+        assert result["url"].startswith("/dashboard/")
+
+    async def test_create_ticket_from_issue_with_event_traceback(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Ticket z issue ktory ma event z traceback -- sprawdza generowanie opisu."""
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        issue = Issue(
+            project_id=mcp_project.id,
+            title="TypeError: 'NoneType' has no len",
+            fingerprint="fp-create-2",
+            status="unresolved",
+            event_count=1,
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        event = Event(
+            issue_id=issue.id,
+            timestamp=datetime.now(UTC),
+            exception={
+                "type": "TypeError",
+                "value": "'NoneType' has no len",
+                "stacktrace": {
+                    "frames": [
+                        {
+                            "filename": "app/views.py",
+                            "function": "get_list",
+                            "lineno": 42,
+                            "context_line": "return len(result)",
+                        },
+                        {
+                            "filename": "app/models.py",
+                            "function": "query",
+                            "lineno": 10,
+                        },
+                    ]
+                },
+            },
+            request_data={"url": "https://example.com/api", "method": "GET"},
+            environment={"environment": "production"},
+        )
+        db_session.add(event)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket_from_issue(ctx, mcp_project.slug, str(issue.id))
+        assert "ticket_id" in result
+
+    async def test_create_ticket_from_issue_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Issue nie istnieje -- ValueError."""
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Issue nie istnieje"),
+        ):
+            await create_ticket_from_issue(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+    async def test_create_ticket_from_issue_already_has_ticket(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Issue z powiazanym ticketem -- ValueError."""
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        issue = Issue(
+            project_id=mcp_project.id,
+            title="Existing issue",
+            fingerprint="fp-create-3",
+            status="unresolved",
+            event_count=1,
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        ticket = Ticket(
+            project_id=mcp_project.id,
+            number=99,
+            title="Existing ticket",
+            issue_id=issue.id,
+        )
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="already has a linked ticket"),
+        ):
+            await create_ticket_from_issue(ctx, mcp_project.slug, str(issue.id))
+
+    async def test_create_ticket_from_issue_with_sprint(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Ticket tworzony z sprint_id dostaje status 'todo'."""
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        issue = Issue(
+            project_id=mcp_project.id,
+            title="Sprint issue",
+            fingerprint="fp-create-4",
+            status="unresolved",
+            event_count=1,
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Sprint for issue",
+            start_date=date(2026, 3, 1),
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket_from_issue(
+                ctx,
+                mcp_project.slug,
+                str(issue.id),
+                sprint_id=str(sprint.id),
+                priority="high",
+                story_points=5,
+            )
+        assert "ticket_id" in result
+
+    async def test_create_ticket_from_issue_invalid_priority_defaults(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy priority zamienia sie na medium."""
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        issue = Issue(
+            project_id=mcp_project.id,
+            title="Priority issue",
+            fingerprint="fp-create-5",
+            status="unresolved",
+            event_count=1,
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket_from_issue(
+                ctx,
+                mcp_project.slug,
+                str(issue.id),
+                priority="ultra",
+            )
+        assert "ticket_id" in result
+
+    async def test_create_ticket_from_issue_with_traceback_key(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Event z exc_data ktory ma 'traceback' zamiast 'stacktrace'."""
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        issue = Issue(
+            project_id=mcp_project.id,
+            title="Traceback key issue",
+            fingerprint="fp-create-6",
+            status="unresolved",
+            event_count=1,
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        event = Event(
+            issue_id=issue.id,
+            timestamp=datetime.now(UTC),
+            exception={
+                "traceback": "Traceback (most recent call last):\n  File ...",
+                "stacktrace": {},
+            },
+            request_data={"url": "https://test.com", "method": "POST"},
+            environment={"hostname": "server-01"},
+        )
+        db_session.add(event)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket_from_issue(ctx, mcp_project.slug, str(issue.id))
+        assert "ticket_id" in result
+
+    async def test_create_ticket_from_issue_with_type_value_exc(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Event z exc_data z type/value bez stacktrace frames."""
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        issue = Issue(
+            project_id=mcp_project.id,
+            title="Type value issue",
+            fingerprint="fp-create-7",
+            status="unresolved",
+            event_count=1,
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        event = Event(
+            issue_id=issue.id,
+            timestamp=datetime.now(UTC),
+            exception={
+                "type": "RuntimeError",
+                "value": "Something broke",
+            },
+            request_data={},
+            environment={},
+        )
+        db_session.add(event)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket_from_issue(ctx, mcp_project.slug, str(issue.id))
+        assert "ticket_id" in result
+
+    async def test_create_ticket_from_issue_long_title_truncated(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Ticket z dlugim tytulem jest obcinany do 512 znakow.
+
+        Issue title = 510 znakow, po dodaniu prefiksu [500ki] (8 znakow)
+        wynik = 518 > 512 -> obcinany do 509 + '...'
+        """
+        from monolynx.mcp_server import create_ticket_from_issue
+
+        long_title = "X" * 510  # 510 chars fits in issue.title varchar(512)
+        issue = Issue(
+            project_id=mcp_project.id,
+            title=long_title,
+            fingerprint="fp-create-8",
+            status="unresolved",
+            event_count=1,
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket_from_issue(ctx, mcp_project.slug, str(issue.id))
+        assert "ticket_id" in result
+
+
+# ---------------------------------------------------------------------------
+# Graph tools (lines 1507-1793)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCreateGraphNode:
+    """Testy create_graph_node."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import create_graph_node
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await create_graph_node(ctx, mcp_project.slug, "File", "test.py")
+
+    async def test_invalid_node_type(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import create_graph_node
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Nieznany typ node'a"),
+        ):
+            mock_gs.is_enabled.return_value = True
+            await create_graph_node(ctx, mcp_project.slug, "InvalidType", "test.py")
+
+    async def test_create_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import create_graph_node
+
+        ctx = _make_ctx()
+        mock_node = {"id": "node-1", "type": "File", "name": "test.py"}
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.create_node = AsyncMock(return_value=mock_node)
+            result = await create_graph_node(ctx, mcp_project.slug, "File", "test.py")
+        assert result["name"] == "test.py"
+        assert "message" in result
+
+
+@pytest.mark.unit
+class TestListGraphNodes:
+    """Testy list_graph_nodes."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import list_graph_nodes
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await list_graph_nodes(ctx, mcp_project.slug)
+
+    async def test_list_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import list_graph_nodes
+
+        ctx = _make_ctx()
+        mock_nodes = [{"id": "n1", "type": "File", "name": "a.py"}, {"id": "n2", "type": "Class", "name": "Foo"}]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.list_nodes = AsyncMock(return_value=mock_nodes)
+            result = await list_graph_nodes(ctx, mcp_project.slug)
+        assert len(result) == 2
+        assert result[0]["name"] == "a.py"
+
+
+@pytest.mark.unit
+class TestGetGraphNode:
+    """Testy get_graph_node."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import get_graph_node
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await get_graph_node(ctx, mcp_project.slug, "node-1")
+
+    async def test_node_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import get_graph_node
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Node nie istnieje"),
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.get_node = AsyncMock(return_value=None)
+            await get_graph_node(ctx, mcp_project.slug, "nonexistent")
+
+    async def test_get_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import get_graph_node
+
+        ctx = _make_ctx()
+        mock_node = {"id": "node-1", "type": "File", "name": "main.py"}
+        mock_neighbors = [{"id": "node-2", "type": "Class", "name": "App"}]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.get_node = AsyncMock(return_value=mock_node)
+            mock_gs.get_neighbors = AsyncMock(return_value=mock_neighbors)
+            result = await get_graph_node(ctx, mcp_project.slug, "node-1")
+        assert result["name"] == "main.py"
+        assert result["neighbors"] == mock_neighbors
+
+
+@pytest.mark.unit
+class TestDeleteGraphNode:
+    """Testy delete_graph_node."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import delete_graph_node
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await delete_graph_node(ctx, mcp_project.slug, "node-1")
+
+    async def test_node_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import delete_graph_node
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Node nie istnieje"),
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.delete_node = AsyncMock(return_value=False)
+            await delete_graph_node(ctx, mcp_project.slug, "node-1")
+
+    async def test_delete_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import delete_graph_node
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.delete_node = AsyncMock(return_value=True)
+            result = await delete_graph_node(ctx, mcp_project.slug, "node-1")
+        assert result["message"] == "Node usuniety"
+        assert result["node_id"] == "node-1"
+
+
+@pytest.mark.unit
+class TestCreateGraphEdge:
+    """Testy create_graph_edge."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import create_graph_edge
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await create_graph_edge(ctx, mcp_project.slug, "s1", "t1", "CALLS")
+
+    async def test_invalid_edge_type(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import create_graph_edge
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Nieznany typ krawedzi"),
+        ):
+            mock_gs.is_enabled.return_value = True
+            await create_graph_edge(ctx, mcp_project.slug, "s1", "t1", "INVALID_TYPE")
+
+    async def test_nodes_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import create_graph_edge
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Nie znaleziono node'ow"),
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.create_edge = AsyncMock(return_value=None)
+            await create_graph_edge(ctx, mcp_project.slug, "s1", "t1", "CALLS")
+
+    async def test_create_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import create_graph_edge
+
+        ctx = _make_ctx()
+        mock_edge = {"source_id": "s1", "target_id": "t1", "type": "CALLS"}
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.create_edge = AsyncMock(return_value=mock_edge)
+            result = await create_graph_edge(ctx, mcp_project.slug, "s1", "t1", "CALLS")
+        assert result["type"] == "CALLS"
+        assert "message" in result
+
+
+@pytest.mark.unit
+class TestDeleteGraphEdge:
+    """Testy delete_graph_edge."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import delete_graph_edge
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await delete_graph_edge(ctx, mcp_project.slug, "s1", "t1", "CALLS")
+
+    async def test_edge_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import delete_graph_edge
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Krawedz nie istnieje"),
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.delete_edge = AsyncMock(return_value=False)
+            await delete_graph_edge(ctx, mcp_project.slug, "s1", "t1", "CALLS")
+
+    async def test_delete_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import delete_graph_edge
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.delete_edge = AsyncMock(return_value=True)
+            result = await delete_graph_edge(ctx, mcp_project.slug, "s1", "t1", "CALLS")
+        assert result["message"] == "Krawedz usunieta"
+        assert result["source_id"] == "s1"
+        assert result["target_id"] == "t1"
+
+
+@pytest.mark.unit
+class TestQueryGraph:
+    """Testy query_graph."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import query_graph
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await query_graph(ctx, mcp_project.slug)
+
+    async def test_query_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import query_graph
+
+        ctx = _make_ctx()
+        mock_graph = {"nodes": [{"id": "n1"}], "edges": []}
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.get_graph = AsyncMock(return_value=mock_graph)
+            result = await query_graph(ctx, mcp_project.slug)
+        assert result["nodes"] == [{"id": "n1"}]
+
+
+@pytest.mark.unit
+class TestFindGraphPath:
+    """Testy find_graph_path."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import find_graph_path
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await find_graph_path(ctx, mcp_project.slug, "s1", "t1")
+
+    async def test_find_path_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import find_graph_path
+
+        ctx = _make_ctx()
+        mock_path = {"path": [{"id": "s1"}, {"id": "t1"}], "length": 1}
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.find_path = AsyncMock(return_value=mock_path)
+            result = await find_graph_path(ctx, mcp_project.slug, "s1", "t1")
+        assert result["length"] == 1
+
+
+@pytest.mark.unit
+class TestGetGraphStats:
+    """Testy get_graph_stats."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import get_graph_stats
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await get_graph_stats(ctx, mcp_project.slug)
+
+    async def test_stats_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import get_graph_stats
+
+        ctx = _make_ctx()
+        mock_stats = {"total_nodes": 10, "total_edges": 15, "nodes_by_type": {"File": 5}}
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.get_stats = AsyncMock(return_value=mock_stats)
+            result = await get_graph_stats(ctx, mcp_project.slug)
+        assert result["total_nodes"] == 10
+        assert result["total_edges"] == 15
+
+
+@pytest.mark.unit
+class TestBulkCreateGraphNodes:
+    """Testy bulk_create_graph_nodes."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import bulk_create_graph_nodes
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await bulk_create_graph_nodes(ctx, mcp_project.slug, [])
+
+    async def test_bulk_create_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import bulk_create_graph_nodes
+
+        ctx = _make_ctx()
+        mock_node = {"id": "n1", "type": "File", "name": "a.py"}
+        nodes_input = [
+            {"type": "File", "name": "a.py"},
+            {"type": "Class", "name": "Foo"},
+        ]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.create_node = AsyncMock(return_value=mock_node)
+            result = await bulk_create_graph_nodes(ctx, mcp_project.slug, nodes_input)
+        assert result["created"] == 2
+        assert result["errors"] == []
+
+    async def test_bulk_create_missing_fields(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Node bez wymaganych pol (name/type) generuje error."""
+        from monolynx.mcp_server import bulk_create_graph_nodes
+
+        ctx = _make_ctx()
+        nodes_input = [{"name": "missing_type"}, {"type": "File"}]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            result = await bulk_create_graph_nodes(ctx, mcp_project.slug, nodes_input)
+        assert result["created"] == 0
+        assert len(result["errors"]) == 2
+
+    async def test_bulk_create_invalid_type(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Node z nieprawidlowym typem generuje error."""
+        from monolynx.mcp_server import bulk_create_graph_nodes
+
+        ctx = _make_ctx()
+        nodes_input = [{"type": "InvalidType", "name": "bad"}]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            result = await bulk_create_graph_nodes(ctx, mcp_project.slug, nodes_input)
+        assert result["created"] == 0
+        assert len(result["errors"]) == 1
+        assert "Nieznany typ" in result["errors"][0]
+
+    async def test_bulk_create_exception_in_node(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Wyjatek z graph_service.create_node jest przechwytywany."""
+        from monolynx.mcp_server import bulk_create_graph_nodes
+
+        ctx = _make_ctx()
+        nodes_input = [{"type": "File", "name": "error.py"}]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.create_node = AsyncMock(side_effect=RuntimeError("Neo4j error"))
+            result = await bulk_create_graph_nodes(ctx, mcp_project.slug, nodes_input)
+        assert result["created"] == 0
+        assert len(result["errors"]) == 1
+        assert "Neo4j error" in result["errors"][0]
+
+
+@pytest.mark.unit
+class TestBulkCreateGraphEdges:
+    """Testy bulk_create_graph_edges."""
+
+    async def test_graph_disabled(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import bulk_create_graph_edges
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+            pytest.raises(ValueError, match="Baza grafowa nie jest wlaczona"),
+        ):
+            mock_gs.is_enabled.return_value = False
+            await bulk_create_graph_edges(ctx, mcp_project.slug, [])
+
+    async def test_bulk_create_edges_success(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.mcp_server import bulk_create_graph_edges
+
+        ctx = _make_ctx()
+        mock_edge = {"source_id": "s1", "target_id": "t1", "type": "CALLS"}
+        edges_input = [
+            {"source_id": "s1", "target_id": "t1", "type": "CALLS"},
+            {"source_id": "s2", "target_id": "t2", "type": "IMPORTS"},
+        ]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.create_edge = AsyncMock(return_value=mock_edge)
+            result = await bulk_create_graph_edges(ctx, mcp_project.slug, edges_input)
+        assert result["created"] == 2
+        assert result["skipped"] == 0
+
+    async def test_bulk_create_edges_missing_fields(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Edge bez wymaganych pol generuje error."""
+        from monolynx.mcp_server import bulk_create_graph_edges
+
+        ctx = _make_ctx()
+        edges_input = [
+            {"source_id": "s1", "target_id": "t1"},  # brak type
+            {"source_id": "s1"},  # brak target_id i type
+        ]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            result = await bulk_create_graph_edges(ctx, mcp_project.slug, edges_input)
+        assert result["created"] == 0
+        assert len(result["errors"]) == 2
+
+    async def test_bulk_create_edges_invalid_type(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Edge z nieprawidlowym typem generuje error."""
+        from monolynx.mcp_server import bulk_create_graph_edges
+
+        ctx = _make_ctx()
+        edges_input = [{"source_id": "s1", "target_id": "t1", "type": "BAD_TYPE"}]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            result = await bulk_create_graph_edges(ctx, mcp_project.slug, edges_input)
+        assert result["created"] == 0
+        assert len(result["errors"]) == 1
+        assert "Nieznany typ" in result["errors"][0]
+
+    async def test_bulk_create_edges_nodes_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Edge gdzie create_edge zwraca None (node nie znaleziony) jest skippowany."""
+        from monolynx.mcp_server import bulk_create_graph_edges
+
+        ctx = _make_ctx()
+        edges_input = [{"source_id": "s1", "target_id": "t1", "type": "CALLS"}]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.create_edge = AsyncMock(return_value=None)
+            result = await bulk_create_graph_edges(ctx, mcp_project.slug, edges_input)
+        assert result["created"] == 0
+        assert result["skipped"] == 1
+
+    async def test_bulk_create_edges_exception(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Wyjatek z graph_service.create_edge jest przechwytywany."""
+        from monolynx.mcp_server import bulk_create_graph_edges
+
+        ctx = _make_ctx()
+        edges_input = [{"source_id": "s1", "target_id": "t1", "type": "CALLS"}]
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.create_edge = AsyncMock(side_effect=RuntimeError("DB error"))
+            result = await bulk_create_graph_edges(ctx, mcp_project.slug, edges_input)
+        assert result["created"] == 0
+        assert len(result["errors"]) == 1
+        assert "DB error" in result["errors"][0]

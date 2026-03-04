@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     NEO4J_PASSWORD: str = "neo4j_dev"
     ENABLE_GRAPH_DB: bool = True
 
+    # OAuth 2.1
+    OAUTH_ACCESS_TOKEN_TTL: int = 3600  # 1h
+    OAUTH_REFRESH_TOKEN_TTL: int = 2592000  # 30 dni
+    OAUTH_AUTH_CODE_TTL: int = 600  # 10 min
+
     # Embeddings (RAG search for Wiki)
     OPENAI_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"
