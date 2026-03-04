@@ -120,3 +120,83 @@ class TestWorkerModuleBlock:
 
         source = inspect.getsource(monolynx.worker)
         assert 'if __name__ == "__main__"' in source or "if __name__ == '__main__'" in source
+
+
+@pytest.mark.unit
+class TestWorkerShutdownHandler:
+    """Testy signal handlera _shutdown i cleanup po zakonczeniu."""
+
+    @patch("monolynx.worker.monitor_checker_loop")
+    @patch("monolynx.worker.settings")
+    async def test_sigterm_triggers_shutdown(self, mock_settings, mock_checker_loop):
+        """SIGTERM wywoluje _shutdown: anuluje checker task i dispose engine."""
+        import os
+        import signal
+
+        mock_settings.LOG_LEVEL = "info"
+        mock_settings.ENVIRONMENT = "test"
+
+        async def fake_checker_loop(session_factory, acquire_lock=True):
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                return
+
+        mock_checker_loop.side_effect = fake_checker_loop
+
+        mock_engine = AsyncMock()
+        mock_factory = MagicMock()
+
+        with (
+            patch("monolynx.database.async_session_factory", mock_factory),
+            patch("monolynx.database.engine", mock_engine),
+            patch("monolynx.worker.logging"),
+        ):
+            from monolynx.worker import main
+
+            task = asyncio.create_task(main())
+            await asyncio.sleep(0.05)
+
+            # Send SIGTERM to trigger _shutdown handler
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.sleep(0.1)
+
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        # engine.dispose should have been called
+        mock_engine.dispose.assert_awaited_once()
+
+    @patch("monolynx.worker.monitor_checker_loop")
+    @patch("monolynx.worker.settings")
+    async def test_shutdown_disposes_engine(self, mock_settings, mock_checker_loop):
+        """Po shutdown dispose engine jest wywolane."""
+        mock_settings.LOG_LEVEL = "info"
+        mock_settings.ENVIRONMENT = "test"
+
+        stop_immediately = asyncio.Event()
+
+        async def fake_checker_loop(session_factory, acquire_lock=True):
+            stop_immediately.set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                return
+
+        mock_checker_loop.side_effect = fake_checker_loop
+        mock_engine = AsyncMock()
+        mock_factory = MagicMock()
+
+        with (
+            patch("monolynx.database.async_session_factory", mock_factory),
+            patch("monolynx.database.engine", mock_engine),
+            patch("monolynx.worker.logging"),
+        ):
+            from monolynx.worker import main
+
+            task = asyncio.create_task(main())
+            await stop_immediately.wait()
+            await asyncio.sleep(0.02)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task

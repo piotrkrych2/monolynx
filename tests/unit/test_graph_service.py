@@ -521,3 +521,233 @@ class TestParseMetadata:
     def test_parse_metadata_none(self) -> None:
         result = _parse_metadata(None)
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# init_driver
+# ---------------------------------------------------------------------------
+
+import monolynx.services.graph as graph_module  # noqa: E402
+
+
+@pytest.mark.unit
+class TestInitDriver:
+    async def test_init_driver_disabled(self) -> None:
+        original = graph_module._driver
+        try:
+            with patch.object(graph_module, "settings") as ms:
+                ms.ENABLE_GRAPH_DB = False
+                await graph_module.init_driver()
+                assert graph_module._driver is original  # unchanged
+        finally:
+            graph_module._driver = original
+
+    async def test_init_driver_success(self) -> None:
+        original = graph_module._driver
+        try:
+            graph_module._driver = None
+            mock_driver_instance = AsyncMock()
+            mock_driver_instance.verify_connectivity = AsyncMock()
+            mock_agd = MagicMock()
+            mock_agd.driver.return_value = mock_driver_instance
+
+            with (
+                patch.object(graph_module, "settings") as ms,
+                patch.dict("sys.modules", {"neo4j": MagicMock(AsyncGraphDatabase=mock_agd)}),
+            ):
+                ms.ENABLE_GRAPH_DB = True
+                ms.NEO4J_URI = "bolt://test:7687"
+                ms.NEO4J_USER = "neo4j"
+                ms.NEO4J_PASSWORD = "pass"
+                await graph_module.init_driver()
+
+            assert graph_module._driver is mock_driver_instance
+            mock_driver_instance.verify_connectivity.assert_awaited_once()
+        finally:
+            graph_module._driver = original
+
+    async def test_init_driver_exception(self) -> None:
+        original = graph_module._driver
+        try:
+            graph_module._driver = None
+            mock_agd = MagicMock()
+            mock_agd.driver.side_effect = ConnectionError("Neo4j down")
+
+            with (
+                patch.object(graph_module, "settings") as ms,
+                patch.dict("sys.modules", {"neo4j": MagicMock(AsyncGraphDatabase=mock_agd)}),
+            ):
+                ms.ENABLE_GRAPH_DB = True
+                ms.NEO4J_URI = "bolt://test:7687"
+                ms.NEO4J_USER = "neo4j"
+                ms.NEO4J_PASSWORD = "pass"
+                await graph_module.init_driver()
+
+            assert graph_module._driver is None
+        finally:
+            graph_module._driver = original
+
+
+# ---------------------------------------------------------------------------
+# close_driver
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCloseDriver:
+    async def test_close_driver_when_none(self) -> None:
+        original = graph_module._driver
+        try:
+            graph_module._driver = None
+            await graph_module.close_driver()
+            assert graph_module._driver is None
+        finally:
+            graph_module._driver = original
+
+    async def test_close_driver_with_driver(self) -> None:
+        original = graph_module._driver
+        try:
+            mock_drv = AsyncMock()
+            graph_module._driver = mock_drv
+            await graph_module.close_driver()
+            mock_drv.close.assert_awaited_once()
+            assert graph_module._driver is None
+        finally:
+            graph_module._driver = original
+
+
+# ---------------------------------------------------------------------------
+# init_schema
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestInitSchema:
+    async def test_init_schema_driver_none(self) -> None:
+        original = graph_module._driver
+        try:
+            graph_module._driver = None
+            await graph_module.init_schema()  # should return early
+        finally:
+            graph_module._driver = original
+
+    async def test_init_schema_success(self) -> None:
+        original = graph_module._driver
+        try:
+            mock_session = AsyncMock()
+            mock_drv = MagicMock()
+            mock_drv.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_drv.session.return_value.__aexit__ = AsyncMock(return_value=False)
+            graph_module._driver = mock_drv
+
+            await graph_module.init_schema()
+
+            # 6 node types * 2 calls (constraint + index) = 12
+            assert mock_session.run.call_count == 12
+        finally:
+            graph_module._driver = original
+
+    async def test_init_schema_exception(self) -> None:
+        original = graph_module._driver
+        try:
+            mock_session = AsyncMock()
+            mock_session.run.side_effect = Exception("Schema creation failed")
+            mock_drv = MagicMock()
+            mock_drv.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_drv.session.return_value.__aexit__ = AsyncMock(return_value=False)
+            graph_module._driver = mock_drv
+
+            # Should not raise
+            await graph_module.init_schema()
+        finally:
+            graph_module._driver = original
+
+
+# ---------------------------------------------------------------------------
+# get_neo4j_session
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetNeo4jSession:
+    async def test_get_neo4j_session_driver_none(self) -> None:
+        original = graph_module._driver
+        try:
+            graph_module._driver = None
+            with pytest.raises(RuntimeError, match="Neo4j driver niedostepny"):
+                async with graph_module.get_neo4j_session():
+                    pass
+        finally:
+            graph_module._driver = original
+
+
+# ---------------------------------------------------------------------------
+# get_neighbors
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetNeighbors:
+    async def test_get_neighbors_with_records(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        project_id = uuid.uuid4()
+
+        node_a = _make_node_props(node_id="a1", name="NodeA")
+        node_b = _make_node_props(node_id="b1", name="NodeB")
+
+        record1 = _make_record(
+            {
+                "n": node_a,
+                "labels": ["File"],
+                "source_id": "a1",
+                "target_id": "b1",
+                "edge_type": "CALLS",
+                "edge_metadata": "{}",
+            }
+        )
+        record2 = _make_record(
+            {
+                "n": node_b,
+                "labels": ["Method"],
+                "source_id": "a1",
+                "target_id": "b1",
+                "edge_type": "CALLS",
+                "edge_metadata": "{}",
+            }
+        )
+
+        session.run.return_value = _make_result_with_records(record1, record2)
+
+        from monolynx.services.graph import get_neighbors
+
+        result = await get_neighbors(project_id, "a1", depth=1)
+
+        assert len(result["nodes"]) == 2
+        assert len(result["edges"]) == 1  # deduplicated
+
+    async def test_get_neighbors_empty(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        project_id = uuid.uuid4()
+
+        session.run.return_value = _make_result_with_records()
+
+        from monolynx.services.graph import get_neighbors
+
+        result = await get_neighbors(project_id, "nonexistent")
+
+        assert result["nodes"] == []
+        assert result["edges"] == []
+
+    async def test_get_neighbors_depth_clamped(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        project_id = uuid.uuid4()
+
+        session.run.return_value = _make_result_with_records()
+
+        from monolynx.services.graph import get_neighbors
+
+        await get_neighbors(project_id, "a1", depth=10)
+
+        # Check that the Cypher query contains *1..5 (clamped from 10)
+        query = session.run.call_args[0][0]
+        assert "*1..5" in query

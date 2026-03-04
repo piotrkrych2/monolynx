@@ -101,8 +101,10 @@ async def healthcheck() -> dict[str, str]:
 def _register_routers() -> None:
     from monolynx.api.events import router as events_router
     from monolynx.api.issues import router as issues_router
+    from monolynx.api.oauth import router as oauth_router
     from monolynx.dashboard import router as dashboard_router
 
+    app.include_router(oauth_router)
     app.include_router(events_router)
     app.include_router(issues_router)
     app.include_router(dashboard_router)

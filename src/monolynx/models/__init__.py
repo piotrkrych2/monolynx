@@ -5,6 +5,12 @@ from monolynx.models.event import Event
 from monolynx.models.issue import Issue
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
+from monolynx.models.oauth import (
+    OAuthAccessToken,
+    OAuthAuthorizationCode,
+    OAuthClient,
+    OAuthRefreshToken,
+)
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
@@ -22,6 +28,10 @@ __all__ = [
     "Issue",
     "Monitor",
     "MonitorCheck",
+    "OAuthAccessToken",
+    "OAuthAuthorizationCode",
+    "OAuthClient",
+    "OAuthRefreshToken",
     "Project",
     "ProjectMember",
     "Sprint",

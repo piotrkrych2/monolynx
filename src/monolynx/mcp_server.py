@@ -86,7 +86,7 @@ mcp = FastMCP(
 
 
 async def _auth(ctx: Context[Any, Any]) -> User:
-    """Wyciagnij token z naglowka HTTP i zwaliduj uzytkownika."""
+    """Wyciagnij token z naglowka HTTP i zwaliduj uzytkownika (OAuth + legacy)."""
     request_ctx = ctx.request_context
     if request_ctx is None:
         raise ValueError("Brak kontekstu HTTP — token wymagany")
@@ -101,6 +101,16 @@ async def _auth(ctx: Context[Any, Any]) -> User:
         raise ValueError("Brak tokenu Bearer w naglowku Authorization")
 
     raw_token = auth_header[7:]
+
+    # Sprobuj najpierw OAuth access token
+    from monolynx.services.oauth import verify_oauth_access_token
+
+    async with async_session_factory() as db:
+        user = await verify_oauth_access_token(raw_token, db)
+    if user is not None:
+        return user
+
+    # Fallback na legacy osk_* token
     async with async_session_factory() as db:
         user = await verify_mcp_token(raw_token, db)
     if user is None:
