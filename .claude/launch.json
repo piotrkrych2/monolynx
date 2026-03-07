@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "monolynx",
-      "runtimeExecutable": "echo",
-      "runtimeArgs": ["Server already running in Docker"],
+      "runtimeExecutable": "tail",
+      "runtimeArgs": ["-f", "/dev/null"],
       "port": 8077
     }
   ]
