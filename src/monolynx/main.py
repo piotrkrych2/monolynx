@@ -172,6 +172,7 @@ async def healthcheck() -> dict[str, str]:
 # Importowane tutaj aby uniknac circular imports
 def _register_routers() -> None:
     from monolynx.api.events import router as events_router
+    from monolynx.api.heartbeat import router as heartbeat_router
     from monolynx.api.issues import router as issues_router
     from monolynx.api.oauth import router as oauth_router
     from monolynx.dashboard import router as dashboard_router
@@ -179,6 +180,7 @@ def _register_routers() -> None:
     app.include_router(oauth_router)
     app.include_router(events_router)
     app.include_router(issues_router)
+    app.include_router(heartbeat_router)
     app.include_router(dashboard_router)
 
 

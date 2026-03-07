@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "skills": {
+    "asyncio": {
+      "source": "bobmatnyc/claude-mpm-skills",
+      "sourceType": "github",
+      "computedHash": "081f94565761c09e6858f7b2be3c5d7d10ef7d70d9abdc25ad0a7cc64ab11ad3"
+    },
+    "ci-cd": {
+      "source": "chaterm/terminal-skills",
+      "sourceType": "github",
+      "computedHash": "f92da9a3f21119588250d542ac6afe57d39f9a68b079c06e6790ba0f3a7da26d"
+    },
+    "code-review-security": {
+      "source": "hieutrtr/ai1-skills",
+      "sourceType": "github",
+      "computedHash": "a087b4f575afd3257fee5e00a40cfa0d9aa6ed867e6e7ca5b53f5804485aae40"
+    },
+    "devops-deployment": {
+      "source": "yonatangross/orchestkit",
+      "sourceType": "github",
+      "computedHash": "c8cf41226ade8089e86b0a38af870c0eafa2218b56603ce846ba090c5f910fab"
+    },
+    "docker-expert": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "76bd52d934142cb8f3861cb37f2a39ad93bf3b03dcbc94a02beaa0544f6dd7c2"
+    },
+    "dockerfile-optimise": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "computedHash": "d293a19e34a976b4b46d3e13880f9fad8ebdb98e032d9c480e29c80899a11e66"
+    },
+    "documentation-writer": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "ee53d65b163cd7eb953a930c95841cfe398cc2c0bd24c06508bbaa07c432be35"
+    },
+    "fastapi-async-patterns": {
+      "source": "thebushidocollective/han",
+      "sourceType": "github",
+      "computedHash": "cd39488c82cb6f9db2a91489a57eb1f99f8333072fb4db5386a45d343fd07908"
+    },
+    "fastapi-templates": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "fa51843cda87fc738f819c937cc697691255684d27d598dbc64a3a121e480064"
+    },
+    "markdown-documentation": {
+      "source": "aj-geddes/useful-ai-prompts",
+      "sourceType": "github",
+      "computedHash": "bebe932f4f94560dd90ae7534f2a8731edb70a3ca33f96ad8127cb1de4464780"
+    },
+    "owasp-security-review": {
+      "source": "jgamaraalv/ts-dev-kit",
+      "sourceType": "github",
+      "computedHash": "a0238b3d40d2b9ef97f0d8ca54db1acdd76be48f06111a0b3ffe199ebac1fad7"
+    },
+    "postgres-patterns": {
+      "source": "affaan-m/everything-claude-code",
+      "sourceType": "github",
+      "computedHash": "ce3084b8f555d1c560d849332483428301f30ec78f315e1d60ca1ddd8bc69a51"
+    },
+    "postgresql-optimization": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "8022448de70ba9a485e3b5bce34c5bbc644f93eb39b68431c9f7dabcf03aeb09"
+    },
+    "python-design-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "b70500bae0d16740d8a359be63c4645a0ab0f9b839d11d181c45d20958313698"
+    },
+    "python-performance-optimization": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "a25abb5b2d224eee9d572b09fa13937a45831c5de1560c41c3f739e6630b7380"
+    },
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "a2cc64d28bbda77aeac8ec634ae38102a3b8d2314f3aa802811a44281c5d7838"
+    },
+    "tailwind-config": {
+      "source": "sgcarstrends/sgcarstrends",
+      "sourceType": "github",
+      "computedHash": "285f9822d8bce0f9f85574f0cb9b2fc89d2904b5da1136d4ad51f712e1e2f939"
+    },
+    "technical-writer": {
+      "source": "onewave-ai/claude-skills",
+      "sourceType": "github",
+      "computedHash": "91f95ce88d7f311aa1eb1ca00e2dbfe629383c00a7bf076effb0e3af9e051b76"
+    },
+    "test-driven-development": {
+      "source": "bobmatnyc/claude-mpm-skills",
+      "sourceType": "github",
+      "computedHash": "308ab00c59740ace079a20ddb61ad39f83f031ddc6cba61162c1362c71a5d6f4"
+    },
+    "visual-design-foundations": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "5c5e091d61e2f6e465b77650b99d36acfe779cb70f29e9a103b5ba443065a3a9"
+    }
+  }
+}

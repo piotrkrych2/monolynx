@@ -99,6 +99,7 @@ async def monitor_checker_loop(
 ) -> None:
     """Glowna petla monitoringu. Parametry umozliwiaja reuse w testach i workerze."""
     from monolynx.config import settings
+    from monolynx.services.heartbeat import check_heartbeat_statuses
 
     if startup_delay > 0:
         await asyncio.sleep(startup_delay)
@@ -125,6 +126,11 @@ async def monitor_checker_loop(
             try:
                 await asyncio.sleep(sleep_interval)
                 await run_monitor_checks(session_factory)
+                try:
+                    async with session_factory() as db:
+                        await check_heartbeat_statuses(db)
+                except Exception:
+                    logger.warning("Blad sprawdzania heartbeatow", exc_info=True)
                 HEALTHCHECK_FILE.touch()
             except asyncio.CancelledError:
                 logger.info("Monitor checker loop cancelled")

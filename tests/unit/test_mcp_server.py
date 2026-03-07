@@ -207,6 +207,11 @@ EXPECTED_TOOLS = [
     "bulk_create_graph_nodes",
     "bulk_create_graph_edges",
     "create_ticket_from_issue",
+    "list_heartbeats",
+    "get_heartbeat",
+    "create_heartbeat",
+    "update_heartbeat",
+    "delete_heartbeat",
 ]
 
 
@@ -215,7 +220,7 @@ class TestMcpToolRegistration:
     """Weryfikacja ze wszystkie narzedzia MCP sa poprawnie zarejestrowane."""
 
     async def test_list_tools_returns_all_tools(self):
-        """list_tools() zwraca wszystkie 38 narzedzi."""
+        """list_tools() zwraca wszystkie 44 narzedzia."""
         tools = await mcp.list_tools()
         tool_names = [t.name for t in tools]
         for name in EXPECTED_TOOLS:

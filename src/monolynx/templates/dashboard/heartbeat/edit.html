@@ -1,0 +1,53 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Edytuj heartbeat - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Heartbeat</h1>
+    <a href="/dashboard/{{ project.slug }}/heartbeat/{{ heartbeat.id }}"
+       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+        Wstecz
+    </a>
+</div>
+
+<div class="max-w-lg">
+    <h2 class="text-lg font-semibold text-white mb-4">Edytuj heartbeat</h2>
+
+    {% if error %}
+    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/dashboard/{{ project.slug }}/heartbeat/{{ heartbeat.id }}/edit" class="space-y-4">
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Nazwa</label>
+            <input type="text" name="name" value="{{ form_data.name if form_data else heartbeat.name }}" required
+                   placeholder="np. Moj cron job"
+                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Okres (minuty)</label>
+            <input type="number" name="period" min="1"
+                   value="{{ form_data.period if form_data else heartbeat.period // 60 }}"
+                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            <p class="text-xs text-gray-500 mt-1">Co ile minut oczekiwany jest ping.</p>
+        </div>
+
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Tolerancja (minuty)</label>
+            <input type="number" name="grace" min="0"
+                   value="{{ form_data.grace if form_data else heartbeat.grace // 60 }}"
+                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            <p class="text-xs text-gray-500 mt-1">Ile minut opoznienia jest dopuszczalne.</p>
+        </div>
+
+        <button type="submit"
+                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded transition">
+            Zapisz zmiany
+        </button>
+    </form>
+</div>
+{% endblock %}

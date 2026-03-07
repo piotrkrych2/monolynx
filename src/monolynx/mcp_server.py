@@ -22,6 +22,7 @@ from monolynx.constants import (
 )
 from monolynx.database import async_session_factory
 from monolynx.models.event import Event
+from monolynx.models.heartbeat import Heartbeat
 from monolynx.models.issue import Issue
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
@@ -33,6 +34,10 @@ from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services import graph as graph_service
+from monolynx.services.heartbeat import create_heartbeat as svc_create_heartbeat
+from monolynx.services.heartbeat import delete_heartbeat as svc_delete_heartbeat
+from monolynx.services.heartbeat import get_heartbeat_status
+from monolynx.services.heartbeat import update_heartbeat as svc_update_heartbeat
 from monolynx.services.mcp_auth import verify_mcp_token
 from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
@@ -1782,3 +1787,181 @@ async def bulk_create_graph_edges(
         "skipped": skipped,
         "errors": errors,
     }
+
+
+# --- Heartbeat ---
+
+
+@mcp.tool()
+async def list_heartbeats(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> list[dict[str, Any]]:
+    """Lista heartbeatow projektu z aktualnym statusem i URL do pingowania."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(select(Heartbeat).where(Heartbeat.project_id == project.id).order_by(Heartbeat.created_at))
+        heartbeats = result.scalars().all()
+
+    return [
+        {
+            "id": str(hb.id),
+            "name": hb.name,
+            "period_minutes": hb.period // 60,
+            "grace_minutes": hb.grace // 60,
+            "status": get_heartbeat_status(hb),
+            "last_ping_at": hb.last_ping_at.isoformat() if hb.last_ping_at else None,
+            "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
+            "created_at": hb.created_at.isoformat(),
+        }
+        for hb in heartbeats
+    ]
+
+
+@mcp.tool()
+async def get_heartbeat(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    heartbeat_id: str,
+) -> dict[str, Any]:
+    """Szczegoly heartbeatu: token, URL do pinga, status, last_ping_at, period, grace."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Heartbeat).where(
+                Heartbeat.id == uuid.UUID(heartbeat_id),
+                Heartbeat.project_id == project.id,
+            )
+        )
+        hb = result.scalar_one_or_none()
+        if hb is None:
+            raise ValueError("Heartbeat nie istnieje")
+
+    return {
+        "id": str(hb.id),
+        "name": hb.name,
+        "token": hb.token,
+        "period_minutes": hb.period // 60,
+        "grace_minutes": hb.grace // 60,
+        "status": get_heartbeat_status(hb),
+        "last_ping_at": hb.last_ping_at.isoformat() if hb.last_ping_at else None,
+        "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
+        "created_at": hb.created_at.isoformat(),
+    }
+
+
+@mcp.tool()
+async def create_heartbeat(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    name: str,
+    period: int,
+    grace: int = 1,
+) -> dict[str, Any]:
+    """Tworzy nowy heartbeat dla projektu. Zwraca URL do pingowania.
+
+    period -- oczekiwany interwal w minutach (np. 60 = co godzine)
+    grace -- dodatkowy czas tolerancji w minutach (domyslnie 1 minuta)
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not name.strip():
+        raise ValueError("Nazwa heartbeatu jest wymagana")
+    if period <= 0:
+        raise ValueError("Period musi byc wiekszy niz 0")
+    if grace < 0:
+        raise ValueError("Grace nie moze byc ujemne")
+
+    async with async_session_factory() as db:
+        hb = await svc_create_heartbeat(
+            db,
+            project.id,
+            {
+                "name": name.strip(),
+                "period": period * 60,
+                "grace": grace * 60,
+            },
+        )
+
+    return {
+        "id": str(hb.id),
+        "name": hb.name,
+        "token": hb.token,
+        "period_minutes": hb.period // 60,
+        "grace_minutes": hb.grace // 60,
+        "status": hb.status,
+        "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
+        "message": f"Heartbeat '{hb.name}' utworzony",
+    }
+
+
+@mcp.tool()
+async def update_heartbeat(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    heartbeat_id: str,
+    name: str | None = None,
+    period: int | None = None,
+    grace: int | None = None,
+) -> dict[str, Any]:
+    """Aktualizuje konfiguracje heartbeatu. Podaj tylko pola do zmiany.
+
+    period -- oczekiwany interwal w minutach
+    grace -- dodatkowy czas tolerancji w minutach
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    data: dict[str, Any] = {}
+    if name is not None:
+        if not name.strip():
+            raise ValueError("Nazwa heartbeatu nie moze byc pusta")
+        data["name"] = name.strip()
+    if period is not None:
+        if period <= 0:
+            raise ValueError("Period musi byc wiekszy niz 0")
+        data["period"] = period * 60
+    if grace is not None:
+        if grace < 0:
+            raise ValueError("Grace nie moze byc ujemne")
+        data["grace"] = grace * 60
+
+    async with async_session_factory() as db:
+        hb = await svc_update_heartbeat(db, project.id, uuid.UUID(heartbeat_id), data)
+
+    return {
+        "id": str(hb.id),
+        "name": hb.name,
+        "period_minutes": hb.period // 60,
+        "grace_minutes": hb.grace // 60,
+        "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
+        "message": f"Heartbeat '{hb.name}' zaktualizowany",
+    }
+
+
+@mcp.tool()
+async def delete_heartbeat(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    heartbeat_id: str,
+) -> dict[str, Any]:
+    """Usuwa heartbeat z projektu."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        # Verify existence before deleting for a clear error message
+        result = await db.execute(
+            select(Heartbeat).where(
+                Heartbeat.id == uuid.UUID(heartbeat_id),
+                Heartbeat.project_id == project.id,
+            )
+        )
+        hb = result.scalar_one_or_none()
+        if hb is None:
+            raise ValueError("Heartbeat nie istnieje")
+
+        name = hb.name
+        await svc_delete_heartbeat(db, project.id, uuid.UUID(heartbeat_id))
+
+    return {"message": f"Heartbeat '{name}' usuniety", "heartbeat_id": heartbeat_id}

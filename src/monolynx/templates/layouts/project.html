@@ -46,6 +46,19 @@
                     </span>
                     {% endif %}
                 </a>
+                <a href="/dashboard/{{ project.slug }}/heartbeat/"
+                   class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
+                          {% if active_module == 'heartbeat' %}bg-indigo-600 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                    </svg>
+                    Heartbeat
+                    {% if sidebar_badges is defined and sidebar_badges.heartbeats_down > 0 %}
+                    <span class="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-bold text-white bg-red-600 rounded-full animate-pulse">
+                        {{ sidebar_badges.heartbeats_down }}
+                    </span>
+                    {% endif %}
+                </a>
                 <a href="/dashboard/{{ project.slug }}/wiki/"
                    class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
                           {% if active_module == 'wiki' %}bg-indigo-600 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %}">
