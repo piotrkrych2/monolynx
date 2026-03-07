@@ -2,6 +2,7 @@
 
 from monolynx.models.base import Base
 from monolynx.models.event import Event
+from monolynx.models.heartbeat import Heartbeat
 from monolynx.models.issue import Issue
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
@@ -25,6 +26,7 @@ from monolynx.models.wiki_page import WikiPage
 __all__ = [
     "Base",
     "Event",
+    "Heartbeat",
     "Issue",
     "Monitor",
     "MonitorCheck",

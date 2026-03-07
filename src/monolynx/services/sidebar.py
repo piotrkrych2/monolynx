@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monolynx.models.heartbeat import Heartbeat
 from monolynx.models.issue import Issue
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
@@ -21,6 +22,7 @@ class SidebarBadges:
     monitors_failing_count: int = 0
     monitors_failing_pulse: bool = False
     monitoring_uptime_24h: float | None = None
+    heartbeats_down: int = 0
 
 
 async def get_sidebar_badges(project_id: uuid.UUID, db: AsyncSession) -> SidebarBadges:
@@ -94,10 +96,20 @@ async def get_sidebar_badges(project_id: uuid.UUID, db: AsyncSession) -> Sidebar
     if total_checks > 0:
         monitoring_uptime_24h = round((success_checks / total_checks) * 100, 1)
 
+    # Heartbeat: heartbeaty ze statusem "down"
+    heartbeats_down_result = await db.execute(
+        select(func.count(Heartbeat.id)).where(
+            Heartbeat.project_id == project_id,
+            Heartbeat.status == "down",
+        )
+    )
+    heartbeats_down: int = heartbeats_down_result.scalar_one()
+
     return SidebarBadges(
         issues_count=issues_count,
         issues_pulse=issues_recent > 0,
         monitors_failing_count=monitors_failing,
         monitors_failing_pulse=monitors_failing_recent > 0,
         monitoring_uptime_24h=monitoring_uptime_24h,
+        heartbeats_down=heartbeats_down,
     )

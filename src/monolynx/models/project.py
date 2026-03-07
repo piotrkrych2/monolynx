@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from monolynx.models.base import Base
 
 if TYPE_CHECKING:
+    from monolynx.models.heartbeat import Heartbeat
     from monolynx.models.issue import Issue
     from monolynx.models.monitor import Monitor
     from monolynx.models.project_member import ProjectMember
@@ -32,6 +33,7 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    heartbeats: Mapped[list[Heartbeat]] = relationship(back_populates="project", cascade="all, delete-orphan")
     issues: Mapped[list[Issue]] = relationship(back_populates="project")
     members: Mapped[list[ProjectMember]] = relationship(back_populates="project")
     monitors: Mapped[list[Monitor]] = relationship(back_populates="project")

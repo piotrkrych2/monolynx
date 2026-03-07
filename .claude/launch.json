@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "monolynx",
+      "runtimeExecutable": "echo",
+      "runtimeArgs": ["Server already running in Docker"],
+      "port": 8077
+    }
+  ]
+}
