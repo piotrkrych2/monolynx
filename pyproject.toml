@@ -132,4 +132,4 @@ script_location = "alembic"
 where = ["src"]
 
 [tool.setuptools.package-data]
-monolynx = ["templates/**/*.html"]
+monolynx = ["templates/**/*.html", "static/**/*"]
