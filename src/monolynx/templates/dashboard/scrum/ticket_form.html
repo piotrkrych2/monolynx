@@ -19,7 +19,7 @@
           action="/dashboard/{{ project.slug }}/scrum/tickets/{% if ticket %}{{ ticket.id }}/edit{% else %}create{% endif %}"
           class="space-y-4">
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Tytul</label>
+            <label class="block text-sm text-gray-400 mb-1">Tytuł</label>
             <input type="text" name="title" value="{{ ticket.title if ticket else '' }}" required
                 class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
         </div>
@@ -91,7 +91,7 @@
 
         <button type="submit"
             class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded transition">
-            {% if ticket %}Zapisz zmiany{% else %}Utworz ticket{% endif %}
+            {% if ticket %}Zapisz zmiany{% else %}Utwórz ticket{% endif %}
         </button>
     </form>
 </div>

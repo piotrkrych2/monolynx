@@ -14,7 +14,7 @@
     <div class="flex items-end gap-3 flex-wrap">
         <div class="flex-1 min-w-[150px]">
             <label class="block text-xs text-gray-400 mb-1">Szukaj</label>
-            <input type="text" name="search" value="{{ filters.search }}" placeholder="Tytul ticketu..."
+            <input type="text" name="search" value="{{ filters.search }}" placeholder="Tytuł ticketu..."
                 class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div>
@@ -167,7 +167,7 @@
 {% else %}
 <div class="text-center py-12 text-gray-500">
     <p class="text-lg">Brak ticketow</p>
-    <p class="text-sm mt-2"><a href="/dashboard/{{ project.slug }}/scrum/tickets/create" class="text-indigo-400 hover:text-indigo-300">Utworz pierwszy ticket</a></p>
+    <p class="text-sm mt-2"><a href="/dashboard/{{ project.slug }}/scrum/tickets/create" class="text-indigo-400 hover:text-indigo-300">Utwórz pierwszy ticket</a></p>
 </div>
 {% endif %}
 

@@ -1,0 +1,185 @@
+{% extends "layouts/landing.html" %}
+
+{% block title %}{{ f.title }} — Monolynx{% endblock %}
+
+{% block content %}
+<!-- Hero -->
+<section class="relative pt-32 pb-16 overflow-hidden">
+    <div class="absolute inset-0 bg-gradient-to-b from-{{ f.color }}-950/20 via-gray-950 to-gray-950"></div>
+    <div class="relative max-w-4xl mx-auto px-6">
+        <div class="flex items-center gap-3 mb-6 animate-fade-in-up">
+            <div class="w-12 h-12 bg-{{ f.color }}-500/10 rounded-xl flex items-center justify-center">
+                {{ f.icon | safe }}
+            </div>
+            <span class="text-xs font-mono text-{{ f.color }}-400 bg-{{ f.color }}-500/10 px-3 py-1 rounded-full uppercase tracking-wider">{{ f.badge }}</span>
+        </div>
+        <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight leading-tight mb-6 animate-fade-in-up">
+            {{ f.headline }}
+        </h1>
+        <p class="text-lg text-gray-400 max-w-2xl animate-fade-in-up animate-fade-in-up-delay-1">
+            {{ f.description }}
+        </p>
+    </div>
+</section>
+
+<!-- Screenshot -->
+{% if f.screenshot %}
+<section class="pb-16">
+    <div class="max-w-5xl mx-auto px-6 animate-fade-in-up animate-fade-in-up-delay-2">
+        <img src="/static/img/screenshots/{{ f.screenshot }}" alt="{{ f.screenshot_hint }}"
+             class="w-full rounded-xl border border-gray-800 shadow-2xl shadow-black/50">
+    </div>
+</section>
+{% endif %}
+
+<!-- Key Features -->
+<section class="py-16">
+    <div class="max-w-5xl mx-auto px-6">
+        <h2 class="text-2xl font-bold mb-8">
+            {% if lang == "pl" %}Kluczowe funkcje{% else %}Key features{% endif %}
+        </h2>
+        <div class="grid sm:grid-cols-2 gap-6">
+            {% for feature in f.features %}
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+                <h3 class="text-sm font-semibold text-white mb-2">{{ feature.title }}</h3>
+                <p class="text-sm text-gray-400">{{ feature.desc }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<!-- How it works -->
+<section class="py-16 border-t border-gray-800/50">
+    <div class="max-w-5xl mx-auto px-6">
+        <h2 class="text-2xl font-bold mb-8">
+            {% if lang == "pl" %}Jak to działa{% else %}How it works{% endif %}
+        </h2>
+        <div class="space-y-6">
+            {% for step in f.steps %}
+            <div class="flex gap-4">
+                <div class="flex-shrink-0 w-8 h-8 bg-{{ f.color }}-500/10 rounded-full flex items-center justify-center text-{{ f.color }}-400 text-sm font-bold">
+                    {{ loop.index }}
+                </div>
+                <div>
+                    <h3 class="text-sm font-semibold text-white">{{ step.title }}</h3>
+                    <p class="text-sm text-gray-400 mt-1">{{ step.desc }}</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<!-- AI & MCP -->
+<section class="py-16 border-t border-gray-800/50">
+    <div class="max-w-5xl mx-auto px-6">
+        <div class="flex items-center gap-3 mb-8">
+            <div class="w-10 h-10 bg-indigo-500/10 rounded-lg flex items-center justify-center">
+                <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"/>
+                </svg>
+            </div>
+            <h2 class="text-2xl font-bold">
+                {% if lang == "pl" %}AI i MCP{% else %}AI & MCP{% endif %}
+            </h2>
+        </div>
+        <p class="text-gray-400 mb-6 max-w-2xl">{{ f.ai_intro }}</p>
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <p class="text-xs text-gray-500 font-mono mb-4">
+                {% if lang == "pl" %}Dostępne narzędzia MCP{% else %}Available MCP tools{% endif %}
+            </p>
+            <div class="grid sm:grid-cols-2 gap-3">
+                {% for tool in f.mcp_tools %}
+                <div class="flex items-start gap-3">
+                    <code class="text-xs text-indigo-300 bg-gray-800 px-2 py-0.5 rounded whitespace-nowrap mt-0.5 font-mono">{{ tool.name }}</code>
+                    <span class="text-sm text-gray-400">{{ tool.desc }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Second screenshot -->
+{% if f.screenshot_2 %}
+<section class="py-16 border-t border-gray-800/50">
+    <div class="max-w-5xl mx-auto px-6">
+        <img src="/static/img/screenshots/{{ f.screenshot_2 }}" alt="{{ f.screenshot_hint_2 }}"
+             class="w-full rounded-xl border border-gray-800 shadow-2xl shadow-black/50">
+    </div>
+</section>
+{% endif %}
+
+<!-- Technical details -->
+{% if f.tech_details %}
+<section class="py-16 border-t border-gray-800/50">
+    <div class="max-w-5xl mx-auto px-6">
+        <h2 class="text-2xl font-bold mb-8">
+            {% if lang == "pl" %}Szczegóły techniczne{% else %}Technical details{% endif %}
+        </h2>
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <dl class="space-y-4">
+                {% for detail in f.tech_details %}
+                <div>
+                    <dt class="text-sm font-semibold text-white">{{ detail.label }}</dt>
+                    <dd class="text-sm text-gray-400 mt-1">{{ detail.value }}</dd>
+                </div>
+                {% endfor %}
+            </dl>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Other features -->
+<section class="py-16 border-t border-gray-800/50">
+    <div class="max-w-5xl mx-auto px-6">
+        <h2 class="text-2xl font-bold mb-8">
+            {% if lang == "pl" %}Pozostałe moduły{% else %}Other modules{% endif %}
+        </h2>
+        <div class="grid sm:grid-cols-3 gap-4">
+            {% for other in f.other_modules %}
+            <a href="/features/{{ other.slug }}?lang={{ lang }}"
+               class="bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-{{ other.color }}-500/50 transition-colors group">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-2 h-2 rounded-full bg-{{ other.color }}-400"></span>
+                    <h3 class="text-sm font-semibold group-hover:text-white transition-colors">{{ other.name }}</h3>
+                </div>
+                <p class="text-xs text-gray-500">{{ other.short }}</p>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="py-20 border-t border-gray-800/50">
+    <div class="max-w-4xl mx-auto px-6 text-center">
+        <h2 class="text-3xl font-bold mb-4">
+            {% if lang == "pl" %}Wypróbuj Monolynx{% else %}Try Monolynx{% endif %}
+        </h2>
+        <p class="text-gray-400 mb-8 max-w-lg mx-auto">
+            {% if lang == "pl" %}Darmowy, open source, self-hosted. Zainstaluj na swojej infrastrukturze w kilka minut.
+            {% else %}Free, open source, self-hosted. Deploy on your infrastructure in minutes.{% endif %}
+        </p>
+        <div class="flex items-center justify-center gap-4">
+            <a href="/auth/login"
+               class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-8 py-3 rounded-lg transition-colors text-base">
+                {% if lang == "pl" %}Zaloguj się{% else %}Log in{% endif %}
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/>
+                </svg>
+            </a>
+            <a href="https://gitlab.com/piotrkrych/monolynx"
+               class="inline-flex items-center gap-2 text-gray-400 hover:text-white font-medium transition-colors"
+               target="_blank" rel="noopener">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="m23.6 9.593-.033-.086L20.3.98a.851.851 0 0 0-.336-.405.879.879 0 0 0-1.002.07.87.87 0 0 0-.292.39L16.47 7.092H7.537L5.332 1.035a.857.857 0 0 0-.292-.39.879.879 0 0 0-1.002-.07.855.855 0 0 0-.336.405L.437 9.502l-.032.086a6.066 6.066 0 0 0 2.012 7.01l.01.008.028.02 4.97 3.722 2.458 1.86 1.496 1.13a1.008 1.008 0 0 0 1.22 0l1.496-1.13 2.458-1.86 4.998-3.742.012-.01a6.068 6.068 0 0 0 2.008-7.003Z"/>
+                </svg>
+                GitLab
+            </a>
+        </div>
+    </div>
+</section>
+{% endblock %}

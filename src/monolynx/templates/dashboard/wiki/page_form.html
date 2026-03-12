@@ -16,7 +16,7 @@
 <div class="max-w-4xl">
     <h2 class="text-lg font-semibold text-white mb-4">
         {% if page %}
-            Edytuj strone
+            Edytuj stronę
         {% elif parent %}
             Nowa podstrona w: {{ parent.title }}
         {% else %}
@@ -34,9 +34,9 @@
           action="{% if page %}/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/edit{% elif parent %}/dashboard/{{ project.slug }}/wiki/pages/{{ parent.id }}/create{% else %}/dashboard/{{ project.slug }}/wiki/pages/create{% endif %}"
           class="space-y-4">
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Tytul</label>
+            <label class="block text-sm text-gray-400 mb-1">Tytuł</label>
             <input type="text" name="title" value="{{ form_data.title if form_data else '' }}" required
-                   placeholder="Tytul strony"
+                   placeholder="Tytuł strony"
                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
         </div>
 
@@ -48,13 +48,13 @@
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Tresc (Markdown)</label>
+            <label class="block text-sm text-gray-400 mb-1">Treść (Markdown)</label>
             <textarea id="wiki-content" name="content" rows="20">{{ form_data.content if form_data else '' }}</textarea>
         </div>
 
         <button type="submit"
                 class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded transition">
-            {% if page %}Zapisz zmiany{% else %}Utworz strone{% endif %}
+            {% if page %}Zapisz zmiany{% else %}Utwórz stronę{% endif %}
         </button>
     </form>
 </div>

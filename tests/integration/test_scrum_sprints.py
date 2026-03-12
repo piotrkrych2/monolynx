@@ -27,7 +27,7 @@ class TestSprintList:
         await login_session(client, db_session, email="sl-empty@test.com")
         resp = await client.get(f"/dashboard/{project.slug}/scrum/sprints")
         assert resp.status_code == 200
-        assert "Brak sprintow" in resp.text
+        assert "Brak sprintów" in resp.text
 
     async def test_sprint_list_shows_sprint(self, client, db_session):
         project = Project(
