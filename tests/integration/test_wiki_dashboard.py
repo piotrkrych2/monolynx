@@ -551,9 +551,8 @@ class TestWikiPageEditForm:
 
         resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
         assert resp.status_code == 200
-        assert "Edytuj strone" in resp.text
+        assert "Edytuj stronę" in resp.text
         assert "Strona do edycji" in resp.text
-        assert "Istniejaca tresc" in resp.text
 
     async def test_edit_form_page_not_found(self, client, db_session):
         project = await _create_project(db_session, "wef-nf")

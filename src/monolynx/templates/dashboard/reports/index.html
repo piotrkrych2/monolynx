@@ -33,7 +33,7 @@
         </div>
         <div class="min-w-[200px]">
             <label class="block text-xs text-gray-400 mb-1">Uzytkownik</label>
-            <select id="filter-user" name="user_id" multiple placeholder="Szukaj uzytkownika...">
+            <select id="filter-user" name="user_id" multiple placeholder="Szukaj użytkownika...">
                 {% if filters.user_ids %}
                 {% for uid in filters.user_ids %}
                 <option value="{{ uid }}" selected>{{ user_lookup.get(uid|string, '?') }}</option>

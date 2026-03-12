@@ -13,7 +13,7 @@
 </div>
 
 <div class="grid grid-cols-3 gap-6">
-    <!-- Glowna tresc -->
+    <!-- Główna treść -->
     <div class="col-span-2">
         <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
             <div class="flex items-start justify-between mb-4">
@@ -45,7 +45,7 @@
                     </form>
                     <form method="post" action="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}/delete" class="inline">
                         <button type="submit" class="text-sm text-gray-400 hover:text-red-400 transition"
-                                onclick="return confirm('Czy na pewno chcesz usunac ten monitor?')">Usun</button>
+                                onclick="return confirm('Czy na pewno chcesz usunąć ten monitor?')">Usuń</button>
                     </form>
                 </div>
             </div>
@@ -70,7 +70,7 @@
                             <th class="text-left text-gray-400 font-medium px-4 py-3">Status</th>
                             <th class="text-left text-gray-400 font-medium px-4 py-3">Kod</th>
                             <th class="text-left text-gray-400 font-medium px-4 py-3">Czas odp.</th>
-                            <th class="text-left text-gray-400 font-medium px-4 py-3">Blad</th>
+                            <th class="text-left text-gray-400 font-medium px-4 py-3">Błąd</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-700">
@@ -86,7 +86,7 @@
                                 {% else %}
                                 <span class="inline-flex items-center gap-1.5">
                                     <span class="w-2 h-2 rounded-full bg-red-500"></span>
-                                    <span class="text-red-400">Blad</span>
+                                    <span class="text-red-400">Błąd</span>
                                 </span>
                                 {% endif %}
                             </td>
@@ -141,7 +141,7 @@
     <!-- Sidebar z metadanymi -->
     <div class="space-y-4">
         <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <h3 class="text-sm font-semibold text-gray-400 mb-3">Szczegoly</h3>
+            <h3 class="text-sm font-semibold text-gray-400 mb-3">Szczegóły</h3>
 
             <div class="space-y-3 text-sm">
                 <div>

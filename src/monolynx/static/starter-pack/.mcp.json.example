@@ -1,0 +1,15 @@
+# prod
+  {
+    "mcpServers": {
+      "monolynx": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "mcp-remote",
+          "https://open.monolynx.com/mcp/",
+          "--header",
+          "Authorization: Bearer osk_<...>"
+        ]
+      }
+    }
+  }

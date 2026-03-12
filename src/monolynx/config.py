@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = _SECRET_KEY_SENTINEL
     ENVIRONMENT: str = "development"
     ENABLE_MONITOR_LOOP: bool = True
+    SKIP_LANDING_PAGE: bool = True
     LOG_LEVEL: str = "info"
     SESSION_COOKIE_NAME: str = "monolynx_session"
     SESSION_MAX_AGE: int = 86400
@@ -42,6 +43,10 @@ class Settings(BaseSettings):
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "neo4j_dev"
     ENABLE_GRAPH_DB: bool = True
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
 
     # OAuth 2.1
     OAUTH_ACCESS_TOKEN_TTL: int = 2592000  # 30 dni

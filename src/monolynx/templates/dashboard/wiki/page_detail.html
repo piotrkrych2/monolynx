@@ -37,7 +37,7 @@
 {% endif %}
 
 <div class="grid grid-cols-3 gap-6">
-    <!-- Glowna tresc -->
+    <!-- Główna treść -->
     <div class="col-span-2">
         <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
             <div class="flex items-start justify-between mb-4">
@@ -46,11 +46,11 @@
                     <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/edit"
                        class="text-sm text-gray-400 hover:text-indigo-400 transition">Edytuj</a>
                     <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/create"
-                       class="text-sm text-gray-400 hover:text-green-400 transition">Dodaj podstrone</a>
+                       class="text-sm text-gray-400 hover:text-green-400 transition">Dodaj podstronę</a>
                     <form method="post" action="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/delete" class="inline">
                         <button type="submit" class="text-sm text-gray-400 hover:text-red-400 transition"
-                                onclick="return confirm('Czy na pewno chcesz usunac te strone? Wszystkie podstrony rowniez zostana usuniete.')">
-                            Usun
+                                onclick="return confirm('Czy na pewno chcesz usunąć tę stronę? Wszystkie podstrony również zostaną usunięte.')">
+                            Usuń
                         </button>
                     </form>
                 </div>
@@ -95,7 +95,7 @@
     <!-- Sidebar z metadanymi -->
     <div class="space-y-4">
         <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <h3 class="text-sm font-semibold text-gray-400 mb-3">Szczegoly</h3>
+            <h3 class="text-sm font-semibold text-gray-400 mb-3">Szczegóły</h3>
 
             <div class="space-y-3 text-sm">
                 <div>

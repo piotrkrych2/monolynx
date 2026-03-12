@@ -9,12 +9,14 @@
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
     <nav class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
-        <a href="/dashboard/" class="text-xl font-bold text-indigo-400">Monolynx</a>
+        <a href="/dashboard/" class="flex items-center">
+            <img src="/static/img/monolynx-logo-white.svg" alt="Monolynx" class="h-7">
+        </a>
         <div class="flex items-center gap-4">
             {% block nav_right %}
             <a href="/dashboard/reports" class="text-indigo-400 hover:text-indigo-300 text-sm">Raporty</a>
             {% if request.session.get('is_superuser') %}
-            <a href="/dashboard/users" class="text-indigo-400 hover:text-indigo-300 text-sm">Uzytkownicy</a>
+            <a href="/dashboard/users" class="text-indigo-400 hover:text-indigo-300 text-sm">Użytkownicy</a>
             {% endif %}
             <a href="/dashboard/profile/tokens" class="text-indigo-400 hover:text-indigo-300 text-sm">Tokeny API</a>
             <a href="/dashboard/profile/mcp-guide" class="text-indigo-400 hover:text-indigo-300 text-sm">How to MCP</a>
