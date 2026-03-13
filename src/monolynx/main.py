@@ -192,6 +192,7 @@ async def landing_page(request: Request, lang: str = "en") -> Response:
             "active_page": "home",
             "lang_switch_url": "/?lang=pl",
             "lang_switch_url_en": "/?lang=en",
+            "app_url": settings.APP_URL,
         },
     )
 
@@ -217,6 +218,7 @@ async def feature_page(request: Request, slug: str, lang: str = "en") -> Respons
             "active_page": "feature",
             "lang_switch_url": f"/features/{slug}?lang=pl",
             "lang_switch_url_en": f"/features/{slug}?lang=en",
+            "app_url": settings.APP_URL,
         },
     )
 
@@ -235,6 +237,7 @@ async def contact_page(request: Request, lang: str = "en") -> Response:
             "active_page": "contact",
             "lang_switch_url": "/contact?lang=pl",
             "lang_switch_url_en": "/contact?lang=en",
+            "app_url": settings.APP_URL,
         },
     )
 

@@ -4,6 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Monolynx{% endblock %}</title>
+    <meta name="description" content="{% block meta_description %}Open-source AI-first project platform. Error tracking, Scrum, monitoring, wiki with RAG search, and 30+ MCP tools.{% endblock %}">
+    <!-- Open Graph / Facebook / LinkedIn -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{% block og_title %}Monolynx — AI-first Project Platform{% endblock %}">
+    <meta property="og:description" content="{% block og_description %}Open-source project platform with error tracking, Scrum, monitoring, wiki with semantic search, and 30+ MCP tools for AI agents.{% endblock %}">
+    <meta property="og:image" content="{% block og_image %}{{ app_url }}/static/img/screenshots/social-media.png{% endblock %}">
+    <meta property="og:url" content="{% block og_url %}{{ app_url }}{% endblock %}">
+    <meta property="og:site_name" content="Monolynx">
+    <meta property="og:locale" content="{{ lang }}">
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{% block twitter_title %}Monolynx — AI-first Project Platform{% endblock %}">
+    <meta name="twitter:description" content="{% block twitter_description %}Open-source project platform with error tracking, Scrum, monitoring, wiki with RAG search, and 30+ MCP tools.{% endblock %}">
+    <meta name="twitter:image" content="{% block twitter_image %}{{ app_url }}/static/img/screenshots/social-media.png{% endblock %}">
+    <link rel="icon" type="image/png" href="/static/img/favicon/favicon-96x96.png" sizes="96x96">
+    <link rel="icon" type="image/svg+xml" href="/static/img/favicon/favicon.svg">
+    <link rel="shortcut icon" href="/static/img/favicon/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/img/favicon/apple-touch-icon.png">
+    <link rel="manifest" href="/static/img/favicon/site.webmanifest">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @keyframes fade-in-up {

@@ -51,14 +51,14 @@
     <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
         <h2 class="text-lg font-semibold mb-4">Status konta</h2>
         <div class="flex items-center gap-3 mb-4">
-            {% if user.password_hash %}
+            {% if user.password_hash or user.google_id %}
             <span class="bg-green-600/30 text-green-300 text-sm px-3 py-1 rounded">Aktywny</span>
             {% else %}
             <span class="bg-yellow-600/30 text-yellow-300 text-sm px-3 py-1 rounded">Oczekuje na aktywacje</span>
             {% endif %}
         </div>
 
-        {% if not user.password_hash %}
+        {% if not user.password_hash and not user.google_id %}
         <form method="post" action="/dashboard/users/{{ user.id }}/activate" class="space-y-4">
             <p class="text-sm text-gray-400">Ustaw haslo, aby recznie aktywowac konto uzytkownika.</p>
             <div>
