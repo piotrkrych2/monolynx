@@ -39,13 +39,13 @@ clean-code:
     - docker run --rm "$CI_REGISTRY_IMAGE:dev" ruff check src/ tests/ sdk/
     - docker run --rm "$CI_REGISTRY_IMAGE:dev" ruff format --check src/ tests/ sdk/
     - docker run --rm "$CI_REGISTRY_IMAGE:dev" mypy src/
-    - docker network create test-net
+    - docker rm -f db test-runner 2>/dev/null || true
+    - docker network create test-net 2>/dev/null || true
     - docker run -d --name db --network test-net
         -e POSTGRES_USER=sentry
         -e POSTGRES_PASSWORD=sentry_ci
         pgvector/pgvector:pg16
     - sleep 5
-    - docker pull "$CI_REGISTRY_IMAGE:dev"
     - TEST_EXIT=0
     - docker run --name test-runner --network test-net
         -e DATABASE_URL="postgresql+asyncpg://sentry:sentry_ci@db:5432/open_sentry"
@@ -53,6 +53,7 @@ clean-code:
         pytest tests/ --cov=src/monolynx --cov-report=term --cov-report=xml:coverage.xml
         || TEST_EXIT=$?
     - docker cp test-runner:/app/coverage.xml coverage.xml || true
+    - docker rm -f db test-runner 2>/dev/null || true
     - exit $TEST_EXIT
   coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
