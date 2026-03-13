@@ -130,5 +130,13 @@ async def create_project(
             },
         )
 
+    # Dodaj twórce jako właściciela projektu
+    member = ProjectMember(
+        project_id=project.id,
+        user_id=user_id,
+        role="owner",
+    )
+    db.add(member)
+
     await db.commit()
     return RedirectResponse(url="/dashboard/", status_code=303)
