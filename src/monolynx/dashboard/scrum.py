@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import os
@@ -9,6 +10,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from datetime import date
+from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, UploadFile
@@ -662,7 +664,8 @@ async def ticket_attachment_serve(
         return HTMLResponse("Attachment not found", status_code=404)
 
     try:
-        data, content_type = minio_get_attachment(attachment.storage_path)
+        loop = asyncio.get_running_loop()
+        data, content_type = await loop.run_in_executor(None, minio_get_attachment, attachment.storage_path)
     except Exception:
         return HTMLResponse("Blad pobierania pliku", status_code=500)
 
@@ -729,7 +732,8 @@ async def ticket_attachment_upload(
     content_type = filepond.content_type or "application/octet-stream"
 
     try:
-        minio_path = minio_upload_attachment(project.slug, safe_filename, data, content_type)
+        loop = asyncio.get_running_loop()
+        minio_path = await loop.run_in_executor(None, partial(minio_upload_attachment, project.slug, safe_filename, data, content_type))
     except Exception:
         return JSONResponse({"error": "Blad uploadu pliku"}, status_code=500)
 
@@ -794,7 +798,8 @@ async def ticket_attachment_delete(
         return HTMLResponse("Attachment not found", status_code=404)
 
     with contextlib.suppress(Exception):
-        minio_delete_object(attachment.storage_path)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, minio_delete_object, attachment.storage_path)
 
     await db.delete(attachment)
     await db.commit()

@@ -45,32 +45,42 @@ async def get_burndown_data(
 
     done_tickets = [t for t in tickets if t.status == "done"]
 
-    # ideal line
+    # Pre-compute cumulative burned points per day (single pass)
+    burned_by_date: dict[date, float] = {}
+    done_points = 0.0
+    for t in done_tickets:
+        pts = t.story_points or 0
+        done_points += pts
+        completed_date = t.updated_at.date() if t.updated_at else start_date
+        burned_by_date[completed_date] = burned_by_date.get(completed_date, 0) + pts
+
+    # ideal line + build lookup for on_track check
     days_total = (end_date - start_date).days
     ideal_line = []
+    ideal_by_date: dict[date, float] = {}
     for i in range(days_total + 1):
         d = start_date + timedelta(days=i)
         remaining = round(total_story_points * (1 - i / days_total), 1) if days_total > 0 else 0.0
         ideal_line.append({"date": d.isoformat(), "remaining_points": remaining})
+        ideal_by_date[d] = remaining
 
-    # actual line
+    # actual line (using cumulative sum from burned_by_date)
     actual_end = min(today, end_date)
     actual_days = (actual_end - start_date).days
     actual_line = []
+    cumulative_burned = 0.0
     for i in range(actual_days + 1):
         d = start_date + timedelta(days=i)
-        burned = sum(t.story_points or 0 for t in done_tickets if t.updated_at.date() <= d)
-        remaining = round(total_story_points - burned, 1)
+        cumulative_burned += burned_by_date.get(d, 0)
+        remaining = round(total_story_points - cumulative_burned, 1)
         actual_line.append({"date": d.isoformat(), "remaining_points": remaining})
 
     # current velocity
     days_elapsed = (end_date - start_date).days if sprint.status == "completed" else (today - start_date).days
-
-    done_points = sum(t.story_points or 0 for t in done_tickets)
     current_velocity = round(done_points / days_elapsed, 1) if days_elapsed > 0 else 0.0
 
     # remaining points as of today
-    burned_today = sum(t.story_points or 0 for t in done_tickets if t.updated_at.date() <= today)
+    burned_today = sum(burned_by_date.get(d, 0) for d in burned_by_date if d <= today)
     remaining_today = total_story_points - burned_today
 
     # forecast completion
@@ -86,19 +96,13 @@ async def get_burndown_data(
     else:
         forecast_completion = None
 
-    # on_track
-    ideal_today: float = float(total_story_points)
-    ideal_today_found = False
-    for entry in ideal_line:
-        if entry["date"] == today.isoformat():
-            ideal_today = float(entry["remaining_points"])  # type: ignore[arg-type]
-            ideal_today_found = True
-            break
-    if not ideal_today_found:
-        if today > end_date:
-            ideal_today = 0.0
-        elif today < start_date:
-            ideal_today = float(total_story_points)
+    # on_track (O(1) lookup instead of linear search)
+    if today in ideal_by_date:
+        ideal_today = ideal_by_date[today]
+    elif today > end_date:
+        ideal_today = 0.0
+    else:
+        ideal_today = float(total_story_points)
 
     on_track = remaining_today <= ideal_today
 

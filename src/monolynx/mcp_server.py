@@ -21,10 +21,13 @@ from sqlalchemy.orm import selectinload
 
 from monolynx.config import settings as app_settings
 from monolynx.constants import (
+    ACTIVITY_ENTITY_TYPES,
     BOARD_STATUSES,
     GRAPH_EDGE_TYPES,
     GRAPH_NODE_TYPES,
     INTERVAL_UNITS,
+    INVITATION_DAYS,
+    LABEL_COLOR_PALETTE,
     PRIORITIES,
     TICKET_STATUSES,
 )
@@ -75,21 +78,6 @@ from monolynx.services.wiki import (
 )
 
 logger = logging.getLogger("monolynx.mcp")
-
-INVITATION_DAYS = 7
-
-LABEL_COLOR_PALETTE = [
-    "#e74c3c",
-    "#e67e22",
-    "#f1c40f",
-    "#2ecc71",
-    "#1abc9c",
-    "#3498db",
-    "#9b59b6",
-    "#e91e63",
-    "#00bcd4",
-    "#8bc34a",
-]
 
 
 def _build_allowed_hosts() -> list[str]:
@@ -164,6 +152,352 @@ async def _verify_token(raw_token: str) -> User:
     return user
 
 
+def _format_board(sprint: Sprint, project_code: str, columns: dict[str, list[dict[str, Any]]]) -> str:
+    """Konwertuj dane tablicy Kanban na kompaktowy string dla LLM.
+
+    Format:
+        Sprint: <name> (<start> → <end>) | <sp>sp total
+
+        ## Todo
+        CODE-1 | Tytul | priority | @assignee | 3sp
+
+        ## In Progress
+        (brak)
+        ...
+    """
+    end_str = sprint.end_date.isoformat() if sprint.end_date else "?"
+    total_sp = sum(t.get("story_points") or 0 for col in columns.values() for t in col)
+    header = f"Sprint: {sprint.name} ({sprint.start_date.isoformat()} → {end_str}) | {total_sp}sp total"
+
+    status_labels = {
+        "todo": "Todo",
+        "in_progress": "In Progress",
+        "in_review": "In Review",
+        "done": "Done",
+    }
+
+    lines: list[str] = [header, ""]
+    for status, label in status_labels.items():
+        lines.append(f"## {label}")
+        tickets = columns.get(status, [])
+        if not tickets:
+            lines.append("(brak)")
+        else:
+            for t in tickets:
+                key = t["key"]
+                title = t["title"]
+                priority = t["priority"] or "--"
+                assignee = f"@{t['assignee']}" if t.get("assignee") else "--"
+                sp = f"{t['story_points']}sp" if t.get("story_points") is not None else "--"
+                labels_part = ""
+                if t.get("labels"):
+                    labels_part = f" [{', '.join(t['labels'])}]"
+                lines.append(f"{key} | {title} | {priority} | {assignee} | {sp}{labels_part}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+def _format_ticket_detail(
+    ticket: Ticket,
+    project_code: str,
+) -> str:
+    """Konwertuj ticket na kompaktowy string dla LLM.
+
+    Format:
+        MON-12 | Tytul ticketa
+        Status: in_progress | Priority: high | Sprint: Sprint 5 | Assignee: jan@example.com
+        Story Points: 3 | Due: 2026-03-20 | Labels: backend, urgent
+        Created: 2026-03-10 | Updated: 2026-03-12 | AI: no
+        ID: 550e8400-e29b-41d4-a716-446655440000
+
+        ## Description
+        Tresc opisu...
+
+        ## Attachments (2)
+        - report.pdf (application/pdf, 1.2 MB)
+
+        ## Comments (3)
+        [2026-03-11 jan@example.com] Tresc komentarza
+    """
+
+    def _human_size(size_bytes: int) -> str:
+        if size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        return f"{size_bytes / 1024:.0f} KB"
+
+    key = f"{project_code}-{ticket.number}"
+    lines: list[str] = [f"{key} | {ticket.title}"]
+
+    sprint_name = ticket.sprint.name if ticket.sprint else "—"
+    assignee_email = ticket.assignee.email if ticket.assignee else "—"
+    lines.append(f"Status: {ticket.status} | Priority: {ticket.priority} | Sprint: {sprint_name} | Assignee: {assignee_email}")
+
+    due_str = ticket.due_date.isoformat() if ticket.due_date else "—"
+    label_names = ", ".join(lb.name for lb in ticket.labels) if ticket.labels else "—"
+    sp_str = str(ticket.story_points) if ticket.story_points is not None else "—"
+    lines.append(f"Story Points: {sp_str} | Due: {due_str} | Labels: {label_names}")
+
+    created_str = ticket.created_at.date().isoformat()
+    updated_str = ticket.updated_at.date().isoformat()
+    ai_str = "yes" if ticket.created_via_ai else "no"
+    lines.append(f"Created: {created_str} | Updated: {updated_str} | AI: {ai_str}")
+    lines.append(f"ID: {ticket.id}")
+
+    if ticket.description:
+        lines.append("")
+        lines.append("## Description")
+        lines.append(ticket.description)
+
+    attachments = list(ticket.attachments) if ticket.attachments else []
+    if attachments:
+        lines.append("")
+        lines.append(f"## Attachments ({len(attachments)})")
+        for att in attachments:
+            mime = att.mime_type or "application/octet-stream"
+            size_str = _human_size(att.size)
+            lines.append(f"- {att.filename} ({mime}, {size_str})")
+
+    comments = list(ticket.comments) if ticket.comments else []
+    if comments:
+        lines.append("")
+        lines.append(f"## Comments ({len(comments)})")
+        for c in comments:
+            date_str = c.created_at.date().isoformat()
+            author_str = "ai" if c.created_via_ai else c.author.email
+            content = c.content.replace("\n", " ")
+            lines.append(f"[{date_str} {author_str}] {content}")
+
+    return "\n".join(lines)
+
+
+def _format_sprint_detail(sprint: Sprint, project_code: str, tickets: list[dict[str, Any]]) -> str:
+    """Konwertuj dane sprintu na kompaktowy string dla LLM."""
+    end_str = sprint.end_date.isoformat() if sprint.end_date else "(brak)"
+    header = f"Sprint: {sprint.name} | Status: {sprint.status} | {sprint.start_date.isoformat()} \u2192 {end_str}"
+
+    total_sp = sum(t.get("story_points") or 0 for t in tickets)
+    done_sp = sum(t.get("story_points") or 0 for t in tickets if t.get("status") == "done")
+
+    lines: list[str] = [
+        f"ID: {sprint.id}",
+        header,
+    ]
+    if sprint.goal:
+        lines.append(f"Goal: {sprint.goal}")
+    lines.append(f"Total: {total_sp}sp | Done: {done_sp}sp")
+
+    lines.append("")
+    lines.append(f"## Tickets ({len(tickets)})")
+    if not tickets:
+        lines.append("(brak)")
+    else:
+        lines.append(f"{'Key':<10} | {'Title':<24} | {'Status':<11} | {'Pri':<6} | {'Assignee':<11} | SP")
+        for t in tickets:
+            key = t["key"]
+            title = t["title"][:24]
+            status = t["status"] or "--"
+            priority = t["priority"] or "--"
+            assignee = t["assignee"] or "--"
+            sp = str(t["story_points"]) if t.get("story_points") is not None else "--"
+            lines.append(f"{key:<10} | {title:<24} | {status:<11} | {priority:<6} | {assignee:<11} | {sp}")
+
+    return "\n".join(lines)
+
+
+def _format_graph_dsl(data: dict[str, Any]) -> str:
+    """Konwertuj dict z nodes/edges na kompaktowy Arrow DSL dla LLM.
+
+    Format:
+        [Type] name (key=val,key2=val2)
+        source_name --EDGE_TYPE--> target_name
+    """
+    nodes: list[dict[str, Any]] = data.get("nodes", [])
+    edges: list[dict[str, Any]] = data.get("edges", [])
+
+    node_map: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
+
+    lines: list[str] = [f"{len(nodes)} nodes, {len(edges)} edges", ""]
+
+    # Group nodes by type
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for n in nodes:
+        by_type.setdefault(n.get("type", "Unknown"), []).append(n)
+
+    for ntype, nlist in by_type.items():
+        for n in nlist:
+            meta_parts: list[str] = []
+            if n.get("file_path"):
+                meta_parts.append(f"path={n['file_path']}")
+            if n.get("line_number"):
+                meta_parts.append(f"line={n['line_number']}")
+            md = n.get("metadata") or {}
+            for k, v in md.items():
+                meta_parts.append(f"{k}={v}")
+            meta_str = f" ({','.join(meta_parts)})" if meta_parts else ""
+            lines.append(f"[{ntype}] {n['name']}{meta_str}")
+
+    if edges:
+        lines.append("")
+        for e in edges:
+            src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
+            tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
+            lines.append(f"{src} --{e['type']}--> {tgt}")
+
+    return "\n".join(lines)
+
+
+def _interval_human(value: int, unit: str) -> str:
+    """Zamien (5, 'minutes') -> '5 min', (1, 'hours') -> '1 hr', (1, 'days') -> '1 day'."""
+    u = unit.lower()
+    if u in ("minutes", "minute"):
+        return f"{value} min"
+    if u in ("hours", "hour"):
+        return f"{value} hr"
+    if u in ("days", "day"):
+        return f"{value} day"
+    return f"{value} {unit}"
+
+
+def _format_monitor_detail(
+    monitor: Any,
+    checks: list[Any],
+    uptime_24h: float | None,
+    page: int = 1,
+    total_pages: int = 1,
+) -> str:
+    """Konwertuj monitor i historię checków na kompaktowy string dla LLM.
+
+    Format:
+        Monitor: API Health | https://api.example.com/health
+        ID: 550e8400-e29b-41d4-a716-446655440000
+        Active: yes | Interval: 5 min | Uptime 24h: 99.8%
+
+        ## Check History (20) (page 1/3)
+        Timestamp           | Status | Code | Response Time | Error
+        2026-03-15 14:22:00 | OK     | 200  | 45ms          |
+        2026-03-15 14:12:00 | FAIL   | 503  | --            | Connection refused
+    """
+    name = monitor.name or monitor.url
+    active_str = "yes" if monitor.is_active else "no"
+    interval_str = _interval_human(monitor.interval_value, monitor.interval_unit)
+    uptime_str = f"{uptime_24h}%" if uptime_24h is not None else "--"
+
+    lines: list[str] = [
+        f"Monitor: {name} | {monitor.url}",
+        f"ID: {monitor.id}",
+        f"Active: {active_str} | Interval: {interval_str} | Uptime 24h: {uptime_str}",
+    ]
+
+    count = len(checks)
+    page_info = f" (page {page}/{total_pages})" if total_pages > 1 else ""
+    lines.append("")
+    lines.append(f"## Check History ({count}){page_info}")
+    lines.append(f"{'Timestamp':<20} | {'Status':<6} | {'Code':<4} | {'Response Time':<13} | Error")
+
+    for c in checks:
+        ts = c.checked_at.strftime("%Y-%m-%d %H:%M:%S") if c.checked_at else "--"
+        status = "OK" if c.is_success else "FAIL"
+        code = str(c.status_code) if c.status_code is not None else "--"
+        rt = f"{c.response_time_ms}ms" if c.response_time_ms is not None else "--"
+        error = c.error_message or ""
+        lines.append(f"{ts:<20} | {status:<6} | {code:<4} | {rt:<13} | {error}")
+
+    return "\n".join(lines)
+
+
+def _format_monitors_table(monitors_data: list[dict[str, Any]]) -> str:
+    """Konwertuj liste monitorow na kompaktowy string tabelaryczny dla LLM."""
+    if not monitors_data:
+        return "0 monitors"
+
+    def _interval_human(interval_str: str) -> str:
+        """Zamien '5 minutes' -> '5 min', '1 hours' -> '1 hr', '1 days' -> '1 day'."""
+        parts = interval_str.split()
+        if len(parts) != 2:
+            return interval_str
+        val, unit = parts[0], parts[1].lower()
+        if unit in ("minutes", "minute"):
+            return f"{val} min"
+        if unit in ("hours", "hour"):
+            return f"{val} hr"
+        if unit in ("days", "day"):
+            return f"{val} day"
+        return interval_str
+
+    def _last_check_str(last_check: dict[str, Any] | None) -> str:
+        if last_check is None:
+            return "--"
+        status = "OK" if last_check.get("is_success") else "FAIL"
+        code = last_check.get("status_code") or "--"
+        rt = last_check.get("response_time_ms")
+        rt_str = f"{rt}ms" if rt is not None else "--"
+        ts = last_check.get("checked_at", "")
+        # Skracamy ISO timestamp do "YYYY-MM-DD HH:MM"
+        if "T" in ts:
+            ts = ts.replace("T", " ")[:16]
+        return f"{status} {code} {rt_str} {ts}"
+
+    header = "ID                                   | Name           | URL                          | Active | Interval | Uptime 24h | Last Check"
+    sep = "-" * len(header)
+    lines: list[str] = [f"{len(monitors_data)} monitors", "", header, sep]
+
+    for m in monitors_data:
+        mid = m.get("id", "")
+        name = (m.get("name") or "")[:14]
+        url = (m.get("url") or "")[:28]
+        active = "yes" if m.get("is_active") else "no"
+        interval = _interval_human(m.get("interval", ""))
+        uptime = m.get("uptime_24h")
+        uptime_str = f"{uptime}%" if uptime is not None else "--"
+        last_check = _last_check_str(m.get("last_check"))
+        lines.append(f"{mid} | {name:<14} | {url:<28} | {active:<6} | {interval:<8} | {uptime_str:<10} | {last_check}")
+
+    return "\n".join(lines)
+
+
+def _format_tickets_table(
+    tickets: list[Any],
+    project_code: str,
+    page: int,
+    total_pages: int,
+    total: int,
+) -> str:
+    """Konwertuj liste ticketow na kompaktowy string pipe-separated dla LLM.
+
+    Format:
+        20 tickets (page 1/3)
+
+        Key      | Title                    | Status      | Pri    | Assignee     | Sprint   | SP | Due        | Labels
+        MON-20   | Fix login timeout        | in_progress | high   | jan@ex.com   | Sprint 5 | 3  | 2026-03-20 | backend, urgent
+        MON-19   | Dodaj eksport PDF        | todo        | medium | --           | Sprint 5 | 5  | --         |
+    """
+    header_line = f"{total} tickets (page {page}/{total_pages})"
+
+    if not tickets:
+        return f"{header_line}\n\n(brak ticketow)"
+
+    col_header = (
+        "Key      | Title                                    | Status      | Pri    "
+        "| Assignee              | Sprint            | SP | Due        | Labels"
+    )
+    rows: list[str] = [header_line, "", col_header]
+
+    for t in tickets:
+        key = f"{project_code}-{t.number}"
+        title = (t.title or "")[:40]
+        status = t.status or "--"
+        priority = t.priority or "--"
+        assignee = t.assignee.email if t.assignee else "--"
+        sprint = t.sprint.name if t.sprint else "--"
+        sp = str(t.story_points) if t.story_points is not None else "--"
+        due = t.due_date.isoformat() if t.due_date else "--"
+        labels = ", ".join(lb.name for lb in t.labels) if t.labels else ""
+        rows.append(f"{key:<8} | {title:<40} | {status:<11} | {priority:<6} | {assignee:<21} | {sprint:<17} | {sp:<2} | {due:<10} | {labels}")
+
+    return "\n".join(rows)
+
+
 async def _get_user_and_project(ctx: Context[Any, Any], project_slug: str) -> tuple[User, Project]:
     """Autoryzuj uzytkownika i sprawdz dostep do projektu."""
     raw_token = await _get_auth_header(ctx)
@@ -190,15 +524,9 @@ async def _get_user_and_project(ctx: Context[Any, Any], project_slug: str) -> tu
 
 async def _get_user_member_and_project(ctx: Context[Any, Any], project_slug: str) -> tuple[User, ProjectMember, Project]:
     """Autoryzuj uzytkownika, sprawdz dostep do projektu i zwroc obiekt ProjectMember."""
-    raw_token = await _get_auth_header(ctx)
-    user = await _verify_token(raw_token)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(select(Project).where(Project.slug == project_slug, Project.is_active.is_(True)))
-        project = result.scalar_one_or_none()
-        if project is None:
-            raise ValueError(f"Projekt '{project_slug}' nie istnieje")
-
         member_result = await db.execute(
             select(ProjectMember).where(
                 ProjectMember.project_id == project.id,
@@ -778,6 +1106,30 @@ async def remove_member(
 # --- 500ki (Error Tracking) ---
 
 
+def _format_issues_table(issues: list[Any], page: int, total_pages: int, total: int) -> str:
+    """Formatuje liste issues jako kompaktowy string oszczedzajacy tokeny."""
+    lines = [f"{total} issues (page {page}/{total_pages})", ""]
+    if not issues:
+        lines.append("(brak wynikow)")
+        return "\n".join(lines)
+
+    header = f"{'ID':<36} | {'Title':<40} | {'Level':<7} | {'Status':<10} | {'Events':>6} | {'First Seen':>10} | {'Last Seen':>10}"
+    lines.append(header)
+    lines.append("-" * len(header))
+
+    for i in issues:
+        issue_id = str(i.id)
+        title = (i.title or "")[:40]
+        level = (i.level or "")[:7]
+        status = (i.status or "")[:10]
+        events = i.event_count or 0
+        first_seen = i.first_seen.strftime("%Y-%m-%d") if i.first_seen else ""
+        last_seen = i.last_seen.strftime("%Y-%m-%d") if i.last_seen else ""
+        lines.append(f"{issue_id:<36} | {title:<40} | {level:<7} | {status:<10} | {events:>6} | {first_seen:>10} | {last_seen:>10}")
+
+    return "\n".join(lines)
+
+
 @mcp.tool()
 async def list_issues(
     ctx: Context[Any, Any],
@@ -785,11 +1137,12 @@ async def list_issues(
     status: str = "unresolved",
     search: str | None = None,
     page: int = 1,
-) -> list[dict[str, Any]]:
-    """Lista bledow (issues) w projekcie.
+) -> str:
+    """Lista bledow (issues) w projekcie jako kompaktowa tabela tekstowa.
 
     Filtrowanie po statusie (unresolved/resolved) i tekscie.
     Paginacja po 20. Domyslnie tylko nierozwiazane.
+    ID w tabeli to pelne UUID uzywane w get_issue.
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
     per_page = 20
@@ -808,19 +1161,69 @@ async def list_issues(
         result = await db.execute(select(Issue).where(*conditions).order_by(Issue.last_seen.desc()).limit(per_page).offset((page - 1) * per_page))
         issues = result.scalars().all()
 
-    return [
-        {
-            "id": str(i.id),
-            "title": i.title,
-            "culprit": i.culprit,
-            "level": i.level,
-            "status": i.status,
-            "event_count": i.event_count,
-            "first_seen": i.first_seen.isoformat(),
-            "last_seen": i.last_seen.isoformat(),
-        }
-        for i in issues
-    ] + [{"_meta": {"page": page, "total_pages": total_pages, "total": total}}]
+    return _format_issues_table(list(issues), page, total_pages, total)
+
+
+def _format_event_compact(event: Event) -> str:
+    """Wyciagnij kluczowe info z JSONB eventu i zwroc jako kompaktowy string."""
+    lines: list[str] = []
+
+    ts = event.timestamp.strftime("%Y-%m-%d %H:%M")
+    exc = event.exception or {}
+    exc_type = exc.get("type") or exc.get("exception_type") or "Exception"
+    exc_msg = exc.get("value") or exc.get("message") or exc.get("exception_value") or ""
+    lines.append(f"[{ts}] {exc_type}: {exc_msg}" if exc_msg else f"[{ts}] {exc_type}")
+
+    frames: list[Any] = []
+    stacktrace = exc.get("stacktrace")
+    if isinstance(stacktrace, dict):
+        frames = stacktrace.get("frames", [])
+    elif "frames" in exc:
+        frames = exc["frames"]
+    if frames:
+        tail = frames[-4:]
+        parts = [f"{f.get('filename', '?')}:{f.get('function', '?')}:{f.get('lineno', '?')}" for f in tail]
+        lines.append(f"  at {' -> '.join(parts)}")
+
+    req = event.request_data or {}
+    method = req.get("method") or req.get("request_method") or ""
+    path = req.get("url") or req.get("path") or req.get("request_url") or ""
+    status = req.get("status_code") or req.get("response_status") or ""
+    if method or path:
+        req_line = f"  {method} {path}".strip()
+        if status:
+            req_line += f" {status}"
+        lines.append(req_line)
+
+    env = event.environment or {}
+    env_name = env.get("environment") or env.get("env") or ""
+    python_ver = env.get("python_version") or env.get("python") or env.get("runtime_version") or ""
+    env_parts = [p for p in [env_name, f"python {python_ver}" if python_ver else ""] if p]
+    if env_parts:
+        lines.append(f"  env: {' | '.join(env_parts)}")
+
+    return "\n".join(lines)
+
+
+def _format_issue(issue: Issue, events: list[Event]) -> str:
+    """Konwertuj Issue + eventy na kompaktowy string oszczedzajacy tokeny."""
+    culprit = f" | {issue.culprit}" if issue.culprit else ""
+    lines: list[str] = [
+        f"Issue #{issue.id} | {issue.title}{culprit} | level: {issue.level} | status: {issue.status}",
+    ]
+
+    first = issue.first_seen.strftime("%Y-%m-%d")
+    last = issue.last_seen.strftime("%Y-%m-%d")
+    source = getattr(issue, "source", "auto")
+    lines.append(f"Events: {issue.event_count} | First: {first} | Last: {last} | Source: {source}")
+
+    if events:
+        lines.append(f"\n## Latest Events ({len(events)})")
+        for e in events:
+            lines.append("")
+            lines.append(_format_event_compact(e))
+
+    return "\n".join(lines)
 
 
 @mcp.tool()
@@ -828,8 +1231,14 @@ async def get_issue(
     ctx: Context[Any, Any],
     project_slug: str,
     issue_id: str,
-) -> dict[str, Any]:
-    """Szczegoly bledu z ostatnimi 5 eventami (traceback, request, environment)."""
+) -> str:
+    """Szczegoly bledu z ostatnimi 5 eventami w kompaktowym formacie tekstowym.
+
+    Zwraca naglowek z ID/title/level/status, statystyki zdarzen oraz do 5 ostatnich
+    eventow z: exception type+message, kompaktowym stack trace (ostatnie 3-4 ramki),
+    request method+path+status i srodowiskiem.
+    ID issue jest widoczne w pierwszej linii - uzywaj go w update_issue_status.
+    """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
@@ -846,26 +1255,7 @@ async def get_issue(
         events_result = await db.execute(select(Event).where(Event.issue_id == issue.id).order_by(Event.timestamp.desc()).limit(5))
         events = events_result.scalars().all()
 
-    return {
-        "id": str(issue.id),
-        "title": issue.title,
-        "culprit": issue.culprit,
-        "level": issue.level,
-        "status": issue.status,
-        "event_count": issue.event_count,
-        "first_seen": issue.first_seen.isoformat(),
-        "last_seen": issue.last_seen.isoformat(),
-        "events": [
-            {
-                "id": str(e.id),
-                "timestamp": e.timestamp.isoformat(),
-                "exception": e.exception,
-                "request_data": e.request_data,
-                "environment": e.environment,
-            }
-            for e in events
-        ],
-    }
+    return _format_issue(issue, list(events))
 
 
 @mcp.tool()
@@ -1003,8 +1393,14 @@ async def create_issue(
 async def list_monitors(
     ctx: Context[Any, Any],
     project_slug: str,
-) -> list[dict[str, Any]]:
-    """Lista monitorow URL z aktualnym statusem i uptime 24h."""
+) -> str:
+    """Lista monitorow URL z aktualnym statusem i uptime 24h.
+
+    Zwraca kompaktowa tabele w formacie:
+        ID | Name | URL | Active | Interval | Uptime 24h | Last Check
+    gdzie Last Check = 'OK/FAIL status_code response_time timestamp' lub '--' jesli brak.
+    Active: yes/no. Interval: '5 min', '1 hr', '1 day'.
+    """
     _user, project = await _get_user_and_project(ctx, project_slug)
     twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
 
@@ -1056,7 +1452,7 @@ async def list_monitors(
                 }
             )
 
-    return monitor_data
+    return _format_monitors_table(monitor_data)
 
 
 @mcp.tool()
@@ -1064,9 +1460,21 @@ async def get_monitor(
     ctx: Context[Any, Any],
     project_slug: str,
     monitor_id: str,
-) -> dict[str, Any]:
-    """Szczegoly monitora z ostatnimi 20 checkami."""
+) -> str:
+    """Szczegoly monitora z ostatnimi 20 checkami w kompaktowym formacie.
+
+    Zwraca string z danymi monitora i historia ostatnich 20 checków:
+        Monitor: API Health | https://api.example.com/health
+        ID: 550e8400-e29b-41d4-a716-446655440000
+        Active: yes | Interval: 5 min | Uptime 24h: 99.8%
+
+        ## Check History (20)
+        Timestamp           | Status | Code | Response Time | Error
+        2026-03-15 14:22:00 | OK     | 200  | 45ms          |
+        2026-03-15 14:12:00 | FAIL   | 503  | --            | Connection refused
+    """
     _user, project = await _get_user_and_project(ctx, project_slug)
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
 
     async with async_session_factory() as db:
         result = await db.execute(
@@ -1082,27 +1490,26 @@ async def get_monitor(
         checks_result = await db.execute(
             select(MonitorCheck).where(MonitorCheck.monitor_id == monitor.id).order_by(MonitorCheck.checked_at.desc()).limit(20)
         )
-        checks = checks_result.scalars().all()
+        checks = list(checks_result.scalars().all())
 
-    return {
-        "id": str(monitor.id),
-        "name": monitor.name or monitor.url,
-        "url": monitor.url,
-        "interval_value": monitor.interval_value,
-        "interval_unit": monitor.interval_unit,
-        "is_active": monitor.is_active,
-        "created_at": monitor.created_at.isoformat(),
-        "checks": [
-            {
-                "is_success": c.is_success,
-                "status_code": c.status_code,
-                "response_time_ms": c.response_time_ms,
-                "error_message": c.error_message,
-                "checked_at": c.checked_at.isoformat(),
-            }
-            for c in checks
-        ],
-    }
+        # Uptime 24h
+        uptime_result = await db.execute(
+            select(
+                func.count(MonitorCheck.id),
+                func.count(case((MonitorCheck.is_success.is_(True), 1))),
+            ).where(
+                MonitorCheck.monitor_id == monitor.id,
+                MonitorCheck.checked_at >= twenty_four_hours_ago,
+            )
+        )
+        uptime_row = uptime_result.one()
+        total_checks: int = uptime_row[0]
+        success_checks: int = uptime_row[1]
+        uptime_24h: float | None = None
+        if total_checks > 0:
+            uptime_24h = round((success_checks / total_checks) * 100, 1)
+
+    return _format_monitor_detail(monitor, checks, uptime_24h)
 
 
 @mcp.tool()
@@ -1297,10 +1704,13 @@ async def delete_monitor(
 async def get_board(
     ctx: Context[Any, Any],
     project_slug: str,
-) -> dict[str, Any]:
+) -> str:
     """Tablica Kanban — tickety aktywnego sprintu pogrupowane po statusie.
 
-    Kolumny: todo, in_progress, in_review, done.
+    Zwraca kompaktowy tekstowy widok tablicy.
+    Kolumny: Todo, In Progress, In Review, Done.
+    Format wiersza: CODE-N | Tytul | priority | @assignee | Nsp [label1, label2]
+    Jesli brak aktywnego sprintu — zwraca "(Brak aktywnego sprintu)".
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -1313,10 +1723,13 @@ async def get_board(
         )
         sprint = sprint_result.scalar_one_or_none()
         if sprint is None:
-            return {"message": "Brak aktywnego sprintu", "columns": {}}
+            return "(Brak aktywnego sprintu)"
 
         result = await db.execute(
-            select(Ticket).options(selectinload(Ticket.assignee)).where(Ticket.sprint_id == sprint.id).order_by(Ticket.order, Ticket.created_at)
+            select(Ticket)
+            .options(selectinload(Ticket.assignee), selectinload(Ticket.labels))
+            .where(Ticket.sprint_id == sprint.id)
+            .order_by(Ticket.order, Ticket.created_at)
         )
         tickets = result.scalars().all()
 
@@ -1325,25 +1738,16 @@ async def get_board(
         if t.status in columns:
             columns[t.status].append(
                 {
-                    "id": str(t.id),
                     "key": f"{project.code}-{t.number}",
                     "title": t.title,
                     "priority": t.priority,
                     "story_points": t.story_points,
                     "assignee": t.assignee.email if t.assignee else None,
+                    "labels": [lbl.name for lbl in t.labels] if t.labels else [],
                 }
             )
 
-    return {
-        "sprint": {
-            "id": str(sprint.id),
-            "name": sprint.name,
-            "goal": sprint.goal,
-            "start_date": sprint.start_date.isoformat(),
-            "end_date": sprint.end_date.isoformat() if sprint.end_date else None,
-        },
-        "columns": columns,
-    }
+    return _format_board(sprint, project.code, columns)
 
 
 # --- Podsumowanie projektu ---
@@ -1466,8 +1870,11 @@ async def list_tickets(
     overdue: bool = False,
     label_id: str | None = None,
     page: int = 1,
-) -> list[dict[str, Any]]:
-    """Lista ticketow w projekcie.
+) -> str:
+    """Lista ticketow w projekcie — kompaktowy format pipe-separated.
+
+    Pierwsza linia: "<total> tickets (page <page>/<total_pages>)"
+    Naglowek kolumn + wiersze: Key | Title | Status | Pri | Assignee | Sprint | SP | Due | Labels
 
     Filtrowanie po statusie, priorytecie, sprincie, tekscie, dacie granicznej i etykiecie.
     due_date_before: tickety z due_date <= data (YYYY-MM-DD)
@@ -1521,25 +1928,13 @@ async def list_tickets(
         )
         tickets = result.scalars().all()
 
-    return [
-        {
-            "id": str(t.id),
-            "key": f"{project.code}-{t.number}",
-            "title": t.title,
-            "description": t.description,
-            "status": t.status,
-            "priority": t.priority,
-            "story_points": t.story_points,
-            "sprint": t.sprint.name if t.sprint else None,
-            "sprint_id": str(t.sprint_id) if t.sprint_id else None,
-            "assignee": t.assignee.email if t.assignee else None,
-            "due_date": t.due_date.isoformat() if t.due_date else None,
-            "labels": [{"id": str(lb.id), "name": lb.name, "color": lb.color} for lb in t.labels],
-            "created_via_ai": t.created_via_ai,
-            "created_at": t.created_at.isoformat(),
-        }
-        for t in tickets
-    ] + [{"_meta": {"page": page, "total_pages": total_pages, "total": total}}]
+    return _format_tickets_table(
+        tickets=list(tickets),
+        project_code=project.code,
+        page=page,
+        total_pages=total_pages,
+        total=total,
+    )
 
 
 @mcp.tool()
@@ -1650,8 +2045,14 @@ async def get_ticket(
     ctx: Context[Any, Any],
     project_slug: str,
     ticket_id: str,
-) -> dict[str, Any]:
-    """Szczegoly ticketa z komentarzami."""
+) -> str:
+    """Szczegoly ticketa z komentarzami i zalacznikami w kompaktowym formacie tekstowym.
+
+    Zwraca jednolinijkowy naglowek z kluczem i tytulem, metadane (status, priority, sprint,
+    assignee, story points, due date, labels, daty, flaga AI, UUID), opcjonalny opis,
+    liste zalacznikow oraz komentarze. UUID ticketa w polu ID jest potrzebny do
+    update_ticket i delete_ticket.
+    """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
@@ -1662,6 +2063,7 @@ async def get_ticket(
                 selectinload(Ticket.sprint),
                 selectinload(Ticket.comments).selectinload(TicketComment.author),
                 selectinload(Ticket.labels),
+                selectinload(Ticket.attachments),
             )
             .where(
                 Ticket.id == uuid.UUID(ticket_id),
@@ -1672,33 +2074,7 @@ async def get_ticket(
         if ticket is None:
             raise ValueError("Ticket nie istnieje")
 
-    return {
-        "id": str(ticket.id),
-        "key": f"{project.code}-{ticket.number}",
-        "title": ticket.title,
-        "description": ticket.description,
-        "status": ticket.status,
-        "priority": ticket.priority,
-        "story_points": ticket.story_points,
-        "sprint": ticket.sprint.name if ticket.sprint else None,
-        "sprint_id": str(ticket.sprint_id) if ticket.sprint_id else None,
-        "assignee": ticket.assignee.email if ticket.assignee else None,
-        "due_date": ticket.due_date.isoformat() if ticket.due_date else None,
-        "labels": [{"id": str(lb.id), "name": lb.name, "color": lb.color} for lb in ticket.labels],
-        "created_via_ai": ticket.created_via_ai,
-        "created_at": ticket.created_at.isoformat(),
-        "updated_at": ticket.updated_at.isoformat(),
-        "comments": [
-            {
-                "id": str(c.id),
-                "author": c.author.email,
-                "content": c.content,
-                "created_via_ai": c.created_via_ai,
-                "created_at": c.created_at.isoformat(),
-            }
-            for c in ticket.comments
-        ],
-    }
+    return _format_ticket_detail(ticket, project.code)
 
 
 @mcp.tool()
@@ -2074,39 +2450,44 @@ async def bulk_update_tickets(
             if assignee:
                 resolved_assignee_id = assignee.id
 
+        # Parse UUIDs and collect valid ones for batch query
+        valid_uuids: dict[uuid.UUID, str] = {}
         for ticket_id_str in ticket_ids:
             try:
-                ticket_uuid = uuid.UUID(ticket_id_str)
+                valid_uuids[uuid.UUID(ticket_id_str)] = ticket_id_str
             except ValueError:
                 failed.append({"id": ticket_id_str, "reason": "Nieprawidlowe UUID"})
-                continue
 
-            try:
-                ticket_result = await db.execute(
-                    select(Ticket).where(
-                        Ticket.id == ticket_uuid,
-                        Ticket.project_id == project.id,
-                    )
+        if valid_uuids:
+            tickets_result = await db.execute(
+                select(Ticket).where(
+                    Ticket.id.in_(valid_uuids.keys()),
+                    Ticket.project_id == project.id,
                 )
-                ticket = ticket_result.scalar_one_or_none()
+            )
+            found_tickets = {t.id: t for t in tickets_result.scalars().all()}
+
+            for ticket_uuid, ticket_id_str in valid_uuids.items():
+                ticket = found_tickets.get(ticket_uuid)
                 if ticket is None:
                     failed.append({"id": ticket_id_str, "reason": "Ticket nie istnieje"})
                     continue
 
-                if status is not None:
-                    ticket.status = status
-                if priority is not None:
-                    ticket.priority = priority
-                if sprint_id is not None:
-                    ticket.sprint_id = None if sprint_id == "" else uuid.UUID(sprint_id)
-                if assignee_email is not None:
-                    ticket.assignee_id = None if assignee_email == "" else resolved_assignee_id
-                if due_date is not None:
-                    ticket.due_date = None if clear_due_date else parsed_due_date
+                try:
+                    if status is not None:
+                        ticket.status = status
+                    if priority is not None:
+                        ticket.priority = priority
+                    if sprint_id is not None:
+                        ticket.sprint_id = None if sprint_id == "" else uuid.UUID(sprint_id)
+                    if assignee_email is not None:
+                        ticket.assignee_id = None if assignee_email == "" else resolved_assignee_id
+                    if due_date is not None:
+                        ticket.due_date = None if clear_due_date else parsed_due_date
 
-                updated += 1
-            except Exception as e:
-                failed.append({"id": ticket_id_str, "reason": str(e)})
+                    updated += 1
+                except Exception as e:
+                    failed.append({"id": ticket_id_str, "reason": str(e)})
 
         await db.commit()
 
@@ -2301,8 +2682,13 @@ async def get_sprint(
     ctx: Context[Any, Any],
     project_slug: str,
     sprint_id: str,
-) -> dict[str, Any]:
-    """Szczegoly sprintu z lista ticketow."""
+) -> str:
+    """Szczegoly sprintu z lista ticketow w kompaktowym formacie tekstowym.
+
+    Zwraca string z naglowkiem sprintu (ID, nazwa, status, daty, cel, story points)
+    oraz tabela ticketow (klucz, tytul, status, priorytet, assignee, SP).
+    ID sprintu jest zawarte w naglowku i mozna go uzyc do operacji start/complete.
+    """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
@@ -2318,27 +2704,19 @@ async def get_sprint(
         if sprint is None:
             raise ValueError("Sprint nie istnieje")
 
-    return {
-        "id": str(sprint.id),
-        "name": sprint.name,
-        "goal": sprint.goal,
-        "status": sprint.status,
-        "start_date": sprint.start_date.isoformat(),
-        "end_date": sprint.end_date.isoformat() if sprint.end_date else None,
-        "created_at": sprint.created_at.isoformat(),
-        "tickets": [
-            {
-                "id": str(t.id),
-                "key": f"{project.code}-{t.number}",
-                "title": t.title,
-                "status": t.status,
-                "priority": t.priority,
-                "story_points": t.story_points,
-                "assignee": t.assignee.email if t.assignee else None,
-            }
-            for t in sprint.tickets
-        ],
-    }
+    tickets = [
+        {
+            "key": f"{project.code}-{t.number}",
+            "title": t.title,
+            "status": t.status,
+            "priority": t.priority,
+            "story_points": t.story_points,
+            "assignee": t.assignee.email if t.assignee else None,
+        }
+        for t in sprint.tickets
+    ]
+
+    return _format_sprint_detail(sprint, project.code, tickets)
 
 
 @mcp.tool()
@@ -2706,14 +3084,41 @@ async def log_time(
 # --- Wiki ---
 
 
+def _format_wiki_tree(pages_data: list[dict[str, Any]]) -> str:
+    """Konwertuj plaska liste stron wiki na kompaktowy string z wcieciami.
+
+    Format:
+        N pages
+
+        ID                                   | Title              | Updated
+        <uuid> | Title                        | YYYY-MM-DD
+        <uuid> |   Child Title               | YYYY-MM-DD
+    """
+    if not pages_data:
+        return "0 pages"
+
+    lines: list[str] = [f"{len(pages_data)} pages", ""]
+    lines.append(f"{'ID':<36} | Title              | Updated")
+
+    for p in pages_data:
+        indent = "  " * p["depth"]
+        title = indent + p["title"]
+        date_str = p["updated_at"][:10]
+        lines.append(f"{p['id']:<36} | {title:<18} | {date_str}")
+
+    return "\n".join(lines)
+
+
 @mcp.tool()
 async def list_wiki_pages(
     ctx: Context[Any, Any],
     project_slug: str,
-) -> list[dict[str, Any]]:
+) -> str:
     """Lista stron wiki w projekcie (drzewo z hierarchia).
 
-    Zwraca plaska liste stron z informacja o parent_id i glebokosci.
+    Zwraca kompaktowy string z wcieciami pokazujacymi hierarchie parent-child.
+    Kolumny: ID (pelne UUID), Title (z wcieciem 2 spacje na poziom), Updated (YYYY-MM-DD).
+    Uzyj ID strony do wywolania get_wiki_page, update_wiki_page lub delete_wiki_page.
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -2728,21 +3133,14 @@ async def list_wiki_pages(
                 {
                     "id": str(p.id),
                     "title": p.title,
-                    "slug": p.slug,
-                    "parent_id": str(p.parent_id) if p.parent_id else None,
-                    "position": p.position,
                     "depth": depth,
-                    "is_ai_touched": p.is_ai_touched,
-                    "created_by": p.created_by.email,
-                    "last_edited_by": p.last_edited_by.email,
-                    "created_at": p.created_at.isoformat(),
                     "updated_at": p.updated_at.isoformat(),
                 }
             )
             result.extend(_flatten(node["children"], depth + 1))
         return result
 
-    return _flatten(tree)
+    return _format_wiki_tree(_flatten(tree))
 
 
 @mcp.tool()
@@ -2969,8 +3367,8 @@ async def get_graph_node(
     project_slug: str,
     node_id: str,
     depth: int = 1,
-) -> dict[str, Any]:
-    """Szczegoly node'a z polaczeniami do sasiednich elementow.
+) -> str:
+    """Szczegoly node'a z polaczeniami do sasiednich elementow w kompaktowym formacie Arrow DSL.
 
     depth: ile poziomow polaczen pokazac (domyslnie 1 = tylko bezposredni sasiedzi,
     2 = sasiedzi sasiadow itd., max 5). Uzyj depth=2 aby zobaczyc szerszy kontekst,
@@ -2987,7 +3385,7 @@ async def get_graph_node(
 
     neighbors = await graph_service.get_neighbors(project.id, node_id, depth=depth)
 
-    return {**node, "neighbors": neighbors}
+    return _format_graph_dsl(neighbors)
 
 
 @mcp.tool()
@@ -3066,14 +3464,19 @@ async def query_graph(
     project_slug: str,
     node_type: str | None = None,
     limit: int = 200,
-) -> dict[str, Any]:
-    """Pobierz graf lub podgraf projektu (node'y + krawedzie). Opcjonalnie filtruj po typie node'a."""
+) -> str:
+    """Pobierz graf lub podgraf projektu (node'y + krawedzie) w kompaktowym formacie Arrow DSL.
+
+    Zwraca tekst z node'ami jako [Type] name (metadata) i krawędziami jako src --TYPE--> tgt.
+    Opcjonalnie filtruj po typie node'a.
+    """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
 
-    return await graph_service.get_graph(project.id, type_filter=node_type, limit=limit)
+    data = await graph_service.get_graph(project.id, type_filter=node_type, limit=limit)
+    return _format_graph_dsl(data)
 
 
 @mcp.tool()
@@ -3082,14 +3485,15 @@ async def find_graph_path(
     project_slug: str,
     source_id: str,
     target_id: str,
-) -> dict[str, Any]:
-    """Znajdz najkrotsza sciezke miedzy dwoma node'ami."""
+) -> str:
+    """Znajdz najkrotsza sciezke miedzy dwoma node'ami. Zwraca kompaktowy format Arrow DSL."""
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
 
-    return await graph_service.find_path(project.id, source_id, target_id)
+    data = await graph_service.find_path(project.id, source_id, target_id)
+    return _format_graph_dsl(data)
 
 
 @mcp.tool()
@@ -3205,6 +3609,23 @@ async def bulk_create_graph_edges(
 # --- Heartbeat ---
 
 
+def _heartbeat_dict(hb: Heartbeat, *, include_token: bool = False) -> dict[str, Any]:
+    """Format heartbeat response dictionary."""
+    d: dict[str, Any] = {
+        "id": str(hb.id),
+        "name": hb.name,
+        "period_minutes": hb.period // 60,
+        "grace_minutes": hb.grace // 60,
+        "status": get_heartbeat_status(hb),
+        "last_ping_at": hb.last_ping_at.isoformat() if hb.last_ping_at else None,
+        "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
+        "created_at": hb.created_at.isoformat(),
+    }
+    if include_token:
+        d["token"] = hb.token
+    return d
+
+
 @mcp.tool()
 async def list_heartbeats(
     ctx: Context[Any, Any],
@@ -3217,19 +3638,7 @@ async def list_heartbeats(
         result = await db.execute(select(Heartbeat).where(Heartbeat.project_id == project.id).order_by(Heartbeat.created_at))
         heartbeats = result.scalars().all()
 
-    return [
-        {
-            "id": str(hb.id),
-            "name": hb.name,
-            "period_minutes": hb.period // 60,
-            "grace_minutes": hb.grace // 60,
-            "status": get_heartbeat_status(hb),
-            "last_ping_at": hb.last_ping_at.isoformat() if hb.last_ping_at else None,
-            "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
-            "created_at": hb.created_at.isoformat(),
-        }
-        for hb in heartbeats
-    ]
+    return [_heartbeat_dict(hb) for hb in heartbeats]
 
 
 @mcp.tool()
@@ -3252,17 +3661,7 @@ async def get_heartbeat(
         if hb is None:
             raise ValueError("Heartbeat nie istnieje")
 
-    return {
-        "id": str(hb.id),
-        "name": hb.name,
-        "token": hb.token,
-        "period_minutes": hb.period // 60,
-        "grace_minutes": hb.grace // 60,
-        "status": get_heartbeat_status(hb),
-        "last_ping_at": hb.last_ping_at.isoformat() if hb.last_ping_at else None,
-        "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
-        "created_at": hb.created_at.isoformat(),
-    }
+    return _heartbeat_dict(hb, include_token=True)
 
 
 @mcp.tool()
@@ -3298,16 +3697,9 @@ async def create_heartbeat(
             },
         )
 
-    return {
-        "id": str(hb.id),
-        "name": hb.name,
-        "token": hb.token,
-        "period_minutes": hb.period // 60,
-        "grace_minutes": hb.grace // 60,
-        "status": hb.status,
-        "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
-        "message": f"Heartbeat '{hb.name}' utworzony",
-    }
+    result = _heartbeat_dict(hb, include_token=True)
+    result["message"] = f"Heartbeat '{hb.name}' utworzony"
+    return result
 
 
 @mcp.tool()
@@ -3343,14 +3735,9 @@ async def update_heartbeat(
     async with async_session_factory() as db:
         hb = await svc_update_heartbeat(db, project.id, uuid.UUID(heartbeat_id), data)
 
-    return {
-        "id": str(hb.id),
-        "name": hb.name,
-        "period_minutes": hb.period // 60,
-        "grace_minutes": hb.grace // 60,
-        "ping_url": f"{app_settings.APP_URL}/hb/{hb.token}",
-        "message": f"Heartbeat '{hb.name}' zaktualizowany",
-    }
+    result = _heartbeat_dict(hb)
+    result["message"] = f"Heartbeat '{hb.name}' zaktualizowany"
+    return result
 
 
 @mcp.tool()
@@ -3378,9 +3765,6 @@ async def delete_heartbeat(
         await svc_delete_heartbeat(db, project.id, uuid.UUID(heartbeat_id))
 
     return {"message": f"Heartbeat '{name}' usuniety", "heartbeat_id": heartbeat_id}
-
-
-ACTIVITY_ENTITY_TYPES = {"ticket", "sprint", "monitor", "wiki", "member"}
 
 
 @mcp.tool()

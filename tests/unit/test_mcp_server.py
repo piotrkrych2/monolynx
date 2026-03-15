@@ -444,9 +444,10 @@ class TestListTickets:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug)
-        # Ostatni element to _meta
-        assert len(result) == 1
-        assert result[0]["_meta"]["total"] == 0
+        assert isinstance(result, str)
+        assert "0 tickets" in result
+        assert "page 1/1" in result
+        assert "(brak ticketow)" in result
 
     async def test_returns_tickets(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ticket = Ticket(
@@ -465,11 +466,10 @@ class TestListTickets:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug)
-        # 1 ticket + _meta
-        assert len(result) == 2
-        assert result[0]["title"] == "Test ticket"
-        assert result[0]["status"] == "backlog"
-        assert result[1]["_meta"]["total"] == 1
+        assert isinstance(result, str)
+        assert "1 tickets" in result
+        assert "Test ticket" in result
+        assert "backlog" in result
 
     async def test_filter_by_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         for i, status in enumerate(("backlog", "todo", "done"), start=1):
@@ -489,8 +489,10 @@ class TestListTickets:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug, status="done")
-        assert result[-1]["_meta"]["total"] == 1
-        assert result[0]["status"] == "done"
+        assert isinstance(result, str)
+        assert "1 tickets" in result
+        assert "done" in result
+        assert "Ticket done" in result
 
     async def test_filter_by_priority(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         db_session.add(Ticket(project_id=mcp_project.id, number=1, title="High", priority="high"))
@@ -503,8 +505,10 @@ class TestListTickets:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug, priority="high")
-        assert result[-1]["_meta"]["total"] == 1
-        assert result[0]["priority"] == "high"
+        assert isinstance(result, str)
+        assert "1 tickets" in result
+        assert "high" in result
+        assert "High" in result
 
     async def test_filter_by_search(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Login bug"))
@@ -517,8 +521,9 @@ class TestListTickets:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug, search="Login")
-        assert result[-1]["_meta"]["total"] == 1
-        assert "Login" in result[0]["title"]
+        assert isinstance(result, str)
+        assert "1 tickets" in result
+        assert "Login" in result
 
     async def test_filter_by_sprint(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         sprint = Sprint(
@@ -539,8 +544,9 @@ class TestListTickets:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug, sprint_id=str(sprint.id))
-        assert result[-1]["_meta"]["total"] == 1
-        assert result[0]["title"] == "In sprint"
+        assert isinstance(result, str)
+        assert "1 tickets" in result
+        assert "In sprint" in result
 
     async def test_invalid_status_ignored(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         """Nieprawidlowy status jest ignorowany -- zwraca wszystkie tickety."""
@@ -553,7 +559,8 @@ class TestListTickets:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug, status="invalid_status")
-        assert result[-1]["_meta"]["total"] == 1
+        assert isinstance(result, str)
+        assert "1 tickets" in result
 
 
 # ---------------------------------------------------------------------------
@@ -582,12 +589,13 @@ class TestGetTicket:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_ticket(ctx, mcp_project.slug, str(ticket.id))
-        assert result["title"] == "Detail ticket"
-        assert result["description"] == "Some description"
-        assert result["status"] == "todo"
-        assert result["priority"] == "high"
-        assert result["story_points"] == 5
-        assert result["comments"] == []
+        assert isinstance(result, str)
+        assert "Detail ticket" in result
+        assert "Some description" in result
+        assert "Status: todo" in result
+        assert "Priority: high" in result
+        assert "Story Points: 5" in result
+        assert "## Comments" not in result
 
     async def test_ticket_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ctx = _make_ctx()
@@ -617,9 +625,10 @@ class TestGetTicket:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_ticket(ctx, mcp_project.slug, str(ticket.id))
-        assert len(result["comments"]) == 1
-        assert result["comments"][0]["content"] == "A comment"
-        assert result["comments"][0]["author"] == mcp_user.email
+        assert isinstance(result, str)
+        assert "## Comments (1)" in result
+        assert "A comment" in result
+        assert mcp_user.email in result
 
     async def test_ticket_with_assignee(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ticket = Ticket(
@@ -637,7 +646,8 @@ class TestGetTicket:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_ticket(ctx, mcp_project.slug, str(ticket.id))
-        assert result["assignee"] == mcp_user.email
+        assert isinstance(result, str)
+        assert f"Assignee: {mcp_user.email}" in result
 
 
 # ---------------------------------------------------------------------------
@@ -1141,10 +1151,10 @@ class TestTicketDueDate:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug, due_date_before="2026-06-30")
-        titles = [r["title"] for r in result if "_meta" not in r]
-        assert "Early" in titles
-        assert "Late" not in titles
-        assert "No date" not in titles
+        assert isinstance(result, str)
+        assert "Early" in result
+        assert "Late" not in result
+        assert "No date" not in result
 
     async def test_list_tickets_filter_due_date_after(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         """Filtr due_date_after zwraca tylko tickety z due_date >= data."""
@@ -1158,9 +1168,9 @@ class TestTicketDueDate:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug, due_date_after="2026-06-30")
-        titles = [r["title"] for r in result if "_meta" not in r]
-        assert "Late" in titles
-        assert "Early" not in titles
+        assert isinstance(result, str)
+        assert "Late" in result
+        assert "Early" not in result
 
     async def test_list_tickets_filter_overdue(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         """Filtr overdue=True zwraca tylko niezakonczone tickety po terminie."""
@@ -1178,11 +1188,11 @@ class TestTicketDueDate:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug, overdue=True)
-        titles = [r["title"] for r in result if "_meta" not in r]
-        assert "Overdue open" in titles
-        assert "Overdue done" not in titles
-        assert "Future" not in titles
-        assert "No date" not in titles
+        assert isinstance(result, str)
+        assert "Overdue open" in result
+        assert "Overdue done" not in result
+        assert "Future" not in result
+        assert "No date" not in result
 
     async def test_list_tickets_filter_due_date_before_invalid_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         """Nieprawidlowy format due_date_before rzuca ValueError."""
@@ -1211,7 +1221,8 @@ class TestTicketDueDate:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_ticket(ctx, mcp_project.slug, str(ticket.id))
-        assert result["due_date"] == "2026-09-15"
+        assert isinstance(result, str)
+        assert "Due: 2026-09-15" in result
 
     async def test_list_tickets_includes_due_date_in_response(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         """list_tickets zwraca due_date dla kazdego ticketa."""
@@ -1225,11 +1236,14 @@ class TestTicketDueDate:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_tickets(ctx, mcp_project.slug)
-        tickets = [r for r in result if "_meta" not in r]
-        with_date = next(t for t in tickets if t["title"] == "With date")
-        without_date = next(t for t in tickets if t["title"] == "Without date")
-        assert with_date["due_date"] == "2026-05-01"
-        assert without_date["due_date"] is None
+        assert isinstance(result, str)
+        # Wiersz z "With date" zawiera date ISO, wiersz "Without date" zawiera "--"
+        lines = result.splitlines()
+        with_date_line = next(line for line in lines if "With date" in line)
+        without_date_line = next(line for line in lines if "Without date" in line)
+        assert "2026-05-01" in with_date_line
+        # kolumna due dla ticketa bez daty powinna byc "--"
+        assert "--" in without_date_line
 
 
 # ---------------------------------------------------------------------------
@@ -1533,11 +1547,12 @@ class TestGetSprint:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_sprint(ctx, mcp_project.slug, str(sprint.id))
-        assert result["name"] == "Detail sprint"
-        assert result["goal"] == "Sprint goal"
-        assert result["end_date"] == "2026-03-14"
-        assert len(result["tickets"]) == 1
-        assert result["tickets"][0]["title"] == "Sprint ticket"
+        assert isinstance(result, str)
+        assert "Detail sprint" in result
+        assert "Sprint goal" in result
+        assert "2026-03-14" in result
+        assert "Sprint ticket" in result
+        assert str(sprint.id) in result
 
     async def test_sprint_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ctx = _make_ctx()
@@ -1563,7 +1578,8 @@ class TestGetSprint:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_sprint(ctx, mcp_project.slug, str(sprint.id))
-        assert result["end_date"] is None
+        assert isinstance(result, str)
+        assert "(brak)" in result
 
 
 # ---------------------------------------------------------------------------
@@ -1966,8 +1982,9 @@ class TestListIssues:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_issues(ctx, mcp_project.slug)
-        assert len(result) == 1
-        assert result[0]["_meta"]["total"] == 0
+        assert isinstance(result, str)
+        assert "0 issues (page 1/1)" in result
+        assert "(brak wynikow)" in result
 
     async def test_returns_unresolved_by_default(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         db_session.add(Issue(project_id=mcp_project.id, title="Bug 1", fingerprint="fp1", status="unresolved"))
@@ -1980,8 +1997,10 @@ class TestListIssues:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_issues(ctx, mcp_project.slug)
-        assert result[-1]["_meta"]["total"] == 1
-        assert result[0]["status"] == "unresolved"
+        assert isinstance(result, str)
+        assert "1 issues (page 1/1)" in result
+        assert "Bug 1" in result
+        assert "Bug 2" not in result
 
     async def test_filter_resolved(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         db_session.add(Issue(project_id=mcp_project.id, title="Bug", fingerprint="fp1", status="unresolved"))
@@ -1994,8 +2013,9 @@ class TestListIssues:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_issues(ctx, mcp_project.slug, status="resolved")
-        assert result[-1]["_meta"]["total"] == 1
-        assert result[0]["title"] == "Fixed"
+        assert isinstance(result, str)
+        assert "1 issues (page 1/1)" in result
+        assert "Fixed" in result
 
     async def test_search_filter(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         db_session.add(Issue(project_id=mcp_project.id, title="ValueError in views", fingerprint="fp1"))
@@ -2008,8 +2028,10 @@ class TestListIssues:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_issues(ctx, mcp_project.slug, search="ValueError")
-        assert result[-1]["_meta"]["total"] == 1
-        assert "ValueError" in result[0]["title"]
+        assert isinstance(result, str)
+        assert "1 issues (page 1/1)" in result
+        assert "ValueError" in result
+        assert "TypeError" not in result
 
 
 @pytest.mark.unit
@@ -2029,10 +2051,11 @@ class TestGetIssue:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_issue(ctx, mcp_project.slug, str(issue.id))
-        assert result["title"] == "Test bug"
-        assert result["status"] == "unresolved"
-        assert len(result["events"]) == 1
-        assert result["events"][0]["exception"] == {"type": "ValueError"}
+        assert isinstance(result, str)
+        assert "Test bug" in result
+        assert "unresolved" in result
+        assert "## Latest Events" in result
+        assert "ValueError" in result
 
     async def test_issue_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ctx = _make_ctx()
@@ -2087,7 +2110,8 @@ class TestListMonitors:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_monitors(ctx, mcp_project.slug)
-        assert result == []
+        assert isinstance(result, str)
+        assert result == "0 monitors"
 
     async def test_returns_monitors(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         monitor = Monitor(
@@ -2106,10 +2130,11 @@ class TestListMonitors:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_monitors(ctx, mcp_project.slug)
-        assert len(result) == 1
-        assert result[0]["name"] == "Example"
-        assert result[0]["url"] == "https://example.com"
-        assert result[0]["is_active"] is True
+        assert isinstance(result, str)
+        assert "1 monitors" in result
+        assert "Example" in result
+        assert "https://example.com" in result
+        assert "yes" in result  # is_active
 
     async def test_monitor_with_checks(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         monitor = Monitor(
@@ -2136,8 +2161,10 @@ class TestListMonitors:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await list_monitors(ctx, mcp_project.slug)
-        assert result[0]["last_check"]["is_success"] is True
-        assert result[0]["last_check"]["status_code"] == 200
+        assert isinstance(result, str)
+        assert "OK" in result
+        assert "200" in result
+        assert "150ms" in result
 
 
 @pytest.mark.unit
@@ -2163,9 +2190,15 @@ class TestGetMonitor:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_monitor(ctx, mcp_project.slug, str(monitor.id))
-        assert result["name"] == "Detail"
-        assert result["url"] == "https://example.com"
-        assert len(result["checks"]) == 1
+        assert isinstance(result, str)
+        assert "Detail" in result
+        assert "https://example.com" in result
+        assert "OK" in result
+        assert "200" in result
+        assert "100ms" in result
+        assert "Active: yes" in result
+        assert "Interval: 5 min" in result
+        assert "## Check History (1)" in result
 
     async def test_monitor_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         ctx = _make_ctx()
@@ -2265,8 +2298,8 @@ class TestGetBoard:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_board(ctx, mcp_project.slug)
-        assert result["message"] == "Brak aktywnego sprintu"
-        assert result["columns"] == {}
+        assert isinstance(result, str)
+        assert "(Brak aktywnego sprintu)" in result
 
     async def test_returns_board_with_tickets(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         sprint = Sprint(
@@ -2288,10 +2321,14 @@ class TestGetBoard:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await get_board(ctx, mcp_project.slug)
-        assert result["sprint"]["name"] == "Active sprint"
-        assert len(result["columns"]["todo"]) == 1
-        assert len(result["columns"]["in_progress"]) == 1
-        assert len(result["columns"]["done"]) == 1
+        assert isinstance(result, str)
+        assert "Active sprint" in result
+        assert "## Todo" in result
+        assert "## In Progress" in result
+        assert "## Done" in result
+        assert "Ticket todo" in result
+        assert "Ticket in_progress" in result
+        assert "Ticket done" in result
 
 
 # ---------------------------------------------------------------------------
@@ -2422,7 +2459,8 @@ class TestListWikiPages:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await mcp_list_wiki_pages(ctx, mcp_project.slug)
-        assert result == []
+        assert isinstance(result, str)
+        assert result == "0 pages"
 
     async def test_returns_pages(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         page = WikiPage(
@@ -2443,10 +2481,10 @@ class TestListWikiPages:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await mcp_list_wiki_pages(ctx, mcp_project.slug)
-        assert len(result) == 1
-        assert result[0]["title"] == "Strona testowa"
-        assert result[0]["depth"] == 0
-        assert result[0]["created_by"] == mcp_user.email
+        assert isinstance(result, str)
+        assert "1 pages" in result
+        assert "Strona testowa" in result
+        assert str(page.id) in result
 
     async def test_returns_nested_pages(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         parent = WikiPage(
@@ -2480,12 +2518,14 @@ class TestListWikiPages:
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
         ):
             result = await mcp_list_wiki_pages(ctx, mcp_project.slug)
-        assert len(result) == 2
-        assert result[0]["title"] == "Parent"
-        assert result[0]["depth"] == 0
-        assert result[1]["title"] == "Child"
-        assert result[1]["depth"] == 1
-        assert result[1]["parent_id"] == str(parent.id)
+        assert isinstance(result, str)
+        assert "2 pages" in result
+        assert str(parent.id) in result
+        assert str(child.id) in result
+        # Child title is indented with 2 spaces
+        assert "  Child" in result
+        # Parent title has no indentation in the title column
+        assert "Parent" in result
 
 
 @pytest.mark.unit
@@ -3211,7 +3251,15 @@ class TestGetGraphNode:
 
         ctx = _make_ctx()
         mock_node = {"id": "node-1", "type": "File", "name": "main.py"}
-        mock_neighbors = [{"id": "node-2", "type": "Class", "name": "App"}]
+        mock_neighbors = {
+            "nodes": [
+                {"id": "node-1", "name": "main.py", "type": "File", "file_path": "src/main.py", "line_number": None, "metadata": {}},
+                {"id": "node-2", "name": "App", "type": "Class", "file_path": None, "line_number": None, "metadata": {}},
+            ],
+            "edges": [
+                {"source_id": "node-1", "target_id": "node-2", "type": "CONTAINS", "metadata": {}},
+            ],
+        }
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
@@ -3221,8 +3269,10 @@ class TestGetGraphNode:
             mock_gs.get_node = AsyncMock(return_value=mock_node)
             mock_gs.get_neighbors = AsyncMock(return_value=mock_neighbors)
             result = await get_graph_node(ctx, mcp_project.slug, "node-1")
-        assert result["name"] == "main.py"
-        assert result["neighbors"] == mock_neighbors
+        assert isinstance(result, str)
+        assert "[File] main.py" in result
+        assert "[Class] App" in result
+        assert "main.py --CONTAINS--> App" in result
 
 
 @pytest.mark.unit
@@ -3402,7 +3452,10 @@ class TestQueryGraph:
         from monolynx.mcp_server import query_graph
 
         ctx = _make_ctx()
-        mock_graph = {"nodes": [{"id": "n1"}], "edges": []}
+        mock_graph = {
+            "nodes": [{"id": "n1", "name": "main.py", "type": "File", "file_path": "src/main.py", "line_number": None, "metadata": {}}],
+            "edges": [],
+        }
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
@@ -3411,7 +3464,10 @@ class TestQueryGraph:
             mock_gs.is_enabled.return_value = True
             mock_gs.get_graph = AsyncMock(return_value=mock_graph)
             result = await query_graph(ctx, mcp_project.slug)
-        assert result["nodes"] == [{"id": "n1"}]
+        assert isinstance(result, str)
+        assert "1 nodes, 0 edges" in result
+        assert "[File] main.py" in result
+        assert "path=src/main.py" in result
 
 
 @pytest.mark.unit
@@ -3435,7 +3491,15 @@ class TestFindGraphPath:
         from monolynx.mcp_server import find_graph_path
 
         ctx = _make_ctx()
-        mock_path = {"path": [{"id": "s1"}, {"id": "t1"}], "length": 1}
+        mock_path = {
+            "nodes": [
+                {"id": "s1", "name": "auth.py", "type": "File", "file_path": "src/auth.py", "line_number": None, "metadata": {}},
+                {"id": "t1", "name": "User", "type": "Class", "file_path": "src/models.py", "line_number": 10, "metadata": {}},
+            ],
+            "edges": [
+                {"source_id": "s1", "target_id": "t1", "type": "IMPORTS", "metadata": {}},
+            ],
+        }
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
@@ -3444,7 +3508,62 @@ class TestFindGraphPath:
             mock_gs.is_enabled.return_value = True
             mock_gs.find_path = AsyncMock(return_value=mock_path)
             result = await find_graph_path(ctx, mcp_project.slug, "s1", "t1")
-        assert result["length"] == 1
+        assert isinstance(result, str)
+        assert "2 nodes, 1 edges" in result
+        assert "[File] auth.py" in result
+        assert "auth.py --IMPORTS--> User" in result
+
+
+@pytest.mark.unit
+class TestFormatGraphDsl:
+    """Testy _format_graph_dsl helper."""
+
+    def test_empty_graph(self):
+        from monolynx.mcp_server import _format_graph_dsl
+
+        result = _format_graph_dsl({"nodes": [], "edges": []})
+        assert "0 nodes, 0 edges" in result
+
+    def test_nodes_with_metadata(self):
+        from monolynx.mcp_server import _format_graph_dsl
+
+        data = {
+            "nodes": [
+                {"id": "n1", "name": "auth.py", "type": "File", "file_path": "src/auth.py", "line_number": None, "metadata": {}},
+                {"id": "n2", "name": "User", "type": "Class", "file_path": "src/models.py", "line_number": 15, "metadata": {"abstract": True}},
+            ],
+            "edges": [{"source_id": "n1", "target_id": "n2", "type": "IMPORTS", "metadata": {}}],
+        }
+        result = _format_graph_dsl(data)
+        assert "2 nodes, 1 edges" in result
+        assert "[File] auth.py (path=src/auth.py)" in result
+        assert "[Class] User (path=src/models.py,line=15,abstract=True)" in result
+        assert "auth.py --IMPORTS--> User" in result
+
+    def test_edge_uses_name_not_id(self):
+        from monolynx.mcp_server import _format_graph_dsl
+
+        data = {
+            "nodes": [
+                {"id": "abc123", "name": "main.py", "type": "File", "file_path": None, "line_number": None, "metadata": {}},
+                {"id": "def456", "name": "App", "type": "Class", "file_path": None, "line_number": None, "metadata": {}},
+            ],
+            "edges": [{"source_id": "abc123", "target_id": "def456", "type": "CONTAINS", "metadata": {}}],
+        }
+        result = _format_graph_dsl(data)
+        assert "main.py --CONTAINS--> App" in result
+        # IDs should not appear in edges
+        assert "abc123" not in result.split("\n")[-1]
+
+    def test_unknown_edge_node_falls_back_to_id(self):
+        from monolynx.mcp_server import _format_graph_dsl
+
+        data = {
+            "nodes": [{"id": "n1", "name": "foo.py", "type": "File", "file_path": None, "line_number": None, "metadata": {}}],
+            "edges": [{"source_id": "n1", "target_id": "unknown-id", "type": "CALLS", "metadata": {}}],
+        }
+        result = _format_graph_dsl(data)
+        assert "foo.py --CALLS--> unknown-id" in result
 
 
 @pytest.mark.unit

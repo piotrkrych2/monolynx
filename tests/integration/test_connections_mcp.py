@@ -153,9 +153,8 @@ class TestGetGraphNode:
 
             result = await get_graph_node(_make_ctx(), "test-project", node_id="abc123")
 
-        assert result["name"] == "details.py"
-        assert "neighbors" in result
-        assert len(result["neighbors"]["nodes"]) == 1
+        assert isinstance(result, str)
+        assert "[File] TestNode" in result
 
     async def test_get_graph_node_not_found(self):
         mock_auth_fn, _user, _project = _mock_auth()
@@ -313,8 +312,10 @@ class TestQueryGraph:
 
             result = await query_graph(_make_ctx(), "test-project")
 
-        assert len(result["nodes"]) == 2
-        assert len(result["edges"]) == 1
+        assert isinstance(result, str)
+        assert "2 nodes, 1 edges" in result
+        assert "[File] A" in result
+        assert "[File] B" in result
 
 
 # ---------------------------------------------------------------------------
@@ -345,8 +346,10 @@ class TestFindGraphPath:
                 target_id="e1",
             )
 
-        assert len(result["nodes"]) == 2
-        assert len(result["edges"]) == 1
+        assert isinstance(result, str)
+        assert "2 nodes, 1 edges" in result
+        assert "[File] Start" in result
+        assert "[File] End" in result
 
 
 # ---------------------------------------------------------------------------
