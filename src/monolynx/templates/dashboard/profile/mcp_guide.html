@@ -111,7 +111,7 @@
             <h2 class="text-lg font-semibold text-white">Użyj narzędzi</h2>
         </div>
 
-        <p class="text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-white">35 narzędzi</strong> we wszystkich modułach:</p>
+        <p class="text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-white">62 narzędzi</strong> we wszystkich modułach:</p>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
             <div>
@@ -119,6 +119,18 @@
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_projects</code> <span class="text-gray-500">— lista projektów</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_project_summary</code> <span class="text-gray-500">— podsumowanie projektu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_project</code> <span class="text-gray-500">— pełne szczegóły projektu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">create_project</code> <span class="text-gray-500">— utwórz nowy projekt</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">update_project</code> <span class="text-gray-500">— edytuj projekt</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">delete_project</code> <span class="text-gray-500">— usuń projekt</span></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-400 mb-2">Członkowie zespołu</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">list_members</code> <span class="text-gray-500">— lista członków projektu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">invite_member</code> <span class="text-gray-500">— zaproś do projektu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">remove_member</code> <span class="text-gray-500">— usuń z projektu</span></li>
                 </ul>
             </div>
             <div>
@@ -128,6 +140,7 @@
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_issue</code> <span class="text-gray-500">— szczegóły błędu</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">update_issue_status</code> <span class="text-gray-500">— zmień status</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">create_ticket_from_issue</code> <span class="text-gray-500">— utwórz ticket z błędu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">create_issue</code> <span class="text-gray-500">— ręczne zgłoszenie błędu</span></li>
                 </ul>
             </div>
             <div>
@@ -138,6 +151,16 @@
                     <li class="text-sm"><code class="text-indigo-300 font-mono">create_ticket</code> <span class="text-gray-500">— utwórz ticket</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">update_ticket</code> <span class="text-gray-500">— edytuj ticket</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">delete_ticket</code> <span class="text-gray-500">— usuń ticket</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">search_tickets</code> <span class="text-gray-500">— zaawansowane wyszukiwanie</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">bulk_update_tickets</code> <span class="text-gray-500">— masowa aktualizacja</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">add_attachment</code> <span class="text-gray-500">— dodaj załącznik do ticketu</span></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-400 mb-2">Scrum — Etykiety</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">list_labels</code> <span class="text-gray-500">— lista etykiet projektu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">create_label</code> <span class="text-gray-500">— utwórz etykietę</span></li>
                 </ul>
             </div>
             <div>
@@ -149,6 +172,8 @@
                     <li class="text-sm"><code class="text-indigo-300 font-mono">start_sprint</code> <span class="text-gray-500">— rozpocznij sprint</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">complete_sprint</code> <span class="text-gray-500">— zakończ sprint</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_board</code> <span class="text-gray-500">— tablica Kanban</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">update_sprint</code> <span class="text-gray-500">— edytuj sprint</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_burndown</code> <span class="text-gray-500">— dane burndown chart</span></li>
                 </ul>
             </div>
             <div>
@@ -164,6 +189,25 @@
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_monitors</code> <span class="text-gray-500">— lista monitorów</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_monitor</code> <span class="text-gray-500">— szczegóły monitora</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">create_monitor</code> <span class="text-gray-500">— utwórz monitor</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">update_monitor</code> <span class="text-gray-500">— edytuj monitor</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">delete_monitor</code> <span class="text-gray-500">— usuń monitor</span></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-400 mb-2">Audyt</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_activity_log</code> <span class="text-gray-500">— historia zmian w projekcie</span></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-400 mb-2">Heartbeat</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">list_heartbeats</code> <span class="text-gray-500">— lista heartbeatów</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_heartbeat</code> <span class="text-gray-500">— szczegóły heartbeatu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">create_heartbeat</code> <span class="text-gray-500">— utwórz heartbeat</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">update_heartbeat</code> <span class="text-gray-500">— edytuj heartbeat</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">delete_heartbeat</code> <span class="text-gray-500">— usuń heartbeat</span></li>
                 </ul>
             </div>
             <div>

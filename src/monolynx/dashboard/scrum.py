@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import contextlib
+import io
+import os
+import re
 import uuid
 from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.responses import PlainTextResponse
 
 from monolynx.constants import (
     BOARD_STATUSES,
@@ -25,12 +30,17 @@ from monolynx.constants import (
 from monolynx.database import get_db
 from monolynx.models.event import Event
 from monolynx.models.issue import Issue
+from monolynx.models.label import Label, TicketLabel
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
+from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.time_tracking_entry import TimeTrackingEntry
+from monolynx.services.minio_client import delete_object as minio_delete_object
+from monolynx.services.minio_client import get_attachment as minio_get_attachment
+from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
 from monolynx.services.sprint import complete_sprint, start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
 from monolynx.services.time_tracking import (
@@ -44,6 +54,8 @@ from .helpers import _get_user_id, flash, render_project_page, templates
 
 router = APIRouter(prefix="/dashboard", tags=["scrum"])
 
+MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024  # 10 MB
+
 
 async def _get_project(slug: str, db: AsyncSession) -> Project | None:
     result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
@@ -53,6 +65,23 @@ async def _get_project(slug: str, db: AsyncSession) -> Project | None:
 async def _get_project_members(project_id: uuid.UUID, db: AsyncSession) -> list[ProjectMember]:
     result = await db.execute(select(ProjectMember).options(selectinload(ProjectMember.user)).where(ProjectMember.project_id == project_id))
     return list(result.scalars().all())
+
+
+async def _get_project_labels(project_id: uuid.UUID, db: AsyncSession) -> list[Label]:
+    result = await db.execute(select(Label).where(Label.project_id == project_id).order_by(Label.name))
+    return list(result.scalars().all())
+
+
+def _parse_valid_label_ids(label_ids_raw: list[Any], project_labels: list[Label]) -> set[uuid.UUID]:
+    """Parse and validate label IDs — only allow labels belonging to the project."""
+    project_label_ids = {label.id for label in project_labels}
+    valid_ids: set[uuid.UUID] = set()
+    for raw_id in label_ids_raw:
+        with contextlib.suppress(ValueError):
+            lid = uuid.UUID(str(raw_id))
+            if lid in project_label_ids:
+                valid_ids.add(lid)
+    return valid_ids
 
 
 # --- Backlog ---
@@ -121,7 +150,7 @@ async def backlog(
     page = min(page, total_pages)
 
     # Main query with eager loads
-    query = select(Ticket).options(selectinload(Ticket.assignee), selectinload(Ticket.sprint)).where(*conditions)
+    query = select(Ticket).options(selectinload(Ticket.assignee), selectinload(Ticket.sprint), selectinload(Ticket.labels)).where(*conditions)
     if not show_completed_sprints:
         query = query.outerjoin(Sprint, Ticket.sprint_id == Sprint.id).where(sprint_join_filter)
 
@@ -195,7 +224,10 @@ async def board(
 
     if active_sprint:
         ticket_result = await db.execute(
-            select(Ticket).options(selectinload(Ticket.assignee)).where(Ticket.sprint_id == active_sprint.id).order_by(Ticket.order)
+            select(Ticket)
+            .options(selectinload(Ticket.assignee), selectinload(Ticket.labels))
+            .where(Ticket.sprint_id == active_sprint.id)
+            .order_by(Ticket.order)
         )
         for ticket in ticket_result.scalars().all():
             if ticket.status in columns:
@@ -217,6 +249,7 @@ async def board(
             "sp_done": sp_done,
             "active_module": "scrum",
             "status_labels": STATUS_LABELS,
+            "now_date": date.today(),
         },
         db=db,
     )
@@ -244,6 +277,7 @@ async def ticket_create_form(
         return HTMLResponse("Project not found", status_code=404)
 
     members = await _get_project_members(project.id, db)
+    labels = await _get_project_labels(project.id, db)
 
     result = await db.execute(select(Sprint).where(Sprint.project_id == project.id, Sprint.status != "completed").order_by(Sprint.created_at.desc()))
     sprints = result.scalars().all()
@@ -256,6 +290,7 @@ async def ticket_create_form(
             "ticket": None,
             "members": members,
             "sprints": sprints,
+            "labels": labels,
             "priorities": PRIORITIES,
             "statuses": TICKET_STATUSES,
             "error": None,
@@ -290,9 +325,13 @@ async def ticket_create(
     story_points_raw = str(form.get("story_points", "")).strip()
     sprint_id_raw = str(form.get("sprint_id", "")).strip()
     assignee_id_raw = str(form.get("assignee_id", "")).strip()
+    due_date_raw = str(form.get("due_date", "")).strip()
+
+    label_ids_raw = list(form.getlist("label_ids"))
 
     if not title:
         members = await _get_project_members(project.id, db)
+        labels = await _get_project_labels(project.id, db)
         result = await db.execute(
             select(Sprint).where(
                 Sprint.project_id == project.id,
@@ -308,6 +347,7 @@ async def ticket_create(
                 "ticket": None,
                 "members": members,
                 "sprints": sprints,
+                "labels": labels,
                 "priorities": PRIORITIES,
                 "statuses": TICKET_STATUSES,
                 "error": "Tytul jest wymagany",
@@ -327,6 +367,10 @@ async def ticket_create(
         assignee_id = uuid.UUID(assignee_id_raw) if assignee_id_raw else None
     except ValueError:
         assignee_id = None
+    try:
+        due_date: date | None = date.fromisoformat(due_date_raw) if due_date_raw else None
+    except ValueError:
+        due_date = None
 
     if priority not in PRIORITIES:
         priority = "medium"
@@ -343,8 +387,17 @@ async def ticket_create(
         sprint_id=sprint_id,
         assignee_id=assignee_id,
         status="backlog" if sprint_id is None else "todo",
+        due_date=due_date,
     )
     db.add(ticket)
+    await db.flush()  # Get ticket.id before syncing labels
+
+    # Sync labels (validated against project)
+    project_labels = await _get_project_labels(project.id, db)
+    valid_label_ids = _parse_valid_label_ids(label_ids_raw, project_labels)
+    for lid in valid_label_ids:
+        db.add(TicketLabel(ticket_id=ticket.id, label_id=lid))
+
     await db.commit()
 
     flash(request, "Ticket zostal utworzony")
@@ -500,9 +553,11 @@ async def ticket_detail(
         .options(
             selectinload(Ticket.assignee),
             selectinload(Ticket.sprint),
+            selectinload(Ticket.labels),
             selectinload(Ticket.comments).selectinload(TicketComment.author),
             selectinload(Ticket.time_entries).selectinload(TimeTrackingEntry.user),
             selectinload(Ticket.issue),
+            selectinload(Ticket.attachments),
         )
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )
@@ -528,6 +583,8 @@ async def ticket_detail(
             "current_user_id": user_id,
             "rendered_description": rendered_description,
             "rendered_comments": rendered_comments,
+            "now_date": date.today(),
+            "attachments": ticket.attachments,
         },
         db=db,
     )
@@ -571,6 +628,181 @@ async def ticket_comment_create(
 
 
 @router.get(
+    "/{slug}/scrum/tickets/{ticket_id}/attachments/{attachment_id}/{filename}",
+    response_model=None,
+)
+async def ticket_attachment_serve(
+    request: Request,
+    slug: str,
+    ticket_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse | HTMLResponse | RedirectResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    # Weryfikacja ze zalacznik nalezy do ticketa w tym projekcie
+    result = await db.execute(
+        select(TicketAttachment)
+        .join(Ticket, TicketAttachment.ticket_id == Ticket.id)
+        .where(
+            TicketAttachment.id == attachment_id,
+            Ticket.id == ticket_id,
+            Ticket.project_id == project.id,
+        )
+    )
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        return HTMLResponse("Attachment not found", status_code=404)
+
+    try:
+        data, content_type = minio_get_attachment(attachment.storage_path)
+    except Exception:
+        return HTMLResponse("Blad pobierania pliku", status_code=500)
+
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{attachment.filename.replace(chr(34), "_").replace(chr(92), "_")}"'},
+    )
+
+
+@router.post(
+    "/{slug}/scrum/tickets/{ticket_id}/attachments/upload",
+    response_model=None,
+)
+async def ticket_attachment_upload(
+    request: Request,
+    slug: str,
+    ticket_id: uuid.UUID,
+    filepond: UploadFile,
+    db: AsyncSession = Depends(get_db),
+) -> PlainTextResponse | JSONResponse | RedirectResponse:
+    """Upload zalacznika do ticketa (FilePond compatible)."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    # Sprawdz membership
+    membership = await db.execute(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project.id,
+            ProjectMember.user_id == user_id,
+        )
+    )
+    if membership.scalar_one_or_none() is None:
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+
+    # Sprawdz czy ticket istnieje i nalezy do projektu
+    ticket_result = await db.execute(
+        select(Ticket).where(
+            Ticket.id == ticket_id,
+            Ticket.project_id == project.id,
+        )
+    )
+    if ticket_result.scalar_one_or_none() is None:
+        return JSONResponse({"error": "Ticket not found"}, status_code=404)
+
+    if filepond.filename is None or filepond.filename == "":
+        return JSONResponse({"error": "Brak nazwy pliku"}, status_code=400)
+
+    # Sanityzacja nazwy pliku
+    safe_filename = os.path.basename(filepond.filename)
+    safe_filename = re.sub(r"[^\w\s\-.]", "_", safe_filename).strip()
+    if not safe_filename:
+        safe_filename = "attachment"
+
+    data = await filepond.read()
+    if len(data) > MAX_ATTACHMENT_SIZE:
+        return JSONResponse({"error": "Plik za duzy (max 10 MB)"}, status_code=400)
+
+    content_type = filepond.content_type or "application/octet-stream"
+
+    try:
+        minio_path = minio_upload_attachment(project.slug, safe_filename, data, content_type)
+    except Exception:
+        return JSONResponse({"error": "Blad uploadu pliku"}, status_code=500)
+
+    attachment = TicketAttachment(
+        ticket_id=ticket_id,
+        filename=safe_filename,
+        storage_path=minio_path,
+        mime_type=content_type,
+        size=len(data),
+        created_via_ai=False,
+    )
+    db.add(attachment)
+    await db.commit()
+    await db.refresh(attachment)
+
+    # FilePond oczekuje plain text z server ID
+    return PlainTextResponse(str(attachment.id), status_code=200)
+
+
+@router.post(
+    "/{slug}/scrum/tickets/{ticket_id}/attachments/{attachment_id}/delete",
+    response_model=None,
+)
+async def ticket_attachment_delete(
+    request: Request,
+    slug: str,
+    ticket_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    """Usuwanie zalacznika ticketa."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    # Sprawdz membership
+    membership = await db.execute(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project.id,
+            ProjectMember.user_id == user_id,
+        )
+    )
+    if membership.scalar_one_or_none() is None:
+        return HTMLResponse("Forbidden", status_code=403)
+
+    # Sprawdz czy attachment istnieje i nalezy do ticketa w projekcie
+    result = await db.execute(
+        select(TicketAttachment)
+        .join(Ticket, TicketAttachment.ticket_id == Ticket.id)
+        .where(
+            TicketAttachment.id == attachment_id,
+            Ticket.id == ticket_id,
+            Ticket.project_id == project.id,
+        )
+    )
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        return HTMLResponse("Attachment not found", status_code=404)
+
+    with contextlib.suppress(Exception):
+        minio_delete_object(attachment.storage_path)
+
+    await db.delete(attachment)
+    await db.commit()
+
+    return HTMLResponse("", status_code=200)
+
+
+@router.get(
     "/{slug}/scrum/tickets/{ticket_id}/edit",
     response_class=HTMLResponse,
     response_model=None,
@@ -591,7 +823,7 @@ async def ticket_edit_form(
 
     result = await db.execute(
         select(Ticket)
-        .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint))
+        .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint), selectinload(Ticket.labels))
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )
     ticket = result.scalar_one_or_none()
@@ -599,6 +831,7 @@ async def ticket_edit_form(
         return HTMLResponse("Ticket not found", status_code=404)
 
     members = await _get_project_members(project.id, db)
+    labels = await _get_project_labels(project.id, db)
     result = await db.execute(
         select(Sprint).where(
             Sprint.project_id == project.id,
@@ -615,6 +848,7 @@ async def ticket_edit_form(
             "ticket": ticket,
             "members": members,
             "sprints": sprints,
+            "labels": labels,
             "priorities": PRIORITIES,
             "statuses": TICKET_STATUSES,
             "error": None,
@@ -676,6 +910,18 @@ async def ticket_edit(
     status = str(form.get("status", ticket.status))
     if status in TICKET_STATUSES:
         ticket.status = status
+
+    due_date_raw = str(form.get("due_date", "")).strip()
+    with contextlib.suppress(ValueError):
+        ticket.due_date = date.fromisoformat(due_date_raw) if due_date_raw else None
+
+    # Sync labels: remove existing, add new ones from form (validated against project)
+    label_ids_raw = list(form.getlist("label_ids"))
+    project_labels = await _get_project_labels(project.id, db)
+    valid_label_ids = _parse_valid_label_ids(label_ids_raw, project_labels)
+    await db.execute(sa_delete(TicketLabel).where(TicketLabel.ticket_id == ticket_id))
+    for lid in valid_label_ids:
+        db.add(TicketLabel(ticket_id=ticket_id, label_id=lid))
 
     await db.commit()
     flash(request, "Ticket zostal zaktualizowany")

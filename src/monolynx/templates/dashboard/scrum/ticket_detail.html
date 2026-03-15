@@ -121,6 +121,17 @@
                 </div>
                 {% endif %}
 
+                {% if ticket.labels %}
+                <div>
+                    <span class="text-gray-500">Etykiety</span>
+                    <div class="flex flex-wrap gap-1.5 mt-1">
+                        {% for label in ticket.labels %}
+                        <span class="rounded-full px-2.5 py-1 text-xs font-medium text-white" style="background-color: {{ label.color }}">{{ label.name | e }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
                 <div>
                     <span class="text-gray-500">Zalogowany czas</span>
                     <p class="text-white mt-1">
@@ -131,6 +142,27 @@
                         </span>
                     </p>
                 </div>
+
+                {% if ticket.due_date %}
+                <div>
+                    <span class="text-gray-500">Termin wykonania</span>
+                    <p class="mt-1">
+                        {% if ticket.due_date < now_date %}
+                        <span class="px-2 py-1 rounded text-xs bg-red-900 text-red-300 font-mono">
+                            Po terminie &mdash; {{ ticket.due_date.isoformat() }}
+                        </span>
+                        {% elif ticket.due_date == now_date %}
+                        <span class="px-2 py-1 rounded text-xs bg-yellow-900 text-yellow-300 font-mono">
+                            Dzisiaj &mdash; {{ ticket.due_date.isoformat() }}
+                        </span>
+                        {% else %}
+                        <span class="px-2 py-1 rounded text-xs bg-gray-700 text-gray-300 font-mono">
+                            {{ ticket.due_date.isoformat() }}
+                        </span>
+                        {% endif %}
+                    </p>
+                </div>
+                {% endif %}
 
                 <div>
                     <span class="text-gray-500">Utworzony</span>
@@ -174,6 +206,63 @@
         </div>
         {% endif %}
     </div>
+</div>
+
+<!-- Zalaczniki -->
+<div class="mt-6">
+    <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold text-white">Zalaczniki ({{ attachments|length }})</h3>
+        <button type="button"
+                onclick="document.getElementById('filepond-section').classList.toggle('hidden')"
+                class="bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition">
+            + Dodaj
+        </button>
+    </div>
+
+    <!-- FilePond widget — ukryty domyslnie -->
+    <div id="filepond-section" class="hidden mb-4">
+        <input type="file" id="filepond-input" multiple>
+    </div>
+
+    {% if attachments %}
+    <div class="space-y-2">
+        {% for att in attachments %}
+        <div class="attachment-item bg-gray-800 border border-gray-700 rounded-lg p-3 flex items-center gap-4">
+            {% if att.mime_type and att.mime_type.startswith('image/') %}
+            <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/attachments/{{ att.id }}/{{ att.filename }}" target="_blank" class="shrink-0">
+                <img src="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/attachments/{{ att.id }}/{{ att.filename }}"
+                     alt="{{ att.filename }}"
+                     class="h-16 w-16 object-cover rounded border border-gray-600">
+            </a>
+            {% else %}
+            <div class="shrink-0 w-16 h-16 bg-gray-700 rounded border border-gray-600 flex items-center justify-center">
+                <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+            </div>
+            {% endif %}
+            <div class="flex-1 min-w-0">
+                <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/attachments/{{ att.id }}/{{ att.filename }}"
+                   class="text-sm font-medium text-indigo-400 hover:text-indigo-300 transition truncate block"
+                   target="_blank">{{ att.filename | e }}</a>
+                <p class="text-xs text-gray-500 mt-0.5">
+                    {{ (att.size / 1024)|round(1) }} KB
+                    &middot; {{ att.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    {% if att.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded ml-1">AI</span>{% endif %}
+                </p>
+            </div>
+            <form hx-post="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/attachments/{{ att.id }}/delete"
+                  hx-confirm="Usunac zalacznik {{ att.filename | e }}?"
+                  hx-target="closest .attachment-item"
+                  hx-swap="outerHTML">
+                <button type="submit" class="text-red-400 hover:text-red-300 text-xs transition shrink-0">Usun</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-gray-500 text-sm italic">Brak zalacznikow</p>
+    {% endif %}
 </div>
 
 <!-- Czas pracy -->
@@ -230,7 +319,12 @@
     </form>
 </div>
 
+<!-- FilePond CSS -->
+<link href="https://unpkg.com/filepond/dist/filepond.css" rel="stylesheet">
+<link href="https://unpkg.com/filepond-plugin-image-preview/dist/filepond-plugin-image-preview.css" rel="stylesheet">
+
 <style>
+    /* copy tooltip styles */
     .copy-btn .copy-tooltip {
         visibility: hidden;
         opacity: 0;
@@ -247,7 +341,24 @@
         background-color: #065f46;
         color: #6ee7b7;
     }
+
+    /* FilePond dark theme */
+    .filepond--panel-root { background-color: #1f2937; }
+    .filepond--drop-label { color: #9ca3af; }
+    .filepond--label-action { color: #818cf8; text-decoration: underline; }
+    .filepond--item-panel { background-color: #374151; }
+    .filepond--drip-blob { background-color: #4f46e5; }
+    .filepond--file-action-button { color: white; }
+    .filepond--file { color: white; }
+    .filepond--root { border: 1px dashed #4b5563; border-radius: 0.5rem; }
 </style>
+
+<!-- FilePond JS -->
+<script src="https://unpkg.com/filepond-plugin-image-preview/dist/filepond-plugin-image-preview.js"></script>
+<script src="https://unpkg.com/filepond-plugin-file-validate-size/dist/filepond-plugin-file-validate-size.js"></script>
+<script src="https://unpkg.com/filepond-plugin-file-validate-type/dist/filepond-plugin-file-validate-type.js"></script>
+<script src="https://unpkg.com/filepond/dist/filepond.js"></script>
+
 <script>
 function copyToClipboard(btn, text, defaultLabel) {
     navigator.clipboard.writeText(text).then(function() {
@@ -260,5 +371,30 @@ function copyToClipboard(btn, text, defaultLabel) {
         }, 3000);
     });
 }
+
+// FilePond
+FilePond.registerPlugin(
+    FilePondPluginImagePreview,
+    FilePondPluginFileValidateSize,
+    FilePondPluginFileValidateType
+);
+
+const pond = FilePond.create(document.getElementById('filepond-input'), {
+    server: {
+        process: '/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/attachments/upload',
+        headers: {}
+    },
+    allowMultiple: true,
+    maxFileSize: '10MB',
+    acceptedFileTypes: ['image/*', 'application/pdf', 'text/*', 'application/zip'],
+    labelIdle: 'Przeci\u0105gnij pliki lub <span class="filepond--label-action">kliknij tutaj</span>',
+    credits: false,
+});
+
+pond.on('processfile', (error, file) => {
+    if (!error) {
+        setTimeout(() => window.location.reload(), 500);
+    }
+});
 </script>
 {% endblock %}

@@ -13,9 +13,13 @@ from monolynx.mcp_server import (
     _get_auth_header,
     _get_user_and_project,
     add_comment,
+    bulk_update_tickets,
     complete_sprint,
+    create_label,
+    create_monitor,
     create_sprint,
     create_ticket,
+    delete_monitor,
     delete_ticket,
     get_board,
     get_issue,
@@ -23,16 +27,23 @@ from monolynx.mcp_server import (
     get_project_summary,
     get_sprint,
     get_ticket,
+    invite_member,
     list_comments,
     list_issues,
+    list_labels,
+    list_members,
     list_monitors,
     list_projects,
     list_sprints,
     list_tickets,
     log_time,
     mcp,
+    remove_member,
+    search_tickets,
     start_sprint,
     update_issue_status,
+    update_monitor,
+    update_sprint,
     update_ticket,
 )
 from monolynx.mcp_server import create_wiki_page as mcp_create_wiki_page
@@ -43,6 +54,7 @@ from monolynx.mcp_server import search_wiki as mcp_search_wiki
 from monolynx.mcp_server import update_wiki_page as mcp_update_wiki_page
 from monolynx.models.event import Event
 from monolynx.models.issue import Issue
+from monolynx.models.label import Label, TicketLabel
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.project import Project
@@ -169,25 +181,39 @@ def mock_verify(mcp_user):
 
 EXPECTED_TOOLS = [
     "list_projects",
+    "get_project",
+    "update_project",
+    "delete_project",
+    "create_project",
     "list_issues",
     "get_issue",
     "update_issue_status",
+    "create_issue",
+    "list_labels",
+    "create_label",
     "list_monitors",
     "get_monitor",
+    "create_monitor",
+    "update_monitor",
+    "delete_monitor",
     "get_board",
     "get_project_summary",
     "list_tickets",
+    "search_tickets",
     "get_ticket",
     "create_ticket",
     "update_ticket",
     "delete_ticket",
+    "bulk_update_tickets",
     "list_sprints",
     "get_sprint",
     "create_sprint",
+    "update_sprint",
     "start_sprint",
     "complete_sprint",
     "list_comments",
     "add_comment",
+    "add_attachment",
     "log_time",
     "list_wiki_pages",
     "get_wiki_page",
@@ -212,6 +238,11 @@ EXPECTED_TOOLS = [
     "create_heartbeat",
     "update_heartbeat",
     "delete_heartbeat",
+    "list_members",
+    "invite_member",
+    "remove_member",
+    "get_activity_log",
+    "get_burndown",
 ]
 
 
@@ -220,7 +251,7 @@ class TestMcpToolRegistration:
     """Weryfikacja ze wszystkie narzedzia MCP sa poprawnie zarejestrowane."""
 
     async def test_list_tools_returns_all_tools(self):
-        """list_tools() zwraca wszystkie 44 narzedzia."""
+        """list_tools() zwraca wszystkie zarejestrowane narzedzia."""
         tools = await mcp.list_tools()
         tool_names = [t.name for t in tools]
         for name in EXPECTED_TOOLS:
@@ -245,7 +276,7 @@ class TestMcpToolRegistration:
         tools = await mcp.list_tools()
         for tool in tools:
             props = tool.inputSchema.get("properties", {})
-            if tool.name == "list_projects":
+            if tool.name in ("list_projects", "create_project"):
                 assert "project_slug" not in props
             else:
                 assert "project_slug" in props, f"{tool.name} nie ma parametru project_slug"
@@ -870,6 +901,531 @@ class TestDeleteTicket:
             pytest.raises(ValueError, match="Ticket nie istnieje"),
         ):
             await delete_ticket(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+# ---------------------------------------------------------------------------
+# bulk_update_tickets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestBulkUpdateTickets:
+    async def test_bulk_update_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """3 tickety — zmien status na done."""
+        tickets = [Ticket(project_id=mcp_project.id, number=i + 1, title=f"Ticket {i + 1}", status="backlog") for i in range(3)]
+        for t in tickets:
+            db_session.add(t)
+        await db_session.flush()
+
+        ticket_ids = [str(t.id) for t in tickets]
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await bulk_update_tickets(ctx, mcp_project.slug, ticket_ids, status="done")
+
+        assert result["updated"] == 3
+        assert result["failed"] == []
+        for t in tickets:
+            assert t.status == "done"
+
+    async def test_bulk_update_partial_failure(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Mix istniejacych i nieistniejacych ID — czesc aktualizuje, czesc w failed."""
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Istniejacy", status="backlog")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        nonexistent_id = str(uuid.uuid4())
+        ticket_ids = [str(ticket.id), nonexistent_id]
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await bulk_update_tickets(ctx, mcp_project.slug, ticket_ids, status="in_progress")
+
+        assert result["updated"] == 1
+        assert len(result["failed"]) == 1
+        assert result["failed"][0]["id"] == nonexistent_id
+        assert "nie istnieje" in result["failed"][0]["reason"]
+        assert ticket.status == "in_progress"
+
+    async def test_bulk_update_limit_exceeded(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """101 ticketow w jednym wywolaniu powoduje ValueError."""
+        ticket_ids = [str(uuid.uuid4()) for _ in range(101)]
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Zbyt duzo ticketow"),
+        ):
+            await bulk_update_tickets(ctx, mcp_project.slug, ticket_ids, status="done")
+
+    async def test_bulk_update_invalid_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy status przed petla powoduje ValueError (fail fast)."""
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Test", status="backlog")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy status"),
+        ):
+            await bulk_update_tickets(ctx, mcp_project.slug, [str(ticket.id)], status="invalid_status")
+        # Ticket nie zostal zmieniony
+        assert ticket.status == "backlog"
+
+    async def test_bulk_update_invalid_priority(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy priorytet przed petla powoduje ValueError (fail fast)."""
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Test", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy priorytet"),
+        ):
+            await bulk_update_tickets(ctx, mcp_project.slug, [str(ticket.id)], priority="ultra")
+        assert ticket.priority == "medium"
+
+    async def test_bulk_update_clear_sprint(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """sprint_id='' przenosi tickety do backlogu."""
+        sprint = Sprint(project_id=mcp_project.id, name="Sprint 1", start_date=date(2026, 3, 1))
+        db_session.add(sprint)
+        await db_session.flush()
+
+        tickets = [Ticket(project_id=mcp_project.id, number=i + 1, title=f"T{i + 1}", sprint_id=sprint.id) for i in range(2)]
+        for t in tickets:
+            db_session.add(t)
+        await db_session.flush()
+
+        ticket_ids = [str(t.id) for t in tickets]
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await bulk_update_tickets(ctx, mcp_project.slug, ticket_ids, sprint_id="")
+
+        assert result["updated"] == 2
+        assert result["failed"] == []
+        for t in tickets:
+            assert t.sprint_id is None
+
+    async def test_bulk_update_invalid_due_date(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy format due_date powoduje ValueError (fail fast)."""
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Test")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format daty due_date"),
+        ):
+            await bulk_update_tickets(ctx, mcp_project.slug, [str(ticket.id)], due_date="30-06-2026")
+
+    async def test_bulk_update_empty_ticket_ids(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta lista ticket_ids zwraca updated=0 i pusta liste failed."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await bulk_update_tickets(ctx, mcp_project.slug, [], status="done")
+
+        assert result["updated"] == 0
+        assert result["failed"] == []
+
+
+# ---------------------------------------------------------------------------
+# due_date: create_ticket, update_ticket, list_tickets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestTicketDueDate:
+    async def test_create_ticket_with_due_date(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """create_ticket zapisuje due_date i zwraca w response."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket(ctx, mcp_project.slug, "Ticket z terminem", due_date="2026-06-30")
+        assert result["due_date"] == "2026-06-30"
+
+    async def test_create_ticket_without_due_date(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """create_ticket bez due_date zwraca None."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_ticket(ctx, mcp_project.slug, "Ticket bez terminu")
+        assert result["due_date"] is None
+
+    async def test_create_ticket_invalid_due_date_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy format due_date rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format daty due_date"),
+        ):
+            await create_ticket(ctx, mcp_project.slug, "Zly termin", due_date="30-06-2026")
+
+    async def test_update_ticket_with_due_date(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """update_ticket ustawia due_date i zwraca w response."""
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Ticket do aktualizacji")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_ticket(ctx, mcp_project.slug, str(ticket.id), due_date="2026-07-15")
+        assert result["due_date"] == "2026-07-15"
+
+    async def test_update_ticket_clear_due_date(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """update_ticket z due_date='' czyści date."""
+        ticket = Ticket(
+            project_id=mcp_project.id,
+            number=1,
+            title="Ticket z terminem",
+            due_date=date(2026, 6, 30),
+        )
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_ticket(ctx, mcp_project.slug, str(ticket.id), due_date="")
+        assert result["due_date"] is None
+
+    async def test_update_ticket_invalid_due_date_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy format due_date w update rzuca ValueError."""
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Ticket err")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format daty due_date"),
+        ):
+            await update_ticket(ctx, mcp_project.slug, str(ticket.id), due_date="invalid")
+
+    async def test_list_tickets_filter_due_date_before(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Filtr due_date_before zwraca tylko tickety z due_date <= data."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Early", due_date=date(2026, 3, 1)))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Late", due_date=date(2026, 12, 31)))
+        db_session.add(Ticket(project_id=mcp_project.id, number=3, title="No date"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_tickets(ctx, mcp_project.slug, due_date_before="2026-06-30")
+        titles = [r["title"] for r in result if "_meta" not in r]
+        assert "Early" in titles
+        assert "Late" not in titles
+        assert "No date" not in titles
+
+    async def test_list_tickets_filter_due_date_after(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Filtr due_date_after zwraca tylko tickety z due_date >= data."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Early", due_date=date(2026, 3, 1)))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Late", due_date=date(2026, 12, 31)))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_tickets(ctx, mcp_project.slug, due_date_after="2026-06-30")
+        titles = [r["title"] for r in result if "_meta" not in r]
+        assert "Late" in titles
+        assert "Early" not in titles
+
+    async def test_list_tickets_filter_overdue(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Filtr overdue=True zwraca tylko niezakonczone tickety po terminie."""
+        past = date(2020, 1, 1)
+        future = date(2099, 12, 31)
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Overdue open", due_date=past, status="todo"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Overdue done", due_date=past, status="done"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=3, title="Future", due_date=future, status="todo"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=4, title="No date", status="todo"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_tickets(ctx, mcp_project.slug, overdue=True)
+        titles = [r["title"] for r in result if "_meta" not in r]
+        assert "Overdue open" in titles
+        assert "Overdue done" not in titles
+        assert "Future" not in titles
+        assert "No date" not in titles
+
+    async def test_list_tickets_filter_due_date_before_invalid_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy format due_date_before rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format due_date_before"),
+        ):
+            await list_tickets(ctx, mcp_project.slug, due_date_before="invalid")
+
+    async def test_get_ticket_returns_due_date(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """get_ticket zwraca due_date w ISO format."""
+        ticket = Ticket(
+            project_id=mcp_project.id,
+            number=1,
+            title="Ticket z due_date",
+            due_date=date(2026, 9, 15),
+        )
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_ticket(ctx, mcp_project.slug, str(ticket.id))
+        assert result["due_date"] == "2026-09-15"
+
+    async def test_list_tickets_includes_due_date_in_response(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """list_tickets zwraca due_date dla kazdego ticketa."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="With date", due_date=date(2026, 5, 1)))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Without date"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_tickets(ctx, mcp_project.slug)
+        tickets = [r for r in result if "_meta" not in r]
+        with_date = next(t for t in tickets if t["title"] == "With date")
+        without_date = next(t for t in tickets if t["title"] == "Without date")
+        assert with_date["due_date"] == "2026-05-01"
+        assert without_date["due_date"] is None
+
+
+# ---------------------------------------------------------------------------
+# search_tickets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSearchTickets:
+    async def test_empty_results(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Brak ticketow zwraca puste results z metadanymi."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug)
+        assert result["results"] == []
+        assert result["total"] == 0
+        assert result["page"] == 1
+        assert result["total_pages"] == 1
+
+    async def test_search_by_query_title(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """query wyszukuje po tytule (ILIKE)."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Login bug fix"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Dashboard redesign"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug, query="login")
+        assert result["total"] == 1
+        assert result["results"][0]["title"] == "Login bug fix"
+
+    async def test_search_by_query_description(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """query wyszukuje tez po opisie (ILIKE)."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Fix something", description="Affects the authentication module"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Another task", description="Unrelated work"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug, query="authentication")
+        assert result["total"] == 1
+        assert result["results"][0]["title"] == "Fix something"
+
+    async def test_filter_by_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Filtr po statusie zwraca tylko dopasowane tickety."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Done task", status="done"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Todo task", status="todo"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug, status="done")
+        assert result["total"] == 1
+        assert result["results"][0]["status"] == "done"
+
+    async def test_filter_by_priority(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Filtr po priorytecie zwraca tylko dopasowane tickety."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="High prio", priority="high"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Low prio", priority="low"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug, priority="high")
+        assert result["total"] == 1
+        assert result["results"][0]["priority"] == "high"
+
+    async def test_filter_by_assignee_email(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Filtr po assignee_email zwraca tylko tickety przypisane do danej osoby."""
+        other_user = User(email=f"assignee-{uuid.uuid4().hex[:8]}@test.com", password_hash=hash_password("pass"))
+        db_session.add(other_user)
+        await db_session.flush()
+
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Assigned to other", assignee_id=other_user.id))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Unassigned"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug, assignee_email=other_user.email)
+        assert result["total"] == 1
+        assert result["results"][0]["title"] == "Assigned to other"
+        assert result["results"][0]["assignee"] == other_user.email
+
+    async def test_filter_by_assignee_email_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy assignee_email zwraca puste wyniki."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Some ticket"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug, assignee_email="nobody@example.com")
+        assert result["total"] == 0
+        assert result["results"] == []
+
+    async def test_combined_filters(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Kombinacja query + status zwraca tylko dopasowane tickety."""
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Fix login bug", status="in_progress"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=2, title="Fix payment bug", status="done"))
+        db_session.add(Ticket(project_id=mcp_project.id, number=3, title="Other task", status="in_progress"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug, query="fix", status="in_progress")
+        assert result["total"] == 1
+        assert result["results"][0]["title"] == "Fix login bug"
+
+    async def test_pagination(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Paginacja zwraca poprawne metadane."""
+        for i in range(1, 25):
+            db_session.add(Ticket(project_id=mcp_project.id, number=i, title=f"Ticket {i}"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result_page1 = await search_tickets(ctx, mcp_project.slug, page=1)
+            result_page2 = await search_tickets(ctx, mcp_project.slug, page=2)
+
+        assert result_page1["total"] == 24
+        assert result_page1["total_pages"] == 2
+        assert result_page1["page"] == 1
+        assert len(result_page1["results"]) == 20
+
+        assert result_page2["page"] == 2
+        assert len(result_page2["results"]) == 4
+
+    async def test_response_shape(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Odpowiedz zawiera wymagane pola dla kazdego ticketa."""
+        db_session.add(
+            Ticket(
+                project_id=mcp_project.id,
+                number=1,
+                title="Shape test",
+                status="todo",
+                priority="medium",
+                story_points=3,
+                due_date=date(2026, 6, 1),
+            )
+        )
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await search_tickets(ctx, mcp_project.slug)
+
+        assert len(result["results"]) == 1
+        ticket = result["results"][0]
+        assert "id" in ticket
+        assert "key" in ticket
+        assert ticket["title"] == "Shape test"
+        assert ticket["status"] == "todo"
+        assert ticket["priority"] == "medium"
+        assert ticket["story_points"] == 3
+        assert ticket["due_date"] == "2026-06-01"
+        assert ticket["assignee"] is None
+
+    async def test_invalid_due_before_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy format due_before rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format due_before"),
+        ):
+            await search_tickets(ctx, mcp_project.slug, due_before="not-a-date")
 
 
 # ---------------------------------------------------------------------------
@@ -1619,6 +2175,80 @@ class TestGetMonitor:
             pytest.raises(ValueError, match="Monitor nie istnieje"),
         ):
             await get_monitor(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+# ---------------------------------------------------------------------------
+# delete_monitor
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestDeleteMonitor:
+    async def test_deletes_existing_monitor(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        monitor = Monitor(
+            project_id=mcp_project.id,
+            url="https://example.com",
+            name="Do usuniecia",
+            interval_value=5,
+            interval_unit="minutes",
+        )
+        db_session.add(monitor)
+        await db_session.flush()
+        monitor_id = str(monitor.id)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await delete_monitor(ctx, mcp_project.slug, monitor_id)
+
+        assert "Do usuniecia" in result["message"]
+        assert "deleted_at" in result
+
+    async def test_monitor_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Monitor nie istnieje"),
+        ):
+            await delete_monitor(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+    async def test_non_admin_cannot_delete(self, db_session, mcp_user, mcp_project, mock_factory, mock_verify):
+        # Czlonek z rola 'member' nie powinien moc usunac monitora
+        from monolynx.models.project_member import ProjectMember as ProjectMemberModel
+        from monolynx.models.user import User as UserModel
+
+        member_user = UserModel(email="member-del@example.com", is_active=True)
+        db_session.add(member_user)
+        await db_session.flush()
+
+        member_role = ProjectMemberModel(project_id=mcp_project.id, user_id=member_user.id, role="member")
+        db_session.add(member_role)
+        await db_session.flush()
+
+        monitor = Monitor(
+            project_id=mcp_project.id,
+            url="https://example.com",
+            name="Chroniony",
+            interval_value=5,
+            interval_unit="minutes",
+        )
+        db_session.add(monitor)
+        await db_session.flush()
+
+        # Mock verify zwracajacy czlonka z rola member
+        async def _verify_member(_token: str, _db):  # type: ignore[no-untyped-def]
+            return member_user
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", _verify_member),
+            pytest.raises(ValueError, match="Tylko owner lub admin"),
+        ):
+            await delete_monitor(ctx, mcp_project.slug, str(monitor.id))
 
 
 # ---------------------------------------------------------------------------
@@ -3047,3 +3677,981 @@ class TestBulkCreateGraphEdges:
         assert result["created"] == 0
         assert len(result["errors"]) == 1
         assert "DB error" in result["errors"][0]
+
+
+# ---------------------------------------------------------------------------
+# create_monitor
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCreateMonitor:
+    async def test_create_monitor_minimal_params(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Tworzenie monitora z minimalnymi parametrami zwraca poprawny slownik."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value=None),
+        ):
+            result = await create_monitor(ctx, mcp_project.slug, "My Monitor", "https://example.com")
+
+        assert result["name"] == "My Monitor"
+        assert result["url"] == "https://example.com"
+        assert result["interval_value"] == 5
+        assert result["interval_unit"] == "minutes"
+        assert result["is_active"] is True
+        assert "id" in result
+        assert "created_at" in result
+
+    async def test_create_monitor_with_custom_interval(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Tworzenie monitora z custom interval_value i interval_unit."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value=None),
+        ):
+            result = await create_monitor(
+                ctx,
+                mcp_project.slug,
+                "Hourly Monitor",
+                "https://example.com/health",
+                interval_value=2,
+                interval_unit="hours",
+            )
+
+        assert result["interval_value"] == 2
+        assert result["interval_unit"] == "hours"
+        assert result["name"] == "Hourly Monitor"
+
+    async def test_create_monitor_empty_name_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa monitora rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa monitora nie moze byc pusta"),
+        ):
+            await create_monitor(ctx, mcp_project.slug, "   ", "https://example.com")
+
+    async def test_create_monitor_invalid_url_scheme_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """URL bez http:// lub https:// rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="URL musi zaczynac sie od http:// lub https://"),
+        ):
+            await create_monitor(ctx, mcp_project.slug, "Bad URL Monitor", "ftp://example.com")
+
+    async def test_create_monitor_ssrf_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """URL wskazujacy na prywatny adres IP jest blokowany przez SSRF protection."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value="adres lokalny niedozwolony"),
+            pytest.raises(ValueError, match="Niedozwolony URL"),
+        ):
+            await create_monitor(ctx, mcp_project.slug, "SSRF Monitor", "http://localhost/secret")
+
+    async def test_create_monitor_invalid_interval_unit_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy interval_unit rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value=None),
+            pytest.raises(ValueError, match="interval_unit musi byc jednym z"),
+        ):
+            await create_monitor(ctx, mcp_project.slug, "Monitor", "https://example.com", interval_unit="seconds")
+
+    async def test_create_monitor_interval_value_zero_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """interval_value=0 rzuca ValueError (poza zakresem 1-60)."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value=None),
+            pytest.raises(ValueError, match="interval_value musi byc liczba od 1 do 60"),
+        ):
+            await create_monitor(ctx, mcp_project.slug, "Monitor", "https://example.com", interval_value=0)
+
+    async def test_create_monitor_interval_value_61_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """interval_value=61 rzuca ValueError (poza zakresem 1-60)."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value=None),
+            pytest.raises(ValueError, match="interval_value musi byc liczba od 1 do 60"),
+        ):
+            await create_monitor(ctx, mcp_project.slug, "Monitor", "https://example.com", interval_value=61)
+
+    async def test_create_monitor_limit_exceeded_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Osiagniecie limitu 20 monitorow rzuca ValueError."""
+        for i in range(20):
+            db_session.add(
+                Monitor(
+                    project_id=mcp_project.id,
+                    url=f"https://example{i}.com",
+                    name=f"Monitor {i}",
+                    interval_value=5,
+                    interval_unit="minutes",
+                )
+            )
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value=None),
+            pytest.raises(ValueError, match="Osiagnieto limit 20 monitorow na projekt"),
+        ):
+            await create_monitor(ctx, mcp_project.slug, "One More Monitor", "https://new.example.com")
+
+
+# ---------------------------------------------------------------------------
+# update_monitor
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestUpdateMonitor:
+    async def test_update_name_only(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Aktualizacja tylko nazwy zostawia pozostale pola bez zmian."""
+        monitor = Monitor(
+            project_id=mcp_project.id,
+            url="https://example.com",
+            name="Stara nazwa",
+            interval_value=5,
+            interval_unit="minutes",
+        )
+        db_session.add(monitor)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_monitor(ctx, mcp_project.slug, str(monitor.id), name="Nowa nazwa")
+
+        assert result["name"] == "Nowa nazwa"
+        assert result["url"] == "https://example.com"
+        assert result["interval_value"] == 5
+        assert result["interval_unit"] == "minutes"
+        assert "id" in result
+        assert "created_at" in result
+
+    async def test_update_url(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Aktualizacja URL przechodzi walidacje scheme i SSRF."""
+        monitor = Monitor(
+            project_id=mcp_project.id,
+            url="https://old.example.com",
+            name="Monitor",
+            interval_value=5,
+            interval_unit="minutes",
+        )
+        db_session.add(monitor)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value=None),
+        ):
+            result = await update_monitor(ctx, mcp_project.slug, str(monitor.id), url="https://new.example.com")
+
+        assert result["url"] == "https://new.example.com"
+
+    async def test_update_interval(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Aktualizacja interval_value i interval_unit jednoczesnie."""
+        monitor = Monitor(
+            project_id=mcp_project.id,
+            url="https://example.com",
+            name="Monitor",
+            interval_value=5,
+            interval_unit="minutes",
+        )
+        db_session.add(monitor)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_monitor(ctx, mcp_project.slug, str(monitor.id), interval_value=2, interval_unit="hours")
+
+        assert result["interval_value"] == 2
+        assert result["interval_unit"] == "hours"
+
+    async def test_update_monitor_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy monitor_id rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Monitor nie istnieje"),
+        ):
+            await update_monitor(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+    async def test_update_empty_name_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa (po strip) rzuca ValueError przed zapytaniem do DB."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa monitora nie moze byc pusta"),
+        ):
+            await update_monitor(ctx, mcp_project.slug, str(uuid.uuid4()), name="   ")
+
+    async def test_update_invalid_url_scheme_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """URL bez http:// lub https:// rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="URL musi zaczynac sie od http:// lub https://"),
+        ):
+            await update_monitor(ctx, mcp_project.slug, str(uuid.uuid4()), url="ftp://bad.example.com")
+
+    async def test_update_ssrf_url_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """URL wskazujacy na prywatny IP jest blokowany przez SSRF protection."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server._is_url_safe", return_value="adres lokalny niedozwolony"),
+            pytest.raises(ValueError, match="Niedozwolony URL"),
+        ):
+            await update_monitor(ctx, mcp_project.slug, str(uuid.uuid4()), url="http://localhost/secret")
+
+    async def test_update_invalid_interval_unit_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy interval_unit rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="interval_unit musi byc jednym z"),
+        ):
+            await update_monitor(ctx, mcp_project.slug, str(uuid.uuid4()), interval_unit="seconds")
+
+    async def test_update_interval_value_out_of_range_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """interval_value poza zakresem 1-60 rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="interval_value musi byc liczba od 1 do 60"),
+        ):
+            await update_monitor(ctx, mcp_project.slug, str(uuid.uuid4()), interval_value=0)
+
+
+# ---------------------------------------------------------------------------
+# update_sprint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestUpdateSprint:
+    async def test_update_name(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana nazwy sprintu zwraca zaktualizowane dane."""
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Old Name",
+            start_date=date(2026, 4, 1),
+            status="planning",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_sprint(ctx, mcp_project.slug, str(sprint.id), name="New Name")
+
+        assert result["name"] == "New Name"
+        assert result["id"] == str(sprint.id)
+        assert result["status"] == "planning"
+
+    async def test_update_goal(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana celu sprintu zapisuje nowy goal."""
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Goal Sprint",
+            start_date=date(2026, 4, 1),
+            status="planning",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_sprint(ctx, mcp_project.slug, str(sprint.id), goal="Deliver feature X")
+
+        assert result["goal"] == "Deliver feature X"
+
+    async def test_update_dates(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana dat start_date i end_date dla sprintu w statusie planning."""
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Date Sprint",
+            start_date=date(2026, 4, 1),
+            end_date=date(2026, 4, 14),
+            status="planning",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_sprint(
+                ctx,
+                mcp_project.slug,
+                str(sprint.id),
+                start_date="2026-05-01",
+                end_date="2026-05-15",
+            )
+
+        assert result["start_date"] == "2026-05-01"
+        assert result["end_date"] == "2026-05-15"
+
+    async def test_update_dates_on_completed_sprint_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana dat zakonczonego sprintu rzuca ValueError."""
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Completed Sprint",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 14),
+            status="completed",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nie mozna zmienic dat zakonczonego sprintu"),
+        ):
+            await update_sprint(ctx, mcp_project.slug, str(sprint.id), end_date="2026-03-21")
+
+    async def test_update_name_on_completed_sprint_succeeds(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana nazwy zakonczonego sprintu jest dozwolona."""
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Old Completed Name",
+            start_date=date(2026, 3, 1),
+            status="completed",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_sprint(ctx, mcp_project.slug, str(sprint.id), name="Renamed Completed")
+
+        assert result["name"] == "Renamed Completed"
+        assert result["status"] == "completed"
+
+    async def test_update_end_date_before_start_date_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """end_date <= start_date rzuca ValueError."""
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Date Validation Sprint",
+            start_date=date(2026, 4, 10),
+            status="planning",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Data zakonczenia musi byc pozniejsza niz data rozpoczecia"),
+        ):
+            await update_sprint(
+                ctx,
+                mcp_project.slug,
+                str(sprint.id),
+                start_date="2026-04-10",
+                end_date="2026-04-10",
+            )
+
+    async def test_update_nonexistent_sprint_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Sprint nie istnieje rzuca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Sprint nie istnieje"),
+        ):
+            await update_sprint(ctx, mcp_project.slug, str(uuid.uuid4()), name="Ghost Sprint")
+
+    async def test_update_empty_name_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa (po strip) rzuca ValueError."""
+        sprint = Sprint(
+            project_id=mcp_project.id,
+            name="Valid Name",
+            start_date=date(2026, 4, 1),
+            status="planning",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa sprintu nie moze byc pusta"),
+        ):
+            await update_sprint(ctx, mcp_project.slug, str(sprint.id), name="   ")
+
+
+# ---------------------------------------------------------------------------
+# list_members
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListMembers:
+    async def test_single_owner(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """list_members zwraca jednego ownera."""
+        mcp_user.first_name = "Jan"
+        mcp_user.last_name = "Kowalski"
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_members(ctx, mcp_project.slug)
+
+        assert len(result) == 1
+        assert result[0]["email"] == mcp_user.email
+        assert result[0]["name"] == "Jan Kowalski"
+        assert result[0]["role"] == "owner"
+        assert result[0]["user_id"] == str(mcp_user.id)
+        assert "joined_at" in result[0]
+
+    async def test_multiple_roles_sorted(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """list_members: owner na gorze, potem admin, potem member — alfabetycznie w grupie."""
+        admin_user = User(
+            email=f"admin-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            first_name="Zenon",
+            last_name="Admin",
+        )
+        member_user = User(
+            email=f"member-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            first_name="Anna",
+            last_name="Member",
+        )
+        db_session.add_all([admin_user, member_user])
+        await db_session.flush()
+
+        db_session.add(ProjectMember(project_id=mcp_project.id, user_id=admin_user.id, role="admin"))
+        db_session.add(ProjectMember(project_id=mcp_project.id, user_id=member_user.id, role="member"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_members(ctx, mcp_project.slug)
+
+        assert len(result) == 3
+        assert result[0]["role"] == "owner"
+        assert result[1]["role"] == "admin"
+        assert result[2]["role"] == "member"
+
+    async def test_name_fallback_to_email(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Gdy first_name i last_name sa puste, name to email."""
+        mcp_user.first_name = ""
+        mcp_user.last_name = ""
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_members(ctx, mcp_project.slug)
+
+        assert result[0]["name"] == mcp_user.email
+
+    async def test_returns_required_fields(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Kazdy element wyniku zawiera: user_id, name, email, role, joined_at."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_members(ctx, mcp_project.slug)
+
+        assert len(result) >= 1
+        for item in result:
+            assert "user_id" in item
+            assert "name" in item
+            assert "email" in item
+            assert "role" in item
+            assert "joined_at" in item
+
+
+# ---------------------------------------------------------------------------
+# invite_member
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestInviteMember:
+    """Testy narzedzia MCP invite_member."""
+
+    async def test_invite_existing_active_user_adds_as_member(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Happy path: owner zaprasza istniejacego aktywnego usera — dodany jako member bez emaila."""
+        # Arrange
+        invited_user = User(
+            email=f"invited-existing-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            is_active=True,
+        )
+        db_session.add(invited_user)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.send_invitation_email") as mock_email,
+        ):
+            # Act
+            result = await invite_member(ctx, mcp_project.slug, invited_user.email, role="member")
+
+        # Assert
+        assert result["user_email"] == invited_user.email
+        assert result["role"] == "member"
+        assert "dodany do projektu" in result["message"]
+        # Brak wyslania emaila — user juz istnieje i jest aktywny
+        mock_email.assert_not_called()
+        # Sprawdz ze ProjectMember zostal dodany
+        await db_session.refresh(invited_user)
+
+    async def test_invite_new_user_creates_account_and_sends_email(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Happy path: owner zaprasza nieistniejacy email — nowy User + ProjectMember + email wysłany."""
+        # Arrange
+        new_email = f"brand-new-{uuid.uuid4().hex[:8]}@invited.com"
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.send_invitation_email") as mock_email,
+        ):
+            # Act
+            result = await invite_member(ctx, mcp_project.slug, new_email, role="member")
+
+        # Assert — klucze odpowiedzi wskazujace na flow zaproszenia
+        assert result["user_email"] == new_email
+        assert result["role"] == "member"
+        assert "invitation_id" in result
+        assert "expires_at" in result
+        assert "Zaproszenie wyslane" in result["message"]
+        mock_email.assert_called_once()
+
+    async def test_invite_with_admin_role_succeeds(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zaproszenie z rola 'admin' jest dozwolone."""
+        # Arrange
+        new_email = f"admin-invite-{uuid.uuid4().hex[:8]}@test.com"
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.send_invitation_email"),
+        ):
+            # Act
+            result = await invite_member(ctx, mcp_project.slug, new_email, role="admin")
+
+        # Assert
+        assert result["role"] == "admin"
+
+    async def test_invite_with_owner_role_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Proba zaproszenia z rola 'owner' powinna zwrocic ValueError."""
+        # Arrange
+        ctx = _make_ctx()
+
+        # Act / Assert
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="owner"),
+        ):
+            await invite_member(ctx, mcp_project.slug, "anyone@test.com", role="owner")
+
+    async def test_invite_already_member_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Proba zaproszenia osoby, ktora jest juz czlonkiem projektu, zwraca ValueError."""
+        # Arrange — mcp_user jest juz ownerem projektu (mcp_member fixture)
+        ctx = _make_ctx()
+
+        # Act / Assert
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="juz czlonkiem projektu"),
+        ):
+            await invite_member(ctx, mcp_project.slug, mcp_user.email)
+
+    async def test_invite_by_regular_member_raises_value_error(self, db_session, mcp_project, mock_factory):
+        """Uzytkownik z rola 'member' nie moze zapraszac — brak uprawnien."""
+        # Arrange
+        regular_user = User(
+            email=f"regular-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            is_active=True,
+        )
+        db_session.add(regular_user)
+        await db_session.flush()
+
+        db_session.add(ProjectMember(project_id=mcp_project.id, user_id=regular_user.id, role="member"))
+        await db_session.flush()
+
+        mock_verify_regular = AsyncMock(return_value=regular_user)
+
+        ctx = _make_ctx()
+        # Act / Assert
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify_regular),
+            pytest.raises(ValueError, match="Tylko owner lub admin"),
+        ):
+            await invite_member(ctx, mcp_project.slug, "someone@test.com")
+
+    async def test_invite_empty_email_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusty email (po strip) powinien zwrocic ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Email nie moze byc pusty"),
+        ):
+            await invite_member(ctx, mcp_project.slug, "   ")
+
+    async def test_invite_invalid_email_format_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Email bez znaku @ powinien zwrocic ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format"),
+        ):
+            await invite_member(ctx, mcp_project.slug, "notavalidemail")
+
+    async def test_invite_inactive_user_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Proba zaproszenia dezaktywowanego uzytkownika zwraca ValueError."""
+        # Arrange
+        inactive_user = User(
+            email=f"inactive-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            is_active=False,
+        )
+        db_session.add(inactive_user)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="dezaktywowany"),
+        ):
+            await invite_member(ctx, mcp_project.slug, inactive_user.email)
+
+
+# ---------------------------------------------------------------------------
+# remove_member
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestRemoveMember:
+    """Testy narzedzia MCP remove_member."""
+
+    async def test_owner_removes_regular_member(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Happy path: owner usuwa czlonka z rola 'member'."""
+        target_user = User(
+            email=f"target-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            is_active=True,
+        )
+        db_session.add(target_user)
+        await db_session.flush()
+
+        db_session.add(ProjectMember(project_id=mcp_project.id, user_id=target_user.id, role="member"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await remove_member(ctx, mcp_project.slug, target_user.email)
+
+        assert "usuniety" in result["message"]
+        assert target_user.email in result["message"]
+
+    async def test_owner_removes_admin_member(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Owner moze usunac admina."""
+        admin_user = User(
+            email=f"admin-remove-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            is_active=True,
+        )
+        db_session.add(admin_user)
+        await db_session.flush()
+
+        db_session.add(ProjectMember(project_id=mcp_project.id, user_id=admin_user.id, role="admin"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await remove_member(ctx, mcp_project.slug, admin_user.email)
+
+        assert "usuniety" in result["message"]
+
+    async def test_cannot_remove_owner_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Proba usuniecia ownera projektu zwraca ValueError."""
+        # mcp_user jest ownerem projektu (mcp_member fixture)
+        # Dodaj drugiego ownera, zeby moc sprobowac usunac mcp_usera jako inny owner
+        second_owner = User(
+            email=f"second-owner-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            is_active=True,
+        )
+        db_session.add(second_owner)
+        await db_session.flush()
+
+        db_session.add(ProjectMember(project_id=mcp_project.id, user_id=second_owner.id, role="owner"))
+        await db_session.flush()
+
+        mock_verify_second = AsyncMock(return_value=second_owner)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify_second),
+            pytest.raises(ValueError, match="ownera projektu"),
+        ):
+            await remove_member(ctx, mcp_project.slug, mcp_user.email)
+
+    async def test_user_not_found_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Proba usuniecia uzytkownika, ktory nie istnieje w systemie, zwraca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie istnieje w systemie"),
+        ):
+            await remove_member(ctx, mcp_project.slug, "nonexistent@test.com")
+
+    async def test_user_not_member_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Proba usuniecia uzytkownika, ktory nie jest czlonkiem projektu, zwraca ValueError."""
+        non_member = User(
+            email=f"non-member-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            is_active=True,
+        )
+        db_session.add(non_member)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie jest czlonkiem projektu"),
+        ):
+            await remove_member(ctx, mcp_project.slug, non_member.email)
+
+    async def test_regular_member_cannot_remove_raises_value_error(self, db_session, mcp_project, mock_factory):
+        """Uzytkownik z rola 'member' nie moze usuwac czlonkow — brak uprawnien."""
+        regular_user = User(
+            email=f"regular-rm-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash=hash_password("pass"),
+            is_active=True,
+        )
+        db_session.add(regular_user)
+        await db_session.flush()
+
+        db_session.add(ProjectMember(project_id=mcp_project.id, user_id=regular_user.id, role="member"))
+        await db_session.flush()
+
+        mock_verify_regular = AsyncMock(return_value=regular_user)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify_regular),
+            pytest.raises(ValueError, match="Tylko owner lub admin"),
+        ):
+            await remove_member(ctx, mcp_project.slug, "anyone@test.com")
+
+    async def test_empty_email_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusty email (po strip) powinien zwrocic ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Email nie moze byc pusty"),
+        ):
+            await remove_member(ctx, mcp_project.slug, "   ")
+
+    async def test_invalid_email_format_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Email bez @ powinien zwrocic ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format adresu email"),
+        ):
+            await remove_member(ctx, mcp_project.slug, "invalid-email")
+
+
+# ---------------------------------------------------------------------------
+# Testy: list_labels / create_label
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCreateLabel:
+    """Testy narzedzia create_label."""
+
+    async def test_happy_path_without_color(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Tworzy etykiete z losowym kolorem gdy color nie podany."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_label(ctx, mcp_project.slug, "Bug")
+
+        assert result["name"] == "Bug"
+        assert result["color"].startswith("#")
+        assert len(result["color"]) == 7
+        assert "id" in result
+        assert "message" in result
+
+    async def test_happy_path_with_color(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Tworzy etykiete z podanym kolorem."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_label(ctx, mcp_project.slug, "Feature", color="#3498db")
+
+        assert result["name"] == "Feature"
+        assert result["color"] == "#3498db"
+
+    async def test_empty_name_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa powinna zwrocic ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie moze byc pusta"),
+        ):
+            await create_label(ctx, mcp_project.slug, "   ")
+
+    async def test_duplicate_name_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Duplikat nazwy w tym samym projekcie zwraca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            await create_label(ctx, mcp_project.slug, "Duplicate")
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="juz istnieje"),
+        ):
+            await create_label(ctx, mcp_project.slug, "Duplicate")
+
+    async def test_invalid_color_raises_value_error(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy kolor zwraca ValueError."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="formacie hex"),
+        ):
+            await create_label(ctx, mcp_project.slug, "BadColor", color="red")
+
+
+@pytest.mark.unit
+class TestListLabels:
+    """Testy narzedzia list_labels."""
+
+    async def test_empty_list(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zwraca pusta liste gdy brak etykiet."""
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_labels(ctx, mcp_project.slug)
+
+        assert result == []
+
+    async def test_returns_labels_with_tickets_count(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zwraca etykiety z poprawna liczba tickets_count."""
+        label = Label(project_id=mcp_project.id, name="TestLabel", color="#2ecc71")
+        db_session.add(label)
+
+        ticket = Ticket(
+            project_id=mcp_project.id,
+            number=9001,
+            title="Ticket z labelem",
+            status="backlog",
+            priority="medium",
+            order=0,
+        )
+        db_session.add(ticket)
+        await db_session.flush()
+
+        db_session.add(TicketLabel(ticket_id=ticket.id, label_id=label.id))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_labels(ctx, mcp_project.slug)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "TestLabel"
+        assert result[0]["color"] == "#2ecc71"
+        assert result[0]["tickets_count"] == 1

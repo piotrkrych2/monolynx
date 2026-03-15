@@ -115,12 +115,13 @@ def _feature_500ki(lang: str) -> dict[str, Any]:
                 },
                 {"title": "Napraw i zamknij", "desc": "Oznacz issue jako resolved lub utwórz ticket Scrum do naprawy w sprincie."},
             ],
-            "ai_intro": "Twój agent AI może przeglądać błędy, analizować stacktrace i tworzyć z nich tickety — wszystko przez MCP.",
+            "ai_intro": "Twój agent AI może przeglądać błędy, analizować stacktrace, ręcznie zgłaszać bugi i tworzyć z nich tickety — 5 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_issues", "desc": "Lista błędów z filtrowaniem po statusie i wyszukiwaniem tekstowym"},
                 {"name": "get_issue", "desc": "Pełne szczegóły: stacktrace, dane requestu, historia eventów"},
                 {"name": "update_issue_status", "desc": "Oznacz błąd jako rozwiązany lub otwórz ponownie"},
                 {"name": "create_ticket_from_issue", "desc": "Utwórz ticket Scrum z automatycznie wypełnionym opisem błędu"},
+                {"name": "create_issue", "desc": "Ręczne zgłoszenie błędu bez wygenerowania prawdziwego wyjątku"},
             ],
             "tech_details": [
                 {
@@ -183,12 +184,13 @@ def _feature_500ki(lang: str) -> dict[str, Any]:
             {"title": "Analyze in the dashboard", "desc": "Issue list sorted by last occurrence. Click to see full stacktrace and context."},
             {"title": "Fix and close", "desc": "Mark the issue as resolved or create a Scrum ticket for sprint work."},
         ],
-        "ai_intro": "Your AI agent can browse errors, analyze stacktraces, and create tickets from them — all via MCP.",
+        "ai_intro": "Your AI agent can browse errors, analyze stacktraces, manually report bugs, and create tickets from them — 5 MCP tools.",
         "mcp_tools": [
             {"name": "list_issues", "desc": "List errors with status filtering and text search"},
             {"name": "get_issue", "desc": "Full details: stacktrace, request data, event history"},
             {"name": "update_issue_status", "desc": "Mark error as resolved or reopen"},
             {"name": "create_ticket_from_issue", "desc": "Create a Scrum ticket with auto-filled error description"},
+            {"name": "create_issue", "desc": "Manually report a bug without generating a real exception"},
         ],
         "tech_details": [
             {
@@ -257,7 +259,7 @@ def _feature_scrum(lang: str) -> dict[str, Any]:
                 {"title": "Pracuj i przesuwaj karty", "desc": "Zmieniaj statusy na tablicy Kanban. Dodawaj komentarze i loguj czas."},
                 {"title": "Zakończ sprint", "desc": "Niedokończone tickety automatycznie wracają do backlogu. Sprawdź velocity w raportach."},
             ],
-            "ai_intro": "Agent AI może zarządzać całym cyklem Scrum: tworzyć tickety, przenosić między sprintami, dodawać komentarze i logować czas — 16 narzędzi MCP.",
+            "ai_intro": "Agent AI może zarządzać całym cyklem Scrum: tworzyć tickety, przenosić między sprintami, dodawać komentarze, etykiety, załączniki i logować czas — 15 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_tickets", "desc": "Filtrowanie po statusie, priorytecie, sprincie, wyszukiwanie"},
                 {"name": "create_ticket", "desc": "Tworzenie z auto-numeracją, opcjonalnym sprintem i przypisaniem"},
@@ -267,6 +269,13 @@ def _feature_scrum(lang: str) -> dict[str, Any]:
                 {"name": "start_sprint / complete_sprint", "desc": "Zarządzanie cyklem życia sprintu"},
                 {"name": "add_comment", "desc": "Dodaj komentarz Markdown do ticketu"},
                 {"name": "log_time", "desc": "Zaloguj godziny pracy z opisem"},
+                {"name": "search_tickets", "desc": "Zaawansowane wyszukiwanie ticketów z pełnotekstowym filtrowaniem"},
+                {"name": "bulk_update_tickets", "desc": "Masowa zmiana statusu, priorytetu lub sprintu wielu ticketów"},
+                {"name": "add_attachment", "desc": "Dodaj załącznik (plik, screenshot) do ticketu"},
+                {"name": "list_labels", "desc": "Lista etykiet projektu z liczbą przypisanych ticketów"},
+                {"name": "create_label", "desc": "Utwórz nową etykietę z nazwą i kolorem"},
+                {"name": "update_sprint", "desc": "Edytuj nazwę, cel lub daty sprintu"},
+                {"name": "get_burndown", "desc": "Dane burndown chart — ideal/actual line, velocity, prognoza"},
             ],
             "tech_details": [
                 {"label": "Paginacja", "value": "20 ticketów na stronę. Filtry aplikowane przed paginacją, sumy story points obliczane po filtrach."},
@@ -331,7 +340,7 @@ def _feature_scrum(lang: str) -> dict[str, Any]:
             {"title": "Work and move cards", "desc": "Update statuses on the Kanban board. Add comments and log time."},
             {"title": "Complete the sprint", "desc": "Unfinished tickets automatically return to backlog. Check velocity in reports."},
         ],
-        "ai_intro": "Your AI agent can manage the entire Scrum cycle: create tickets, move between sprints, add comments, and log time — 16 MCP tools.",
+        "ai_intro": "Your AI agent can manage the entire Scrum cycle: create tickets, move between sprints, add comments, labels, attachments, and log time — 15 MCP tools.",
         "mcp_tools": [
             {"name": "list_tickets", "desc": "Filter by status, priority, sprint, text search"},
             {"name": "create_ticket", "desc": "Create with auto-numbering, optional sprint and assignee"},
@@ -341,6 +350,13 @@ def _feature_scrum(lang: str) -> dict[str, Any]:
             {"name": "start_sprint / complete_sprint", "desc": "Sprint lifecycle management"},
             {"name": "add_comment", "desc": "Add Markdown comment to a ticket"},
             {"name": "log_time", "desc": "Log work hours with description"},
+            {"name": "search_tickets", "desc": "Advanced ticket search with full-text filtering"},
+            {"name": "bulk_update_tickets", "desc": "Bulk update status, priority or sprint for multiple tickets"},
+            {"name": "add_attachment", "desc": "Add an attachment (file, screenshot) to a ticket"},
+            {"name": "list_labels", "desc": "List project labels with assigned ticket counts"},
+            {"name": "create_label", "desc": "Create a new label with name and color"},
+            {"name": "update_sprint", "desc": "Edit sprint name, goal or dates"},
+            {"name": "get_burndown", "desc": "Burndown chart data — ideal/actual line, velocity, forecast"},
         ],
         "tech_details": [
             {"label": "Pagination", "value": "20 tickets per page. Filters applied before pagination, story point sums computed after filters."},
@@ -400,10 +416,13 @@ def _feature_monitoring(lang: str) -> dict[str, Any]:
                 {"title": "Wyniki zapisywane w historii", "desc": "Każdy check to rekord w bazie: timestamp, czas odpowiedzi (ms), sukces/porażka."},
                 {"title": "Analizuj w dashboardzie", "desc": "Strona szczegółów pokazuje trend uptime, średni czas odpowiedzi i pełną historię."},
             ],
-            "ai_intro": "Agent AI widzi status wszystkich monitorów i ich metryki — może szybko zidentyfikować problemy z dostępnością.",
+            "ai_intro": "Agent AI może tworzyć, edytować i usuwać monitory, śledzić status i metryki — 5 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_monitors", "desc": "Wszystkie monitory z ostatnim statusem checka"},
                 {"name": "get_monitor", "desc": "Pełna historia z paginacją, metryki uptime, średni czas odpowiedzi"},
+                {"name": "create_monitor", "desc": "Utwórz nowy monitor URL z interwałem i oczekiwanym statusem"},
+                {"name": "update_monitor", "desc": "Edytuj nazwę, URL, interwał lub oczekiwany status monitora"},
+                {"name": "delete_monitor", "desc": "Usuń monitor wraz z historią checków"},
             ],
             "tech_details": [
                 {
@@ -459,10 +478,13 @@ def _feature_monitoring(lang: str) -> dict[str, Any]:
             {"title": "Results saved to history", "desc": "Each check is a database record: timestamp, response time (ms), success/failure."},
             {"title": "Analyze in the dashboard", "desc": "Detail page shows uptime trend, average response time, and full history."},
         ],
-        "ai_intro": "Your AI agent sees the status of all monitors and their metrics — quickly identifying availability issues.",
+        "ai_intro": "Your AI agent can create, edit, and delete monitors, track status and metrics — 5 MCP tools.",
         "mcp_tools": [
             {"name": "list_monitors", "desc": "All monitors with last check status"},
             {"name": "get_monitor", "desc": "Full history with pagination, uptime metrics, average response time"},
+            {"name": "create_monitor", "desc": "Create a new URL monitor with interval and expected status"},
+            {"name": "update_monitor", "desc": "Edit monitor name, URL, interval or expected status"},
+            {"name": "delete_monitor", "desc": "Delete a monitor with its check history"},
         ],
         "tech_details": [
             {

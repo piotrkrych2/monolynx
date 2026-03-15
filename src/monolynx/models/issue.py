@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -36,6 +37,7 @@ class Issue(Base):
     level: Mapped[str] = mapped_column(String(20), default="error")
     status: Mapped[str] = mapped_column(String(20), default="unresolved", index=True)
     event_count: Mapped[int] = mapped_column(Integer, default=1)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'auto'"))
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

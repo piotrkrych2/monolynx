@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import logging
+import os
+import re
+import secrets
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlalchemy import case, func, select
+from sqlalchemy import case, delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from monolynx.config import settings as app_settings
@@ -17,28 +24,38 @@ from monolynx.constants import (
     BOARD_STATUSES,
     GRAPH_EDGE_TYPES,
     GRAPH_NODE_TYPES,
+    INTERVAL_UNITS,
     PRIORITIES,
     TICKET_STATUSES,
 )
+from monolynx.dashboard.helpers import SLUG_PATTERN
+from monolynx.dashboard.monitoring import _is_url_safe
+from monolynx.dashboard.projects import CODE_PATTERN
 from monolynx.database import async_session_factory
 from monolynx.models.event import Event
 from monolynx.models.heartbeat import Heartbeat
 from monolynx.models.issue import Issue
+from monolynx.models.label import Label, TicketLabel
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
+from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services import graph as graph_service
+from monolynx.services.activity import get_activity_log as svc_get_activity_log
+from monolynx.services.burndown import get_burndown_data as svc_get_burndown_data
+from monolynx.services.email import send_invitation_email
 from monolynx.services.heartbeat import create_heartbeat as svc_create_heartbeat
 from monolynx.services.heartbeat import delete_heartbeat as svc_delete_heartbeat
 from monolynx.services.heartbeat import get_heartbeat_status
 from monolynx.services.heartbeat import update_heartbeat as svc_update_heartbeat
 from monolynx.services.mcp_auth import verify_mcp_token
+from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
 from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
@@ -58,6 +75,21 @@ from monolynx.services.wiki import (
 )
 
 logger = logging.getLogger("monolynx.mcp")
+
+INVITATION_DAYS = 7
+
+LABEL_COLOR_PALETTE = [
+    "#e74c3c",
+    "#e67e22",
+    "#f1c40f",
+    "#2ecc71",
+    "#1abc9c",
+    "#3498db",
+    "#9b59b6",
+    "#e91e63",
+    "#00bcd4",
+    "#8bc34a",
+]
 
 
 def _build_allowed_hosts() -> list[str]:
@@ -156,6 +188,30 @@ async def _get_user_and_project(ctx: Context[Any, Any], project_slug: str) -> tu
     return user, project
 
 
+async def _get_user_member_and_project(ctx: Context[Any, Any], project_slug: str) -> tuple[User, ProjectMember, Project]:
+    """Autoryzuj uzytkownika, sprawdz dostep do projektu i zwroc obiekt ProjectMember."""
+    raw_token = await _get_auth_header(ctx)
+    user = await _verify_token(raw_token)
+
+    async with async_session_factory() as db:
+        result = await db.execute(select(Project).where(Project.slug == project_slug, Project.is_active.is_(True)))
+        project = result.scalar_one_or_none()
+        if project is None:
+            raise ValueError(f"Projekt '{project_slug}' nie istnieje")
+
+        member_result = await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == user.id,
+            )
+        )
+        member = member_result.scalar_one_or_none()
+        if member is None:
+            raise ValueError(f"Uzytkownik nie jest czlonkiem projektu '{project_slug}'")
+
+    return user, member, project
+
+
 # --- Projekty ---
 
 
@@ -185,6 +241,538 @@ async def list_projects(ctx: Context[Any, Any]) -> list[dict[str, Any]]:
         }
         for project, role in rows
     ]
+
+
+@mcp.tool()
+async def get_project(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> dict[str, Any]:
+    """Pelne szczegoly projektu: nazwa, opis, czlonkowie, statystyki, aktywny sprint."""
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        # Rola uzytkownika
+        role_result = await db.execute(
+            select(ProjectMember.role).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == user.id,
+            )
+        )
+        role = role_result.scalar_one_or_none()
+        if role is None:
+            raise ValueError("Uzytkownik nie jest czlonkiem projektu")
+
+        # Liczba czlonkow
+        members_count = (
+            await db.execute(
+                select(func.count(ProjectMember.id)).where(
+                    ProjectMember.project_id == project.id,
+                )
+            )
+        ).scalar() or 0
+
+        # Liczba ticketow
+        tickets_count = (
+            await db.execute(
+                select(func.count(Ticket.id)).where(
+                    Ticket.project_id == project.id,
+                )
+            )
+        ).scalar() or 0
+
+        # Aktywny sprint
+        sprint_result = await db.execute(
+            select(Sprint).where(
+                Sprint.project_id == project.id,
+                Sprint.status == "active",
+            )
+        )
+        sprint = sprint_result.scalar_one_or_none()
+
+        active_sprint = None
+        if sprint:
+            ticket_stats = await db.execute(select(Ticket.status, func.count(Ticket.id)).where(Ticket.sprint_id == sprint.id).group_by(Ticket.status))
+            status_counts: dict[str, int] = {row[0]: row[1] for row in ticket_stats.all()}
+            active_sprint = {
+                "name": sprint.name,
+                "goal": sprint.goal,
+                "tickets_by_status": status_counts,
+            }
+
+        # Liczba monitorow
+        monitors_count = (
+            await db.execute(
+                select(func.count(Monitor.id)).where(
+                    Monitor.project_id == project.id,
+                )
+            )
+        ).scalar() or 0
+
+        # Liczba heartbeatow
+        heartbeats_count = (
+            await db.execute(
+                select(func.count(Heartbeat.id)).where(
+                    Heartbeat.project_id == project.id,
+                )
+            )
+        ).scalar() or 0
+
+    return {
+        "id": str(project.id),
+        "name": project.name,
+        "slug": project.slug,
+        "description": project.description,
+        "created_at": project.created_at.isoformat(),
+        "role": role,
+        "members_count": members_count,
+        "tickets_count": tickets_count,
+        "active_sprint": active_sprint,
+        "monitors_count": monitors_count,
+        "heartbeats_count": heartbeats_count,
+    }
+
+
+@mcp.tool()
+async def update_project(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    name: str | None = None,
+    description: str | None = None,
+    new_slug: str | None = None,
+) -> dict[str, Any]:
+    """Aktualizuj projekt. Podaj tylko pola do zmiany. Wymaga roli owner lub admin."""
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        # Sprawdz role - tylko owner/admin moze edytowac projekt
+        result = await db.execute(
+            select(ProjectMember.role).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == user.id,
+            )
+        )
+        role = result.scalar_one_or_none()
+        if role not in ("owner", "admin"):
+            raise ValueError("Tylko owner lub admin moze edytowac projekt")
+
+        # Walidacja new_slug
+        if new_slug is not None:
+            if len(new_slug) > 255:
+                raise ValueError("Slug moze miec maksymalnie 255 znakow")
+            if not SLUG_PATTERN.match(new_slug):
+                raise ValueError("Slug moze zawierac tylko male litery, cyfry i myslniki")
+            # Sprawdz unikalnosc
+            existing = await db.execute(select(Project.id).where(Project.slug == new_slug, Project.id != project.id))
+            if existing.scalar_one_or_none() is not None:
+                raise ValueError(f"Slug '{new_slug}' jest juz zajety")
+
+        # Pobierz projekt do edycji w tej sesji
+        proj_result = await db.execute(select(Project).where(Project.id == project.id))
+        proj = proj_result.scalar_one()
+
+        if name is not None:
+            stripped_name = name.strip()
+            if not stripped_name:
+                raise ValueError("Nazwa nie moze byc pusta")
+            if len(stripped_name) > 255:
+                raise ValueError("Nazwa moze miec maksymalnie 255 znakow")
+            proj.name = stripped_name
+        if description is not None:
+            stripped_desc = description.strip()
+            if len(stripped_desc) > 1000:
+                raise ValueError("Opis moze miec maksymalnie 1000 znakow")
+            proj.description = stripped_desc if stripped_desc else None
+        if new_slug is not None:
+            proj.slug = new_slug
+
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise ValueError("Projekt z takim slugiem juz istnieje") from None
+        await db.refresh(proj)
+
+        return {
+            "id": str(proj.id),
+            "name": proj.name,
+            "slug": proj.slug,
+            "code": proj.code,
+            "description": proj.description,
+            "created_at": proj.created_at.isoformat(),
+        }
+
+
+@mcp.tool()
+async def delete_project(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Usun projekt (soft delete). Wymaga potwierdzenia confirm=true oraz roli owner."""
+    if not confirm:
+        raise ValueError("Aby usunac projekt, podaj confirm=true")
+
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        # Sprawdz role - tylko owner moze usunac projekt
+        result = await db.execute(
+            select(ProjectMember.role).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == user.id,
+            )
+        )
+        role = result.scalar_one_or_none()
+        if role not in ("owner",):
+            raise ValueError("Tylko owner moze usunac projekt")
+
+        # Pobierz projekt do edycji w tej sesji
+        proj_result = await db.execute(select(Project).where(Project.id == project.id))
+        proj = proj_result.scalar_one()
+
+        proj.is_active = False
+        await db.commit()
+
+        deleted_at = datetime.now(UTC).isoformat()
+
+    return {"message": f"Projekt '{proj.name}' usuniety", "deleted_at": deleted_at}
+
+
+@mcp.tool()
+async def invite_member(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    email: str,
+    role: str = "member",
+) -> dict[str, Any]:
+    """Zaprosz nowa osobe do projektu lub dodaj istniejacego uzytkownika jako czlonka.
+
+    Parametry:
+    - project_slug: slug projektu, do ktorego zapraszamy
+    - email: adres email osoby do zaproszenia
+    - role: rola w projekcie — "member" (domyslnie) lub "admin"
+
+    Wymaga roli owner lub admin w projekcie.
+
+    Zachowanie:
+    - Jesli uzytkownik z danym emailem juz istnieje w systemie — zostaje dodany
+      bezposrednio jako czlonek projektu (bez wysylki emaila).
+    - Jesli uzytkownik NIE istnieje — zostaje utworzone nowe konto (bez hasla),
+      generowany jest token zaproszenia wazny 7 dni, a na podany email wysylany
+      jest link do ustawienia hasla.
+    - Nie mozna zaprosic osoby, ktora juz jest czlonkiem projektu.
+
+    Zwraca: { message, user_email, role } oraz opcjonalnie
+    { invitation_id, expires_at } jesli wyslano zaproszenie emailowe.
+    """
+    # Walidacja roli
+    if role not in ("member", "admin"):
+        raise ValueError("Rola musi byc 'member' lub 'admin' (owner nie moze byc przyznany przez zaproszenie)")
+
+    # Sprawdz uprawnienia wywołujacego
+    _calling_user, calling_member, project = await _get_user_member_and_project(ctx, project_slug)
+    if calling_member.role not in ("owner", "admin"):
+        raise ValueError("Tylko owner lub admin moze zapraszac czlonkow do projektu")
+
+    email = email.strip().lower()
+    if not email:
+        raise ValueError("Email nie moze byc pusty")
+    if "@" not in email or len(email) > 255:
+        raise ValueError("Nieprawidlowy format adresu email")
+
+    async with async_session_factory() as db:
+        # Sprawdz czy user juz istnieje w systemie (takze nieaktywny)
+        any_user_result = await db.execute(select(User).where(User.email == email))
+        any_user = any_user_result.scalar_one_or_none()
+        if any_user is not None and not any_user.is_active:
+            raise ValueError(f"Uzytkownik {email} jest dezaktywowany")
+
+        existing_user = any_user if (any_user is not None and any_user.is_active) else None
+
+        # Sprawdz czy uzytkownik jest juz czlonkiem projektu
+        if existing_user is not None:
+            existing_member_result = await db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project.id,
+                    ProjectMember.user_id == existing_user.id,
+                )
+            )
+            if existing_member_result.scalar_one_or_none() is not None:
+                raise ValueError(f"Uzytkownik '{email}' jest juz czlonkiem projektu '{project_slug}'")
+
+            # Dodaj istniejacego uzytkownika bezposrednio jako czlonka
+            new_member = ProjectMember(
+                project_id=project.id,
+                user_id=existing_user.id,
+                role=role,
+            )
+            db.add(new_member)
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                raise ValueError(f"Uzytkownik '{email}' jest juz czlonkiem projektu '{project_slug}'") from None
+
+            return {
+                "message": f"Uzytkownik '{email}' zostal dodany do projektu '{project_slug}' jako {role}.",
+                "user_email": email,
+                "role": role,
+            }
+
+        # Nowy uzytkownik — utworz konto z tokenem zaproszenia
+        invitation_token = uuid.uuid4()
+        expires_at = datetime.now(UTC) + timedelta(days=INVITATION_DAYS)
+
+        new_user = User(
+            email=email,
+            first_name="",
+            last_name="",
+            password_hash=None,
+            invitation_token=invitation_token,
+            invitation_expires_at=expires_at,
+        )
+        db.add(new_user)
+
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            raise ValueError(f"Uzytkownik z emailem '{email}' juz istnieje w systemie") from None
+
+        new_member = ProjectMember(
+            project_id=project.id,
+            user_id=new_user.id,
+            role=role,
+        )
+        db.add(new_member)
+        await db.commit()
+
+        # Wysylaj email z zaproszeniem
+        send_invitation_email(email, "", invitation_token)
+
+        return {
+            "message": (
+                f"Zaproszenie wyslane na adres '{email}'. Uzytkownik zostanie dodany do projektu '{project_slug}' jako {role} po aktywacji konta."
+            ),
+            "user_email": email,
+            "role": role,
+            "invitation_id": str(invitation_token),
+            "expires_at": expires_at.isoformat(),
+        }
+
+
+def _slugify(name: str) -> str:
+    """Zamien nazwe projektu na slug (male litery, myslniki zamiast spacji/znakow)."""
+    slug = name.lower()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"[\s-]+", "-", slug)
+    slug = slug.strip("-")
+    return slug or "projekt"
+
+
+def _code_from_slug(slug: str) -> str:
+    """Wygeneruj kod projektu ze sluga (np. 'anna-miastkowska' -> 'ANNAM')."""
+    parts = slug.split("-")
+    code = slug[:5].upper() if len(parts) == 1 else "".join(p[0] for p in parts if p)[:10].upper()
+    if not code:
+        code = "PROJ"
+    # Upewnij sie ze kod zaczyna sie od litery
+    if not code[0].isalpha():
+        code = "P" + code[:9]
+    # Upewnij sie ze kod ma minimum 2 znaki
+    if len(code) < 2:
+        code = code * 2
+    return code
+
+
+@mcp.tool()
+async def create_project(
+    ctx: Context[Any, Any],
+    name: str,
+    slug: str | None = None,
+    description: str | None = None,
+    code: str | None = None,
+) -> dict[str, Any]:
+    """Tworzy nowy projekt w Monolynx.
+
+    Parametry:
+    - name: wymagany, nazwa projektu (np. "Anna Miastkowska")
+    - slug: opcjonalny, jesli nie podany — generowany automatycznie z nazwy
+    - description: opcjonalny, krotki opis projektu
+    - code: opcjonalny, unikalny kod projektu (2-10 wielkich liter/cyfr, np. "PIM"); jesli nie podany — generowany ze sluga
+
+    Zwraca: { id, name, slug, description, code, created_at, message }
+    """
+    user = await _auth(ctx)
+
+    # Walidacja nazwy
+    name = name.strip()
+    if not name:
+        raise ValueError("Nazwa projektu nie moze byc pusta.")
+    if len(name) > 255:
+        raise ValueError("Nazwa projektu nie moze przekraczac 255 znakow.")
+    if description is not None and len(description) > 1000:
+        raise ValueError("Opis projektu nie moze przekraczac 1000 znakow.")
+
+    # Przygotuj slug
+    slug = slug.strip().lower() if slug else _slugify(name)
+
+    if not SLUG_PATTERN.match(slug):
+        raise ValueError(f"Nieprawidlowy slug '{slug}'. Slug moze zawierac tylko male litery, cyfry i myslniki (np. 'anna-miastkowska').")
+
+    # Przygotuj kod projektu
+    code = code.strip().upper() if code else _code_from_slug(slug)
+
+    if not CODE_PATTERN.match(code):
+        raise ValueError(f"Nieprawidlowy kod '{code}'. Kod musi miec 2-10 znakow: wielkie litery i cyfry, zaczynac sie od litery (np. PIM, PROJ2).")
+
+    async with async_session_factory() as db:
+        # Sprawdz unikalnosc sluga
+        existing = await db.execute(select(Project.id).where(Project.slug == slug))
+        if existing.scalar_one_or_none() is not None:
+            raise ValueError(f"Projekt ze slugiem '{slug}' juz istnieje. Podaj inny slug.")
+
+        # Sprawdz unikalnosc kodu
+        existing_code = await db.execute(select(Project.id).where(Project.code == code))
+        if existing_code.scalar_one_or_none() is not None:
+            # Sprobuj dodac suffix numeryczny do kodu (batch query)
+            candidates = [(code + str(i))[:10] for i in range(2, 100) if CODE_PATTERN.match((code + str(i))[:10])]
+            taken_result = await db.execute(select(Project.code).where(Project.code.in_(candidates)))
+            taken_codes = {row[0] for row in taken_result.all()}
+            code = next((c for c in candidates if c not in taken_codes), None)
+            if code is None:
+                raise ValueError(f"Kod '{code}' jest juz zajety i nie udalo sie znalezc wolnego wariantu. Podaj inny kod.")
+
+        project = Project(
+            name=name,
+            slug=slug,
+            code=code,
+            description=description,
+            api_key=secrets.token_urlsafe(32),
+        )
+        db.add(project)
+        try:
+            await db.flush()
+        except IntegrityError as e:
+            await db.rollback()
+            raise ValueError("Projekt z takim slugiem lub kodem juz istnieje.") from e
+
+        member = ProjectMember(
+            project_id=project.id,
+            user_id=user.id,
+            role="owner",
+        )
+        db.add(member)
+        await db.commit()
+        await db.refresh(project)
+
+        return {
+            "id": str(project.id),
+            "name": project.name,
+            "slug": project.slug,
+            "description": project.description,
+            "code": project.code,
+            "created_at": project.created_at.isoformat(),
+            "message": f"Projekt '{project.name}' zostal utworzony pomyslnie.",
+        }
+
+
+@mcp.tool()
+async def list_members(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> list[dict[str, Any]]:
+    """Lista czlonkow projektu z ich rolami i emailami.
+
+    Zwraca: lista obiektow { user_id, name, email, role, joined_at }.
+    Sortowanie: owner na gorze, potem admin, potem member — kazda grupa alfabetycznie po name.
+    Wymaga czlonkostwa w projekcie.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(ProjectMember, User)
+            .join(User, User.id == ProjectMember.user_id)
+            .where(ProjectMember.project_id == project.id)
+            .order_by(
+                case(
+                    (ProjectMember.role == "owner", 1),
+                    (ProjectMember.role == "admin", 2),
+                    else_=3,
+                ),
+                (User.first_name + " " + User.last_name),
+            )
+        )
+        rows = result.all()
+
+    return [
+        {
+            "user_id": str(member.user_id),
+            "name": f"{user.first_name} {user.last_name}".strip() or user.email,
+            "email": user.email,
+            "role": member.role,
+            "joined_at": member.created_at.isoformat(),
+        }
+        for member, user in rows
+    ]
+
+
+@mcp.tool()
+async def remove_member(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    email: str,
+) -> dict[str, Any]:
+    """Usun czlonka z projektu.
+
+    Parametry:
+    - project_slug: slug projektu
+    - email: adres email osoby do usuniecia
+
+    Wymaga roli owner lub admin w projekcie.
+    Nie mozna usunac ownera projektu.
+    Tickety przypisane do usuwanej osoby pozostaja bez zmian (assignee nie jest czyszczony).
+
+    Zwraca: { message }
+    """
+    _calling_user, calling_member, project = await _get_user_member_and_project(ctx, project_slug)
+    if calling_member.role not in ("owner", "admin"):
+        raise ValueError("Tylko owner lub admin moze usuwac czlonkow z projektu")
+
+    email = email.strip().lower()
+    if not email:
+        raise ValueError("Email nie moze byc pusty")
+    if "@" not in email or len(email) > 255:
+        raise ValueError("Nieprawidlowy format adresu email")
+
+    async with async_session_factory() as db:
+        # Znajdz uzytkownika po emailu
+        user_result = await db.execute(select(User).where(User.email == email))
+        target_user = user_result.scalar_one_or_none()
+        if target_user is None:
+            raise ValueError(f"Uzytkownik z emailem '{email}' nie istnieje w systemie")
+
+        # Znajdz membership
+        member_result = await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == target_user.id,
+            )
+        )
+        member = member_result.scalar_one_or_none()
+        if member is None:
+            raise ValueError(f"Uzytkownik '{email}' nie jest czlonkiem projektu '{project_slug}'")
+
+        # Nie mozna usunac ownera
+        if member.role == "owner":
+            raise ValueError("Nie mozna usunac ownera projektu. Zmien najpierw role ownera na innego czlonka.")
+
+        await db.delete(member)
+        await db.commit()
+
+    return {"message": f"Uzytkownik '{email}' zostal usuniety z projektu '{project_slug}'"}
 
 
 # --- 500ki (Error Tracking) ---
@@ -315,6 +903,99 @@ async def update_issue_status(
     }
 
 
+@mcp.tool()
+async def create_issue(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    title: str,
+    description: str | None = None,
+    severity: str = "medium",
+    environment: str | None = None,
+    traceback: str | None = None,
+) -> dict[str, Any]:
+    """Recznie tworzy blad (issue) w projekcie 500ki.
+
+    Umozliwia zgłoszenie bugu przez AI bez generowania prawdziwego bledu 500.
+    Parametry:
+    - title: krotki opis bledu (wymagany)
+    - description: szczegolowy opis (opcjonalny)
+    - severity: low / medium / high / critical (domyslnie medium)
+    - environment: production / staging / development (opcjonalny)
+    - traceback: stack trace jako string (opcjonalny)
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    title_stripped = title.strip() if title else ""
+    if not title_stripped:
+        raise ValueError("Tytul bledu nie moze byc pusty")
+
+    if len(title_stripped) > 512:
+        raise ValueError("Tytul nie moze przekraczac 512 znakow")
+
+    allowed_severities = {"low", "medium", "high", "critical"}
+    if severity not in allowed_severities:
+        raise ValueError(f"Severity musi byc jednym z: {', '.join(sorted(allowed_severities))}")
+
+    allowed_environments = {"production", "staging", "development"}
+    if environment is not None and environment not in allowed_environments:
+        raise ValueError(f"Environment musi byc jednym z: {', '.join(sorted(allowed_environments))}")
+
+    fingerprint = f"manual-{uuid.uuid4().hex}"
+
+    exception_data: dict[str, Any] = {
+        "type": title_stripped,
+        "value": description or "",
+        "severity": severity,
+    }
+    if traceback:
+        exception_data["traceback"] = traceback
+
+    environment_data: dict[str, Any] | None = None
+    if environment:
+        environment_data = {"environment": environment}
+
+    now = datetime.now(tz=UTC)
+
+    new_issue = Issue(
+        project_id=project.id,
+        fingerprint=fingerprint,
+        title=title_stripped,
+        culprit=None,
+        level=severity,
+        status="unresolved",
+        event_count=1,
+        source="manual",
+    )
+
+    async with async_session_factory() as db:
+        try:
+            db.add(new_issue)
+            await db.flush()
+
+            new_event = Event(
+                issue_id=new_issue.id,
+                timestamp=now,
+                exception=exception_data,
+                request_data=None,
+                environment=environment_data,
+            )
+            db.add(new_event)
+            await db.commit()
+            await db.refresh(new_issue)
+        except IntegrityError as exc:
+            await db.rollback()
+            raise ValueError("Nie udalo sie utworzyc issue — konflikt fingerprint") from exc
+
+    return {
+        "id": str(new_issue.id),
+        "title": new_issue.title,
+        "status": new_issue.status,
+        "severity": new_issue.level,
+        "source": new_issue.source,
+        "created_at": new_issue.first_seen.isoformat(),
+    }
+
+
 # --- Monitoring ---
 
 
@@ -422,6 +1103,191 @@ async def get_monitor(
             for c in checks
         ],
     }
+
+
+@mcp.tool()
+async def create_monitor(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    name: str,
+    url: str,
+    interval_value: int = 5,
+    interval_unit: str = "minutes",
+) -> dict[str, Any]:
+    """Tworzy nowy monitor URL w projekcie.
+
+    interval_unit: minutes | hours | days (domyslnie: minutes)
+    interval_value: 1-60 (domyslnie: 5)
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    # Walidacja nazwy
+    name = name.strip()
+    if not name:
+        raise ValueError("Nazwa monitora nie moze byc pusta")
+
+    # Walidacja URL scheme
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("URL musi zaczynac sie od http:// lub https://")
+
+    # SSRF protection
+    ssrf_error = _is_url_safe(url)
+    if ssrf_error:
+        raise ValueError(f"Niedozwolony URL: {ssrf_error}")
+
+    # Walidacja interval_unit
+    if interval_unit not in INTERVAL_UNITS:
+        raise ValueError(f"interval_unit musi byc jednym z: {', '.join(INTERVAL_UNITS)}")
+
+    # Walidacja interval_value
+    if not (1 <= interval_value <= 60):
+        raise ValueError("interval_value musi byc liczba od 1 do 60")
+
+    async with async_session_factory() as db:
+        # Limit monitorow na projekt
+        count_result = await db.execute(select(func.count(Monitor.id)).where(Monitor.project_id == project.id))
+        monitor_count: int = count_result.scalar_one()
+        if monitor_count >= 20:
+            raise ValueError("Osiagnieto limit 20 monitorow na projekt")
+
+        monitor = Monitor(
+            project_id=project.id,
+            name=name,
+            url=url,
+            interval_value=interval_value,
+            interval_unit=interval_unit,
+            is_active=True,
+        )
+        db.add(monitor)
+        await db.commit()
+        await db.refresh(monitor)
+
+    return {
+        "id": str(monitor.id),
+        "name": monitor.name,
+        "url": monitor.url,
+        "interval_value": monitor.interval_value,
+        "interval_unit": monitor.interval_unit,
+        "is_active": monitor.is_active,
+        "created_at": monitor.created_at.isoformat(),
+    }
+
+
+@mcp.tool()
+async def update_monitor(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    monitor_id: str,
+    name: str | None = None,
+    url: str | None = None,
+    interval_value: int | None = None,
+    interval_unit: str | None = None,
+) -> dict[str, Any]:
+    """Aktualizuj istniejacy monitor URL. Podaj tylko pola do zmiany.
+
+    interval_unit: minutes | hours | days
+    interval_value: 1-60
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    # Walidacja przed otwarciem sesji DB
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Nazwa monitora nie moze byc pusta")
+        if len(name) > 255:
+            raise ValueError("Nazwa monitora moze miec maksymalnie 255 znakow")
+
+    if url is not None:
+        url = url.strip()
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("URL musi zaczynac sie od http:// lub https://")
+        if len(url) > 2048:
+            raise ValueError("URL moze miec maksymalnie 2048 znakow")
+        ssrf_error = _is_url_safe(url)
+        if ssrf_error:
+            raise ValueError(f"Niedozwolony URL: {ssrf_error}")
+
+    if interval_unit is not None and interval_unit not in INTERVAL_UNITS:
+        raise ValueError(f"interval_unit musi byc jednym z: {', '.join(INTERVAL_UNITS)}")
+
+    if interval_value is not None and not (1 <= interval_value <= 60):
+        raise ValueError("interval_value musi byc liczba od 1 do 60")
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Monitor).where(
+                Monitor.id == uuid.UUID(monitor_id),
+                Monitor.project_id == project.id,
+            )
+        )
+        monitor = result.scalar_one_or_none()
+        if monitor is None:
+            raise ValueError("Monitor nie istnieje")
+
+        if name is not None:
+            monitor.name = name
+
+        if url is not None:
+            monitor.url = url
+
+        if interval_value is not None:
+            monitor.interval_value = interval_value
+
+        if interval_unit is not None:
+            monitor.interval_unit = interval_unit
+
+        await db.commit()
+        await db.refresh(monitor)
+
+    return {
+        "id": str(monitor.id),
+        "name": monitor.name,
+        "url": monitor.url,
+        "interval_value": monitor.interval_value,
+        "interval_unit": monitor.interval_unit,
+        "is_active": monitor.is_active,
+        "created_at": monitor.created_at.isoformat(),
+    }
+
+
+@mcp.tool()
+async def delete_monitor(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    monitor_id: str,
+) -> dict[str, Any]:
+    """Usuwa monitor URL z projektu (wraz z historia checkow). Wymaga roli owner lub admin."""
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        # Sprawdz role - tylko owner/admin moze usuwac monitor
+        role_result = await db.execute(
+            select(ProjectMember.role).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == user.id,
+            )
+        )
+        role = role_result.scalar_one_or_none()
+        if role not in ("owner", "admin"):
+            raise ValueError("Tylko owner lub admin moze usuwac monitor")
+
+        result = await db.execute(
+            select(Monitor).where(
+                Monitor.id == uuid.UUID(monitor_id),
+                Monitor.project_id == project.id,
+            )
+        )
+        monitor = result.scalar_one_or_none()
+        if monitor is None:
+            raise ValueError("Monitor nie istnieje")
+
+        monitor_name = monitor.name or monitor.url
+        await db.delete(monitor)
+        await db.commit()
+
+    deleted_at = datetime.now(UTC).isoformat()
+    return {"message": f"Monitor '{monitor_name}' usuniety", "deleted_at": deleted_at}
 
 
 # --- Scrum: Tablica Kanban ---
@@ -595,11 +1461,19 @@ async def list_tickets(
     priority: str | None = None,
     search: str | None = None,
     sprint_id: str | None = None,
+    due_date_before: str | None = None,
+    due_date_after: str | None = None,
+    overdue: bool = False,
+    label_id: str | None = None,
     page: int = 1,
 ) -> list[dict[str, Any]]:
     """Lista ticketow w projekcie.
 
-    Filtrowanie po statusie, priorytecie, sprincie, tekscie.
+    Filtrowanie po statusie, priorytecie, sprincie, tekscie, dacie granicznej i etykiecie.
+    due_date_before: tickety z due_date <= data (YYYY-MM-DD)
+    due_date_after: tickety z due_date >= data (YYYY-MM-DD)
+    overdue: True = tylko tickety po terminie (due_date < dzisiaj, status != done)
+    label_id: UUID etykiety — filtruj tickety z tym labelem
     Paginacja po 20.
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
@@ -615,6 +1489,23 @@ async def list_tickets(
             conditions.append(Ticket.sprint_id == uuid.UUID(sprint_id))
         if search:
             conditions.append(Ticket.title.ilike(f"%{search}%"))
+        if due_date_before:
+            try:
+                conditions.append(Ticket.due_date <= date.fromisoformat(due_date_before))
+            except ValueError as e:
+                raise ValueError(f"Nieprawidlowy format due_date_before: '{due_date_before}'. Uzyj YYYY-MM-DD") from e
+        if due_date_after:
+            try:
+                conditions.append(Ticket.due_date >= date.fromisoformat(due_date_after))
+            except ValueError as e:
+                raise ValueError(f"Nieprawidlowy format due_date_after: '{due_date_after}'. Uzyj YYYY-MM-DD") from e
+        if overdue:
+            today = date.today()
+            conditions.append(Ticket.due_date < today)
+            conditions.append(Ticket.due_date.is_not(None))
+            conditions.append(Ticket.status != "done")
+        if label_id:
+            conditions.append(Ticket.id.in_(select(TicketLabel.ticket_id).where(TicketLabel.label_id == uuid.UUID(label_id))))
 
         total = (await db.execute(select(func.count(Ticket.id)).where(*conditions))).scalar() or 0
         total_pages = max(1, (total + per_page - 1) // per_page)
@@ -622,7 +1513,7 @@ async def list_tickets(
 
         result = await db.execute(
             select(Ticket)
-            .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint))
+            .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint), selectinload(Ticket.labels))
             .where(*conditions)
             .order_by(Ticket.order, Ticket.created_at.desc())
             .limit(per_page)
@@ -642,11 +1533,116 @@ async def list_tickets(
             "sprint": t.sprint.name if t.sprint else None,
             "sprint_id": str(t.sprint_id) if t.sprint_id else None,
             "assignee": t.assignee.email if t.assignee else None,
+            "due_date": t.due_date.isoformat() if t.due_date else None,
+            "labels": [{"id": str(lb.id), "name": lb.name, "color": lb.color} for lb in t.labels],
             "created_via_ai": t.created_via_ai,
             "created_at": t.created_at.isoformat(),
         }
         for t in tickets
     ] + [{"_meta": {"page": page, "total_pages": total_pages, "total": total}}]
+
+
+@mcp.tool()
+async def search_tickets(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    query: str | None = None,
+    status: str | None = None,
+    priority: str | None = None,
+    assignee_email: str | None = None,
+    sprint_id: str | None = None,
+    due_before: str | None = None,
+    due_after: str | None = None,
+    page: int = 1,
+) -> dict[str, Any]:
+    """Wyszukaj tickety w projekcie z filtrami i paginacja.
+
+    query: ILIKE search po tytule i opisie
+    status: todo | in_progress | in_review | done | backlog
+    priority: low | medium | high
+    assignee_email: email przypisanej osoby
+    sprint_id: UUID sprintu
+    due_before: tickety z due_date <= data (YYYY-MM-DD)
+    due_after: tickety z due_date >= data (YYYY-MM-DD)
+    page: strona wynikow (domyslnie 1), 20 wynikow na strone
+    """
+    from sqlalchemy import or_
+
+    _user, project = await _get_user_and_project(ctx, project_slug)
+    per_page = 20
+
+    async with async_session_factory() as db:
+        conditions = [Ticket.project_id == project.id]
+
+        if query:
+            pattern = f"%{query}%"
+            conditions.append(
+                or_(
+                    Ticket.title.ilike(pattern),
+                    Ticket.description.ilike(pattern),
+                )
+            )
+
+        if status and status in TICKET_STATUSES:
+            conditions.append(Ticket.status == status)
+
+        if priority and priority in PRIORITIES:
+            conditions.append(Ticket.priority == priority)
+
+        if sprint_id:
+            conditions.append(Ticket.sprint_id == uuid.UUID(sprint_id))
+
+        if due_before:
+            try:
+                conditions.append(Ticket.due_date <= date.fromisoformat(due_before))
+            except ValueError as e:
+                raise ValueError(f"Nieprawidlowy format due_before: '{due_before}'. Uzyj YYYY-MM-DD") from e
+
+        if due_after:
+            try:
+                conditions.append(Ticket.due_date >= date.fromisoformat(due_after))
+            except ValueError as e:
+                raise ValueError(f"Nieprawidlowy format due_after: '{due_after}'. Uzyj YYYY-MM-DD") from e
+
+        if assignee_email:
+            assignee_result = await db.execute(select(User).where(User.email == assignee_email))
+            assignee = assignee_result.scalar_one_or_none()
+            if assignee is None:
+                return {"results": [], "total": 0, "page": 1, "total_pages": 1}
+            conditions.append(Ticket.assignee_id == assignee.id)
+
+        total = (await db.execute(select(func.count(Ticket.id)).where(*conditions))).scalar() or 0
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+
+        result = await db.execute(
+            select(Ticket)
+            .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint))
+            .where(*conditions)
+            .order_by(Ticket.order, Ticket.created_at.desc())
+            .limit(per_page)
+            .offset((page - 1) * per_page)
+        )
+        tickets = result.scalars().all()
+
+    return {
+        "results": [
+            {
+                "id": str(t.id),
+                "key": f"{project.code}-{t.number}",
+                "title": t.title,
+                "status": t.status,
+                "priority": t.priority,
+                "story_points": t.story_points,
+                "assignee": t.assignee.email if t.assignee else None,
+                "due_date": t.due_date.isoformat() if t.due_date else None,
+            }
+            for t in tickets
+        ],
+        "total": total,
+        "page": page,
+        "total_pages": total_pages,
+    }
 
 
 @mcp.tool()
@@ -665,6 +1661,7 @@ async def get_ticket(
                 selectinload(Ticket.assignee),
                 selectinload(Ticket.sprint),
                 selectinload(Ticket.comments).selectinload(TicketComment.author),
+                selectinload(Ticket.labels),
             )
             .where(
                 Ticket.id == uuid.UUID(ticket_id),
@@ -686,6 +1683,8 @@ async def get_ticket(
         "sprint": ticket.sprint.name if ticket.sprint else None,
         "sprint_id": str(ticket.sprint_id) if ticket.sprint_id else None,
         "assignee": ticket.assignee.email if ticket.assignee else None,
+        "due_date": ticket.due_date.isoformat() if ticket.due_date else None,
+        "labels": [{"id": str(lb.id), "name": lb.name, "color": lb.color} for lb in ticket.labels],
         "created_via_ai": ticket.created_via_ai,
         "created_at": ticket.created_at.isoformat(),
         "updated_at": ticket.updated_at.isoformat(),
@@ -712,14 +1711,27 @@ async def create_ticket(
     story_points: int | None = None,
     sprint_id: str | None = None,
     assignee_email: str | None = None,
+    due_date: str | None = None,
+    label_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Utworz nowy ticket w projekcie. Oznaczany jako created_via_ai=True."""
+    """Utworz nowy ticket w projekcie. Oznaczany jako created_via_ai=True.
+
+    due_date: opcjonalna data graniczna w formacie YYYY-MM-DD
+    label_ids: opcjonalna lista UUID etykiet do przypisania
+    """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     if not title.strip():
         raise ValueError("Tytul jest wymagany")
     if priority not in PRIORITIES:
         priority = "medium"
+
+    parsed_due_date: date | None = None
+    if due_date:
+        try:
+            parsed_due_date = date.fromisoformat(due_date)
+        except ValueError as e:
+            raise ValueError(f"Nieprawidlowy format daty due_date: '{due_date}'. Uzyj YYYY-MM-DD") from e
 
     async with async_session_factory() as db:
         assignee_id = None
@@ -746,8 +1758,23 @@ async def create_ticket(
             assignee_id=assignee_id,
             status="backlog" if resolved_sprint_id is None else "todo",
             created_via_ai=True,
+            due_date=parsed_due_date,
         )
         db.add(ticket)
+        await db.flush()
+
+        if label_ids:
+            label_uuids = [uuid.UUID(lid) for lid in label_ids]
+            labels_result = await db.execute(
+                select(Label).where(
+                    Label.id.in_(label_uuids),
+                    Label.project_id == project.id,
+                )
+            )
+            labels = labels_result.scalars().all()
+            for lb in labels:
+                db.add(TicketLabel(ticket_id=ticket.id, label_id=lb.id))
+
         await db.commit()
         await db.refresh(ticket)
 
@@ -756,6 +1783,7 @@ async def create_ticket(
         "key": f"{project.code}-{ticket.number}",
         "title": ticket.title,
         "status": ticket.status,
+        "due_date": ticket.due_date.isoformat() if ticket.due_date else None,
         "created_via_ai": True,
         "message": f"Ticket '{ticket.title}' utworzony",
     }
@@ -773,8 +1801,14 @@ async def update_ticket(
     story_points: int | None = None,
     sprint_id: str | None = None,
     assignee_email: str | None = None,
+    due_date: str | None = None,
+    label_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Aktualizuj istniejacy ticket. Podaj tylko pola do zmiany."""
+    """Aktualizuj istniejacy ticket. Podaj tylko pola do zmiany.
+
+    due_date: data graniczna w formacie YYYY-MM-DD, lub pusty string aby wyczysc
+    label_ids: lista UUID etykiet — zastepuje wszystkie poprzednie etykiety; [] = usun etykiety
+    """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
@@ -825,6 +1859,30 @@ async def update_ticket(
                 if assignee:
                     ticket.assignee_id = assignee.id
 
+        if due_date is not None:
+            if due_date == "":
+                ticket.due_date = None
+            else:
+                try:
+                    ticket.due_date = date.fromisoformat(due_date)
+                except ValueError as e:
+                    raise ValueError(f"Nieprawidlowy format daty due_date: '{due_date}'. Uzyj YYYY-MM-DD") from e
+
+        if label_ids is not None:
+            # Usun stare etykiety
+            await db.execute(delete(TicketLabel).where(TicketLabel.ticket_id == ticket.id))
+            if label_ids:
+                label_uuids = [uuid.UUID(lid) for lid in label_ids]
+                labels_result = await db.execute(
+                    select(Label).where(
+                        Label.id.in_(label_uuids),
+                        Label.project_id == project.id,
+                    )
+                )
+                labels = labels_result.scalars().all()
+                for lb in labels:
+                    db.add(TicketLabel(ticket_id=ticket.id, label_id=lb.id))
+
         await db.commit()
 
     return {
@@ -832,6 +1890,7 @@ async def update_ticket(
         "key": f"{project.code}-{ticket.number}",
         "title": ticket.title,
         "status": ticket.status,
+        "due_date": ticket.due_date.isoformat() if ticket.due_date else None,
         "message": f"Ticket '{ticket.title}' zaktualizowany",
     }
 
@@ -861,6 +1920,200 @@ async def delete_ticket(
         await db.commit()
 
     return {"message": f"Ticket '{title}' usuniety"}
+
+
+# --- Labele ---
+
+
+@mcp.tool()
+async def list_labels(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> list[dict[str, Any]]:
+    """Lista etykiet (labels) projektu z liczba powiazanych ticketow.
+
+    Zwraca: lista obiektow { id, name, color, tickets_count }.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(
+                Label.id,
+                Label.name,
+                Label.color,
+                func.count(TicketLabel.ticket_id).label("tickets_count"),
+            )
+            .outerjoin(TicketLabel, TicketLabel.label_id == Label.id)
+            .where(Label.project_id == project.id)
+            .group_by(Label.id, Label.name, Label.color)
+            .order_by(Label.name)
+        )
+        rows = result.all()
+
+    return [
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "color": row.color,
+            "tickets_count": row.tickets_count,
+        }
+        for row in rows
+    ]
+
+
+@mcp.tool()
+async def create_label(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    name: str,
+    color: str | None = None,
+) -> dict[str, Any]:
+    """Tworzy nowa etykiete (label) w projekcie.
+
+    Parametry:
+    - name: nazwa etykiety (wymagana, max 100 znakow)
+    - color: kolor w formacie hex np. "#e74c3c" (opcjonalny, domyslnie losowy z palety)
+
+    Zwraca: { id, name, color, message }
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    name = name.strip()
+    if not name:
+        raise ValueError("Nazwa etykiety nie moze byc pusta.")
+    if len(name) > 100:
+        raise ValueError("Nazwa etykiety nie moze przekraczac 100 znakow.")
+
+    if color is not None:
+        color = color.strip()
+        if not color.startswith("#") or len(color) != 7:
+            raise ValueError("Kolor musi byc w formacie hex np. '#e74c3c'.")
+    else:
+        color = secrets.choice(LABEL_COLOR_PALETTE)
+
+    async with async_session_factory() as db:
+        existing = await db.execute(
+            select(Label.id).where(
+                Label.project_id == project.id,
+                Label.name == name,
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise ValueError(f"Etykieta o nazwie '{name}' juz istnieje w tym projekcie.")
+
+        label = Label(
+            project_id=project.id,
+            name=name,
+            color=color,
+        )
+        db.add(label)
+        await db.commit()
+        await db.refresh(label)
+
+    return {
+        "id": str(label.id),
+        "name": label.name,
+        "color": label.color,
+        "message": f"Etykieta '{label.name}' zostala utworzona.",
+    }
+
+
+@mcp.tool()
+async def bulk_update_tickets(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_ids: list[str],
+    status: str | None = None,
+    priority: str | None = None,
+    assignee_email: str | None = None,
+    sprint_id: str | None = None,
+    due_date: str | None = None,
+) -> dict[str, Any]:
+    """Masowa aktualizacja ticketow. Aktualizuje status, priorytet, assignee lub sprint.
+
+    ticket_ids: lista UUID ticketow do aktualizacji (max 100)
+    assignee_email: pusty string = usun assignee
+    sprint_id: pusty string = przesun do backlogu
+    due_date: data YYYY-MM-DD lub pusty string = usun date
+    Zwraca: {"updated": N, "failed": [{"id": "...", "reason": "..."}]}
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if len(ticket_ids) > 100:
+        raise ValueError(f"Zbyt duzo ticketow: {len(ticket_ids)}. Limit to 100 na jedno wywolanie.")
+
+    # Walidacja statusu i priorytetu przed petla (fail fast)
+    if status is not None and status not in TICKET_STATUSES:
+        raise ValueError(f"Nieprawidlowy status: {status}. Dozwolone: {', '.join(TICKET_STATUSES)}")
+    if priority is not None and priority not in PRIORITIES:
+        raise ValueError(f"Nieprawidlowy priorytet: {priority}. Dozwolone: {', '.join(PRIORITIES)}")
+
+    # Parsowanie due_date przed petla (fail fast)
+    # clear_due_date=True oznacza ze nalezy ustawic None; parsed_due_date=date = nowa wartosc
+    clear_due_date = False
+    parsed_due_date: date | None = None
+    if due_date is not None:
+        if due_date == "":
+            clear_due_date = True
+        else:
+            try:
+                parsed_due_date = date.fromisoformat(due_date)
+            except ValueError as e:
+                raise ValueError(f"Nieprawidlowy format daty due_date: '{due_date}'. Uzyj YYYY-MM-DD") from e
+
+    updated = 0
+    failed: list[dict[str, str]] = []
+
+    async with async_session_factory() as db:
+        # Wyszukaj assignee raz (jesli podano email)
+        resolved_assignee_id = None
+        if assignee_email is not None and assignee_email != "":
+            assignee_result = await db.execute(select(User).where(User.email == assignee_email))
+            assignee = assignee_result.scalar_one_or_none()
+            if assignee:
+                resolved_assignee_id = assignee.id
+
+        for ticket_id_str in ticket_ids:
+            try:
+                ticket_uuid = uuid.UUID(ticket_id_str)
+            except ValueError:
+                failed.append({"id": ticket_id_str, "reason": "Nieprawidlowe UUID"})
+                continue
+
+            try:
+                ticket_result = await db.execute(
+                    select(Ticket).where(
+                        Ticket.id == ticket_uuid,
+                        Ticket.project_id == project.id,
+                    )
+                )
+                ticket = ticket_result.scalar_one_or_none()
+                if ticket is None:
+                    failed.append({"id": ticket_id_str, "reason": "Ticket nie istnieje"})
+                    continue
+
+                if status is not None:
+                    ticket.status = status
+                if priority is not None:
+                    ticket.priority = priority
+                if sprint_id is not None:
+                    ticket.sprint_id = None if sprint_id == "" else uuid.UUID(sprint_id)
+                if assignee_email is not None:
+                    ticket.assignee_id = None if assignee_email == "" else resolved_assignee_id
+                if due_date is not None:
+                    ticket.due_date = None if clear_due_date else parsed_due_date
+
+                updated += 1
+            except Exception as e:
+                failed.append({"id": ticket_id_str, "reason": str(e)})
+
+        await db.commit()
+
+    return {
+        "updated": updated,
+        "failed": failed,
+    }
 
 
 @mcp.tool()
@@ -1124,6 +2377,75 @@ async def create_sprint(
 
 
 @mcp.tool()
+async def update_sprint(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    sprint_id: str,
+    name: str | None = None,
+    goal: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
+    """Zaktualizuj istniejacy sprint. Podaj tylko pola do zmiany (PATCH semantics).
+
+    Daty w formacie YYYY-MM-DD.
+    Zmiana dat jest zablokowana dla sprintow o statusie 'completed'.
+    Walidacja: end_date musi byc pozniejsza niz start_date.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Sprint).where(
+                Sprint.id == uuid.UUID(sprint_id),
+                Sprint.project_id == project.id,
+            )
+        )
+        sprint = result.scalar_one_or_none()
+        if sprint is None:
+            raise ValueError("Sprint nie istnieje")
+
+        if name is not None:
+            name = name.strip()
+            if not name:
+                raise ValueError("Nazwa sprintu nie moze byc pusta")
+            if len(name) > 255:
+                raise ValueError("Nazwa sprintu nie moze przekraczac 255 znakow")
+            sprint.name = name
+
+        if goal is not None:
+            sprint.goal = goal.strip() or None
+
+        if start_date is not None or end_date is not None:
+            if sprint.status == "completed":
+                raise ValueError("Nie mozna zmienic dat zakonczonego sprintu")
+
+            new_start = date.fromisoformat(start_date) if start_date is not None else sprint.start_date
+            new_end = None if end_date == "" else (date.fromisoformat(end_date) if end_date is not None else sprint.end_date)
+
+            if new_end is not None and new_end <= new_start:
+                raise ValueError("Data zakonczenia musi byc pozniejsza niz data rozpoczecia")
+
+            if start_date is not None:
+                sprint.start_date = new_start
+            if end_date is not None:
+                sprint.end_date = new_end
+
+        await db.commit()
+        await db.refresh(sprint)
+
+    return {
+        "id": str(sprint.id),
+        "name": sprint.name,
+        "goal": sprint.goal,
+        "start_date": sprint.start_date.isoformat() if sprint.start_date else None,
+        "end_date": sprint.end_date.isoformat() if sprint.end_date else None,
+        "status": sprint.status,
+        "created_at": sprint.created_at.isoformat() if sprint.created_at else None,
+    }
+
+
+@mcp.tool()
 async def start_sprint(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1239,6 +2561,97 @@ async def add_comment(
         "id": str(comment.id),
         "message": "Komentarz dodany",
         "created_via_ai": True,
+    }
+
+
+@mcp.tool()
+async def add_attachment(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_id: str,
+    file_base64: str,
+    filename: str,
+    mime_type: str | None = None,
+) -> dict[str, Any]:
+    """Dodaj zalacznik do ticketa (screenshot, log, dokument). Plik zakodowany w base64.
+
+    Maksymalny rozmiar: 10MB. Zwraca attachment_id, filename, url, size, uploaded_at.
+    """
+    max_size = 10 * 1024 * 1024  # 10MB
+
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    # Walidacja i sanityzacja filename
+    if not filename or not filename.strip():
+        raise ValueError("Nazwa pliku nie moze byc pusta")
+    filename = os.path.basename(filename.strip())
+    filename = re.sub(r'[\x00-\x1f"\\]', "_", filename)
+    if not filename or filename in (".", ".."):
+        raise ValueError("Nieprawidlowa nazwa pliku")
+    if len(filename) > 255:
+        raise ValueError("Nazwa pliku nie moze przekraczac 255 znakow")
+
+    # Walidacja base64
+    if not file_base64 or not file_base64.strip():
+        raise ValueError("Zawartosc pliku (file_base64) nie moze byc pusta")
+
+    # Dekodowanie base64
+    try:
+        file_bytes = base64.b64decode(file_base64, validate=True)
+    except Exception as exc:
+        raise ValueError("Nieprawidlowy format base64") from exc
+
+    # Sprawdzenie rozmiaru
+    if len(file_bytes) > max_size:
+        raise ValueError(f"Plik za duzy: max 10MB, otrzymano {len(file_bytes) / 1024 / 1024:.1f}MB")
+
+    # Walidacja mime_type
+    if mime_type is not None:
+        if not re.match(r"^[a-z]+/[a-z0-9.+\-]+$", mime_type):
+            raise ValueError("Nieprawidlowy format mime_type, oczekiwano np. image/png, text/plain")
+    else:
+        mime_type = "application/octet-stream"
+
+    async with async_session_factory() as db:
+        # Sprawdz czy ticket istnieje w projekcie
+        result = await db.execute(
+            select(Ticket).where(
+                Ticket.id == uuid.UUID(ticket_id),
+                Ticket.project_id == project.id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError("Ticket nie istnieje")
+
+        # Upload do MinIO (blokujaca operacja — wywolywana synchronicznie)
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            storage_path = await loop.run_in_executor(
+                executor,
+                lambda: minio_upload_attachment(project_slug, filename, file_bytes, mime_type),
+            )
+
+        # Zapis rekordu w DB
+        attachment = TicketAttachment(
+            ticket_id=uuid.UUID(ticket_id),
+            filename=filename,
+            storage_path=storage_path,
+            mime_type=mime_type,
+            size=len(file_bytes),
+            created_via_ai=True,
+        )
+        db.add(attachment)
+        await db.commit()
+        await db.refresh(attachment)
+
+    url = f"/dashboard/{project_slug}/scrum/tickets/{ticket_id}/attachments/{attachment.id}/{filename}"
+
+    return {
+        "attachment_id": str(attachment.id),
+        "filename": attachment.filename,
+        "url": url,
+        "size": attachment.size,
+        "uploaded_at": attachment.created_at.isoformat(),
     }
 
 
@@ -1965,3 +3378,107 @@ async def delete_heartbeat(
         await svc_delete_heartbeat(db, project.id, uuid.UUID(heartbeat_id))
 
     return {"message": f"Heartbeat '{name}' usuniety", "heartbeat_id": heartbeat_id}
+
+
+ACTIVITY_ENTITY_TYPES = {"ticket", "sprint", "monitor", "wiki", "member"}
+
+
+@mcp.tool()
+async def get_activity_log(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    limit: int = 50,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    actor_email: str | None = None,
+) -> list[dict[str, Any]]:
+    """Historia zmian w projekcie -- kto co zmienil i kiedy.
+
+    Filtrowanie po entity_type (ticket, sprint, monitor, wiki, member),
+    entity_id (UUID konkretnego obiektu), actor_email (email lub "ai" dla operacji AI).
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if limit > 200:
+        limit = 200
+    if limit < 1:
+        limit = 1
+
+    if entity_type is not None and entity_type not in ACTIVITY_ENTITY_TYPES:
+        raise ValueError(f"Nieprawidlowy entity_type. Dozwolone: {', '.join(sorted(ACTIVITY_ENTITY_TYPES))}")
+
+    actor_id: uuid.UUID | None = None
+    actor_type_filter: str | None = None
+
+    if actor_email == "ai":
+        actor_type_filter = "ai"
+    elif actor_email is not None:
+        async with async_session_factory() as db:
+            result = await db.execute(select(User).where(User.email == actor_email))
+            found_user = result.scalar_one_or_none()
+            if found_user is None:
+                raise ValueError(f"Uzytkownik '{actor_email}' nie istnieje")
+            actor_id = found_user.id
+
+    async with async_session_factory() as db:
+        entries = await svc_get_activity_log(
+            db,
+            project_id=project.id,
+            limit=limit,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            actor_id=actor_id,
+            actor_type_filter=actor_type_filter,
+        )
+
+        # Load actor emails in the same session
+        actor_emails: dict[uuid.UUID, str] = {}
+        actor_ids = {e.actor_id for e in entries if e.actor_id is not None}
+        if actor_ids:
+            users_result = await db.execute(select(User).where(User.id.in_(actor_ids)))
+            for u in users_result.scalars().all():
+                actor_emails[u.id] = u.email
+
+    output = []
+    for entry in entries:
+        if entry.actor_type == "ai":
+            actor_display = "ai"
+        elif entry.actor_id is not None:
+            actor_display = actor_emails.get(entry.actor_id, str(entry.actor_id))
+        else:
+            actor_display = "unknown"
+
+        output.append(
+            {
+                "id": str(entry.id),
+                "timestamp": entry.created_at.isoformat(),
+                "actor": actor_display,
+                "action": entry.action,
+                "entity_type": entry.entity_type,
+                "entity_id": entry.entity_id,
+                "entity_title": entry.entity_title,
+                "changes": entry.changes,
+            }
+        )
+
+    return output
+
+
+@mcp.tool()
+async def get_burndown(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    sprint_id: str | None = None,
+) -> dict[str, Any]:
+    """Dane burndown chart dla sprintu -- ideal line, actual line, velocity, prognoza.
+
+    Jesli sprint_id nie podany, uzywa aktywnego sprintu.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    sprint_uuid: uuid.UUID | None = None
+    if sprint_id is not None:
+        sprint_uuid = uuid.UUID(sprint_id)
+
+    async with async_session_factory() as db:
+        return await svc_get_burndown_data(db, project.id, sprint_uuid)
