@@ -17,6 +17,7 @@ class TicketCreate(BaseModel):
     story_points: int | None = None
     sprint_id: uuid.UUID | None = None
     assignee_id: uuid.UUID | None = None
+    due_date: date | None = None
 
     def validate_priority(self) -> bool:
         return self.priority in PRIORITIES
@@ -30,6 +31,7 @@ class TicketUpdate(BaseModel):
     sprint_id: uuid.UUID | None = None
     assignee_id: uuid.UUID | None = None
     status: str | None = None
+    due_date: date | None = None
 
     def validate_status(self) -> bool:
         return self.status is None or self.status in TICKET_STATUSES

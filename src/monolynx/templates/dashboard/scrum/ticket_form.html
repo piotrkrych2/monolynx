@@ -89,6 +89,30 @@
             </select>
         </div>
 
+        <div>
+            <label class="block text-sm text-gray-400 mb-1">Termin wykonania</label>
+            <input type="date" name="due_date"
+                value="{{ ticket.due_date.isoformat() if ticket and ticket.due_date else '' }}"
+                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+        </div>
+
+        {% if labels %}
+        <div>
+            <label class="block text-sm text-gray-400 mb-2">Etykiety</label>
+            <div class="flex flex-wrap gap-2">
+                {% set ticket_label_ids = ticket.labels | map(attribute='id') | list if ticket and ticket.labels else [] %}
+                {% for label in labels %}
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" name="label_ids" value="{{ label.id }}"
+                        {% if label.id in ticket_label_ids %}checked{% endif %}
+                        class="rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0">
+                    <span class="rounded-full px-2 py-0.5 text-xs font-medium text-white" style="background-color: {{ label.color }}">{{ label.name | e }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         <button type="submit"
             class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded transition">
             {% if ticket %}Zapisz zmiany{% else %}Utwórz ticket{% endif %}
@@ -103,10 +127,14 @@ var easyMDE = new EasyMDE({
     spellChecker: false,
     autofocus: false,
     status: false,
+    uploadImage: true,
+    imageUploadEndpoint: '/dashboard/{{ project.slug }}/wiki/upload',
+    imagePathAbsolute: true,
+    imageMaxSize: 10 * 1024 * 1024,
     toolbar: [
         "bold", "italic", "heading", "|",
         "quote", "unordered-list", "ordered-list", "|",
-        "link", "code", "table", "|",
+        "link", "image", "code", "table", "|",
         "preview", "side-by-side", "|",
         "guide"
     ],

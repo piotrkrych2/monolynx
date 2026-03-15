@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,8 +14,10 @@ from monolynx.models.base import Base
 
 if TYPE_CHECKING:
     from monolynx.models.issue import Issue
+    from monolynx.models.label import Label
     from monolynx.models.project import Project
     from monolynx.models.sprint import Sprint
+    from monolynx.models.ticket_attachment import TicketAttachment
     from monolynx.models.ticket_comment import TicketComment
     from monolynx.models.time_tracking_entry import TimeTrackingEntry
     from monolynx.models.user import User
@@ -37,6 +39,7 @@ class Ticket(Base):
     priority: Mapped[str] = mapped_column(String(20), default="medium")
     story_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
     order: Mapped[int] = mapped_column(Integer, default=0)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_via_ai: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -53,6 +56,12 @@ class Ticket(Base):
     time_entries: Mapped[list[TimeTrackingEntry]] = relationship(
         back_populates="ticket",
         order_by="TimeTrackingEntry.date_logged.desc()",
+        cascade="all, delete-orphan",
+    )
+    labels: Mapped[list[Label]] = relationship(secondary="ticket_labels", back_populates="tickets", lazy="selectin")
+    attachments: Mapped[list[TicketAttachment]] = relationship(
+        back_populates="ticket",
+        order_by="TicketAttachment.created_at",
         cascade="all, delete-orphan",
     )
 

@@ -46,6 +46,13 @@
                     <span class="text-indigo-400 font-mono text-xs flex-shrink-0">{{ project.code }}-{{ ticket.number }}</span>
                     <p class="text-sm text-white font-medium truncate">{{ ticket.title }}</p>
                 </div>
+                {% if ticket.labels %}
+                <div class="flex flex-wrap gap-1 mt-1.5">
+                    {% for label in ticket.labels %}
+                    <span class="rounded-full px-2 py-0.5 text-xs font-medium text-white" style="background-color: {{ label.color }}">{{ label.name | e }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
                 <div class="flex items-center justify-between mt-2">
                     <div class="flex items-center gap-2">
                         {% if ticket.priority == 'critical' %}
@@ -65,6 +72,17 @@
                     <span class="text-xs text-gray-500">{{ ticket.assignee.email.split('@')[0] }}</span>
                     {% endif %}
                 </div>
+                {% if ticket.due_date %}
+                <div class="mt-1.5">
+                    {% if ticket.due_date < now_date %}
+                    <span class="text-xs px-1.5 py-0.5 rounded bg-red-900 text-red-300 font-mono">Po terminie {{ ticket.due_date.isoformat() }}</span>
+                    {% elif ticket.due_date == now_date %}
+                    <span class="text-xs px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-300 font-mono">Dzisiaj {{ ticket.due_date.isoformat() }}</span>
+                    {% else %}
+                    <span class="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 font-mono">{{ ticket.due_date.isoformat() }}</span>
+                    {% endif %}
+                </div>
+                {% endif %}
             </div>
             {% endfor %}
         </div>
