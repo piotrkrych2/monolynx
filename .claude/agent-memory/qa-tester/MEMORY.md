@@ -12,3 +12,7 @@
 - For tools using `_get_user_member_and_project`: patch both `async_session_factory` AND `verify_mcp_token` — the helper calls both internally
 - When testing `invite_member` permission checks (member role): create a separate `AsyncMock(return_value=regular_user)` — don't reuse `mock_verify` which returns the owner
 - `send_invitation_email` import path: `monolynx.mcp_server.send_invitation_email` — patch there, not in `services.email`
+- Neo4j driver mocking: patch `monolynx.services.graph._driver`, configure `__aenter__`/`__aexit__` on `driver.session.return_value.__aenter__ = AsyncMock(return_value=session)`
+- Empty dict `{}` is falsy — `depth_map={}` triggers backwards-compatible path in `_format_graph_dsl` (no Depth headers)
+- `_format_graph_dsl` importable directly: `from monolynx.mcp_server import _format_graph_dsl`
+- Async iteration mocking for Neo4j: define class with `__aiter__` returning self, `async __anext__` raising StopAsyncIteration; assign `result_mock.__aiter__ = lambda self: AsyncIterEmpty()`
