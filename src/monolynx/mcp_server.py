@@ -308,41 +308,87 @@ def _format_sprint_detail(sprint: Sprint, project_code: str, tickets: list[dict[
 def _format_graph_dsl(data: dict[str, Any]) -> str:
     """Konwertuj dict z nodes/edges na kompaktowy Arrow DSL dla LLM.
 
-    Format:
+    Format bez depth_map (backwards-compatible):
         [Type] name (key=val,key2=val2)
         source_name --EDGE_TYPE--> target_name
+
+    Format z depth_map (grupowanie po depth rings i typie relacji):
+        --- Depth 1 ---
+        [Class] Contact (path=contacts/models.py,line=13)
+
+        --- Depth 2 ---
+        [Method] Contact.clean (path=contacts/models.py,line=168)
+
+        === INHERITS ===
+        Contact --INHERITS--> BaseInfoModel
+
+        === CONTAINS ===
+        contacts/models.py --CONTAINS--> Contact
     """
     nodes: list[dict[str, Any]] = data.get("nodes", [])
     edges: list[dict[str, Any]] = data.get("edges", [])
+    depth_map: dict[str, int] | None = data.get("depth_map")
 
     node_map: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
 
     lines: list[str] = [f"{len(nodes)} nodes, {len(edges)} edges", ""]
 
-    # Group nodes by type
-    by_type: dict[str, list[dict[str, Any]]] = {}
-    for n in nodes:
-        by_type.setdefault(n.get("type", "Unknown"), []).append(n)
+    def _node_line(n: dict[str, Any]) -> str:
+        ntype = n.get("type", "Unknown")
+        meta_parts: list[str] = []
+        if n.get("file_path"):
+            meta_parts.append(f"path={n['file_path']}")
+        if n.get("line_number"):
+            meta_parts.append(f"line={n['line_number']}")
+        md = n.get("metadata") or {}
+        for k, v in md.items():
+            meta_parts.append(f"{k}={v}")
+        meta_str = f" ({','.join(meta_parts)})" if meta_parts else ""
+        return f"[{ntype}] {n['name']}{meta_str}"
 
-    for ntype, nlist in by_type.items():
-        for n in nlist:
-            meta_parts: list[str] = []
-            if n.get("file_path"):
-                meta_parts.append(f"path={n['file_path']}")
-            if n.get("line_number"):
-                meta_parts.append(f"line={n['line_number']}")
-            md = n.get("metadata") or {}
-            for k, v in md.items():
-                meta_parts.append(f"{k}={v}")
-            meta_str = f" ({','.join(meta_parts)})" if meta_parts else ""
-            lines.append(f"[{ntype}] {n['name']}{meta_str}")
+    if depth_map:
+        # Grupuj nodes po depth level
+        by_depth: dict[int, list[dict[str, Any]]] = {}
+        for n in nodes:
+            d = depth_map.get(n["id"], 0)
+            by_depth.setdefault(d, []).append(n)
+
+        for depth_level in sorted(by_depth.keys()):
+            lines.append(f"--- Depth {depth_level} ---")
+            for n in by_depth[depth_level]:
+                lines.append(_node_line(n))
+            lines.append("")
+    else:
+        # Backwards-compatible: grupuj po typie node'a
+        by_type: dict[str, list[dict[str, Any]]] = {}
+        for n in nodes:
+            by_type.setdefault(n.get("type", "Unknown"), []).append(n)
+
+        for _ntype, nlist in by_type.items():
+            for n in nlist:
+                lines.append(_node_line(n))
+        lines.append("")
 
     if edges:
-        lines.append("")
-        for e in edges:
-            src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
-            tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
-            lines.append(f"{src} --{e['type']}--> {tgt}")
+        if depth_map:
+            # Grupuj edges po typie relacji
+            by_edge_type: dict[str, list[dict[str, Any]]] = {}
+            for e in edges:
+                by_edge_type.setdefault(e["type"], []).append(e)
+
+            for etype in sorted(by_edge_type.keys()):
+                lines.append(f"=== {etype} ===")
+                for e in by_edge_type[etype]:
+                    src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
+                    tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
+                    lines.append(f"{src} --{etype}--> {tgt}")
+                lines.append("")
+        else:
+            # Backwards-compatible: płaska lista edges
+            for e in edges:
+                src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
+                tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
+                lines.append(f"{src} --{e['type']}--> {tgt}")
 
     return "\n".join(lines)
 
@@ -3367,12 +3413,27 @@ async def get_graph_node(
     project_slug: str,
     node_id: str,
     depth: int = 1,
+    relation_types: list[str] | None = None,
+    node_types: list[str] | None = None,
 ) -> str:
     """Szczegoly node'a z polaczeniami do sasiednich elementow w kompaktowym formacie Arrow DSL.
 
     depth: ile poziomow polaczen pokazac (domyslnie 1 = tylko bezposredni sasiedzi,
     2 = sasiedzi sasiadow itd., max 5). Uzyj depth=2 aby zobaczyc szerszy kontekst,
     np. pelna sciezke User -> ProjectMember -> Project w jednym zapytaniu.
+
+    relation_types: opcjonalny filtr typow krawedzi. Dozwolone wartosci:
+        CONTAINS, CALLS, IMPORTS, INHERITS, USES, IMPLEMENTS.
+        Przyklad: ["INHERITS", "CALLS"] — pokaz tylko relacje dziedziczenia i wywolan.
+        Jesli None (domyslnie) — zwroc wszystkie typy relacji.
+
+    node_types: opcjonalny filtr typow sasiadow. Dozwolone wartosci:
+        File, Class, Method, Function, Const, Module.
+        Przyklad: ["Class", "Method"] — pokaz tylko klasy i metody w sasiedztwie.
+        Jesli None (domyslnie) — zwroc wszystkie typy node'ow.
+
+    Wynik zawiera sekcje "Depth N" (grupowanie po glebokosci sciezki) oraz
+    sekcje "=== EDGE_TYPE ===" (grupowanie krawedzi po typie relacji).
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -3383,7 +3444,13 @@ async def get_graph_node(
     if node is None:
         raise ValueError("Node nie istnieje")
 
-    neighbors = await graph_service.get_neighbors(project.id, node_id, depth=depth)
+    neighbors = await graph_service.get_neighbors(
+        project.id,
+        node_id,
+        depth=depth,
+        relation_types=relation_types,
+        node_types=node_types,
+    )
 
     return _format_graph_dsl(neighbors)
 

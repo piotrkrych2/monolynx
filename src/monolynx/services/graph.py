@@ -311,36 +311,92 @@ async def get_neighbors(
     project_id: uuid.UUID,
     node_id: str,
     depth: int = 1,
+    relation_types: list[str] | None = None,
+    node_types: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Pobierz sąsiadów node'a do zadanej głębokości. Zwraca GraphSearchResult."""
+    """Pobierz sąsiadów node'a do zadanej głębokości. Zwraca GraphSearchResult.
+
+    Args:
+        project_id: ID projektu.
+        node_id: ID node'a startowego.
+        depth: Maksymalna głębokość przeszukiwania (max 5).
+        relation_types: Filtruj edges po typie relacji, np. ["INHERITS", "CALLS"].
+            Dozwolone wartości: CONTAINS, CALLS, IMPORTS, INHERITS, USES, IMPLEMENTS.
+            Jeśli None — brak filtra (wszystkie typy).
+        node_types: Filtruj sąsiadów po typie node'a, np. ["Class", "Method"].
+            Dozwolone wartości: File, Class, Method, Function, Const, Module.
+            Jeśli None — brak filtra (wszystkie typy).
+    """
     depth = min(depth, 5)  # max 5 poziomów dla bezpieczeństwa
+
+    # Walidacja relation_types
+    valid_relation_types: list[str] | None = None
+    if relation_types:
+        unknown = [r for r in relation_types if r not in GRAPH_EDGE_TYPES]
+        if unknown:
+            raise ValueError(f"Nieznane typy relacji: {unknown}. Dozwolone: {list(GRAPH_EDGE_TYPES)}")
+        valid_relation_types = relation_types
+
+    # Walidacja node_types
+    valid_node_types: list[str] | None = None
+    if node_types:
+        unknown = [n for n in node_types if n not in GRAPH_NODE_TYPES]
+        if unknown:
+            raise ValueError(f"Nieznane typy node'ów: {unknown}. Dozwolone: {list(GRAPH_NODE_TYPES)}")
+        valid_node_types = node_types
+
+    # Buduj fragment Cypher dla filtra relacji
+    if valid_relation_types:
+        rel_pattern = "|".join(valid_relation_types)
+        rel_clause = f"-[:{rel_pattern}*1..{depth}]-"
+    else:
+        rel_clause = f"-[*1..{depth}]-"
+
+    # Buduj opcjonalny WHERE clause dla filtra typów node'ów
+    node_type_where = ""
+    if valid_node_types:
+        node_type_where = " AND ANY(lbl IN labels(neighbor) WHERE lbl IN $node_types)"
+
+    cypher = (
+        f"MATCH path = (start {{id: $node_id, project_id: $project_id}})"
+        f"{rel_clause}(neighbor) "
+        f"WHERE neighbor.project_id = $project_id{node_type_where} "
+        f"WITH path, length(path) AS depth_level "
+        f"UNWIND nodes(path) AS n "
+        f"UNWIND relationships(path) AS r "
+        f"RETURN DISTINCT n, labels(n) AS labels, "
+        f"startNode(r).id AS source_id, endNode(r).id AS target_id, "
+        f"type(r) AS edge_type, r.metadata AS edge_metadata, depth_level"
+    )
+
     async with get_neo4j_session() as session:
-        # Pobierz node'y i krawędzie do zadanej głębokości
         result = await session.run(
-            f"MATCH path = (start {{id: $node_id, project_id: $project_id}})"
-            f"-[*1..{depth}]-(neighbor) "
-            f"WHERE neighbor.project_id = $project_id "
-            f"UNWIND nodes(path) AS n "
-            f"UNWIND relationships(path) AS r "
-            f"RETURN DISTINCT n, labels(n) AS labels, "
-            f"startNode(r).id AS source_id, endNode(r).id AS target_id, "
-            f"type(r) AS edge_type, r.metadata AS edge_metadata",
+            cypher,
             node_id=node_id,
             project_id=str(project_id),
+            node_types=list(valid_node_types) if valid_node_types else [],
         )
         records = [record async for record in result]
 
     nodes_map: dict[str, dict[str, Any]] = {}
     edges_set: set[tuple[str, str, str]] = set()
     edges: list[dict[str, Any]] = []
+    # depth_map: node_id -> minimalny depth_level
+    depth_map: dict[str, int] = {}
 
     for record in records:
         node = record["n"]
         node_id_val = node["id"]
+        depth_level: int = record["depth_level"]
+
         if node_id_val not in nodes_map:
             labels = [lbl for lbl in record["labels"] if lbl in GRAPH_NODE_TYPES]
             node_type = labels[0] if labels else "Unknown"
             nodes_map[node_id_val] = _node_to_dict(node, node_type)
+
+        # Zbierz minimalny depth per node
+        if node_id_val not in depth_map or depth_map[node_id_val] > depth_level:
+            depth_map[node_id_val] = depth_level
 
         edge_key = (record["source_id"], record["target_id"], record["edge_type"])
         if edge_key not in edges_set:
@@ -354,9 +410,13 @@ async def get_neighbors(
                 }
             )
 
+    # Start node zawsze ma depth 0
+    depth_map[node_id] = 0
+
     return {
         "nodes": list(nodes_map.values()),
         "edges": edges,
+        "depth_map": depth_map,
     }
 
 

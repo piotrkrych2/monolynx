@@ -703,6 +703,7 @@ class TestGetNeighbors:
                 "target_id": "b1",
                 "edge_type": "CALLS",
                 "edge_metadata": "{}",
+                "depth_level": 1,
             }
         )
         record2 = _make_record(
@@ -713,6 +714,7 @@ class TestGetNeighbors:
                 "target_id": "b1",
                 "edge_type": "CALLS",
                 "edge_metadata": "{}",
+                "depth_level": 1,
             }
         )
 
@@ -724,6 +726,8 @@ class TestGetNeighbors:
 
         assert len(result["nodes"]) == 2
         assert len(result["edges"]) == 1  # deduplicated
+        assert "depth_map" in result
+        assert result["depth_map"]["a1"] == 0  # start node always depth 0
 
     async def test_get_neighbors_empty(self, mock_driver: tuple) -> None:
         _driver, session = mock_driver

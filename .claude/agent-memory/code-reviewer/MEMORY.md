@@ -57,11 +57,16 @@
 - get_activity_log MON-41: 82/100 APPROVED (model+migration+service+MCP tool; medium: two DB sessions instead of one, ACTIVITY_ENTITY_TYPES in mcp_server.py; low: redundant project_id index, no dedicated tests, log_activity not called anywhere yet)
 - get_burndown MON-43: 72/100 REQUEST CHANGES (no tests blocker, updated_at unreliable for actual line, forecast_completion edge case, negative days_elapsed for future sprints)
 - UI attachments MON-44: 80/100 APPROVED (FilePond upload+HTMX delete, membership check on write, filename sanitized; medium: no server-side MIME validation, no attachment count limit)
+- get_graph_node MON-45: 86/100 APPROVED (Cypher filters + depth_map + grouped DSL output; medium: start node depth never 0; low: no tests for new filters)
+- get_graph_node testy MON-45: 88/100 APPROVED (34 testy, 5 klas; medium: wrong @pytest.mark.integration marker; low: redundancja z test_mcp_server.py TestFormatGraphDsl)
 
 ## Test Patterns Confirmed
 - Test fixture: connection-level transaction with rollback, `expire_on_commit=False` — services calling `db.commit()` work on savepoints
 - `_make_project` helper in test_heartbeat.py is better DRY than test_monitoring_dashboard.py (which repeats Project() inline)
 - `secrets.token_urlsafe(16)` produces 22 chars — matches `^hb_[A-Za-z0-9_-]{20,30}$` regex
+- Neo4j async iterator mock pattern: `result_mock.__aiter__ = lambda self: AsyncIterMock(records)` — established in test_graph_service.py, reused in test_format_graph_dsl.py
+- Neo4j driver mock: `_make_mock_graph_driver(session)` sets `__aenter__`/`__aexit__` on `driver.session.return_value` — correct for `async with _driver.session()` pattern
+- MCP tool direct import+await in tests: `from monolynx.mcp_server import get_graph_node; await get_graph_node(ctx, ...)` — works because `@mcp.tool()` preserves callable
 
 ## MCP Response Format Inconsistency
 - `list_tickets` returns `list[dict]` with `_meta` as last element — older pattern
