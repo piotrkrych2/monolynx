@@ -39,12 +39,38 @@
         </h3>
         <div class="ticket-list space-y-2 min-h-[200px]">
             {% for ticket in columns[status] %}
+            {% set ticket_key = project.code ~ '-' ~ ticket.number %}
+            {% set ticket_minutes = ticket_time_map.get(ticket.id|string, 0) %}
             <div data-ticket-id="{{ ticket.id }}" data-sp="{{ ticket.story_points or 0 }}"
                  class="ticket-card block bg-gray-800 border border-gray-700 rounded p-3 hover:border-indigo-500 transition cursor-grab"
                  onclick="window.location.href='/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}'">
-                <div class="flex items-center gap-1.5">
-                    <span class="text-indigo-400 font-mono text-xs flex-shrink-0">{{ project.code }}-{{ ticket.number }}</span>
-                    <p class="text-sm text-white font-medium truncate">{{ ticket.title }}</p>
+                <!-- Header row: key + title + copy buttons -->
+                <div class="flex items-start justify-between gap-1">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="text-indigo-400 font-mono text-xs flex-shrink-0">{{ ticket_key }}</span>
+                        <p class="text-sm text-white font-medium truncate">{{ ticket.title }}</p>
+                    </div>
+                    <!-- Copy buttons -->
+                    <div class="flex items-center gap-0.5 flex-shrink-0 ml-1">
+                        <button type="button"
+                                title="Kopiuj numer ticketu"
+                                onclick="event.stopPropagation(); copyTicketText(this, '{{ ticket_key }}', 'Kopiuj numer')"
+                                class="copy-btn relative text-gray-500 hover:text-gray-300 cursor-pointer transition p-0.5 rounded">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                            <span class="copy-tooltip absolute -top-8 right-0 text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-10">Kopiuj numer</span>
+                        </button>
+                        <button type="button"
+                                title="Kopiuj ID ticketu"
+                                onclick="event.stopPropagation(); copyTicketText(this, '{{ ticket.id }}', 'Kopiuj ID')"
+                                class="copy-btn relative text-gray-500 hover:text-gray-300 cursor-pointer transition p-0.5 rounded">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                            </svg>
+                            <span class="copy-tooltip absolute -top-8 right-0 text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-10">Kopiuj ID</span>
+                        </button>
+                    </div>
                 </div>
                 {% if ticket.labels %}
                 <div class="flex flex-wrap gap-1 mt-1.5">
@@ -83,6 +109,19 @@
                     {% endif %}
                 </div>
                 {% endif %}
+                <!-- Czas pracy -->
+                {% if ticket_minutes > 0 %}
+                <div class="flex items-center gap-1 mt-1.5">
+                    <svg class="w-3.5 h-3.5 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    {% if ticket_minutes >= 60 %}
+                    <span class="text-xs font-mono text-gray-400">{{ (ticket_minutes // 60) }}h{% if ticket_minutes % 60 > 0 %} {{ ticket_minutes % 60 }}m{% endif %}</span>
+                    {% else %}
+                    <span class="text-xs font-mono text-gray-400">{{ ticket_minutes }}m</span>
+                    {% endif %}
+                </div>
+                {% endif %}
             </div>
             {% endfor %}
         </div>
@@ -94,6 +133,24 @@
     .ticket-card.sortable-ghost { opacity: 0.5; }
     .ticket-card.sortable-drag { cursor: grabbing; }
     [data-status].drag-over .ticket-list { border: 2px dashed #6366f1; border-radius: 0.5rem; }
+
+    /* copy tooltip styles */
+    .copy-btn .copy-tooltip {
+        visibility: hidden;
+        opacity: 0;
+        background-color: #374151;
+        color: #d1d5db;
+        transition: opacity 0.15s;
+    }
+    .copy-btn:hover .copy-tooltip,
+    .copy-btn .copy-tooltip.show {
+        visibility: visible;
+        opacity: 1;
+    }
+    .copy-btn .copy-tooltip.success {
+        background-color: #065f46;
+        color: #6ee7b7;
+    }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script>
@@ -173,6 +230,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }, true);
     });
 });
+
+function copyTicketText(btn, text, defaultLabel) {
+    navigator.clipboard.writeText(text).then(function() {
+        var tooltip = btn.querySelector('.copy-tooltip');
+        if (!tooltip) return;
+        tooltip.textContent = 'Skopiowano!';
+        tooltip.classList.add('show', 'success');
+        setTimeout(function() {
+            tooltip.classList.remove('show', 'success');
+            tooltip.textContent = defaultLabel;
+        }, 1500);
+    });
+}
 </script>
 {% endif %}
 {% endblock %}

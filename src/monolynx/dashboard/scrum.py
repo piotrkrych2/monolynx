@@ -49,6 +49,7 @@ from monolynx.services.time_tracking import (
     add_time_entry,
     delete_time_entry,
     get_ticket_total_hours,
+    parse_duration,
 )
 from monolynx.services.wiki import render_markdown_html
 
@@ -223,6 +224,7 @@ async def board(
     sp_per_column: dict[str, int] = {s: 0 for s in BOARD_STATUSES}
     sp_total = 0
     sp_done = 0
+    ticket_time_map: dict[str, int] = {}
 
     if active_sprint:
         ticket_result = await db.execute(
@@ -231,7 +233,19 @@ async def board(
             .where(Ticket.sprint_id == active_sprint.id)
             .order_by(Ticket.order)
         )
-        for ticket in ticket_result.scalars().all():
+        tickets = ticket_result.scalars().all()
+
+        # Agregacja czasu pracy -- jeden query dla wszystkich ticketów sprintu
+        ticket_ids = [t.id for t in tickets]
+        if ticket_ids:
+            time_result = await db.execute(
+                select(TimeTrackingEntry.ticket_id, func.sum(TimeTrackingEntry.duration_minutes).label("total_minutes"))
+                .where(TimeTrackingEntry.ticket_id.in_(ticket_ids))
+                .group_by(TimeTrackingEntry.ticket_id)
+            )
+            ticket_time_map = {str(row.ticket_id): row.total_minutes for row in time_result.all()}
+
+        for ticket in tickets:
             if ticket.status in columns:
                 columns[ticket.status].append(ticket)
                 sp_per_column[ticket.status] += ticket.story_points or 0
@@ -252,6 +266,7 @@ async def board(
             "active_module": "scrum",
             "status_labels": STATUS_LABELS,
             "now_date": date.today(),
+            "ticket_time_map": ticket_time_map,
         },
         db=db,
     )
@@ -1083,7 +1098,7 @@ async def time_tracking_log(
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
     ticket_id_raw = body.get("ticket_id", "")
-    duration_raw = body.get("duration_minutes", 0)
+    duration_raw = body.get("duration", body.get("duration_minutes", ""))
     date_raw = body.get("date_logged", "")
     description = body.get("description") or None
 
@@ -1092,12 +1107,12 @@ async def time_tracking_log(
     except (ValueError, TypeError):
         return JSONResponse({"error": "Nieprawidlowy ticket_id"}, status_code=400)
 
-    try:
-        duration_minutes = int(duration_raw)
-        if duration_minutes <= 0:
-            raise ValueError
-    except (ValueError, TypeError):
-        return JSONResponse({"error": "Czas musi byc wiekszy niz 0"}, status_code=400)
+    duration_minutes = parse_duration(duration_raw)
+    if duration_minutes is None:
+        return JSONResponse(
+            {"error": "Nieprawidlowy format czasu. Przykłady: 2h30m, 1.5, 45m, 8h"},
+            status_code=400,
+        )
 
     try:
         date_logged = date.fromisoformat(str(date_raw))
