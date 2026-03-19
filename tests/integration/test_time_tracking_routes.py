@@ -83,7 +83,7 @@ class TestTimeTrackingLog:
             f"/dashboard/{project.slug}/scrum/time-tracking/log",
             json={
                 "ticket_id": str(ticket.id),
-                "duration_minutes": 90,
+                "duration_minutes": "90m",
                 "date_logged": "2026-02-25",
                 "description": "Code review",
             },

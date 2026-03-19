@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from datetime import date
 
@@ -14,6 +15,51 @@ from monolynx.models.project_member import ProjectMember
 from monolynx.models.ticket import Ticket
 from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.schemas.time_tracking import TimeTrackingEntryResponse, TimeTrackingFilter, WorkReportResult
+
+# Regex for flexible duration parsing: "2h30m", "2h", "30m", "2.5", "2.5h", "90m", "8"
+_DURATION_RE = re.compile(
+    r"^\s*(?:(\d+(?:[.,]\d+)?)\s*h)?\s*(?:(\d+(?:[.,]\d+)?)\s*m)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_duration(value: str | int | float) -> int | None:
+    """Parse flexible duration string into minutes.
+
+    Rules:
+    - Plain number without unit (e.g. "8", "2.5") → treated as HOURS
+    - Number with 'h' (e.g. "4h", "2.5h") → hours
+    - Number with 'm' (e.g. "30m", "45m") → minutes
+    - Combined (e.g. "2h30m", "1h 15m") → hours + minutes
+    - Already int/float → treated as hours
+
+    Returns total minutes (int, rounded) or None if unparseable.
+    """
+    if isinstance(value, (int, float)):
+        minutes = round(value * 60)
+        return minutes if minutes > 0 else None
+
+    raw = str(value).strip().replace(",", ".")
+    if not raw:
+        return None
+
+    match = _DURATION_RE.match(raw)
+    if match:
+        h_str, m_str = match.group(1), match.group(2)
+        if h_str is None and m_str is None:
+            return None
+        hours = float(h_str) if h_str else 0.0
+        mins = float(m_str) if m_str else 0.0
+        total = round(hours * 60 + mins)
+        return total if total > 0 else None
+
+    # Fallback: try as plain number → hours
+    try:
+        hours = float(raw)
+        total = round(hours * 60)
+        return total if total > 0 else None
+    except ValueError:
+        return None
 
 
 async def add_time_entry(

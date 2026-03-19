@@ -7,10 +7,11 @@
     <form id="time-entry-form" class="space-y-4">
         <input type="hidden" id="te-ticket-id" value="{{ ticket.id }}">
         <div>
-            <label for="te-duration" class="block text-sm text-gray-400 mb-1">Czas (minuty)</label>
-            <input type="number" id="te-duration" min="1" required
+            <label for="te-duration" class="block text-sm text-gray-400 mb-1">Czas</label>
+            <input type="text" id="te-duration" required
                    class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
-                   placeholder="np. 90">
+                   placeholder="np. 2h30m, 1.5, 45m, 8">
+            <p class="text-xs text-gray-500 mt-1">Bez jednostki = godziny. Przykłady: 8 = 8h, 2.5 = 2h30m, 30m, 1h15m</p>
         </div>
         <div>
             <label for="te-date" class="block text-sm text-gray-400 mb-1">Data pracy</label>
@@ -49,12 +50,12 @@
         errorEl.classList.add('hidden');
 
         const ticketId = document.getElementById('te-ticket-id').value;
-        const duration = parseInt(document.getElementById('te-duration').value);
+        const duration = document.getElementById('te-duration').value.trim();
         const dateLogged = document.getElementById('te-date').value;
         const description = document.getElementById('te-description').value.trim() || null;
 
-        if (!duration || duration <= 0) {
-            errorEl.textContent = 'Czas musi byc wiekszy niz 0';
+        if (!duration) {
+            errorEl.textContent = 'Podaj czas pracy';
             errorEl.classList.remove('hidden');
             return;
         }
@@ -65,7 +66,7 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     ticket_id: ticketId,
-                    duration_minutes: duration,
+                    duration: duration,
                     date_logged: dateLogged,
                     description: description
                 })
