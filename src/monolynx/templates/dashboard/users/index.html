@@ -5,7 +5,7 @@
 {% block nav_right %}
 <a href="/dashboard/users" class="text-indigo-400 hover:text-indigo-300 text-sm">Uzytkownicy</a>
 <form method="post" action="/auth/logout">
-    <button type="submit" class="text-gray-400 hover:text-white text-sm">Wyloguj</button>
+    <button type="submit" class="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm">Wyloguj</button>
 </form>
 {% endblock %}
 
@@ -18,10 +18,10 @@
     </a>
 </div>
 
-<div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
     <table class="w-full text-sm">
         <thead>
-            <tr class="border-b border-gray-700 text-gray-400">
+            <tr class="border-b border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
                 <th class="text-left px-4 py-3 font-medium">Uzytkownik</th>
                 <th class="text-left px-4 py-3 font-medium">Email</th>
                 <th class="text-left px-4 py-3 font-medium">Status</th>
@@ -31,10 +31,10 @@
         </thead>
         <tbody>
             {% for user in users %}
-            <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
+            <tr class="border-b border-gray-200 dark:border-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700/30">
                 <td class="px-4 py-3">
                     <div class="flex items-center gap-2">
-                        <span class="text-white">
+                        <span class="text-gray-900 dark:text-white">
                             {% if user.first_name or user.last_name %}
                                 {{ user.first_name }} {{ user.last_name }}
                             {% else %}
@@ -46,15 +46,15 @@
                         {% endif %}
                     </div>
                 </td>
-                <td class="px-4 py-3 text-gray-400">{{ user.email }}</td>
+                <td class="px-4 py-3 text-gray-600 dark:text-gray-400">{{ user.email }}</td>
                 <td class="px-4 py-3">
                     {% if user.password_hash or user.google_id %}
-                    <span class="bg-green-600/30 text-green-300 text-xs px-2 py-0.5 rounded">Aktywny</span>
+                    <span class="bg-green-600/30 text-green-800 dark:text-green-300 text-xs px-2 py-0.5 rounded">Aktywny</span>
                     {% else %}
-                    <span class="bg-yellow-600/30 text-yellow-300 text-xs px-2 py-0.5 rounded">Oczekuje</span>
+                    <span class="bg-yellow-600/30 text-yellow-800 dark:text-yellow-300 text-xs px-2 py-0.5 rounded">Oczekuje</span>
                     {% endif %}
                 </td>
-                <td class="px-4 py-3 text-gray-400">{{ user.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td class="px-4 py-3 text-gray-600 dark:text-gray-400">{{ user.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                 <td class="px-4 py-3 text-right">
                     <div class="flex items-center justify-end gap-3">
                         <a href="/dashboard/users/{{ user.id }}"

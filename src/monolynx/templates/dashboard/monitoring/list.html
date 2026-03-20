@@ -15,12 +15,12 @@
 <div class="space-y-2">
     {% for monitor in monitors %}
     {% set last_check = last_checks.get(monitor.id) %}
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
         <div class="flex items-center justify-between">
             <a href="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}" class="flex-1 min-w-0">
                 <div class="flex items-center gap-3">
                     {% if not monitor.is_active %}
-                    <span class="w-2.5 h-2.5 rounded-full bg-gray-600 flex-shrink-0"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-gray-200 dark:bg-gray-600 flex-shrink-0"></span>
                     {% elif last_check %}
                         {% if last_check.is_success %}
                         <span class="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0"></span>
@@ -32,7 +32,7 @@
                     {% endif %}
 
                     <div class="min-w-0">
-                        <h3 class="text-white font-medium truncate">{{ monitor.name or monitor.url }}</h3>
+                        <h3 class="text-gray-900 dark:text-white font-medium truncate">{{ monitor.name or monitor.url }}</h3>
                         {% if monitor.name %}
                         <p class="text-xs text-gray-500 truncate">{{ monitor.url }}</p>
                         {% endif %}
@@ -64,12 +64,12 @@
                 <span class="text-xs text-gray-500">co {{ monitor.interval_value }} {{ interval_unit_labels.get(monitor.interval_unit, monitor.interval_unit) }}</span>
 
                 {% if not monitor.is_active %}
-                <span class="bg-gray-600 text-gray-400 text-xs px-2 py-0.5 rounded">Wylaczony</span>
+                <span class="bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 rounded">Wylaczony</span>
                 {% endif %}
 
                 <form method="post" action="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}/toggle" class="inline">
                     <button type="submit" title="{% if monitor.is_active %}Wylacz{% else %}Wlacz{% endif %}"
-                            class="text-gray-400 hover:text-white transition p-1">
+                            class="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition p-1">
                         {% if monitor.is_active %}
                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />

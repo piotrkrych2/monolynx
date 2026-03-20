@@ -4,7 +4,7 @@
 {% block content %}
 
 <div class="mb-6">
-    <h2 class="text-xl font-bold text-white">Raporty pracy</h2>
+    <h2 class="text-xl font-bold text-gray-900 dark:text-white">Raporty pracy</h2>
 </div>
 
 <style>
@@ -19,10 +19,10 @@
     .ts-wrapper .ts-dropdown .option:hover { background: rgb(75, 85, 99); }
     .ts-wrapper.focus .ts-control { border-color: rgb(99, 102, 241); box-shadow: none; }
 </style>
-<form method="get" action="/dashboard/reports" class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-6">
+<form method="get" action="/dashboard/reports" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-6">
     <div class="flex flex-wrap gap-3 items-end">
         <div class="min-w-[200px]">
-            <label class="block text-xs text-gray-400 mb-1">Projekt</label>
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Projekt</label>
             <select id="filter-project" name="project_id" multiple placeholder="Szukaj projektu...">
                 {% for p in projects %}
                 {% if p.id|string in selected_project_ids %}
@@ -32,7 +32,7 @@
             </select>
         </div>
         <div class="min-w-[200px]">
-            <label class="block text-xs text-gray-400 mb-1">Uzytkownik</label>
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Uzytkownik</label>
             <select id="filter-user" name="user_id" multiple placeholder="Szukaj użytkownika...">
                 {% if filters.user_ids %}
                 {% for uid in filters.user_ids %}
@@ -42,7 +42,7 @@
             </select>
         </div>
         <div class="min-w-[200px]">
-            <label class="block text-xs text-gray-400 mb-1">Sprint</label>
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Sprint</label>
             <select id="filter-sprint" name="sprint_id" multiple placeholder="Szukaj sprintu...">
                 {% if filters.sprint_ids %}
                 {% for sid in filters.sprint_ids %}
@@ -52,18 +52,18 @@
             </select>
         </div>
         <div>
-            <label class="block text-xs text-gray-400 mb-1">Data od</label>
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Data od</label>
             <input type="date" name="date_from" value="{{ filters.date_from if filters.date_from else '' }}"
-                   class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                   class="bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div>
-            <label class="block text-xs text-gray-400 mb-1">Data do</label>
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Data do</label>
             <input type="date" name="date_to" value="{{ filters.date_to if filters.date_to else '' }}"
-                   class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                   class="bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div>
-            <label class="block text-xs text-gray-400 mb-1">Zrodlo</label>
-            <select name="ai" class="bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Zrodlo</label>
+            <select name="ai" class="bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                 <option value="">Wszystkie</option>
                 <option value="1" {% if filters.created_via_ai == true %}selected{% endif %}>AI</option>
                 <option value="0" {% if filters.created_via_ai == false %}selected{% endif %}>Reczne</option>
@@ -75,7 +75,7 @@
                 Filtruj
             </button>
             <a href="/dashboard/reports"
-               class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-1.5 rounded transition">
+               class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-1.5 rounded transition">
                 Wyczysc
             </a>
         </div>
@@ -83,21 +83,21 @@
 </form>
 
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <div class="text-xs text-gray-400 mb-1">Zalogowane godziny</div>
-        <div class="text-2xl font-bold text-white">{{ "%.1f"|format(report.total_hours) }}h</div>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <div class="text-xs text-gray-600 dark:text-gray-400 mb-1">Zalogowane godziny</div>
+        <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ "%.1f"|format(report.total_hours) }}h</div>
     </div>
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <div class="text-xs text-gray-400 mb-1">Liczba wpisow</div>
-        <div class="text-2xl font-bold text-white">{{ report.entry_count }}</div>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <div class="text-xs text-gray-600 dark:text-gray-400 mb-1">Liczba wpisow</div>
+        <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ report.entry_count }}</div>
     </div>
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <div class="text-xs text-gray-400 mb-1">Srednia na wpis</div>
-        <div class="text-2xl font-bold text-white">{{ "%.1f"|format(avg_hours) }}h</div>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <div class="text-xs text-gray-600 dark:text-gray-400 mb-1">Srednia na wpis</div>
+        <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ "%.1f"|format(avg_hours) }}h</div>
     </div>
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <div class="text-xs text-gray-400 mb-1">Osoby</div>
-        <div class="text-2xl font-bold text-white">{{ unique_users }}</div>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <div class="text-xs text-gray-600 dark:text-gray-400 mb-1">Osoby</div>
+        <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ unique_users }}</div>
     </div>
 </div>
 
@@ -114,20 +114,20 @@
 {% set filter_params = filter_parts|join("&") %}
 {% set fp_amp = ("&" ~ filter_params) if filter_params else "" %}
 
-<div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden mb-6">
+<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden mb-6">
     <table class="w-full text-sm">
         <thead>
-            <tr class="border-b border-gray-700 text-gray-400 text-xs uppercase">
+            <tr class="border-b border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 text-xs uppercase">
                 <th class="px-4 py-3 text-left">Projekt</th>
                 <th class="px-4 py-3 text-left">Ticket</th>
                 <th class="px-4 py-3 text-left">
-                    <a href="/dashboard/reports?sort=user{{ fp_nosort }}" class="hover:text-white transition">Uzytkownik {% if sort == 'user' %}&darr;{% endif %}</a>
+                    <a href="/dashboard/reports?sort=user{{ fp_nosort }}" class="hover:text-gray-900 dark:hover:text-white transition">Uzytkownik {% if sort == 'user' %}&darr;{% endif %}</a>
                 </th>
                 <th class="px-4 py-3 text-right">
-                    <a href="/dashboard/reports?sort=hours{{ fp_nosort }}" class="hover:text-white transition">Godziny {% if sort == 'hours' %}&darr;{% endif %}</a>
+                    <a href="/dashboard/reports?sort=hours{{ fp_nosort }}" class="hover:text-gray-900 dark:hover:text-white transition">Godziny {% if sort == 'hours' %}&darr;{% endif %}</a>
                 </th>
                 <th class="px-4 py-3 text-left">
-                    <a href="/dashboard/reports?sort=date{{ fp_nosort }}" class="hover:text-white transition">Data {% if sort == 'date' and request.query_params.get('sort') %}&darr;{% endif %}</a>
+                    <a href="/dashboard/reports?sort=date{{ fp_nosort }}" class="hover:text-gray-900 dark:hover:text-white transition">Data {% if sort == 'date' and request.query_params.get('sort') %}&darr;{% endif %}</a>
                 </th>
                 <th class="px-4 py-3 text-left">Opis</th>
                 <th class="px-4 py-3 text-center w-12"></th>
@@ -135,26 +135,26 @@
         </thead>
         <tbody>
             {% for entry in report.entries %}
-            <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
-                <td class="px-4 py-3 text-white">{{ project_lookup.get(entry.project_id|string, '?') }}</td>
+            <tr class="border-b border-gray-200 dark:border-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700/30">
+                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ project_lookup.get(entry.project_id|string, '?') }}</td>
                 <td class="px-4 py-3">
                     <a href="/dashboard/{{ project_slug_lookup.get(entry.project_id|string, '') }}/scrum/tickets/{{ entry.ticket_id }}" class="text-indigo-400 hover:text-indigo-300 font-mono text-xs">
                         {{ ticket_key_lookup.get(entry.ticket_id|string, '?') }}
                     </a>
                 </td>
-                <td class="px-4 py-3 text-white">{{ user_lookup.get(entry.user_id|string, '?') }}</td>
-                <td class="px-4 py-3 text-right text-white font-mono">{{ "%.1f"|format(entry.duration_minutes / 60) }}h</td>
-                <td class="px-4 py-3 text-gray-300">{{ entry.date_logged }}</td>
-                <td class="px-4 py-3 text-gray-400">{{ (entry.description or '')|truncate(100) }}</td>
+                <td class="px-4 py-3 text-gray-900 dark:text-white">{{ user_lookup.get(entry.user_id|string, '?') }}</td>
+                <td class="px-4 py-3 text-right text-gray-900 dark:text-white font-mono">{{ "%.1f"|format(entry.duration_minutes / 60) }}h</td>
+                <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ entry.date_logged }}</td>
+                <td class="px-4 py-3 text-gray-600 dark:text-gray-400">{{ (entry.description or '')|truncate(100) }}</td>
                 <td class="px-4 py-3 text-center">{% if entry.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded" title="Zalogowano przez AI">AI</span>{% endif %}</td>
             </tr>
             {% endfor %}
             {% if not report.entries %}
             <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">Brak wpisow dla wybranych filtrow</td></tr>
             {% endif %}
-            <tr class="bg-gray-700/50 font-semibold">
-                <td class="px-4 py-3 text-white" colspan="3">Razem</td>
-                <td class="px-4 py-3 text-right text-white font-mono">{{ "%.1f"|format(report.total_hours) }}h</td>
+            <tr class="bg-gray-100/50 dark:bg-gray-700/50 font-semibold">
+                <td class="px-4 py-3 text-gray-900 dark:text-white" colspan="3">Razem</td>
+                <td class="px-4 py-3 text-right text-gray-900 dark:text-white font-mono">{{ "%.1f"|format(report.total_hours) }}h</td>
                 <td class="px-4 py-3" colspan="2"></td>
                 <td class="px-4 py-3 text-center text-xs text-purple-400">{% if ai_entry_count > 0 %}{{ ai_hours }}h AI{% endif %}</td>
             </tr>
@@ -163,14 +163,14 @@
 </div>
 
 <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <h3 class="text-sm font-semibold text-gray-400 mb-3">Godziny na sprint</h3>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Godziny na sprint</h3>
         <div class="h-64">
             <canvas id="chart-sprint-hours"></canvas>
         </div>
     </div>
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <h3 class="text-sm font-semibold text-gray-400 mb-3">Godziny na osobe</h3>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Godziny na osobe</h3>
         <div class="h-64">
             <canvas id="chart-user-hours"></canvas>
         </div>
@@ -178,8 +178,8 @@
 </div>
 
 <div class="grid grid-cols-1 gap-6 mb-6">
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <h3 class="text-sm font-semibold text-gray-400 mb-3">Godziny na projekt</h3>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Godziny na projekt</h3>
         <div class="h-64">
             <canvas id="chart-project-hours"></canvas>
         </div>
@@ -188,11 +188,11 @@
 
 <div class="flex items-center gap-3 mb-6">
     <a href="/dashboard/reports/export?format=csv{{ fp_amp }}"
-       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+       class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
         Eksportuj jako CSV
     </a>
     <a href="/dashboard/reports/export?format=pdf{{ fp_amp }}"
-       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+       class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
         Eksportuj jako PDF
     </a>
 </div>
@@ -202,16 +202,16 @@
     <div>
         {% if has_prev %}
         <a href="/dashboard/reports?page={{ page - 1 }}{{ fp_amp }}"
-           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+           class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
             Poprzednia
         </a>
         {% endif %}
     </div>
-    <span class="text-sm text-gray-400">Strona {{ page }} z {{ total_pages }}</span>
+    <span class="text-sm text-gray-600 dark:text-gray-400">Strona {{ page }} z {{ total_pages }}</span>
     <div>
         {% if has_next %}
         <a href="/dashboard/reports?page={{ page + 1 }}{{ fp_amp }}"
-           class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+           class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
             Nastepna
         </a>
         {% endif %}
@@ -408,7 +408,7 @@ function initTomSelect(elementId, searchUrl, extraParams) {
                 return '<div>' + escape(data.text) + '</div>';
             },
             no_results: function() {
-                return '<div class="no-results py-2 px-3 text-gray-400 text-sm">Brak wynikow</div>';
+                return '<div class="no-results py-2 px-3 text-gray-600 dark:text-gray-400 text-sm">Brak wynikow</div>';
             }
         }
     });

@@ -5,34 +5,34 @@
 {% block content %}
 <div class="max-w-4xl mx-auto">
     <div class="mb-8">
-        <h1 class="text-2xl font-bold text-white">How to MCP</h1>
-        <p class="text-gray-400 text-sm mt-1">Podłącz Claude Code do Monolynx przez MCP i zarządzaj Scrumem z poziomu terminala</p>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">How to MCP</h1>
+        <p class="text-gray-600 dark:text-gray-400 text-sm mt-1">Podłącz Claude Code do Monolynx przez MCP i zarządzaj Scrumem z poziomu terminala</p>
     </div>
 
     <!-- Krok 1 -->
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
         <div class="flex items-center gap-3 mb-4">
             <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">1</span>
-            <h2 class="text-lg font-semibold text-white">Wygeneruj token API</h2>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Wygeneruj token API</h2>
         </div>
-        <p class="text-gray-300 text-sm mb-3">
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">
             Przejdź do strony <a href="/dashboard/profile/tokens" class="text-indigo-400 hover:text-indigo-300 underline">Tokeny API</a>,
-            nadaj tokenowi nazwę (np. "Claude Code") i kliknij <strong class="text-white">Wygeneruj token</strong>.
+            nadaj tokenowi nazwę (np. "Claude Code") i kliknij <strong class="text-gray-900 dark:text-white">Wygeneruj token</strong>.
         </p>
-        <p class="text-gray-400 text-sm">
+        <p class="text-gray-600 dark:text-gray-400 text-sm">
             Skopiuj token od razu — nie będzie wyświetlony ponownie.
         </p>
     </div>
 
     <!-- Krok 2 -->
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
         <div class="flex items-center gap-3 mb-4">
             <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">2</span>
-            <h2 class="text-lg font-semibold text-white">Dodaj serwer MCP do Claude Code</h2>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Dodaj serwer MCP do Claude Code</h2>
         </div>
 
-        <p class="text-gray-300 text-sm mb-3">Dodaj do pliku <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> w katalogu projektu:</p>
-        <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">Dodaj do pliku <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> w katalogu projektu:</p>
+        <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-x-auto">
             <code class="text-green-400 font-mono text-sm whitespace-pre">{
   "mcpServers": {
     "monolynx": {
@@ -48,55 +48,55 @@
   }
 }</code>
         </div>
-        <p class="text-gray-400 text-sm mt-3">
+        <p class="text-gray-600 dark:text-gray-400 text-sm mt-3">
             Zastąp <code class="text-indigo-300 font-mono text-sm">TWOJ_TOKEN</code> wygenerowanym tokenem API (zaczyna się od <code class="text-indigo-300 font-mono text-sm">osk_</code>).
         </p>
     </div>
 
     <!-- Krok 2b -->
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
         <div class="flex items-center gap-3 mb-4">
             <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">2b</span>
-            <h2 class="text-lg font-semibold text-white">Alternatywa: Claude Desktop (OAuth)</h2>
-            <span class="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">zamiast 2</span>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Alternatywa: Claude Desktop (OAuth)</h2>
+            <span class="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-0.5 rounded">zamiast 2</span>
         </div>
 
-        <p class="text-gray-300 text-sm mb-4">
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">
             Claude Desktop obsługuje MCP przez OAuth — nie potrzebujesz tokenu API. Otwórz
-            <strong class="text-white">Settings → Integrations → Add</strong> i wypełnij pola:
+            <strong class="text-gray-900 dark:text-white">Settings → Integrations → Add</strong> i wypełnij pola:
         </p>
 
-        <div class="bg-gray-900 rounded-lg overflow-hidden mb-4">
+        <div class="bg-gray-50 dark:bg-gray-900 rounded-lg overflow-hidden mb-4">
             <table class="w-full text-sm">
                 <tbody>
-                    <tr class="border-b border-gray-700">
-                        <td class="px-4 py-3 text-gray-400 font-medium whitespace-nowrap w-48">Nazwa connectora</td>
+                    <tr class="border-b border-gray-200 dark:border-gray-700">
+                        <td class="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium whitespace-nowrap w-48">Nazwa connectora</td>
                         <td class="px-4 py-3"><code class="text-green-400 font-mono">Monolynx</code></td>
                     </tr>
-                    <tr class="border-b border-gray-700">
-                        <td class="px-4 py-3 text-gray-400 font-medium whitespace-nowrap">URL connectora</td>
+                    <tr class="border-b border-gray-200 dark:border-gray-700">
+                        <td class="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium whitespace-nowrap">URL connectora</td>
                         <td class="px-4 py-3"><code class="text-green-400 font-mono">{{ app_url }}/</code></td>
                     </tr>
-                    <tr class="border-b border-gray-700">
-                        <td class="px-4 py-3 text-gray-400 font-medium whitespace-nowrap">OAuth Client ID</td>
-                        <td class="px-4 py-3 text-gray-400 italic">zostaw puste</td>
+                    <tr class="border-b border-gray-200 dark:border-gray-700">
+                        <td class="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium whitespace-nowrap">OAuth Client ID</td>
+                        <td class="px-4 py-3 text-gray-600 dark:text-gray-400 italic">zostaw puste</td>
                     </tr>
                     <tr>
-                        <td class="px-4 py-3 text-gray-400 font-medium whitespace-nowrap">OAuth Client Secret</td>
-                        <td class="px-4 py-3 text-gray-400 italic">zostaw puste</td>
+                        <td class="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium whitespace-nowrap">OAuth Client Secret</td>
+                        <td class="px-4 py-3 text-gray-600 dark:text-gray-400 italic">zostaw puste</td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <p class="text-gray-300 text-sm mb-2">
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-2">
             Claude Desktop automatycznie zarejestruje się jako klient OAuth i przekieruje Cię do strony logowania Monolynx.
             Zaloguj się swoimi danymi (email + hasło) i zatwierdź dostęp.
         </p>
 
-        <div class="bg-gray-700/30 border border-gray-600 rounded-lg p-3 mt-3">
-            <p class="text-gray-400 text-xs">
-                <strong class="text-gray-300">Jak to działa?</strong>
+        <div class="bg-gray-100/30 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 rounded-lg p-3 mt-3">
+            <p class="text-gray-600 dark:text-gray-400 text-xs">
+                <strong class="text-gray-700 dark:text-gray-300">Jak to działa?</strong>
                 Claude Desktop odkrywa endpointy OAuth przez <code class="text-indigo-300 font-mono text-xs">/.well-known/oauth-authorization-server</code>,
                 rejestruje klienta (Dynamic Client Registration), a następnie przeprowadza flow PKCE.
                 Pola Client ID i Secret są opcjonalne — wypełniaj je tylko jeśli masz wcześniej zarejestrowanego klienta.
@@ -105,17 +105,17 @@
     </div>
 
     <!-- Krok 3 -->
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
         <div class="flex items-center gap-3 mb-4">
             <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">3</span>
-            <h2 class="text-lg font-semibold text-white">Użyj narzędzi</h2>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Użyj narzędzi</h2>
         </div>
 
-        <p class="text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-white">62 narzędzi</strong> we wszystkich modułach:</p>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-gray-900 dark:text-white">62 narzędzi</strong> we wszystkich modułach:</p>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Projekty</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Projekty</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_projects</code> <span class="text-gray-500">— lista projektów</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_project_summary</code> <span class="text-gray-500">— podsumowanie projektu</span></li>
@@ -126,7 +126,7 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Członkowie zespołu</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Członkowie zespołu</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_members</code> <span class="text-gray-500">— lista członków projektu</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">invite_member</code> <span class="text-gray-500">— zaproś do projektu</span></li>
@@ -134,7 +134,7 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">500ki (błędy)</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">500ki (błędy)</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_issues</code> <span class="text-gray-500">— lista błędów</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_issue</code> <span class="text-gray-500">— szczegóły błędu</span></li>
@@ -144,7 +144,7 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Scrum — Tickety</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Scrum — Tickety</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_tickets</code> <span class="text-gray-500">— lista ticketów</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_ticket</code> <span class="text-gray-500">— szczegóły ticketu</span></li>
@@ -157,14 +157,14 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Scrum — Etykiety</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Scrum — Etykiety</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_labels</code> <span class="text-gray-500">— lista etykiet projektu</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">create_label</code> <span class="text-gray-500">— utwórz etykietę</span></li>
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Scrum — Sprinty i tablica</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Scrum — Sprinty i tablica</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_sprints</code> <span class="text-gray-500">— lista sprintów</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_sprint</code> <span class="text-gray-500">— szczegóły sprintu</span></li>
@@ -177,7 +177,7 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Komentarze i czas pracy</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Komentarze i czas pracy</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_comments</code> <span class="text-gray-500">— komentarze do ticketu</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">add_comment</code> <span class="text-gray-500">— dodaj komentarz</span></li>
@@ -185,7 +185,7 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Monitoring</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Monitoring</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_monitors</code> <span class="text-gray-500">— lista monitorów</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_monitor</code> <span class="text-gray-500">— szczegóły monitora</span></li>
@@ -195,13 +195,13 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Audyt</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Audyt</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_activity_log</code> <span class="text-gray-500">— historia zmian w projekcie</span></li>
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Heartbeat</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Heartbeat</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_heartbeats</code> <span class="text-gray-500">— lista heartbeatów</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_heartbeat</code> <span class="text-gray-500">— szczegóły heartbeatu</span></li>
@@ -211,7 +211,7 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Wiki</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Wiki</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_wiki_pages</code> <span class="text-gray-500">— drzewo stron</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_wiki_page</code> <span class="text-gray-500">— szczegóły strony</span></li>
@@ -222,7 +222,7 @@
                 </ul>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-400 mb-2">Połączenia (graf)</h3>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Połączenia (graf)</h3>
                 <ul class="space-y-1">
                     <li class="text-sm"><code class="text-indigo-300 font-mono">create_graph_node</code> <span class="text-gray-500">— utwórz node</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_graph_nodes</code> <span class="text-gray-500">— lista node'ów</span></li>
@@ -239,8 +239,8 @@
             </div>
         </div>
 
-        <p class="text-gray-300 text-sm mb-3">Przykład użycia w Claude Code:</p>
-        <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">Przykład użycia w Claude Code:</p>
+        <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-x-auto">
             <code class="text-green-400 font-mono text-sm whitespace-pre">"Stwórz ticket 'Naprawić bug logowania' w projekcie my-app z priorytetem high"
 
 "Pokaż wszystkie tickety w sprincie"
@@ -250,14 +250,14 @@
     </div>
 
     <!-- Krok 4 -->
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
         <div class="flex items-center gap-3 mb-4">
             <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">4</span>
-            <h2 class="text-lg font-semibold text-white">Zainstaluj skille Claude Code</h2>
-            <span class="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">opcjonalnie</span>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Zainstaluj skille Claude Code</h2>
+            <span class="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-0.5 rounded">opcjonalnie</span>
         </div>
 
-        <p class="text-gray-300 text-sm mb-4">
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">
             Skille to gotowe przepisy pracy dla Claude Code. Pobierz paczkę i rozpakuj w katalogu głównym projektu — pliki trafią do <code class="text-indigo-300 font-mono text-sm">.claude/skills/</code>.
         </p>
 
@@ -277,24 +277,24 @@
             Pobierz Starter Pack!
         </a>
 
-        <p class="text-gray-400 text-sm mb-4">
+        <p class="text-gray-600 dark:text-gray-400 text-sm mb-4">
             Po rozpakowaniu zamień <code class="text-indigo-300 font-mono text-sm">&lt;SLUG_PROJEKTU&gt;</code> na slug Twojego projektu w Monolynx (np. <code class="text-indigo-300 font-mono text-sm">my-app</code>).
         </p>
 
         <div class="space-y-3">
-            <div class="bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-white mb-1">monolynx-work</p>
-                <p class="text-xs text-gray-400">Koordynator zespołu agentów — podejmuje ticket ze sprintu, rozdziela pracę, loguje czas.</p>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-work</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Koordynator zespołu agentów — podejmuje ticket ze sprintu, rozdziela pracę, loguje czas.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-work [ticket-id]</code></p>
             </div>
-            <div class="bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-white mb-1">monolynx-search</p>
-                <p class="text-xs text-gray-400">Wyszukiwanie semantyczne w wiki projektu (RAG). Aktywuje się automatycznie na pytania o dokumentację.</p>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-search</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Wyszukiwanie semantyczne w wiki projektu (RAG). Aktywuje się automatycznie na pytania o dokumentację.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-search jak działa autoryzacja w API?</code></p>
             </div>
-            <div class="bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-white mb-1">monolynx-create-graph-ci-script</p>
-                <p class="text-xs text-gray-400">Generuje skrypt CI synchronizujący graf zależności kodu z Twojego projektu.</p>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-create-graph-ci-script</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Generuje skrypt CI synchronizujący graf zależności kodu z Twojego projektu.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-create-graph-ci-script</code></p>
             </div>
         </div>

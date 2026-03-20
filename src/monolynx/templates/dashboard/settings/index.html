@@ -7,18 +7,18 @@
     <h1 class="text-2xl font-bold mb-6">Ustawienia projektu</h1>
 
     {% if error %}
-    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+    <div class="bg-red-50 dark:bg-red-900/50 border border-red-300 dark:border-red-500 text-red-800 dark:text-red-300 px-4 py-2 rounded mb-4">
         {{ error }}
     </div>
     {% endif %}
 
     <div class="mb-6">
-        <label class="block text-sm text-gray-400 mb-1">Klucz API</label>
+        <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Klucz API</label>
         <div class="flex items-center gap-2">
             <input type="text" readonly value="{{ project.api_key }}" id="api-key-field"
-                class="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-300 font-mono text-sm select-all cursor-text">
+                class="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-700 dark:text-gray-300 font-mono text-sm select-all cursor-text">
             <button type="button" onclick="copyApiKey()" id="copy-btn" title="Kopiuj klucz API"
-                class="bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded px-3 py-2 text-gray-400 hover:text-white transition">
+                class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-600 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" id="copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
@@ -31,23 +31,23 @@
 
     <form method="post" action="/dashboard/{{ project.slug }}/settings" class="space-y-4">
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Nazwa projektu</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Nazwa projektu</label>
             <input type="text" name="name" value="{{ name or project.name }}" required
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Kod projektu</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Kod projektu</label>
             <input type="text" name="code" value="{{ code or project.code }}" required
                 pattern="[A-Z][A-Z0-9]{1,9}"
                 maxlength="10"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white uppercase focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white uppercase focus:outline-none focus:border-indigo-500">
             <p class="text-xs text-gray-500 mt-1">Wielkie litery i cyfry, 2-10 znakow (np. PIM, LEP). Uzywany w numeracji ticketow.</p>
         </div>
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Slug</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Slug</label>
             <input type="text" name="slug" value="{{ slug or project.slug }}" required
                 pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             <p class="text-xs text-gray-500 mt-1">Tylko male litery, cyfry i myslniki (np. moj-projekt)</p>
         </div>
         <button type="submit"
@@ -57,25 +57,25 @@
     </form>
 
     <!-- Czlonkowie projektu -->
-    <div class="mt-8 border border-gray-700 rounded-lg p-4">
+    <div class="mt-8 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
         <h2 class="text-lg font-semibold mb-4">Czlonkowie projektu</h2>
 
         {% if member_error %}
-        <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+        <div class="bg-red-50 dark:bg-red-900/50 border border-red-300 dark:border-red-500 text-red-800 dark:text-red-300 px-4 py-2 rounded mb-4">
             {{ member_error }}
         </div>
         {% endif %}
 
         <form method="post" action="/dashboard/{{ project.slug }}/settings/members/add" class="flex items-end gap-3 mb-4">
             <div class="flex-1">
-                <label class="block text-sm text-gray-400 mb-1">Email uzytkownika</label>
+                <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Email uzytkownika</label>
                 <input type="email" name="email" required placeholder="user@example.com"
-                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             </div>
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Rola</label>
+                <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Rola</label>
                 <select name="role"
-                    class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    class="bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                     {% for r in roles %}
                     <option value="{{ r }}" {% if r == 'member' %}selected{% endif %}>
                         {{ role_labels.get(r, r) }}
@@ -92,20 +92,20 @@
         {% if members %}
         <div class="space-y-2">
             {% for member in members %}
-            <div class="flex items-center justify-between bg-gray-800 border border-gray-700 rounded px-4 py-3">
+            <div class="flex items-center justify-between bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-4 py-3">
                 <div class="flex items-center gap-3">
-                    <span class="text-white text-sm">{{ member.user.email }}</span>
+                    <span class="text-gray-900 dark:text-white text-sm">{{ member.user.email }}</span>
                     <span class="text-xs px-2 py-0.5 rounded
-                        {% if member.role == 'owner' %}bg-yellow-900 text-yellow-300
-                        {% elif member.role == 'admin' %}bg-blue-900 text-blue-300
-                        {% else %}bg-gray-700 text-gray-300{% endif %}">
+                        {% if member.role == 'owner' %}bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-300
+                        {% elif member.role == 'admin' %}bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300
+                        {% else %}bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300{% endif %}">
                         {{ role_labels.get(member.role, member.role) }}
                     </span>
                 </div>
                 <div class="flex items-center gap-2">
                     <form method="post" action="/dashboard/{{ project.slug }}/settings/members/{{ member.id }}/role" class="inline">
                         <select name="role" onchange="this.form.submit()"
-                            class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500">
+                            class="bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                             {% for r in roles %}
                             <option value="{{ r }}" {% if member.role == r %}selected{% endif %}>
                                 {{ role_labels.get(r, r) }}
@@ -114,7 +114,7 @@
                         </select>
                     </form>
                     <form method="post" action="/dashboard/{{ project.slug }}/settings/members/{{ member.id }}/remove" class="inline">
-                        <button type="submit" class="text-gray-400 hover:text-red-400 text-sm transition"
+                        <button type="submit" class="text-gray-600 dark:text-gray-400 hover:text-red-400 text-sm transition"
                             onclick="return confirm('Usunac tego czlonka?')">Usun</button>
                     </form>
                 </div>
@@ -128,7 +128,7 @@
 
     <div class="mt-8 border border-red-900 rounded-lg p-4">
         <h2 class="text-lg font-semibold text-red-400 mb-2">Strefa niebezpieczenstwa</h2>
-        <p class="text-sm text-gray-400 mb-4">Usuniecie projektu jest nieodwracalne. Wszystkie powiazane dane zostana ukryte.</p>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Usuniecie projektu jest nieodwracalne. Wszystkie powiazane dane zostana ukryte.</p>
         <form method="post" action="/dashboard/{{ project.slug }}/settings/delete">
             <button type="submit"
                 class="w-full bg-red-600 hover:bg-red-700 text-white font-medium py-2 rounded transition"

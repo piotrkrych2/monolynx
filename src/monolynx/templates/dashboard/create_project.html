@@ -7,33 +7,33 @@
     <h1 class="text-2xl font-bold mb-6">Nowy projekt</h1>
 
     {% if error %}
-    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+    <div class="bg-red-50 dark:bg-red-900/50 border border-red-300 dark:border-red-500 text-red-800 dark:text-red-300 px-4 py-2 rounded mb-4">
         {{ error }}
     </div>
     {% endif %}
 
     <form method="post" action="/dashboard/create-project" class="space-y-4">
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Nazwa projektu</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Nazwa projektu</label>
             <input type="text" name="name" value="{{ name or '' }}" required
                 id="project-name"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Kod projektu</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Kod projektu</label>
             <input type="text" name="code" value="{{ code or '' }}" required
                 id="project-code"
                 pattern="[A-Z][A-Z0-9]{1,9}"
                 maxlength="10"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white uppercase focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white uppercase focus:outline-none focus:border-indigo-500">
             <p class="text-xs text-gray-500 mt-1">Wielkie litery i cyfry, 2-10 znakow (np. PIM, LEP). Uzywany w numeracji ticketow (PIM-1, PIM-99).</p>
         </div>
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Slug</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Slug</label>
             <input type="text" name="slug" value="{{ slug or '' }}" required
                 id="project-slug"
                 pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             <p class="text-xs text-gray-500 mt-1">Tylko male litery, cyfry i myslniki (np. moj-projekt)</p>
         </div>
         <button type="submit"

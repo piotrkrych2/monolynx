@@ -8,13 +8,13 @@
 <div class="grid grid-cols-3 gap-6">
     <!-- Glowna tresc -->
     <div class="col-span-2">
-        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
             <div class="mb-4">
                 <div class="flex items-center justify-between mb-2">
                     <div class="flex items-center gap-2">
                         <span class="text-indigo-400 font-mono text-sm">{{ project.code }}-{{ ticket.number }}</span>
                         <button type="button" onclick="copyToClipboard(this, '{{ project.code }}-{{ ticket.number }}', 'Skopiuj numer ticketu')"
-                                class="copy-btn relative text-gray-500 hover:text-gray-300 transition">
+                                class="copy-btn relative text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
                             </svg>
@@ -22,7 +22,7 @@
                         </button>
                         <span class="text-gray-600 font-mono text-xs">{{ ticket.id }}</span>
                         <button type="button" onclick="copyToClipboard(this, '{{ ticket.id }}', 'Skopiuj ID ticketu')"
-                                class="copy-btn relative text-gray-500 hover:text-gray-300 transition">
+                                class="copy-btn relative text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
                             </svg>
@@ -32,27 +32,27 @@
                     </div>
                     <div class="flex items-center gap-2">
                         <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/edit"
-                           class="text-sm text-gray-400 hover:text-indigo-400 transition">Edytuj</a>
+                           class="text-sm text-gray-600 dark:text-gray-400 hover:text-indigo-400 transition">Edytuj</a>
                         <button onclick="document.getElementById('time-entry-modal').showModal()"
-                                class="text-sm text-gray-400 hover:text-green-400 transition">Zaloguj czas</button>
+                                class="text-sm text-gray-600 dark:text-gray-400 hover:text-green-400 transition">Zaloguj czas</button>
                         <form method="post" action="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/delete" class="inline">
-                            <button type="submit" class="text-sm text-gray-400 hover:text-red-400 transition"
+                            <button type="submit" class="text-sm text-gray-600 dark:text-gray-400 hover:text-red-400 transition"
                                     onclick="return confirm('Czy na pewno chcesz usunac ten ticket?')">Usun</button>
                         </form>
                     </div>
                 </div>
-                <h1 class="text-xl font-bold text-white">{{ ticket.title }}</h1>
+                <h1 class="text-xl font-bold text-gray-900 dark:text-white">{{ ticket.title }}</h1>
             </div>
 
             {% if ticket.description %}
-            <div class="prose prose-invert prose-sm max-w-none
-                        prose-headings:text-white prose-headings:border-b prose-headings:border-gray-700 prose-headings:pb-2
-                        prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:text-indigo-300
-                        prose-code:text-indigo-300 prose-code:bg-gray-700 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
-                        prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-700
+            <div class="prose dark:prose-invert prose-sm max-w-none
+                        prose-headings:border-b prose-headings:border-gray-200 dark:prose-headings:border-gray-700 prose-headings:pb-2
+                        prose-a:text-indigo-600 dark:prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:text-indigo-700 dark:hover:prose-a:text-indigo-300
+                        prose-code:text-indigo-700 dark:prose-code:text-indigo-300 prose-code:bg-gray-100 dark:prose-code:bg-gray-700 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                        prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700
                         prose-table:border-collapse
-                        prose-th:bg-gray-700 prose-th:text-gray-200 prose-th:px-3 prose-th:py-2 prose-th:border prose-th:border-gray-600
-                        prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-gray-700">
+                        prose-th:bg-gray-100 dark:prose-th:bg-gray-700 prose-th:text-gray-800 dark:prose-th:text-gray-200 prose-th:px-3 prose-th:py-2 prose-th:border prose-th:border-gray-300 dark:prose-th:border-gray-600
+                        prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-gray-200 dark:prose-td:border-gray-700">
                 {{ rendered_description | safe }}
             </div>
             {% else %}
@@ -63,19 +63,19 @@
 
     <!-- Sidebar z metadanymi -->
     <div class="space-y-4">
-        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <h3 class="text-sm font-semibold text-gray-400 mb-3">Szczegoly</h3>
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Szczegoly</h3>
 
             <div class="space-y-3 text-sm">
                 <div>
                     <span class="text-gray-500">Status</span>
-                    <p class="text-white mt-1">
+                    <p class="text-gray-900 dark:text-white mt-1">
                         <span class="px-2 py-1 rounded text-xs
-                            {% if ticket.status == 'done' %}bg-green-900 text-green-300
-                            {% elif ticket.status == 'in_progress' %}bg-blue-900 text-blue-300
-                            {% elif ticket.status == 'in_review' %}bg-purple-900 text-purple-300
-                            {% elif ticket.status == 'todo' %}bg-yellow-900 text-yellow-300
-                            {% else %}bg-gray-700 text-gray-300{% endif %}">
+                            {% if ticket.status == 'done' %}bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300
+                            {% elif ticket.status == 'in_progress' %}bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300
+                            {% elif ticket.status == 'in_review' %}bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-300
+                            {% elif ticket.status == 'todo' %}bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-300
+                            {% else %}bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300{% endif %}">
                             {{ status_labels.get(ticket.status, ticket.status) }}
                         </span>
                     </p>
@@ -83,7 +83,7 @@
 
                 <div>
                     <span class="text-gray-500">Priorytet</span>
-                    <p class="text-white mt-1">
+                    <p class="text-gray-900 dark:text-white mt-1">
                         {% if ticket.priority == 'critical' %}
                         <span class="text-red-400">Krytyczny</span>
                         {% elif ticket.priority == 'high' %}
@@ -91,7 +91,7 @@
                         {% elif ticket.priority == 'medium' %}
                         <span class="text-blue-400">Sredni</span>
                         {% else %}
-                        <span class="text-gray-400">Niski</span>
+                        <span class="text-gray-600 dark:text-gray-400">Niski</span>
                         {% endif %}
                     </p>
                 </div>
@@ -99,13 +99,13 @@
                 {% if ticket.story_points is not none %}
                 <div>
                     <span class="text-gray-500">Story Points</span>
-                    <p class="text-white font-mono mt-1">{{ ticket.story_points }}</p>
+                    <p class="text-gray-900 dark:text-white font-mono mt-1">{{ ticket.story_points }}</p>
                 </div>
                 {% endif %}
 
                 <div>
                     <span class="text-gray-500">Przypisany</span>
-                    <p class="text-white mt-1">
+                    <p class="text-gray-900 dark:text-white mt-1">
                         {% if ticket.assignee %}
                         {{ ticket.assignee.email }}
                         {% else %}
@@ -117,7 +117,7 @@
                 {% if ticket.sprint %}
                 <div>
                     <span class="text-gray-500">Sprint</span>
-                    <p class="text-white mt-1">{{ ticket.sprint.name }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">{{ ticket.sprint.name }}</p>
                 </div>
                 {% endif %}
 
@@ -134,8 +134,8 @@
 
                 <div>
                     <span class="text-gray-500">Zalogowany czas</span>
-                    <p class="text-white mt-1">
-                        <span class="px-2 py-1 rounded text-xs bg-green-900 text-green-300 font-mono">
+                    <p class="text-gray-900 dark:text-white mt-1">
+                        <span class="px-2 py-1 rounded text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300 font-mono">
                             {% set total_h = total_logged_hours|int %}
                             {% set total_m = ((total_logged_hours - total_h) * 60)|round|int %}
                             {% if total_h > 0 %}{{ total_h }}h {% endif %}{{ total_m }}m
@@ -148,15 +148,15 @@
                     <span class="text-gray-500">Termin wykonania</span>
                     <p class="mt-1">
                         {% if ticket.due_date < now_date %}
-                        <span class="px-2 py-1 rounded text-xs bg-red-900 text-red-300 font-mono">
+                        <span class="px-2 py-1 rounded text-xs bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-300 font-mono">
                             Po terminie &mdash; {{ ticket.due_date.isoformat() }}
                         </span>
                         {% elif ticket.due_date == now_date %}
-                        <span class="px-2 py-1 rounded text-xs bg-yellow-900 text-yellow-300 font-mono">
+                        <span class="px-2 py-1 rounded text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-300 font-mono">
                             Dzisiaj &mdash; {{ ticket.due_date.isoformat() }}
                         </span>
                         {% else %}
-                        <span class="px-2 py-1 rounded text-xs bg-gray-700 text-gray-300 font-mono">
+                        <span class="px-2 py-1 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-mono">
                             {{ ticket.due_date.isoformat() }}
                         </span>
                         {% endif %}
@@ -166,26 +166,26 @@
 
                 <div>
                     <span class="text-gray-500">Utworzony</span>
-                    <p class="text-white mt-1">{{ ticket.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">{{ ticket.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
                 </div>
             </div>
         </div>
 
         {% if ticket.issue %}
-        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <h3 class="text-sm font-semibold text-gray-400 mb-3">Powiazany blad 500ki</h3>
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Powiazany blad 500ki</h3>
             <a href="/dashboard/{{ project.slug }}/500ki/issues/{{ ticket.issue.id }}"
                class="block text-sm text-indigo-400 hover:text-indigo-300 transition break-words leading-snug mb-3">
                 {{ ticket.issue.title | truncate(80) }}
             </a>
-            <div class="space-y-2 text-xs text-gray-400">
+            <div class="space-y-2 text-xs text-gray-600 dark:text-gray-400">
                 <div class="flex items-center justify-between">
                     <span>Wystapien</span>
-                    <span class="font-mono text-white">{{ ticket.issue.event_count }}</span>
+                    <span class="font-mono text-gray-900 dark:text-white">{{ ticket.issue.event_count }}</span>
                 </div>
                 <div class="flex items-center justify-between">
                     <span>Ostatnio</span>
-                    <span class="text-white">
+                    <span class="text-gray-900 dark:text-white">
                         {% if ticket.issue.last_seen %}
                             {{ ticket.issue.last_seen.strftime("%Y-%m-%d %H:%M") }}
                         {% else %}
@@ -196,9 +196,9 @@
                 <div class="flex items-center justify-between">
                     <span>Status</span>
                     <span class="px-2 py-0.5 rounded text-xs
-                        {% if ticket.issue.status == 'unresolved' %}bg-red-900 text-red-300
-                        {% elif ticket.issue.status == 'resolved' %}bg-green-900 text-green-300
-                        {% else %}bg-gray-700 text-gray-300{% endif %}">
+                        {% if ticket.issue.status == 'unresolved' %}bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-300
+                        {% elif ticket.issue.status == 'resolved' %}bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300
+                        {% else %}bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300{% endif %}">
                         {{ ticket.issue.status }}
                     </span>
                 </div>
@@ -211,7 +211,7 @@
 <!-- Zalaczniki -->
 <div class="mt-6">
     <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-semibold text-white">Zalaczniki ({{ attachments|length }})</h3>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Zalaczniki ({{ attachments|length }})</h3>
         <button type="button"
                 onclick="document.getElementById('filepond-section').classList.toggle('hidden')"
                 class="bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition">
@@ -227,16 +227,16 @@
     {% if attachments %}
     <div class="space-y-2">
         {% for att in attachments %}
-        <div class="attachment-item bg-gray-800 border border-gray-700 rounded-lg p-3 flex items-center gap-4">
+        <div class="attachment-item bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex items-center gap-4">
             {% if att.mime_type and att.mime_type.startswith('image/') %}
             <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/attachments/{{ att.id }}/{{ att.filename }}" target="_blank" class="shrink-0">
                 <img src="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/attachments/{{ att.id }}/{{ att.filename }}"
                      alt="{{ att.filename }}"
-                     class="h-16 w-16 object-cover rounded border border-gray-600">
+                     class="h-16 w-16 object-cover rounded border border-gray-300 dark:border-gray-600">
             </a>
             {% else %}
-            <div class="shrink-0 w-16 h-16 bg-gray-700 rounded border border-gray-600 flex items-center justify-center">
-                <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="shrink-0 w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded border border-gray-300 dark:border-gray-600 flex items-center justify-center">
+                <svg class="w-8 h-8 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                 </svg>
             </div>
@@ -268,7 +268,7 @@
 <!-- Czas pracy -->
 <div class="mt-6">
     <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-semibold text-white">Czas pracy ({% set total_h = total_logged_hours|int %}{% set total_m = ((total_logged_hours - total_h) * 60)|round|int %}{% if total_h > 0 %}{{ total_h }}h {% endif %}{{ total_m }}m)</h3>
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Czas pracy ({% set total_h = total_logged_hours|int %}{% set total_m = ((total_logged_hours - total_h) * 60)|round|int %}{% if total_h > 0 %}{{ total_h }}h {% endif %}{{ total_m }}m)</h3>
         <button onclick="document.getElementById('time-entry-modal').showModal()"
                 class="bg-green-700 hover:bg-green-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition">
             + Zaloguj czas
@@ -281,21 +281,21 @@
 
 <!-- Komentarze -->
 <div id="comments" class="mt-6">
-    <h3 class="text-lg font-semibold text-white mb-4">Komentarze ({{ ticket.comments|length }})</h3>
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Komentarze ({{ ticket.comments|length }})</h3>
 
     {% if rendered_comments %}
     <div class="space-y-3 mb-6">
         {% for item in rendered_comments %}
-        <div class="bg-gray-800 border-l-4 border-indigo-500 rounded-r-lg p-4">
+        <div class="bg-white dark:bg-gray-800 border-l-4 border-indigo-500 rounded-r-lg p-4">
             <div class="flex items-center justify-between mb-2">
                 <span class="text-sm font-medium text-indigo-400">{{ item.comment.author.email.split('@')[0] }}</span>
                 {% if item.comment.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded ml-1">AI</span>{% endif %}
                 <span class="text-xs text-gray-500">{{ item.comment.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
             </div>
-            <div class="prose prose-invert prose-sm max-w-none
-                        prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:text-indigo-300
-                        prose-code:text-indigo-300 prose-code:bg-gray-700 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
-                        prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-700
+            <div class="prose dark:prose-invert prose-sm max-w-none
+                        prose-a:text-indigo-600 dark:prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:text-indigo-700 dark:hover:prose-a:text-indigo-300
+                        prose-code:text-indigo-700 dark:prose-code:text-indigo-300 prose-code:bg-gray-100 dark:prose-code:bg-gray-700 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                        prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700
                         prose-p:my-1">
                 {{ item.html | safe }}
             </div>
@@ -308,7 +308,7 @@
 
     <form method="post" action="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/comments">
         <textarea name="content" rows="3" required
-                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-gray-100 text-sm focus:outline-none focus:border-indigo-500 resize-y"
+                  class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:border-indigo-500 resize-y"
                   placeholder="Dodaj komentarz..."></textarea>
         <div class="mt-2 flex justify-end">
             <button type="submit"

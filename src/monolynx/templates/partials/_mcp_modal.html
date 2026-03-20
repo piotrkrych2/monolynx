@@ -6,7 +6,7 @@
     Używaj z MCP
 </button>
 
-<dialog id="mcp-modal" class="bg-gray-800 border border-gray-700 rounded-lg p-6 text-white max-w-lg w-full backdrop:bg-black/50">
+<dialog id="mcp-modal" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 text-gray-900 dark:text-white max-w-lg w-full backdrop:bg-black/50">
     <div class="flex items-center justify-between mb-5">
         <h3 class="text-lg font-semibold flex items-center gap-2">
             <svg class="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -19,140 +19,140 @@
             {% elif mcp_module == "connections" %}Połączenia
             {% endif %}
         </h3>
-        <button onclick="document.getElementById('mcp-modal').close()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+        <button onclick="document.getElementById('mcp-modal').close()" class="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-xl">&times;</button>
     </div>
 
-    <p class="text-sm text-gray-400 mb-4">Dostępne narzędzia MCP w tym module:</p>
+    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Dostępne narzędzia MCP w tym module:</p>
 
     <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
         {% if mcp_module == "500ki" %}
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_issues</code>
-            <span class="text-sm text-gray-300">Pokaż błędy w projekcie</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_issues</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Pokaż błędy w projekcie</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_issue</code>
-            <span class="text-sm text-gray-300">Sprawdź szczegóły błędu z tracebackiem</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_issue</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Sprawdź szczegóły błędu z tracebackiem</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_issue_status</code>
-            <span class="text-sm text-gray-300">Oznacz błąd jako rozwiązany</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_issue_status</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Oznacz błąd jako rozwiązany</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_ticket_from_issue</code>
-            <span class="text-sm text-gray-300">Utwórz ticket Scrum prosto z błędu</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_ticket_from_issue</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Utwórz ticket Scrum prosto z błędu</span>
         </div>
 
         {% elif mcp_module == "scrum" %}
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_tickets</code>
-            <span class="text-sm text-gray-300">Przejrzyj listę ticketów</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_tickets</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Przejrzyj listę ticketów</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_ticket</code>
-            <span class="text-sm text-gray-300">Sprawdź szczegóły ticketu</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_ticket</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Sprawdź szczegóły ticketu</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_ticket</code>
-            <span class="text-sm text-gray-300">Utwórz nowy ticket</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_ticket</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Utwórz nowy ticket</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_ticket</code>
-            <span class="text-sm text-gray-300">Zmień status, priorytet lub opis</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_ticket</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Zmień status, priorytet lub opis</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_ticket</code>
-            <span class="text-sm text-gray-300">Usuń ticket</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_ticket</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Usuń ticket</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_board</code>
-            <span class="text-sm text-gray-300">Pokaż tablicę Kanban</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_board</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Pokaż tablicę Kanban</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_sprints / get_sprint</code>
-            <span class="text-sm text-gray-300">Przejrzyj sprinty</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_sprints / get_sprint</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Przejrzyj sprinty</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_sprint / start / complete</code>
-            <span class="text-sm text-gray-300">Zarządzaj cyklem sprintu</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_sprint / start / complete</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Zarządzaj cyklem sprintu</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_comments / add_comment</code>
-            <span class="text-sm text-gray-300">Czytaj i dodawaj komentarze</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_comments / add_comment</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Czytaj i dodawaj komentarze</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">log_time</code>
-            <span class="text-sm text-gray-300">Zaloguj czas pracy</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">log_time</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Zaloguj czas pracy</span>
         </div>
 
         {% elif mcp_module == "wiki" %}
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_wiki_pages</code>
-            <span class="text-sm text-gray-300">Pokaż drzewo stron</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_wiki_pages</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Pokaż drzewo stron</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_wiki_page</code>
-            <span class="text-sm text-gray-300">Przeczytaj stronę</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_wiki_page</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Przeczytaj stronę</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_wiki_page</code>
-            <span class="text-sm text-gray-300">Napisz nową stronę</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_wiki_page</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Napisz nową stronę</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_wiki_page</code>
-            <span class="text-sm text-gray-300">Edytuj istniejącą stronę</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">update_wiki_page</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Edytuj istniejącą stronę</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_wiki_page</code>
-            <span class="text-sm text-gray-300">Usuń stronę z podstronami</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_wiki_page</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Usuń stronę z podstronami</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">search_wiki</code>
-            <span class="text-sm text-gray-300">Szukaj semantycznie (RAG)</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">search_wiki</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Szukaj semantycznie (RAG)</span>
         </div>
 
         {% elif mcp_module == "connections" %}
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_graph_node / bulk</code>
-            <span class="text-sm text-gray-300">Dodaj node'y</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_graph_node / bulk</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Dodaj node'y</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_graph_nodes / get</code>
-            <span class="text-sm text-gray-300">Przeglądaj node'y</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">list_graph_nodes / get</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Przeglądaj node'y</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_graph_node</code>
-            <span class="text-sm text-gray-300">Usuń node</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_graph_node</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Usuń node</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_graph_edge / bulk</code>
-            <span class="text-sm text-gray-300">Dodaj krawędzie</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">create_graph_edge / bulk</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Dodaj krawędzie</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_graph_edge</code>
-            <span class="text-sm text-gray-300">Usuń krawędź</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">delete_graph_edge</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Usuń krawędź</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">query_graph</code>
-            <span class="text-sm text-gray-300">Pobierz graf lub podgraf</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">query_graph</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Pobierz graf lub podgraf</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">find_graph_path</code>
-            <span class="text-sm text-gray-300">Znajdź ścieżkę między elementami</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">find_graph_path</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Znajdź ścieżkę między elementami</span>
         </div>
-        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-700/50">
-            <code class="text-xs text-indigo-300 bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_graph_stats</code>
-            <span class="text-sm text-gray-300">Statystyki grafu</span>
+        <div class="flex items-start gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50">
+            <code class="text-xs text-indigo-300 bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded whitespace-nowrap mt-0.5">get_graph_stats</code>
+            <span class="text-sm text-gray-700 dark:text-gray-300">Statystyki grafu</span>
         </div>
         {% endif %}
     </div>
 
-    <div class="mt-5 pt-4 border-t border-gray-700 flex items-center justify-between">
+    <div class="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <a href="/dashboard/profile/mcp-guide" class="text-sm text-indigo-400 hover:text-indigo-300 transition">
             Pełny przewodnik MCP &rarr;
         </a>
         <button onclick="document.getElementById('mcp-modal').close()"
-                class="px-4 py-2 text-sm text-gray-400 hover:text-white transition">Zamknij</button>
+                class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition">Zamknij</button>
     </div>
 </dialog>
 

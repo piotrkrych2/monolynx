@@ -6,45 +6,45 @@
 <div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl font-bold">Monitoring</h1>
     <a href="/dashboard/{{ project.slug }}/monitoring/"
-       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+       class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
         Wstecz
     </a>
 </div>
 
 <div class="max-w-lg">
-    <h2 class="text-lg font-semibold text-white mb-4">Nowy monitor</h2>
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Nowy monitor</h2>
 
     {% if error %}
-    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+    <div class="bg-red-50 dark:bg-red-900/50 border border-red-300 dark:border-red-500 text-red-800 dark:text-red-300 px-4 py-2 rounded mb-4">
         {{ error }}
     </div>
     {% endif %}
 
     <form method="post" action="/dashboard/{{ project.slug }}/monitoring/create" class="space-y-4">
         <div>
-            <label class="block text-sm text-gray-400 mb-1">URL</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">URL</label>
             <input type="url" name="url" value="{{ form_data.url if form_data else '' }}" required
                    placeholder="https://example.com"
-                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                   class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             <p class="text-xs text-gray-500 mt-1">Adres URL do monitorowania (http:// lub https://)</p>
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Nazwa (opcjonalna)</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Nazwa (opcjonalna)</label>
             <input type="text" name="name" value="{{ form_data.name if form_data else '' }}"
                    placeholder="Moja strona"
-                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                   class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             <p class="text-xs text-gray-500 mt-1">Wyswietlana nazwa monitora. Jesli pusta, zostanie uzyty URL.</p>
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Czestotliwosc sprawdzania</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Czestotliwosc sprawdzania</label>
             <div class="flex gap-3">
                 <input type="number" name="interval_value" min="1" max="60"
                        value="{{ form_data.interval_value if form_data else '5' }}"
-                       class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                       class="w-24 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                 <select name="interval_unit"
-                        class="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                        class="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                     {% for unit in interval_units %}
                     <option value="{{ unit }}" {% if form_data and form_data.interval_unit == unit %}selected{% elif not form_data and unit == 'minutes' %}selected{% endif %}>
                         {{ interval_unit_labels.get(unit, unit) }}

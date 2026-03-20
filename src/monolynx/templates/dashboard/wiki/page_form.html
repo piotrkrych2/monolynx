@@ -8,13 +8,13 @@
 <div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl font-bold">Wiki</h1>
     <a href="{% if page %}/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}{% else %}/dashboard/{{ project.slug }}/wiki/{% endif %}"
-       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+       class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
         Wstecz
     </a>
 </div>
 
 <div class="max-w-4xl">
-    <h2 class="text-lg font-semibold text-white mb-4">
+    <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
         {% if page %}
             Edytuj stronę
         {% elif parent %}
@@ -25,7 +25,7 @@
     </h2>
 
     {% if error %}
-    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+    <div class="bg-red-50 dark:bg-red-900/50 border border-red-300 dark:border-red-500 text-red-800 dark:text-red-300 px-4 py-2 rounded mb-4">
         {{ error }}
     </div>
     {% endif %}
@@ -34,21 +34,21 @@
           action="{% if page %}/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/edit{% elif parent %}/dashboard/{{ project.slug }}/wiki/pages/{{ parent.id }}/create{% else %}/dashboard/{{ project.slug }}/wiki/pages/create{% endif %}"
           class="space-y-4">
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Tytuł</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Tytuł</label>
             <input type="text" name="title" value="{{ form_data.title if form_data else '' }}" required
                    placeholder="Tytuł strony"
-                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                   class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Pozycja (kolejnosc)</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Pozycja (kolejnosc)</label>
             <input type="number" name="position" value="{{ form_data.position if form_data else '0' }}" min="0"
-                   class="w-24 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                   class="w-24 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             <p class="text-xs text-gray-500 mt-1">Mniejsza liczba = wyzej na liscie</p>
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Treść (Markdown)</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Treść (Markdown)</label>
             <textarea id="wiki-content" name="content" rows="20">{{ form_data.content if form_data else '' }}</textarea>
         </div>
 
@@ -79,50 +79,38 @@ var easyMDE = new EasyMDE({
     ],
     minHeight: "400px",
 });
-
-/* Dark theme overrides */
-document.querySelectorAll('.EasyMDEContainer .CodeMirror').forEach(function(el) {
-    el.style.backgroundColor = '#374151';
-    el.style.color = '#e5e7eb';
-    el.style.borderColor = '#4b5563';
-});
-document.querySelectorAll('.editor-toolbar').forEach(function(el) {
-    el.style.borderColor = '#4b5563';
-});
-document.querySelectorAll('.editor-toolbar button').forEach(function(el) {
-    el.style.color = '#9ca3af';
-});
 </script>
 
 <style>
-.EasyMDEContainer .CodeMirror {
+/* EasyMDE ciemny motyw */
+html.dark .EasyMDEContainer .CodeMirror {
     background-color: #374151;
     color: #e5e7eb;
     border-color: #4b5563;
 }
-.EasyMDEContainer .CodeMirror-cursor {
+html.dark .EasyMDEContainer .CodeMirror-cursor {
     border-left-color: #e5e7eb;
 }
-.editor-toolbar {
+html.dark .editor-toolbar {
     border-color: #4b5563;
     background-color: #1f2937;
 }
-.editor-toolbar button {
+html.dark .editor-toolbar button {
     color: #9ca3af !important;
 }
-.editor-toolbar button:hover,
-.editor-toolbar button.active {
+html.dark .editor-toolbar button:hover,
+html.dark .editor-toolbar button.active {
     color: #fff !important;
     background-color: #374151;
 }
-.editor-statusbar {
+html.dark .editor-statusbar {
     color: #6b7280;
 }
-.editor-preview {
+html.dark .editor-preview {
     background-color: #1f2937;
     color: #e5e7eb;
 }
-.editor-preview pre {
+html.dark .editor-preview pre {
     background-color: #374151;
 }
 </style>
