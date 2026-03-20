@@ -16,7 +16,7 @@
         <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight leading-tight mb-6 animate-fade-in-up">
             {{ f.headline }}
         </h1>
-        <p class="text-lg text-gray-400 max-w-2xl animate-fade-in-up animate-fade-in-up-delay-1">
+        <p class="text-lg text-gray-600 dark:text-gray-400 max-w-2xl animate-fade-in-up animate-fade-in-up-delay-1">
             {{ f.description }}
         </p>
     </div>
@@ -27,7 +27,7 @@
 <section class="pb-16">
     <div class="max-w-5xl mx-auto px-6 animate-fade-in-up animate-fade-in-up-delay-2">
         <img src="/static/img/screenshots/{{ f.screenshot }}" alt="{{ f.screenshot_hint }}"
-             class="w-full rounded-xl border border-gray-800 shadow-2xl shadow-black/50">
+             class="w-full rounded-xl border border-gray-100 dark:border-gray-800 shadow-2xl shadow-black/50">
     </div>
 </section>
 {% endif %}
@@ -40,9 +40,9 @@
         </h2>
         <div class="grid sm:grid-cols-2 gap-6">
             {% for feature in f.features %}
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-                <h3 class="text-sm font-semibold text-white mb-2">{{ feature.title }}</h3>
-                <p class="text-sm text-gray-400">{{ feature.desc }}</p>
+            <div class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-lg p-5">
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">{{ feature.title }}</h3>
+                <p class="text-sm text-gray-600 dark:text-gray-400">{{ feature.desc }}</p>
             </div>
             {% endfor %}
         </div>
@@ -50,7 +50,7 @@
 </section>
 
 <!-- How it works -->
-<section class="py-16 border-t border-gray-800/50">
+<section class="py-16 border-t border-gray-100 dark:border-gray-800/50">
     <div class="max-w-5xl mx-auto px-6">
         <h2 class="text-2xl font-bold mb-8">
             {% if lang == "pl" %}Jak to działa{% else %}How it works{% endif %}
@@ -62,8 +62,8 @@
                     {{ loop.index }}
                 </div>
                 <div>
-                    <h3 class="text-sm font-semibold text-white">{{ step.title }}</h3>
-                    <p class="text-sm text-gray-400 mt-1">{{ step.desc }}</p>
+                    <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ step.title }}</h3>
+                    <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ step.desc }}</p>
                 </div>
             </div>
             {% endfor %}
@@ -72,7 +72,7 @@
 </section>
 
 <!-- AI & MCP -->
-<section class="py-16 border-t border-gray-800/50">
+<section class="py-16 border-t border-gray-100 dark:border-gray-800/50">
     <div class="max-w-5xl mx-auto px-6">
         <div class="flex items-center gap-3 mb-8">
             <div class="w-10 h-10 bg-indigo-500/10 rounded-lg flex items-center justify-center">
@@ -84,16 +84,16 @@
                 {% if lang == "pl" %}AI i MCP{% else %}AI & MCP{% endif %}
             </h2>
         </div>
-        <p class="text-gray-400 mb-6 max-w-2xl">{{ f.ai_intro }}</p>
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <p class="text-gray-600 dark:text-gray-400 mb-6 max-w-2xl">{{ f.ai_intro }}</p>
+        <div class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-6">
             <p class="text-xs text-gray-500 font-mono mb-4">
                 {% if lang == "pl" %}Dostępne narzędzia MCP{% else %}Available MCP tools{% endif %}
             </p>
             <div class="grid sm:grid-cols-2 gap-3">
                 {% for tool in f.mcp_tools %}
                 <div class="flex items-start gap-3">
-                    <code class="text-xs text-indigo-300 bg-gray-800 px-2 py-0.5 rounded whitespace-nowrap mt-0.5 font-mono">{{ tool.name }}</code>
-                    <span class="text-sm text-gray-400">{{ tool.desc }}</span>
+                    <code class="text-xs text-indigo-300 bg-white dark:bg-gray-800 px-2 py-0.5 rounded whitespace-nowrap mt-0.5 font-mono">{{ tool.name }}</code>
+                    <span class="text-sm text-gray-600 dark:text-gray-400">{{ tool.desc }}</span>
                 </div>
                 {% endfor %}
             </div>
@@ -103,27 +103,27 @@
 
 <!-- Second screenshot -->
 {% if f.screenshot_2 %}
-<section class="py-16 border-t border-gray-800/50">
+<section class="py-16 border-t border-gray-100 dark:border-gray-800/50">
     <div class="max-w-5xl mx-auto px-6">
         <img src="/static/img/screenshots/{{ f.screenshot_2 }}" alt="{{ f.screenshot_hint_2 }}"
-             class="w-full rounded-xl border border-gray-800 shadow-2xl shadow-black/50">
+             class="w-full rounded-xl border border-gray-100 dark:border-gray-800 shadow-2xl shadow-black/50">
     </div>
 </section>
 {% endif %}
 
 <!-- Technical details -->
 {% if f.tech_details %}
-<section class="py-16 border-t border-gray-800/50">
+<section class="py-16 border-t border-gray-100 dark:border-gray-800/50">
     <div class="max-w-5xl mx-auto px-6">
         <h2 class="text-2xl font-bold mb-8">
             {% if lang == "pl" %}Szczegóły techniczne{% else %}Technical details{% endif %}
         </h2>
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <div class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-6">
             <dl class="space-y-4">
                 {% for detail in f.tech_details %}
                 <div>
-                    <dt class="text-sm font-semibold text-white">{{ detail.label }}</dt>
-                    <dd class="text-sm text-gray-400 mt-1">{{ detail.value }}</dd>
+                    <dt class="text-sm font-semibold text-gray-900 dark:text-white">{{ detail.label }}</dt>
+                    <dd class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ detail.value }}</dd>
                 </div>
                 {% endfor %}
             </dl>
@@ -133,7 +133,7 @@
 {% endif %}
 
 <!-- Other features -->
-<section class="py-16 border-t border-gray-800/50">
+<section class="py-16 border-t border-gray-100 dark:border-gray-800/50">
     <div class="max-w-5xl mx-auto px-6">
         <h2 class="text-2xl font-bold mb-8">
             {% if lang == "pl" %}Pozostałe moduły{% else %}Other modules{% endif %}
@@ -141,10 +141,10 @@
         <div class="grid sm:grid-cols-3 gap-4">
             {% for other in f.other_modules %}
             <a href="/features/{{ other.slug }}?lang={{ lang }}"
-               class="bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-{{ other.color }}-500/50 transition-colors group">
+               class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-lg p-4 hover:border-{{ other.color }}-500/50 transition-colors group">
                 <div class="flex items-center gap-2 mb-2">
                     <span class="w-2 h-2 rounded-full bg-{{ other.color }}-400"></span>
-                    <h3 class="text-sm font-semibold group-hover:text-white transition-colors">{{ other.name }}</h3>
+                    <h3 class="text-sm font-semibold group-hover:text-gray-900 dark:hover:text-white transition-colors">{{ other.name }}</h3>
                 </div>
                 <p class="text-xs text-gray-500">{{ other.short }}</p>
             </a>
@@ -154,12 +154,12 @@
 </section>
 
 <!-- CTA -->
-<section class="py-20 border-t border-gray-800/50">
+<section class="py-20 border-t border-gray-100 dark:border-gray-800/50">
     <div class="max-w-4xl mx-auto px-6 text-center">
         <h2 class="text-3xl font-bold mb-4">
             {% if lang == "pl" %}Wypróbuj Monolynx{% else %}Try Monolynx{% endif %}
         </h2>
-        <p class="text-gray-400 mb-8 max-w-lg mx-auto">
+        <p class="text-gray-600 dark:text-gray-400 mb-8 max-w-lg mx-auto">
             {% if lang == "pl" %}Darmowy, open source, self-hosted. Zainstaluj na swojej infrastrukturze w kilka minut.
             {% else %}Free, open source, self-hosted. Deploy on your infrastructure in minutes.{% endif %}
         </p>
@@ -172,7 +172,7 @@
                 </svg>
             </a>
             <a href="https://gitlab.com/piotrkrych/monolynx"
-               class="inline-flex items-center gap-2 text-gray-400 hover:text-white font-medium transition-colors"
+               class="inline-flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white font-medium transition-colors"
                target="_blank" rel="noopener">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="m23.6 9.593-.033-.086L20.3.98a.851.851 0 0 0-.336-.405.879.879 0 0 0-1.002.07.87.87 0 0 0-.292.39L16.47 7.092H7.537L5.332 1.035a.857.857 0 0 0-.292-.39.879.879 0 0 0-1.002-.07.855.855 0 0 0-.336.405L.437 9.502l-.032.086a6.066 6.066 0 0 0 2.012 7.01l.01.008.028.02 4.97 3.722 2.458 1.86 1.496 1.13a1.008 1.008 0 0 0 1.22 0l1.496-1.13 2.458-1.86 4.998-3.742.012-.01a6.068 6.068 0 0 0 2.008-7.003Z"/>

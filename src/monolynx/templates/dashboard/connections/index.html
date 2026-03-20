@@ -8,7 +8,7 @@
     <div class="flex gap-2 items-center">
         {% set mcp_module = "connections" %}{% include "partials/_mcp_modal.html" %}
         <a href="/dashboard/{{ project.slug }}/connections/nodes"
-           class="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded transition">
+           class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-600 text-gray-900 dark:text-white text-sm font-medium px-4 py-2 rounded transition">
             Lista node'ow
         </a>
         <a href="/dashboard/{{ project.slug }}/connections/nodes/create"
@@ -23,26 +23,26 @@
 </div>
 
 {% if not graph_enabled %}
-<div class="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 mb-6">
-    <p class="text-yellow-300 text-sm">Neo4j nie jest dostepne. Sprawdz konfiguracje ENABLE_GRAPH_DB i polaczenie z baza grafowa.</p>
+<div class="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded-lg p-4 mb-6">
+    <p class="text-yellow-800 dark:text-yellow-300 text-sm">Neo4j nie jest dostepne. Sprawdz konfiguracje ENABLE_GRAPH_DB i polaczenie z baza grafowa.</p>
 </div>
 {% endif %}
 
 {% if stats %}
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <p class="text-xs text-gray-400">Node'y</p>
-        <p class="text-2xl font-bold text-white">{{ stats.total_nodes }}</p>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <p class="text-xs text-gray-600 dark:text-gray-400">Node'y</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ stats.total_nodes }}</p>
     </div>
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <p class="text-xs text-gray-400">Krawedzie</p>
-        <p class="text-2xl font-bold text-white">{{ stats.total_edges }}</p>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <p class="text-xs text-gray-600 dark:text-gray-400">Krawedzie</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ stats.total_edges }}</p>
     </div>
     {% for type, count in stats.nodes_by_type.items() %}
     {% if count > 0 %}
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-        <p class="text-xs text-gray-400">{{ type }}</p>
-        <p class="text-2xl font-bold text-white">{{ count }}</p>
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <p class="text-xs text-gray-600 dark:text-gray-400">{{ type }}</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ count }}</p>
     </div>
     {% endif %}
     {% endfor %}
@@ -50,83 +50,83 @@
 {% endif %}
 
 <!-- Panel filtrow -->
-<div class="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-4">
+<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
     <div class="flex flex-wrap items-start gap-6">
         <!-- Filtry node'ow -->
         <div>
-            <p class="text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wider">Typy node'ow</p>
+            <p class="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold uppercase tracking-wider">Typy node'ow</p>
             <div class="flex flex-wrap gap-3">
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="node-type-filter rounded" data-type="File" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#3B82F6"></span>
-                    <span class="text-gray-300">File</span>
+                    <span class="text-gray-700 dark:text-gray-300">File</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="node-type-filter rounded" data-type="Class" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#10B981"></span>
-                    <span class="text-gray-300">Class</span>
+                    <span class="text-gray-700 dark:text-gray-300">Class</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="node-type-filter rounded" data-type="Method" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#F59E0B"></span>
-                    <span class="text-gray-300">Method</span>
+                    <span class="text-gray-700 dark:text-gray-300">Method</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="node-type-filter rounded" data-type="Function" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#EAB308"></span>
-                    <span class="text-gray-300">Function</span>
+                    <span class="text-gray-700 dark:text-gray-300">Function</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="node-type-filter rounded" data-type="Const" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#8B5CF6"></span>
-                    <span class="text-gray-300">Const</span>
+                    <span class="text-gray-700 dark:text-gray-300">Const</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="node-type-filter rounded" data-type="Module" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#EC4899"></span>
-                    <span class="text-gray-300">Module</span>
+                    <span class="text-gray-700 dark:text-gray-300">Module</span>
                 </label>
             </div>
         </div>
         <!-- Filtry krawedzi -->
         <div>
-            <p class="text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wider">Typy krawedzi</p>
+            <p class="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold uppercase tracking-wider">Typy krawedzi</p>
             <div class="flex flex-wrap gap-3">
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="edge-type-filter rounded" data-type="CONTAINS" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#6B7280"></span>
-                    <span class="text-gray-300">CONTAINS</span>
+                    <span class="text-gray-700 dark:text-gray-300">CONTAINS</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="edge-type-filter rounded" data-type="CALLS" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#EF4444"></span>
-                    <span class="text-gray-300">CALLS</span>
+                    <span class="text-gray-700 dark:text-gray-300">CALLS</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="edge-type-filter rounded" data-type="IMPORTS" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#9CA3AF"></span>
-                    <span class="text-gray-300">IMPORTS</span>
+                    <span class="text-gray-700 dark:text-gray-300">IMPORTS</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="edge-type-filter rounded" data-type="INHERITS" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#3B82F6"></span>
-                    <span class="text-gray-300">INHERITS</span>
+                    <span class="text-gray-700 dark:text-gray-300">INHERITS</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="edge-type-filter rounded" data-type="USES" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#F59E0B"></span>
-                    <span class="text-gray-300">USES</span>
+                    <span class="text-gray-700 dark:text-gray-300">USES</span>
                 </label>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="checkbox" class="edge-type-filter rounded" data-type="IMPLEMENTS" checked>
                     <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#10B981"></span>
-                    <span class="text-gray-300">IMPLEMENTS</span>
+                    <span class="text-gray-700 dark:text-gray-300">IMPLEMENTS</span>
                 </label>
             </div>
         </div>
         <!-- Przycisk resetu -->
         <div class="ml-auto self-end">
-            <button id="btn-reset-view" class="bg-gray-700 hover:bg-gray-600 text-white text-sm px-4 py-2 rounded transition">
+            <button id="btn-reset-view" class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-600 text-gray-900 dark:text-white text-sm px-4 py-2 rounded transition">
                 Resetuj widok
             </button>
         </div>
@@ -137,33 +137,33 @@
 <div class="flex gap-4" style="min-height:500px">
     <!-- Canvas Cytoscape -->
     <div class="flex-1 relative">
-        <div id="cy" class="w-full rounded-lg border border-gray-700" style="min-height:500px;height:65vh;background:#1F2937"></div>
+        <div id="cy" class="w-full rounded-lg border border-gray-200 dark:border-gray-700 cy-canvas" style="min-height:500px;height:65vh"></div>
         <!-- Empty state overlay -->
-        <div id="cy-empty" class="absolute inset-0 flex items-center justify-center rounded-lg border border-gray-700" style="background:#1F2937;display:none">
+        <div id="cy-empty" class="absolute inset-0 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 cy-canvas" style="display:none">
             <div class="text-center">
                 <svg class="w-12 h-12 mx-auto text-gray-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
                 </svg>
-                <p class="text-gray-400 text-sm">Brak danych do wyswietlenia</p>
+                <p class="text-gray-600 dark:text-gray-400 text-sm">Brak danych do wyswietlenia</p>
             </div>
         </div>
         <!-- Loading overlay -->
-        <div id="cy-loading" class="absolute inset-0 flex items-center justify-center rounded-lg border border-gray-700" style="background:#1F2937">
+        <div id="cy-loading" class="absolute inset-0 flex items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 cy-canvas">
             <div class="text-center">
                 <svg class="w-8 h-8 mx-auto text-indigo-400 animate-spin mb-3" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                 </svg>
-                <p class="text-gray-400 text-sm">Ladowanie grafu...</p>
+                <p class="text-gray-600 dark:text-gray-400 text-sm">Ladowanie grafu...</p>
             </div>
         </div>
     </div>
 
     <!-- Panel boczny (szczegóły node'a) -->
-    <div id="node-detail-panel" class="w-72 flex-shrink-0 bg-gray-800 border border-gray-700 rounded-lg p-4 overflow-y-auto" style="min-height:500px;max-height:65vh;display:none">
+    <div id="node-detail-panel" class="w-72 flex-shrink-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 overflow-y-auto" style="min-height:500px;max-height:65vh;display:none">
         <div class="flex items-center justify-between mb-4">
-            <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Szczegóły node'a</h3>
-            <button id="btn-close-panel" class="text-gray-500 hover:text-gray-300 transition">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Szczegóły node'a</h3>
+            <button id="btn-close-panel" class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -228,6 +228,11 @@
     var btnClosePanel = document.getElementById('btn-close-panel');
     var btnResetView = document.getElementById('btn-reset-view');
 
+    // --- Kolory zaleznie od motywu ---
+    var isDark = document.documentElement.classList.contains('dark');
+    var NODE_LABEL_COLOR = isDark ? '#E5E7EB' : '#1F2937';
+    var NODE_OUTLINE_COLOR = isDark ? '#1F2937' : '#F9FAFB';
+
     // --- Inicjalizacja Cytoscape ---
     var cy = cytoscape({
         container: cyContainer,
@@ -241,8 +246,8 @@
                     'text-halign': 'center',
                     'text-margin-y': 6,
                     'font-size': '11px',
-                    'color': '#E5E7EB',
-                    'text-outline-color': '#1F2937',
+                    'color': NODE_LABEL_COLOR,
+                    'text-outline-color': NODE_OUTLINE_COLOR,
                     'text-outline-width': 2,
                     'background-color': function(ele) {
                         return NODE_COLORS[ele.data('type')] || '#6B7280';
@@ -460,7 +465,7 @@
 
         // Nazwa
         html += '<div class="mb-3">';
-        html += '<p class="text-white font-medium text-lg break-words">' + escapeHtml(data.label) + '</p>';
+        html += '<p class="text-gray-900 dark:text-white font-medium text-lg break-words">' + escapeHtml(data.label) + '</p>';
         html += '</div>';
 
         // Typ
@@ -468,7 +473,7 @@
         html += '<p class="text-xs text-gray-500 mb-0.5">Typ</p>';
         html += '<span class="inline-flex items-center gap-1.5 text-sm">';
         html += '<span class="inline-block w-2.5 h-2.5 rounded-full" style="background:' + (NODE_COLORS[data.type] || '#6B7280') + '"></span>';
-        html += '<span class="text-gray-200">' + escapeHtml(NODE_LABELS[data.type] || data.type) + '</span>';
+        html += '<span class="text-gray-800 dark:text-gray-200">' + escapeHtml(NODE_LABELS[data.type] || data.type) + '</span>';
         html += '</span>';
         html += '</div>';
 
@@ -476,7 +481,7 @@
         if (data.file_path) {
             html += '<div class="mb-3">';
             html += '<p class="text-xs text-gray-500 mb-0.5">Sciezka pliku</p>';
-            html += '<p class="text-sm text-gray-300 break-all font-mono">' + escapeHtml(data.file_path);
+            html += '<p class="text-sm text-gray-700 dark:text-gray-300 break-all font-mono">' + escapeHtml(data.file_path);
             if (data.line_number) {
                 html += '<span class="text-gray-500">:' + escapeHtml(String(data.line_number)) + '</span>';
             }
@@ -488,13 +493,13 @@
         if (!data.file_path && data.line_number) {
             html += '<div class="mb-3">';
             html += '<p class="text-xs text-gray-500 mb-0.5">Linia</p>';
-            html += '<p class="text-sm text-gray-300">' + escapeHtml(String(data.line_number)) + '</p>';
+            html += '<p class="text-sm text-gray-700 dark:text-gray-300">' + escapeHtml(String(data.line_number)) + '</p>';
             html += '</div>';
         }
 
         // Sasiedzi (connected edges)
         if (connectedEdges.length > 0) {
-            html += '<div class="mt-4 pt-3 border-t border-gray-700">';
+            html += '<div class="mt-4 pt-3 border-t border-gray-200 dark:border-gray-700">';
             html += '<p class="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wider">Połączenia (' + connectedEdges.length + ')</p>';
             html += '<div class="space-y-1.5 max-h-48 overflow-y-auto">';
 
@@ -510,7 +515,7 @@
                 html += '<span class="inline-block w-2 h-2 rounded-full flex-shrink-0" style="background:' + edgeColor + '"></span>';
                 html += '<span class="text-gray-500">' + escapeHtml(EDGE_LABELS[edgeData.type] || edgeData.type) + '</span>';
                 html += '<span class="text-gray-600">' + arrow + '</span>';
-                html += '<span class="text-gray-300 truncate" title="' + escapeHtml(otherData.label) + '">' + escapeHtml(otherData.label) + '</span>';
+                html += '<span class="text-gray-700 dark:text-gray-300 truncate" title="' + escapeHtml(otherData.label) + '">' + escapeHtml(otherData.label) + '</span>';
                 html += '</div>';
             });
 
@@ -608,4 +613,11 @@
 
 })();
 </script>
+
+<style>
+/* Cytoscape canvas - ciemny motyw */
+.cy-canvas { background: #1F2937; }
+/* Cytoscape canvas - jasny motyw */
+html:not(.dark) .cy-canvas { background: #f9fafb; }
+</style>
 {% endblock %}

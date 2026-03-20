@@ -3,7 +3,7 @@
     {% if time_entries %}
     <div class="space-y-2">
         {% for entry in time_entries %}
-        <div class="bg-gray-800 border border-gray-700 rounded-lg p-3 flex items-center justify-between" id="te-{{ entry.id }}">
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex items-center justify-between" id="te-{{ entry.id }}">
             <div class="flex items-center gap-4 flex-1 min-w-0">
                 <div class="flex-shrink-0">
                     <div class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white">
@@ -22,7 +22,7 @@
                         <span class="text-xs text-gray-500">{{ entry.date_logged.strftime('%Y-%m-%d') }}</span>
                     </div>
                     {% if entry.description %}
-                    <p class="text-gray-400 text-xs mt-1 truncate">{{ entry.description }}</p>
+                    <p class="text-gray-600 dark:text-gray-400 text-xs mt-1 truncate">{{ entry.description }}</p>
                     {% endif %}
                 </div>
             </div>

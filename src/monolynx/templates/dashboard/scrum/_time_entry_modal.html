@@ -1,33 +1,33 @@
 <!-- Modal: Zaloguj czas -->
-<dialog id="time-entry-modal" class="bg-gray-800 border border-gray-700 rounded-lg p-6 text-white max-w-md w-full backdrop:bg-black/50">
+<dialog id="time-entry-modal" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 text-gray-900 dark:text-white max-w-md w-full backdrop:bg-black/50">
     <div class="flex items-center justify-between mb-4">
         <h3 class="text-lg font-semibold">Zaloguj czas</h3>
-        <button onclick="document.getElementById('time-entry-modal').close()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+        <button onclick="document.getElementById('time-entry-modal').close()" class="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-xl">&times;</button>
     </div>
     <form id="time-entry-form" class="space-y-4">
         <input type="hidden" id="te-ticket-id" value="{{ ticket.id }}">
         <div>
-            <label for="te-duration" class="block text-sm text-gray-400 mb-1">Czas</label>
+            <label for="te-duration" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Czas</label>
             <input type="text" id="te-duration" required
-                   class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
+                   class="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-gray-900 dark:text-white text-sm focus:outline-none focus:border-indigo-500"
                    placeholder="np. 2h30m, 1.5, 45m, 8">
             <p class="text-xs text-gray-500 mt-1">Bez jednostki = godziny. Przykłady: 8 = 8h, 2.5 = 2h30m, 30m, 1h15m</p>
         </div>
         <div>
-            <label for="te-date" class="block text-sm text-gray-400 mb-1">Data pracy</label>
+            <label for="te-date" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Data pracy</label>
             <input type="date" id="te-date" required
-                   class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500">
+                   class="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-gray-900 dark:text-white text-sm focus:outline-none focus:border-indigo-500">
         </div>
         <div>
-            <label for="te-description" class="block text-sm text-gray-400 mb-1">Opis (opcjonalny)</label>
+            <label for="te-description" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Opis (opcjonalny)</label>
             <textarea id="te-description" rows="2"
-                      class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500 resize-y"
+                      class="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-gray-900 dark:text-white text-sm focus:outline-none focus:border-indigo-500 resize-y"
                       placeholder="Co zostalo zrobione..."></textarea>
         </div>
         <div id="te-error" class="text-red-400 text-sm hidden"></div>
         <div class="flex justify-end gap-3">
             <button type="button" onclick="document.getElementById('time-entry-modal').close()"
-                    class="px-4 py-2 text-sm text-gray-400 hover:text-white transition">Anuluj</button>
+                    class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition">Anuluj</button>
             <button type="submit"
                     class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
                 Zaloguj czas

@@ -10,7 +10,7 @@
     <h1 class="text-2xl font-bold mb-6">{% if ticket %}<span class="text-indigo-400 font-mono text-lg mr-2">{{ project.code }}-{{ ticket.number }}</span>Edytuj ticket{% else %}Nowy ticket{% endif %}</h1>
 
     {% if error %}
-    <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+    <div class="bg-red-50 dark:bg-red-900/50 border border-red-300 dark:border-red-500 text-red-800 dark:text-red-300 px-4 py-2 rounded mb-4">
         {{ error }}
     </div>
     {% endif %}
@@ -19,21 +19,21 @@
           action="/dashboard/{{ project.slug }}/scrum/tickets/{% if ticket %}{{ ticket.id }}/edit{% else %}create{% endif %}"
           class="space-y-4">
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Tytuł</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Tytuł</label>
             <input type="text" name="title" value="{{ ticket.title if ticket else '' }}" required
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Opis (Markdown)</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Opis (Markdown)</label>
             <textarea id="ticket-description" name="description" rows="4">{{ ticket.description if ticket and ticket.description else '' }}</textarea>
         </div>
 
         <div class="grid grid-cols-2 gap-4">
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Priorytet</label>
+                <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Priorytet</label>
                 <select name="priority"
-                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                     {% for p in priorities %}
                     <option value="{{ p }}" {% if ticket and ticket.priority == p %}selected{% elif not ticket and p == 'medium' %}selected{% endif %}>
                         {% if p == 'low' %}Niski{% elif p == 'medium' %}Sredni{% elif p == 'high' %}Wysoki{% else %}Krytyczny{% endif %}
@@ -42,18 +42,18 @@
                 </select>
             </div>
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Story Points</label>
+                <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Story Points</label>
                 <input type="number" name="story_points" min="0" max="100"
                     value="{{ ticket.story_points if ticket and ticket.story_points is not none else '' }}"
-                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             </div>
         </div>
 
         {% if ticket %}
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Status</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Status</label>
             <select name="status"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                 {% for s in statuses %}
                 <option value="{{ s }}" {% if ticket.status == s %}selected{% endif %}>
                     {% if s == 'backlog' %}Backlog{% elif s == 'todo' %}Do zrobienia{% elif s == 'in_progress' %}W trakcie{% elif s == 'in_review' %}Review{% else %}Gotowe{% endif %}
@@ -64,9 +64,9 @@
         {% endif %}
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Sprint</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Sprint</label>
             <select name="sprint_id"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                 <option value="">-- Brak (backlog) --</option>
                 {% for sprint in sprints %}
                 <option value="{{ sprint.id }}" {% if ticket and ticket.sprint_id == sprint.id %}selected{% endif %}>
@@ -77,9 +77,9 @@
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Przypisany</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Przypisany</label>
             <select name="assignee_id"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
                 <option value="">-- Nieprzypisany --</option>
                 {% for member in members %}
                 <option value="{{ member.user_id }}" {% if ticket and ticket.assignee_id == member.user_id %}selected{% endif %}>
@@ -90,22 +90,22 @@
         </div>
 
         <div>
-            <label class="block text-sm text-gray-400 mb-1">Termin wykonania</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Termin wykonania</label>
             <input type="date" name="due_date"
                 value="{{ ticket.due_date.isoformat() if ticket and ticket.due_date else '' }}"
-                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
         </div>
 
         {% if labels %}
         <div>
-            <label class="block text-sm text-gray-400 mb-2">Etykiety</label>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-2">Etykiety</label>
             <div class="flex flex-wrap gap-2">
                 {% set ticket_label_ids = ticket.labels | map(attribute='id') | list if ticket and ticket.labels else [] %}
                 {% for label in labels %}
                 <label class="flex items-center gap-1.5 cursor-pointer">
                     <input type="checkbox" name="label_ids" value="{{ label.id }}"
                         {% if label.id in ticket_label_ids %}checked{% endif %}
-                        class="rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0">
+                        class="rounded bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0">
                     <span class="rounded-full px-2 py-0.5 text-xs font-medium text-white" style="background-color: {{ label.color }}">{{ label.name | e }}</span>
                 </label>
                 {% endfor %}
@@ -143,31 +143,32 @@ var easyMDE = new EasyMDE({
 </script>
 
 <style>
-.EasyMDEContainer .CodeMirror {
+/* EasyMDE ciemny motyw */
+html.dark .EasyMDEContainer .CodeMirror {
     background-color: #374151;
     color: #e5e7eb;
     border-color: #4b5563;
 }
-.EasyMDEContainer .CodeMirror-cursor {
+html.dark .EasyMDEContainer .CodeMirror-cursor {
     border-left-color: #e5e7eb;
 }
-.editor-toolbar {
+html.dark .editor-toolbar {
     border-color: #4b5563;
     background-color: #1f2937;
 }
-.editor-toolbar button {
+html.dark .editor-toolbar button {
     color: #9ca3af !important;
 }
-.editor-toolbar button:hover,
-.editor-toolbar button.active {
+html.dark .editor-toolbar button:hover,
+html.dark .editor-toolbar button.active {
     color: #fff !important;
     background-color: #374151;
 }
-.editor-preview {
+html.dark .editor-preview {
     background-color: #1f2937;
     color: #e5e7eb;
 }
-.editor-preview pre {
+html.dark .editor-preview pre {
     background-color: #374151;
 }
 </style>

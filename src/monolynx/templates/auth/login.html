@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="pl" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,28 +16,36 @@
     <link rel="shortcut icon" href="/static/img/favicon/favicon.ico">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/img/favicon/apple-touch-icon.png">
     <link rel="manifest" href="/static/img/favicon/site.webmanifest">
+    <script>
+        (function() {
+            var saved = localStorage.getItem('monolynx-theme');
+            if (saved === 'light') document.documentElement.classList.remove('dark');
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class' };</script>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center">
-    <div class="bg-gray-800 p-8 rounded-lg shadow-lg w-full max-w-md">
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen flex items-center justify-center transition-colors duration-200">
+    <div class="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg w-full max-w-md">
         <div class="flex justify-center mb-6">
-            <img src="/static/img/monolynx-logo-white.svg" alt="Monolynx" class="h-8">
+            <img src="/static/img/monolynx-logo-white.svg" alt="Monolynx" class="h-8 hidden dark:block">
+            <img src="/static/img/monolynx-logo-color.svg" alt="Monolynx" class="h-8 dark:hidden">
         </div>
         {% if error %}
-        <div class="bg-red-900/50 border border-red-500 text-red-300 px-4 py-2 rounded mb-4">
+        <div class="bg-red-50 dark:bg-red-900/50 border border-red-300 dark:border-red-500 text-red-800 dark:text-red-300 px-4 py-2 rounded mb-4">
             {{ error }}
         </div>
         {% endif %}
         <form method="post" action="/auth/login" class="space-y-4">
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Email</label>
+                <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Email</label>
                 <input type="email" name="email" required
-                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             </div>
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Haslo</label>
+                <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Haslo</label>
                 <input type="password" name="password" required
-                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                    class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
             </div>
             <button type="submit"
                 class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded transition">
@@ -47,10 +55,10 @@
         {% if google_enabled %}
         <div class="relative my-5">
             <div class="absolute inset-0 flex items-center">
-                <div class="w-full border-t border-gray-600"></div>
+                <div class="w-full border-t border-gray-300 dark:border-gray-600"></div>
             </div>
             <div class="relative flex justify-center text-sm">
-                <span class="px-2 bg-gray-800 text-gray-400">lub</span>
+                <span class="px-2 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400">lub</span>
             </div>
         </div>
         <a href="/auth/google/login"

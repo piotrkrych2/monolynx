@@ -41,43 +41,43 @@
 
             <!-- About (3 cols) -->
             <div class="md:col-span-3 space-y-6">
-                <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 sm:p-8">
+                <div class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-6 sm:p-8">
                     <h2 class="text-xl font-bold mb-4">
                         {% if lang == "pl" %}O mnie{% else %}About me{% endif %}
                     </h2>
                     {% if lang == "pl" %}
-                    <div class="space-y-4 text-gray-300 leading-relaxed">
+                    <div class="space-y-4 text-gray-700 dark:text-gray-300 leading-relaxed">
                         <p>
-                            Jestem programistą od <strong class="text-white">2008 roku</strong>.
+                            Jestem programistą od <strong class="text-gray-900 dark:text-white">2008 roku</strong>.
                             Obecnie specjalizuję się w programowaniu <strong class="text-indigo-400">AI First</strong>
-                            z użyciem <strong class="text-white">Claude Code</strong>.
+                            z użyciem <strong class="text-gray-900 dark:text-white">Claude Code</strong>.
                         </p>
                         <p>
-                            Wdrażam rozwiązania AI w firmach <strong class="text-white">MŚP</strong> — pomagam zespołom
+                            Wdrażam rozwiązania AI w firmach <strong class="text-gray-900 dark:text-white">MŚP</strong> — pomagam zespołom
                             programistycznym pracować szybciej i efektywniej, wykorzystując agentów AI jako pełnoprawnych
                             członków zespołu.
                         </p>
                         <p>
-                            <strong class="text-white">Monolynx</strong> to mój autorski projekt — platforma projektowa
+                            <strong class="text-gray-900 dark:text-white">Monolynx</strong> to mój autorski projekt — platforma projektowa
                             zaprojektowana od podstaw z myślą o współpracy człowieka z AI. 30+ narzędzi MCP,
                             semantyczne wyszukiwanie w wiki, integracja z Claude Code — to nie jest kolejny dashboard,
                             to baza wiedzy, z którą Twój agent AI pracuje jak członek zespołu.
                         </p>
                     </div>
                     {% else %}
-                    <div class="space-y-4 text-gray-300 leading-relaxed">
+                    <div class="space-y-4 text-gray-700 dark:text-gray-300 leading-relaxed">
                         <p>
-                            I've been a developer since <strong class="text-white">2008</strong>.
+                            I've been a developer since <strong class="text-gray-900 dark:text-white">2008</strong>.
                             Currently I specialize in <strong class="text-indigo-400">AI First</strong> development
-                            using <strong class="text-white">Claude Code</strong>.
+                            using <strong class="text-gray-900 dark:text-white">Claude Code</strong>.
                         </p>
                         <p>
-                            I help <strong class="text-white">SME companies</strong> implement AI solutions — enabling
+                            I help <strong class="text-gray-900 dark:text-white">SME companies</strong> implement AI solutions — enabling
                             development teams to work faster and more effectively by using AI agents as full-fledged
                             team members.
                         </p>
                         <p>
-                            <strong class="text-white">Monolynx</strong> is my own project — a project platform
+                            <strong class="text-gray-900 dark:text-white">Monolynx</strong> is my own project — a project platform
                             designed from the ground up for human-AI collaboration. 30+ MCP tools,
                             semantic wiki search, Claude Code integration — it's not just another dashboard,
                             it's a knowledge base your AI agent works with as a team member.
@@ -87,7 +87,7 @@
                 </div>
 
                 <!-- What I do -->
-                <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 sm:p-8">
+                <div class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-6 sm:p-8">
                     <h2 class="text-xl font-bold mb-4">
                         {% if lang == "pl" %}Czym się zajmuję{% else %}What I do{% endif %}
                     </h2>
@@ -99,10 +99,10 @@
                                 </svg>
                             </div>
                             <div>
-                                <h3 class="text-sm font-semibold text-white">
+                                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
                                     {% if lang == "pl" %}Wdrożenia AI w firmach{% else %}AI implementation{% endif %}
                                 </h3>
-                                <p class="text-xs text-gray-400 mt-1">
+                                <p class="text-xs text-gray-600 dark:text-gray-400 mt-1">
                                     {% if lang == "pl" %}Integruję agentów AI z istniejącymi procesami i narzędziami zespołów programistycznych.
                                     {% else %}I integrate AI agents with existing processes and tools of development teams.{% endif %}
                                 </p>
@@ -115,10 +115,10 @@
                                 </svg>
                             </div>
                             <div>
-                                <h3 class="text-sm font-semibold text-white">
+                                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
                                     {% if lang == "pl" %}Programowanie AI First{% else %}AI First development{% endif %}
                                 </h3>
-                                <p class="text-xs text-gray-400 mt-1">
+                                <p class="text-xs text-gray-600 dark:text-gray-400 mt-1">
                                     {% if lang == "pl" %}Tworzę aplikacje, w których AI jest pierwszoplanowym narzędziem pracy, nie dodatkiem.
                                     {% else %}I build applications where AI is a first-class work tool, not an afterthought.{% endif %}
                                 </p>
@@ -131,10 +131,10 @@
                                 </svg>
                             </div>
                             <div>
-                                <h3 class="text-sm font-semibold text-white">
+                                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
                                     {% if lang == "pl" %}Szkolenia i consulting{% else %}Training & consulting{% endif %}
                                 </h3>
-                                <p class="text-xs text-gray-400 mt-1">
+                                <p class="text-xs text-gray-600 dark:text-gray-400 mt-1">
                                     {% if lang == "pl" %}Uczę zespoły efektywnej pracy z Claude Code, MCP i agentami AI.
                                     {% else %}I teach teams to work effectively with Claude Code, MCP, and AI agents.{% endif %}
                                 </p>
@@ -147,10 +147,10 @@
                                 </svg>
                             </div>
                             <div>
-                                <h3 class="text-sm font-semibold text-white">
+                                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
                                     {% if lang == "pl" %}Narzędzia i platformy{% else %}Tools & platforms{% endif %}
                                 </h3>
-                                <p class="text-xs text-gray-400 mt-1">
+                                <p class="text-xs text-gray-600 dark:text-gray-400 mt-1">
                                     {% if lang == "pl" %}Buduję platformy takie jak Monolynx — zaprojektowane od zera pod współpracę z AI.
                                     {% else %}I build platforms like Monolynx — designed from scratch for AI collaboration.{% endif %}
                                 </p>
@@ -162,14 +162,14 @@
 
             <!-- Contact card (2 cols) -->
             <div class="md:col-span-2">
-                <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 sm:p-8 md:sticky md:top-24">
+                <div class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-6 sm:p-8 md:sticky md:top-24">
                     <h2 class="text-xl font-bold mb-6">
                         {% if lang == "pl" %}Skontaktuj się{% else %}Get in touch{% endif %}
                     </h2>
 
                     <!-- Phone -->
                     <a href="tel:+48791038123"
-                       class="flex items-center gap-4 p-4 rounded-lg bg-gray-800/50 hover:bg-gray-800 transition-colors mb-4 group">
+                       class="flex items-center gap-4 p-4 rounded-lg bg-white/50 dark:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors mb-4 group">
                         <div class="w-10 h-10 bg-emerald-500/10 rounded-lg flex items-center justify-center flex-shrink-0">
                             <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z"/>
@@ -179,13 +179,13 @@
                             <p class="text-xs text-gray-500 mb-0.5">
                                 {% if lang == "pl" %}Telefon{% else %}Phone{% endif %}
                             </p>
-                            <p class="text-sm font-medium text-white group-hover:text-emerald-400 transition-colors">+48 791 038 123</p>
+                            <p class="text-sm font-medium text-gray-900 dark:text-white group-hover:text-emerald-400 transition-colors">+48 791 038 123</p>
                         </div>
                     </a>
 
                     <!-- Email -->
                     <a href="mailto:piotrkrych@monolynx.com"
-                       class="flex items-center gap-4 p-4 rounded-lg bg-gray-800/50 hover:bg-gray-800 transition-colors mb-6 group">
+                       class="flex items-center gap-4 p-4 rounded-lg bg-white/50 dark:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors mb-6 group">
                         <div class="w-10 h-10 bg-indigo-500/10 rounded-lg flex items-center justify-center flex-shrink-0">
                             <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"/>
@@ -193,11 +193,11 @@
                         </div>
                         <div>
                             <p class="text-xs text-gray-500 mb-0.5">E-mail</p>
-                            <p class="text-sm font-medium text-white group-hover:text-indigo-400 transition-colors">piotrkrych@monolynx.com</p>
+                            <p class="text-sm font-medium text-gray-900 dark:text-white group-hover:text-indigo-400 transition-colors">piotrkrych@monolynx.com</p>
                         </div>
                     </a>
 
-                    <div class="border-t border-gray-700 pt-6">
+                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
                         <p class="text-xs text-gray-500 leading-relaxed">
                             {% if lang == "pl" %}
                             Zapraszam do kontaktu — chętnie porozmawiam o wdrożeniu AI w Twoim zespole

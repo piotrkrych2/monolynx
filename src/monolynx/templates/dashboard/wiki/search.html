@@ -6,7 +6,7 @@
 <div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl font-bold">Szukaj w Wiki</h1>
     <a href="/dashboard/{{ project.slug }}/wiki/"
-       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+       class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
         Wszystkie strony
     </a>
 </div>
@@ -14,7 +14,7 @@
 <form action="/dashboard/{{ project.slug }}/wiki/search" method="get" class="mb-6">
     <div class="flex gap-2">
         <input type="text" name="q" placeholder="Wpisz zapytanie..."
-               class="flex-1 bg-gray-700 border border-gray-600 rounded px-4 py-2.5 text-white text-sm
+               class="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-4 py-2.5 text-gray-900 dark:text-white text-sm
                       focus:outline-none focus:border-indigo-500 placeholder-gray-400"
                value="{{ query }}" autofocus>
         <button type="submit"
@@ -25,21 +25,21 @@
 </form>
 
 {% if not embeddings_enabled %}
-<div class="bg-yellow-900/30 border border-yellow-700 rounded-lg p-4 text-sm text-yellow-300">
-    Wyszukiwanie semantyczne jest wylaczone. Skonfiguruj <code class="bg-gray-700 px-1 rounded">OPENAI_API_KEY</code> w zmiennych srodowiskowych.
+<div class="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-300">
+    Wyszukiwanie semantyczne jest wylaczone. Skonfiguruj <code class="bg-gray-100 dark:bg-gray-700 px-1 rounded">OPENAI_API_KEY</code> w zmiennych srodowiskowych.
 </div>
 
 {% elif query and results %}
 <div class="space-y-3">
-    <p class="text-sm text-gray-400 mb-4">Znaleziono {{ results|length }} wynikow dla "{{ query }}"</p>
+    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Znaleziono {{ results|length }} wynikow dla "{{ query }}"</p>
     {% for result in results %}
     <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ result.id }}"
-       class="block bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+       class="block bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
         <div class="flex items-center justify-between mb-2">
-            <h3 class="text-white font-medium">{{ result.title }}</h3>
+            <h3 class="text-gray-900 dark:text-white font-medium">{{ result.title }}</h3>
             <span class="text-xs text-gray-500 ml-4 flex-shrink-0">{{ (result.similarity * 100)|round(1) }}% trafnosc</span>
         </div>
-        <p class="text-sm text-gray-400 line-clamp-3">{{ result.snippet }}</p>
+        <p class="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">{{ result.snippet }}</p>
     </a>
     {% endfor %}
 </div>

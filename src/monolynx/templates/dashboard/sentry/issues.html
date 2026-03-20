@@ -19,7 +19,7 @@
 <div class="space-y-2">
     {% for issue in issues %}
     <a href="/dashboard/{{ project.slug }}/500ki/issues/{{ issue.id }}"
-       class="block bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+       class="block bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
         <div class="flex items-center justify-between">
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
@@ -30,14 +30,14 @@
                     {% else %}
                     <span class="w-2 h-2 rounded-full bg-gray-500 flex-shrink-0"></span>
                     {% endif %}
-                    <h3 class="text-white font-medium truncate">{{ issue.title }}</h3>
+                    <h3 class="text-gray-900 dark:text-white font-medium truncate">{{ issue.title }}</h3>
                 </div>
                 {% if issue.culprit %}
-                <p class="text-sm text-gray-400 mt-1 truncate">{{ issue.culprit }}</p>
+                <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 truncate">{{ issue.culprit }}</p>
                 {% endif %}
             </div>
             <div class="text-right ml-4 flex-shrink-0">
-                <span class="text-sm font-mono text-gray-300">{{ issue.event_count }}x</span>
+                <span class="text-sm font-mono text-gray-700 dark:text-gray-300">{{ issue.event_count }}x</span>
                 <p class="text-xs text-gray-500 mt-1">{{ issue.last_seen.strftime('%Y-%m-%d %H:%M') }}</p>
             </div>
         </div>

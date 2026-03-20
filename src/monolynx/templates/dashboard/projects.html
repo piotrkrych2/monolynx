@@ -16,16 +16,16 @@
 {% if projects %}
 <div class="grid gap-4">
     {% for project in projects %}
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
         <div class="flex items-center justify-between">
             <a href="/dashboard/{{ project.slug }}/500ki/issues" class="flex-1 min-w-0">
-                <h2 class="text-lg font-semibold text-white">{{ project.name }}</h2>
-                <p class="text-sm text-gray-400">{{ project.slug }}</p>
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ project.name }}</h2>
+                <p class="text-sm text-gray-600 dark:text-gray-400">{{ project.slug }}</p>
             </a>
             <div class="flex items-center gap-3 ml-4">
                 <span class="text-gray-500 text-sm">{{ project.created_at.strftime('%Y-%m-%d') }}</span>
                 <a href="/dashboard/{{ project.slug }}/settings"
-                   class="text-gray-400 hover:text-indigo-400 text-sm transition"
+                   class="text-gray-600 dark:text-gray-400 hover:text-indigo-400 text-sm transition"
                    title="Ustawienia projektu">Ustawienia</a>
             </div>
         </div>

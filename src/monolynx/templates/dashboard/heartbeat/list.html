@@ -15,7 +15,7 @@
 <div class="space-y-2">
     {% for heartbeat in heartbeats %}
     {% set status = heartbeat_statuses.get(heartbeat.id, 'pending') %}
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
         <div class="flex items-center justify-between">
             <a href="/dashboard/{{ project.slug }}/heartbeat/{{ heartbeat.id }}" class="flex-1 min-w-0">
                 <div class="flex items-center gap-3">
@@ -28,7 +28,7 @@
                     {% endif %}
 
                     <div class="min-w-0">
-                        <h3 class="text-white font-medium truncate">{{ heartbeat.name }}</h3>
+                        <h3 class="text-gray-900 dark:text-white font-medium truncate">{{ heartbeat.name }}</h3>
                         <p class="text-xs text-gray-500">
                             co {{ heartbeat.period // 60 }} min &middot; tolerancja {{ heartbeat.grace // 60 }} min
                         </p>
@@ -40,18 +40,18 @@
                 {% if heartbeat.last_ping_at %}
                 <div class="text-right">
                     <p class="text-xs text-gray-500">Ostatni ping</p>
-                    <p class="text-xs text-gray-300">{{ heartbeat.last_ping_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-xs text-gray-700 dark:text-gray-300">{{ heartbeat.last_ping_at.strftime('%Y-%m-%d %H:%M') }}</p>
                 </div>
                 {% else %}
                 <span class="text-xs text-gray-600">Brak pingu</span>
                 {% endif %}
 
                 {% if status == 'up' %}
-                <span class="bg-green-900 text-green-300 text-xs px-2 py-0.5 rounded">Aktywny</span>
+                <span class="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300 text-xs px-2 py-0.5 rounded">Aktywny</span>
                 {% elif status == 'down' %}
-                <span class="bg-red-900 text-red-300 text-xs px-2 py-0.5 rounded">Nieaktywny</span>
+                <span class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-300 text-xs px-2 py-0.5 rounded">Nieaktywny</span>
                 {% else %}
-                <span class="bg-gray-700 text-gray-400 text-xs px-2 py-0.5 rounded">Oczekuje</span>
+                <span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 rounded">Oczekuje</span>
                 {% endif %}
             </div>
         </div>

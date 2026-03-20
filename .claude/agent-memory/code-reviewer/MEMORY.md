@@ -59,6 +59,7 @@
 - UI attachments MON-44: 80/100 APPROVED (FilePond upload+HTMX delete, membership check on write, filename sanitized; medium: no server-side MIME validation, no attachment count limit)
 - get_graph_node MON-45: 86/100 APPROVED (Cypher filters + depth_map + grouped DSL output; medium: start node depth never 0; low: no tests for new filters)
 - get_graph_node testy MON-45: 88/100 APPROVED (34 testy, 5 klas; medium: wrong @pytest.mark.integration marker; low: redundancja z test_mcp_server.py TestFormatGraphDsl)
+- dark/light mode MON-47: iter1=72/100 REQUEST CHANGES (4 standalone templates missing class="dark"/anti-FOUC/darkMode, landing bg-gray-950 hardcoded, logo always white on auth, status badges dark-only, toasts text-gray-900 on colored bg), iter2=88/100 APPROVED (all blockers fixed; low: status badges dark-only, landing no toggle, minor indent)
 
 ## Test Patterns Confirmed
 - Test fixture: connection-level transaction with rollback, `expire_on_commit=False` — services calling `db.commit()` work on savepoints
@@ -108,6 +109,18 @@
 - Dashboard label sync pattern: delete-all + re-insert (sa_delete + loop) — no partial update
 - Dashboard form label_ids via `form.getlist("label_ids")` — multi-checkbox pattern
 - Label validation in MON-44: `_parse_valid_label_ids` validates against project labels — cross-project injection FIXED
+
+## Dark/Light Mode Patterns (MON-47)
+- Tailwind `darkMode: 'class'` configured via inline `tailwind.config` in each standalone template
+- Anti-FOUC: inline `<script>` in `<head>` reads localStorage('monolynx-theme'), removes 'dark' class if 'light'
+- Default: dark mode (`class="dark"` on `<html>`)
+- Toggle: `toggleTheme()` in base.html, button in navbar (sun/moon icons via `hidden dark:block`/`dark:hidden`)
+- Logo: dual variant pattern — `monolynx-logo-white.svg` (hidden dark:block) + `monolynx-logo-color.svg` (dark:hidden)
+- Standalone templates (login, accept_invite, oauth, landing) each have own anti-FOUC + darkMode config (not inherited from base.html)
+- Color pattern: `bg-white dark:bg-gray-800`, `text-gray-900 dark:text-white`, `border-gray-200 dark:border-gray-700`
+- Inputs: `bg-gray-100 dark:bg-gray-700`, `border-gray-300 dark:border-gray-600`
+- Status badges (bg-green-900 text-green-300 etc.) kept dark-only — accepted as "dark pill" style on both themes
+- prose → `prose dark:prose-invert` (3 locations: wiki page_detail, ticket_detail description, ticket_detail comments)
 
 ## render_project_page helper
 - Located in `dashboard/helpers.py`

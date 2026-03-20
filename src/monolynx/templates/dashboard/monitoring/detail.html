@@ -7,7 +7,7 @@
 <div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl font-bold">Monitoring</h1>
     <a href="/dashboard/{{ project.slug }}/monitoring/"
-       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+       class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
         Wstecz do listy
     </a>
 </div>
@@ -15,12 +15,12 @@
 <div class="grid grid-cols-3 gap-6">
     <!-- Główna treść -->
     <div class="col-span-2">
-        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
             <div class="flex items-start justify-between mb-4">
                 <div>
                     <div class="flex items-center gap-3">
                         {% if not monitor.is_active %}
-                        <span class="w-3 h-3 rounded-full bg-gray-600 flex-shrink-0"></span>
+                        <span class="w-3 h-3 rounded-full bg-gray-200 dark:bg-gray-600 flex-shrink-0"></span>
                         {% elif last_check %}
                             {% if last_check.is_success %}
                             <span class="w-3 h-3 rounded-full bg-green-500 flex-shrink-0"></span>
@@ -30,7 +30,7 @@
                         {% else %}
                         <span class="w-3 h-3 rounded-full bg-gray-500 flex-shrink-0"></span>
                         {% endif %}
-                        <h2 class="text-xl font-bold text-white">{{ monitor.name or monitor.url }}</h2>
+                        <h2 class="text-xl font-bold text-gray-900 dark:text-white">{{ monitor.name or monitor.url }}</h2>
                     </div>
                     {% if monitor.name %}
                     <p class="text-sm text-gray-500 mt-1 ml-6">{{ monitor.url }}</p>
@@ -39,19 +39,19 @@
                 <div class="flex items-center gap-2 ml-4">
                     <form method="post" action="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}/toggle" class="inline">
                         <button type="submit"
-                                class="text-sm {% if monitor.is_active %}text-gray-400 hover:text-yellow-400{% else %}text-gray-400 hover:text-green-400{% endif %} transition">
+                                class="text-sm {% if monitor.is_active %}text-gray-600 dark:text-gray-400 hover:text-yellow-400{% else %}text-gray-600 dark:text-gray-400 hover:text-green-400{% endif %} transition">
                             {% if monitor.is_active %}Wylacz{% else %}Wlacz{% endif %}
                         </button>
                     </form>
                     <form method="post" action="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}/delete" class="inline">
-                        <button type="submit" class="text-sm text-gray-400 hover:text-red-400 transition"
+                        <button type="submit" class="text-sm text-gray-600 dark:text-gray-400 hover:text-red-400 transition"
                                 onclick="return confirm('Czy na pewno chcesz usunąć ten monitor?')">Usuń</button>
                     </form>
                 </div>
             </div>
 
             {% if not monitor.is_active %}
-            <div class="bg-gray-700/50 border border-gray-600 text-gray-400 px-4 py-2 rounded mb-4 text-sm">
+            <div class="bg-gray-100/50 dark:bg-gray-700/50 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-4 py-2 rounded mb-4 text-sm">
                 Monitoring jest wylaczony. Sprawdzanie URL nie jest wykonywane.
             </div>
             {% endif %}
@@ -59,24 +59,24 @@
 
         <!-- Historia checkow -->
         <div class="mt-6">
-            <h3 class="text-lg font-semibold text-white mb-4">Historia sprawdzen ({{ total_checks }})</h3>
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Historia sprawdzen ({{ total_checks }})</h3>
 
             {% if checks %}
-            <div class="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+            <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
                 <table class="w-full text-sm">
                     <thead>
-                        <tr class="border-b border-gray-700">
-                            <th class="text-left text-gray-400 font-medium px-4 py-3">Czas</th>
-                            <th class="text-left text-gray-400 font-medium px-4 py-3">Status</th>
-                            <th class="text-left text-gray-400 font-medium px-4 py-3">Kod</th>
-                            <th class="text-left text-gray-400 font-medium px-4 py-3">Czas odp.</th>
-                            <th class="text-left text-gray-400 font-medium px-4 py-3">Błąd</th>
+                        <tr class="border-b border-gray-200 dark:border-gray-700">
+                            <th class="text-left text-gray-600 dark:text-gray-400 font-medium px-4 py-3">Czas</th>
+                            <th class="text-left text-gray-600 dark:text-gray-400 font-medium px-4 py-3">Status</th>
+                            <th class="text-left text-gray-600 dark:text-gray-400 font-medium px-4 py-3">Kod</th>
+                            <th class="text-left text-gray-600 dark:text-gray-400 font-medium px-4 py-3">Czas odp.</th>
+                            <th class="text-left text-gray-600 dark:text-gray-400 font-medium px-4 py-3">Błąd</th>
                         </tr>
                     </thead>
-                    <tbody class="divide-y divide-gray-700">
+                    <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
                         {% for check in checks %}
                         <tr>
-                            <td class="px-4 py-3 text-gray-300">{{ check.checked_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                            <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ check.checked_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                             <td class="px-4 py-3">
                                 {% if check.is_success %}
                                 <span class="inline-flex items-center gap-1.5">
@@ -90,8 +90,8 @@
                                 </span>
                                 {% endif %}
                             </td>
-                            <td class="px-4 py-3 text-gray-300 font-mono">{{ check.status_code or '-' }}</td>
-                            <td class="px-4 py-3 text-gray-300 font-mono">
+                            <td class="px-4 py-3 text-gray-700 dark:text-gray-300 font-mono">{{ check.status_code or '-' }}</td>
+                            <td class="px-4 py-3 text-gray-700 dark:text-gray-300 font-mono">
                                 {% if check.response_time_ms is not none %}
                                 {{ check.response_time_ms }} ms
                                 {% else %}
@@ -113,16 +113,16 @@
                 <div>
                     {% if has_prev %}
                     <a href="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}?page={{ page - 1 }}"
-                       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+                       class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
                         Poprzednia
                     </a>
                     {% endif %}
                 </div>
-                <span class="text-sm text-gray-400">Strona {{ page }} z {{ total_pages }}</span>
+                <span class="text-sm text-gray-600 dark:text-gray-400">Strona {{ page }} z {{ total_pages }}</span>
                 <div>
                     {% if has_next %}
                     <a href="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}?page={{ page + 1 }}"
-                       class="border border-gray-600 hover:border-gray-500 text-gray-300 hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+                       class="border border-gray-300 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
                         Nastepna
                     </a>
                     {% endif %}
@@ -140,23 +140,23 @@
 
     <!-- Sidebar z metadanymi -->
     <div class="space-y-4">
-        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <h3 class="text-sm font-semibold text-gray-400 mb-3">Szczegóły</h3>
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Szczegóły</h3>
 
             <div class="space-y-3 text-sm">
                 <div>
                     <span class="text-gray-500">Status</span>
-                    <p class="text-white mt-1">
+                    <p class="text-gray-900 dark:text-white mt-1">
                         {% if not monitor.is_active %}
-                        <span class="px-2 py-1 rounded text-xs bg-gray-600 text-gray-400">Wylaczony</span>
+                        <span class="px-2 py-1 rounded text-xs bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-400">Wylaczony</span>
                         {% elif last_check %}
                             {% if last_check.is_success %}
-                            <span class="px-2 py-1 rounded text-xs bg-green-900 text-green-300">Dziala</span>
+                            <span class="px-2 py-1 rounded text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300">Dziala</span>
                             {% else %}
-                            <span class="px-2 py-1 rounded text-xs bg-red-900 text-red-300">Nie dziala</span>
+                            <span class="px-2 py-1 rounded text-xs bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-300">Nie dziala</span>
                             {% endif %}
                         {% else %}
-                        <span class="px-2 py-1 rounded text-xs bg-gray-700 text-gray-300">Brak danych</span>
+                        <span class="px-2 py-1 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">Brak danych</span>
                         {% endif %}
                     </p>
                 </div>
@@ -170,19 +170,19 @@
 
                 <div>
                     <span class="text-gray-500">Czestotliwosc</span>
-                    <p class="text-white mt-1">co {{ monitor.interval_value }} {{ interval_unit_labels.get(monitor.interval_unit, monitor.interval_unit) }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">co {{ monitor.interval_value }} {{ interval_unit_labels.get(monitor.interval_unit, monitor.interval_unit) }}</p>
                 </div>
 
                 <div>
                     <span class="text-gray-500">Utworzony</span>
-                    <p class="text-white mt-1">{{ monitor.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">{{ monitor.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
                 </div>
             </div>
         </div>
 
         {% if uptime_24h is not none or uptime_7d is not none or uptime_30d is not none %}
-        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <h3 class="text-sm font-semibold text-gray-400 mb-3">Uptime</h3>
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Uptime</h3>
 
             <div class="space-y-3 text-sm">
                 {% if uptime_24h is not none %}
@@ -216,12 +216,12 @@
         {% endif %}
 
         {% if avg_response_time is not none %}
-        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <h3 class="text-sm font-semibold text-gray-400 mb-3">Wydajnosc</h3>
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Wydajnosc</h3>
 
             <div class="text-sm">
                 <span class="text-gray-500">Sredni czas odpowiedzi (24h)</span>
-                <p class="text-white mt-1 font-mono">{{ avg_response_time }} ms</p>
+                <p class="text-gray-900 dark:text-white mt-1 font-mono">{{ avg_response_time }} ms</p>
             </div>
         </div>
         {% endif %}
