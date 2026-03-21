@@ -125,8 +125,14 @@
                 <pre class="text-sm text-gray-700 dark:text-gray-300 font-mono overflow-x-auto"><code>{
   "mcpServers": {
     "monolynx": {
-      "type": "streamable-http",
-      "url": "https://your-instance/mcp"
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://your-instance/mcp/",
+        "--header",
+        "Authorization: Bearer YOUR_TOKEN"
+      ]
     }
   }
 }</code></pre>

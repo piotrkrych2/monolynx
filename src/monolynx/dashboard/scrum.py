@@ -57,7 +57,7 @@ from .helpers import _get_user_id, flash, render_project_page, templates
 
 router = APIRouter(prefix="/dashboard", tags=["scrum"])
 
-MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_ATTACHMENT_SIZE = 200 * 1024 * 1024  # 200 MB
 
 
 async def _get_project(slug: str, db: AsyncSession) -> Project | None:
@@ -742,7 +742,7 @@ async def ticket_attachment_upload(
 
     data = await filepond.read()
     if len(data) > MAX_ATTACHMENT_SIZE:
-        return JSONResponse({"error": "Plik za duzy (max 10 MB)"}, status_code=400)
+        return JSONResponse({"error": "Plik za duzy (max 200 MB)"}, status_code=400)
 
     content_type = filepond.content_type or "application/octet-stream"
 

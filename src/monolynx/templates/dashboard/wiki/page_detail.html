@@ -90,6 +90,9 @@
             </div>
         </div>
         {% endif %}
+
+        <!-- Załączniki -->
+        {% include "dashboard/wiki/page_attachments.html" %}
     </div>
 
     <!-- Sidebar z metadanymi -->
@@ -137,4 +140,51 @@
         </div>
     </div>
 </div>
+
+<!-- FilePond CSS -->
+<link href="https://unpkg.com/filepond/dist/filepond.css" rel="stylesheet">
+<link href="https://unpkg.com/filepond-plugin-image-preview/dist/filepond-plugin-image-preview.css" rel="stylesheet">
+
+<style>
+    /* FilePond dark theme */
+    .filepond--panel-root { background-color: #1f2937; }
+    .filepond--drop-label { color: #9ca3af; }
+    .filepond--label-action { color: #818cf8; text-decoration: underline; }
+    .filepond--item-panel { background-color: #374151; }
+    .filepond--drip-blob { background-color: #4f46e5; }
+    .filepond--file-action-button { color: white; }
+    .filepond--file { color: white; }
+    .filepond--root { border: 1px dashed #4b5563; border-radius: 0.5rem; }
+</style>
+
+<!-- FilePond JS -->
+<script src="https://unpkg.com/filepond-plugin-image-preview/dist/filepond-plugin-image-preview.js"></script>
+<script src="https://unpkg.com/filepond-plugin-file-validate-size/dist/filepond-plugin-file-validate-size.js"></script>
+<script src="https://unpkg.com/filepond/dist/filepond.js"></script>
+
+<script>
+{% if can_edit %}
+FilePond.registerPlugin(
+    FilePondPluginImagePreview,
+    FilePondPluginFileValidateSize
+);
+
+const wikiPond = FilePond.create(document.getElementById('wiki-filepond-input'), {
+    server: {
+        process: '/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/attachments/upload',
+        headers: {}
+    },
+    allowMultiple: true,
+    maxFileSize: '200MB',
+    labelIdle: 'Przeci\u0105gnij pliki lub <span class="filepond--label-action">kliknij tutaj</span>',
+    credits: false,
+});
+
+wikiPond.on('processfile', (error, file) => {
+    if (!error) {
+        setTimeout(() => window.location.reload(), 500);
+    }
+});
+{% endif %}
+</script>
 {% endblock %}

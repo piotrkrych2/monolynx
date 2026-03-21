@@ -243,6 +243,13 @@ EXPECTED_TOOLS = [
     "remove_member",
     "get_activity_log",
     "get_burndown",
+    "get_attachment",
+    "get_wiki_attachment",
+    "add_wiki_page_attachment",
+    "add_wiki_file",
+    "get_wiki_file",
+    "update_wiki_file",
+    "list_wiki_files",
 ]
 
 

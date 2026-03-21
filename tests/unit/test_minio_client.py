@@ -250,11 +250,12 @@ class TestDeleteObject:
 class TestUploadAttachment:
     """Testy uploadu zalacznikow do MinIO."""
 
+    @patch("monolynx.services.minio_client._date_prefix", return_value="2026/03/21")
     @patch("monolynx.services.minio_client.uuid.uuid4")
     @patch("monolynx.services.minio_client.settings")
     @patch("monolynx.services.minio_client.get_minio_client")
-    def test_generates_unique_filename(self, mock_get_client, mock_settings, mock_uuid):
-        """Generuje unikalna nazwe pliku z rozszerzeniem."""
+    def test_generates_unique_filename(self, mock_get_client, mock_settings, mock_uuid, _mock_date):
+        """Generuje unikalna nazwe pliku z UUID i data w sciezce."""
         mock_settings.MINIO_BUCKET = "wiki-bucket"
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -262,12 +263,13 @@ class TestUploadAttachment:
 
         result = upload_attachment("proj", "photo.jpg", b"image-data", "image/jpeg")
 
-        assert result == "proj/attachments/abc123def456.jpg"
+        assert result == "proj/attachments/2026/03/21/abc123def456.jpg"
 
+    @patch("monolynx.services.minio_client._date_prefix", return_value="2026/03/21")
     @patch("monolynx.services.minio_client.uuid.uuid4")
     @patch("monolynx.services.minio_client.settings")
     @patch("monolynx.services.minio_client.get_minio_client")
-    def test_filename_without_extension(self, mock_get_client, mock_settings, mock_uuid):
+    def test_filename_without_extension(self, mock_get_client, mock_settings, mock_uuid, _mock_date):
         """Plik bez rozszerzenia uzywa 'bin'."""
         mock_settings.MINIO_BUCKET = "wiki-bucket"
         mock_client = MagicMock()
@@ -276,13 +278,14 @@ class TestUploadAttachment:
 
         result = upload_attachment("proj", "noext", b"data", "application/octet-stream")
 
-        assert result == "proj/attachments/abc123def456.bin"
+        assert result == "proj/attachments/2026/03/21/abc123def456.bin"
 
+    @patch("monolynx.services.minio_client._date_prefix", return_value="2026/03/21")
     @patch("monolynx.services.minio_client.uuid.uuid4")
     @patch("monolynx.services.minio_client.settings")
     @patch("monolynx.services.minio_client.get_minio_client")
-    def test_calls_put_object_with_correct_params(self, mock_get_client, mock_settings, mock_uuid):
-        """Wywoluje put_object z poprawnymi parametrami."""
+    def test_calls_put_object_with_correct_params(self, mock_get_client, mock_settings, mock_uuid, _mock_date):
+        """Wywoluje put_object z poprawnymi parametrami i sciezka YYYY/MM/DD."""
         mock_settings.MINIO_BUCKET = "wiki-bucket"
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -294,17 +297,18 @@ class TestUploadAttachment:
         mock_client.put_object.assert_called_once()
         call_args = mock_client.put_object.call_args
         assert call_args[0][0] == "wiki-bucket"
-        assert call_args[0][1] == "proj/attachments/abc123.png"
+        assert call_args[0][1] == "proj/attachments/2026/03/21/abc123.png"
         data_arg = call_args[0][2]
         assert isinstance(data_arg, io.BytesIO)
         assert data_arg.read() == data
         assert call_args.kwargs["length"] == len(data)
         assert call_args.kwargs["content_type"] == "image/png"
 
+    @patch("monolynx.services.minio_client._date_prefix", return_value="2026/03/21")
     @patch("monolynx.services.minio_client.uuid.uuid4")
     @patch("monolynx.services.minio_client.settings")
     @patch("monolynx.services.minio_client.get_minio_client")
-    def test_double_extension_uses_last(self, mock_get_client, mock_settings, mock_uuid):
+    def test_double_extension_uses_last(self, mock_get_client, mock_settings, mock_uuid, _mock_date):
         """Plik z podwojna kropka -- bierze ostatnie rozszerzenie."""
         mock_settings.MINIO_BUCKET = "wiki-bucket"
         mock_client = MagicMock()
@@ -313,7 +317,7 @@ class TestUploadAttachment:
 
         result = upload_attachment("proj", "archive.tar.gz", b"data", "application/gzip")
 
-        assert result == "proj/attachments/aaa111.gz"
+        assert result == "proj/attachments/2026/03/21/aaa111.gz"
 
 
 @pytest.mark.unit

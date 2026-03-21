@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from minio import Minio
 
@@ -77,12 +78,18 @@ def delete_object(minio_path: str) -> None:
         logger.exception("Blad usuwania obiektu MinIO: %s", minio_path)
 
 
+def _date_prefix() -> str:
+    """Zwraca prefix YYYY/MM/DD na podstawie biezacej daty UTC."""
+    now = datetime.now(UTC)
+    return f"{now.year}/{now.month:02d}/{now.day:02d}"
+
+
 def upload_attachment(project_slug: str, filename: str, data: bytes, content_type: str) -> str:
     """Upload zalacznika (obrazek) do MinIO. Zwraca sciezke obiektu."""
     client = get_minio_client()
     ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
     unique_name = f"{uuid.uuid4().hex}.{ext}"
-    object_path = f"{project_slug}/attachments/{unique_name}"
+    object_path = f"{project_slug}/attachments/{_date_prefix()}/{unique_name}"
     client.put_object(
         settings.MINIO_BUCKET,
         object_path,
@@ -104,3 +111,16 @@ def get_attachment(minio_path: str) -> tuple[bytes, str]:
         response.close()
         response.release_conn()
     return data, stat.content_type or "application/octet-stream"
+
+
+def upload_object(storage_path: str, data: bytes, content_type: str) -> str:
+    """Upload dowolnego obiektu do MinIO pod podana sciezke. Zwraca sciezke."""
+    client = get_minio_client()
+    client.put_object(
+        settings.MINIO_BUCKET,
+        storage_path,
+        io.BytesIO(data),
+        length=len(data),
+        content_type=content_type,
+    )
+    return storage_path

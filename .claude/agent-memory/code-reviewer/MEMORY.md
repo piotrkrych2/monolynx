@@ -60,6 +60,7 @@
 - get_graph_node MON-45: 86/100 APPROVED (Cypher filters + depth_map + grouped DSL output; medium: start node depth never 0; low: no tests for new filters)
 - get_graph_node testy MON-45: 88/100 APPROVED (34 testy, 5 klas; medium: wrong @pytest.mark.integration marker; low: redundancja z test_mcp_server.py TestFormatGraphDsl)
 - dark/light mode MON-47: iter1=72/100 REQUEST CHANGES (4 standalone templates missing class="dark"/anti-FOUC/darkMode, landing bg-gray-950 hardcoded, logo always white on auth, status badges dark-only, toasts text-gray-900 on colored bg), iter2=88/100 APPROVED (all blockers fixed; low: status badges dark-only, landing no toggle, minor indent)
+- wiki attachments MON-49: 58/100 NEEDS WORK (3 critical: page_detail missing attachments/can_edit context, files.html uses wrong variable name + wrong model attrs, _get_wiki_page missing selectinload; medium: no MIME validation, get_wiki_attachment filename ambiguity, templates.TemplateResponse instead of render_project_page)
 
 ## Test Patterns Confirmed
 - Test fixture: connection-level transaction with rollback, `expire_on_commit=False` — services calling `db.commit()` work on savepoints
@@ -121,6 +122,15 @@
 - Inputs: `bg-gray-100 dark:bg-gray-700`, `border-gray-300 dark:border-gray-600`
 - Status badges (bg-green-900 text-green-300 etc.) kept dark-only — accepted as "dark pill" style on both themes
 - prose → `prose dark:prose-invert` (3 locations: wiki page_detail, ticket_detail description, ticket_detail comments)
+
+## Wiki Attachment Patterns (MON-49)
+- WikiAttachment model: FK to wiki_pages (CASCADE), same structure as TicketAttachment
+- WikiFile model: FK to projects (CASCADE), has extra `description` (Text, nullable)
+- Storage paths: `{slug}/wiki-attachments/{page_id}/{uuid}.{ext}` and `{slug}/wiki-files/{uuid}.{ext}` — no collision with old `{slug}/attachments/`
+- New dashboard endpoints use `run_in_executor` for MinIO (correct), old `wiki_upload`/`wiki_attachment` still blocking
+- `upload_object()` in minio_client.py — generic version of `upload_attachment()` without auto-UUID naming
+- WikiPage.attachments relationship: `order_by="WikiAttachment.created_at"`, `cascade="all, delete-orphan"`
+- No UniqueConstraint on (wiki_page_id, filename) — duplicate filenames possible, MCP get_wiki_attachment vulnerable
 
 ## render_project_page helper
 - Located in `dashboard/helpers.py`

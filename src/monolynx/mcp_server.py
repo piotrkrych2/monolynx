@@ -48,6 +48,8 @@ from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
+from monolynx.models.wiki_attachment import WikiAttachment
+from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services import graph as graph_service
 from monolynx.services.activity import get_activity_log as svc_get_activity_log
@@ -58,7 +60,9 @@ from monolynx.services.heartbeat import delete_heartbeat as svc_delete_heartbeat
 from monolynx.services.heartbeat import get_heartbeat_status
 from monolynx.services.heartbeat import update_heartbeat as svc_update_heartbeat
 from monolynx.services.mcp_auth import verify_mcp_token
+from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
+from monolynx.services.minio_client import upload_object as minio_upload_object
 from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
@@ -584,6 +588,36 @@ async def _get_user_member_and_project(ctx: Context[Any, Any], project_slug: str
             raise ValueError(f"Uzytkownik nie jest czlonkiem projektu '{project_slug}'")
 
     return user, member, project
+
+
+_TICKET_KEY_RE = re.compile(r"^([A-Za-z]{1,10})-(\d+)$")
+
+
+async def _resolve_ticket_uuid(ticket_id: str, project_id: uuid.UUID) -> uuid.UUID:
+    """Zamien ticket_id (UUID lub klucz jak MNX-12) na UUID ticketa."""
+    # Sprobuj UUID
+    try:
+        return uuid.UUID(ticket_id)
+    except ValueError:
+        pass
+
+    # Sprobuj klucz (np. MNX-12)
+    match = _TICKET_KEY_RE.match(ticket_id.strip())
+    if not match:
+        raise ValueError(f"Nieprawidlowy identyfikator ticketa: '{ticket_id}'. Podaj UUID lub klucz (np. MNX-12)")
+
+    number = int(match.group(2))
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Ticket.id).where(
+                Ticket.project_id == project_id,
+                Ticket.number == number,
+            )
+        )
+        ticket_uuid = result.scalar_one_or_none()
+        if ticket_uuid is None:
+            raise ValueError(f"Ticket '{ticket_id}' nie istnieje w projekcie")
+        return ticket_uuid
 
 
 # --- Projekty ---
@@ -2094,12 +2128,14 @@ async def get_ticket(
 ) -> str:
     """Szczegoly ticketa z komentarzami i zalacznikami w kompaktowym formacie tekstowym.
 
+    ticket_id: UUID ticketa lub klucz (np. MNX-12).
+
     Zwraca jednolinijkowy naglowek z kluczem i tytulem, metadane (status, priority, sprint,
     assignee, story points, due date, labels, daty, flaga AI, UUID), opcjonalny opis,
-    liste zalacznikow oraz komentarze. UUID ticketa w polu ID jest potrzebny do
-    update_ticket i delete_ticket.
+    liste zalacznikow oraz komentarze.
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     async with async_session_factory() as db:
         result = await db.execute(
@@ -2112,7 +2148,7 @@ async def get_ticket(
                 selectinload(Ticket.attachments),
             )
             .where(
-                Ticket.id == uuid.UUID(ticket_id),
+                Ticket.id == resolved_id,
                 Ticket.project_id == project.id,
             )
         )
@@ -2228,15 +2264,17 @@ async def update_ticket(
 ) -> dict[str, Any]:
     """Aktualizuj istniejacy ticket. Podaj tylko pola do zmiany.
 
+    ticket_id: UUID ticketa lub klucz (np. MNX-12).
     due_date: data graniczna w formacie YYYY-MM-DD, lub pusty string aby wyczysc
     label_ids: lista UUID etykiet — zastepuje wszystkie poprzednie etykiety; [] = usun etykiety
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     async with async_session_factory() as db:
         result = await db.execute(
             select(Ticket).where(
-                Ticket.id == uuid.UUID(ticket_id),
+                Ticket.id == resolved_id,
                 Ticket.project_id == project.id,
             )
         )
@@ -2323,13 +2361,14 @@ async def delete_ticket(
     project_slug: str,
     ticket_id: str,
 ) -> dict[str, Any]:
-    """Usun ticket z projektu."""
+    """Usun ticket z projektu. ticket_id: UUID lub klucz (np. MNX-12)."""
     _user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     async with async_session_factory() as db:
         result = await db.execute(
             select(Ticket).where(
-                Ticket.id == uuid.UUID(ticket_id),
+                Ticket.id == resolved_id,
                 Ticket.project_id == project.id,
             )
         )
@@ -2454,7 +2493,7 @@ async def bulk_update_tickets(
 ) -> dict[str, Any]:
     """Masowa aktualizacja ticketow. Aktualizuje status, priorytet, assignee lub sprint.
 
-    ticket_ids: lista UUID ticketow do aktualizacji (max 100)
+    ticket_ids: lista UUID lub kluczy (np. MNX-12) ticketow do aktualizacji (max 100)
     assignee_email: pusty string = usun assignee
     sprint_id: pusty string = przesun do backlogu
     due_date: data YYYY-MM-DD lub pusty string = usun date
@@ -2496,13 +2535,14 @@ async def bulk_update_tickets(
             if assignee:
                 resolved_assignee_id = assignee.id
 
-        # Parse UUIDs and collect valid ones for batch query
+        # Resolve ticket identifiers (UUID or key like MNX-12)
         valid_uuids: dict[uuid.UUID, str] = {}
         for ticket_id_str in ticket_ids:
             try:
-                valid_uuids[uuid.UUID(ticket_id_str)] = ticket_id_str
+                resolved = await _resolve_ticket_uuid(ticket_id_str, project.id)
+                valid_uuids[resolved] = ticket_id_str
             except ValueError:
-                failed.append({"id": ticket_id_str, "reason": "Nieprawidlowe UUID"})
+                failed.append({"id": ticket_id_str, "reason": "Nieprawidlowy identyfikator ticketa"})
 
         if valid_uuids:
             tickets_result = await db.execute(
@@ -2915,13 +2955,14 @@ async def list_comments(
     project_slug: str,
     ticket_id: str,
 ) -> list[dict[str, Any]]:
-    """Lista komentarzy do ticketa."""
+    """Lista komentarzy do ticketa. ticket_id: UUID lub klucz (np. MNX-12)."""
     _user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     async with async_session_factory() as db:
         ticket_result = await db.execute(
             select(Ticket).where(
-                Ticket.id == uuid.UUID(ticket_id),
+                Ticket.id == resolved_id,
                 Ticket.project_id == project.id,
             )
         )
@@ -2931,7 +2972,7 @@ async def list_comments(
         comment_result = await db.execute(
             select(TicketComment)
             .options(selectinload(TicketComment.author))
-            .where(TicketComment.ticket_id == uuid.UUID(ticket_id))
+            .where(TicketComment.ticket_id == resolved_id)
             .order_by(TicketComment.created_at)
         )
         comments = comment_result.scalars().all()
@@ -2955,8 +2996,9 @@ async def add_comment(
     ticket_id: str,
     content: str,
 ) -> dict[str, Any]:
-    """Dodaj komentarz do ticketa. Oznaczany jako created_via_ai=True."""
+    """Dodaj komentarz do ticketa. ticket_id: UUID lub klucz (np. MNX-12). Oznaczany jako created_via_ai=True."""
     user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     if not content.strip():
         raise ValueError("Tresc komentarza nie moze byc pusta")
@@ -2964,7 +3006,7 @@ async def add_comment(
     async with async_session_factory() as db:
         result = await db.execute(
             select(Ticket).where(
-                Ticket.id == uuid.UUID(ticket_id),
+                Ticket.id == resolved_id,
                 Ticket.project_id == project.id,
             )
         )
@@ -2972,7 +3014,7 @@ async def add_comment(
             raise ValueError("Ticket nie istnieje")
 
         comment = TicketComment(
-            ticket_id=uuid.UUID(ticket_id),
+            ticket_id=resolved_id,
             user_id=user.id,
             content=content.strip(),
             created_via_ai=True,
@@ -2999,11 +3041,13 @@ async def add_attachment(
 ) -> dict[str, Any]:
     """Dodaj zalacznik do ticketa (screenshot, log, dokument). Plik zakodowany w base64.
 
-    Maksymalny rozmiar: 10MB. Zwraca attachment_id, filename, url, size, uploaded_at.
+    ticket_id: UUID ticketa lub klucz (np. MNX-12).
+    Maksymalny rozmiar: 200MB. Zwraca attachment_id, filename, url, size, uploaded_at.
     """
-    max_size = 10 * 1024 * 1024  # 10MB
+    max_size = 200 * 1024 * 1024  # 200MB
 
     _user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     # Walidacja i sanityzacja filename
     if not filename or not filename.strip():
@@ -3027,7 +3071,7 @@ async def add_attachment(
 
     # Sprawdzenie rozmiaru
     if len(file_bytes) > max_size:
-        raise ValueError(f"Plik za duzy: max 10MB, otrzymano {len(file_bytes) / 1024 / 1024:.1f}MB")
+        raise ValueError(f"Plik za duzy: max 200MB, otrzymano {len(file_bytes) / 1024 / 1024:.1f}MB")
 
     # Walidacja mime_type
     if mime_type is not None:
@@ -3040,7 +3084,7 @@ async def add_attachment(
         # Sprawdz czy ticket istnieje w projekcie
         result = await db.execute(
             select(Ticket).where(
-                Ticket.id == uuid.UUID(ticket_id),
+                Ticket.id == resolved_id,
                 Ticket.project_id == project.id,
             )
         )
@@ -3057,7 +3101,7 @@ async def add_attachment(
 
         # Zapis rekordu w DB
         attachment = TicketAttachment(
-            ticket_id=uuid.UUID(ticket_id),
+            ticket_id=resolved_id,
             filename=filename,
             storage_path=storage_path,
             mime_type=mime_type,
@@ -3068,7 +3112,7 @@ async def add_attachment(
         await db.commit()
         await db.refresh(attachment)
 
-    url = f"/dashboard/{project_slug}/scrum/tickets/{ticket_id}/attachments/{attachment.id}/{filename}"
+    url = f"/dashboard/{project_slug}/scrum/tickets/{resolved_id}/attachments/{attachment.id}/{filename}"
 
     return {
         "attachment_id": str(attachment.id),
@@ -3093,9 +3137,11 @@ async def log_time(
 ) -> dict[str, Any]:
     """Zaloguj czas pracy na tickecie. Oznaczany jako created_via_ai=True.
 
+    ticket_id: UUID ticketa lub klucz (np. MNX-12).
     date_logged w formacie YYYY-MM-DD. duration_minutes musi byc > 0.
     """
-    user, _project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     if duration_minutes <= 0:
         raise ValueError("Czas musi byc wiekszy niz 0")
@@ -3104,7 +3150,7 @@ async def log_time(
 
     async with async_session_factory() as db:
         result = await add_time_entry(
-            ticket_id=uuid.UUID(ticket_id),
+            ticket_id=resolved_id,
             user_id=user.id,
             duration_minutes=duration_minutes,
             date_logged=parsed_date,
@@ -3933,3 +3979,365 @@ async def get_burndown(
 
     async with async_session_factory() as db:
         return await svc_get_burndown_data(db, project.id, sprint_uuid)
+
+
+# --- Zalaczniki do ticketow (pobieranie) ---
+
+
+@mcp.tool()
+async def get_attachment(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_id: str,
+    attachment_id: str,
+) -> dict[str, Any]:
+    """Pobierz zawartosc zalacznika z ticketa (base64). ticket_id: UUID lub klucz (np. MNX-12). Obrazki zwracane jako data URI."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(TicketAttachment)
+            .join(Ticket, TicketAttachment.ticket_id == Ticket.id)
+            .where(
+                TicketAttachment.id == uuid.UUID(attachment_id),
+                Ticket.id == resolved_id,
+                Ticket.project_id == project.id,
+            )
+        )
+        attachment = result.scalar_one_or_none()
+        if attachment is None:
+            raise ValueError("Zalacznik nie istnieje")
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            data, content_type = await loop.run_in_executor(
+                executor,
+                lambda: minio_get_attachment(attachment.storage_path),
+            )
+
+    content_b64 = base64.b64encode(data).decode("ascii")
+    if content_type.startswith("image/"):
+        content_b64 = f"data:{content_type};base64,{content_b64}"
+
+    return {
+        "attachment_id": str(attachment.id),
+        "filename": attachment.filename,
+        "mime_type": attachment.mime_type,
+        "size": attachment.size,
+        "content_base64": content_b64,
+    }
+
+
+# --- Zalaczniki do stron Wiki ---
+
+
+@mcp.tool()
+async def get_wiki_attachment(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+    attachment_filename: str,
+) -> dict[str, Any]:
+    """Pobierz zawartosc zalacznika ze strony Wiki (base64)."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(WikiAttachment)
+            .join(WikiPage, WikiAttachment.wiki_page_id == WikiPage.id)
+            .where(
+                WikiAttachment.filename == attachment_filename,
+                WikiPage.id == uuid.UUID(page_id),
+                WikiPage.project_id == project.id,
+            )
+            .order_by(WikiAttachment.created_at.desc())
+            .limit(1)
+        )
+        attachment = result.scalar_one_or_none()
+        if attachment is None:
+            raise ValueError("Zalacznik nie istnieje")
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            data, content_type = await loop.run_in_executor(
+                executor,
+                lambda: minio_get_attachment(attachment.storage_path),
+            )
+
+    content_b64 = base64.b64encode(data).decode("ascii")
+    if content_type.startswith("image/"):
+        content_b64 = f"data:{content_type};base64,{content_b64}"
+
+    return {
+        "filename": attachment.filename,
+        "mime_type": attachment.mime_type,
+        "size": attachment.size,
+        "content_base64": content_b64,
+    }
+
+
+@mcp.tool()
+async def add_wiki_page_attachment(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+    file_base64: str,
+    filename: str,
+    mime_type: str | None = None,
+) -> dict[str, Any]:
+    """Dodaj zalacznik do strony Wiki. Plik zakodowany w base64. Maksymalny rozmiar: 200MB."""
+    max_size = 200 * 1024 * 1024
+
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not filename or not filename.strip():
+        raise ValueError("Nazwa pliku nie moze byc pusta")
+    filename = os.path.basename(filename.strip())
+    filename = re.sub(r'[\x00-\x1f"\\]', "_", filename)
+    if not filename or filename in (".", ".."):
+        raise ValueError("Nieprawidlowa nazwa pliku")
+    if len(filename) > 255:
+        raise ValueError("Nazwa pliku nie moze przekraczac 255 znakow")
+
+    if not file_base64 or not file_base64.strip():
+        raise ValueError("Zawartosc pliku (file_base64) nie moze byc pusta")
+
+    try:
+        file_bytes = base64.b64decode(file_base64, validate=True)
+    except Exception as exc:
+        raise ValueError("Nieprawidlowy format base64") from exc
+
+    if len(file_bytes) > max_size:
+        raise ValueError(f"Plik za duzy: max 200MB, otrzymano {len(file_bytes) / 1024 / 1024:.1f}MB")
+
+    if mime_type is not None:
+        if not re.match(r"^[a-z]+/[a-z0-9.+\-]+$", mime_type):
+            raise ValueError("Nieprawidlowy format mime_type")
+    else:
+        mime_type = "application/octet-stream"
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(WikiPage).where(
+                WikiPage.id == uuid.UUID(page_id),
+                WikiPage.project_id == project.id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError("Strona wiki nie istnieje")
+
+        ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
+        now = datetime.now(UTC)
+        date_prefix = f"{now.year}/{now.month:02d}/{now.day:02d}"
+        storage_path = f"{project_slug}/wiki-attachments/{page_id}/{date_prefix}/{uuid.uuid4().hex}.{ext}"
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            await loop.run_in_executor(
+                executor,
+                lambda: minio_upload_object(storage_path, file_bytes, mime_type),
+            )
+
+        attachment = WikiAttachment(
+            wiki_page_id=uuid.UUID(page_id),
+            filename=filename,
+            storage_path=storage_path,
+            mime_type=mime_type,
+            size=len(file_bytes),
+            created_via_ai=True,
+        )
+        db.add(attachment)
+        await db.commit()
+        await db.refresh(attachment)
+
+    return {
+        "attachment_id": str(attachment.id),
+        "filename": attachment.filename,
+        "size": attachment.size,
+        "uploaded_at": attachment.created_at.isoformat(),
+    }
+
+
+# --- Globalne pliki Wiki ---
+
+
+@mcp.tool()
+async def add_wiki_file(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    file_base64: str,
+    filename: str,
+    mime_type: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Dodaj globalny plik do repozytorium Wiki projektu. Plik zakodowany w base64. Maksymalny rozmiar: 200MB."""
+    max_size = 200 * 1024 * 1024
+
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not filename or not filename.strip():
+        raise ValueError("Nazwa pliku nie moze byc pusta")
+    filename = os.path.basename(filename.strip())
+    filename = re.sub(r'[\x00-\x1f"\\]', "_", filename)
+    if not filename or filename in (".", ".."):
+        raise ValueError("Nieprawidlowa nazwa pliku")
+    if len(filename) > 255:
+        raise ValueError("Nazwa pliku nie moze przekraczac 255 znakow")
+
+    if not file_base64 or not file_base64.strip():
+        raise ValueError("Zawartosc pliku (file_base64) nie moze byc pusta")
+
+    try:
+        file_bytes = base64.b64decode(file_base64, validate=True)
+    except Exception as exc:
+        raise ValueError("Nieprawidlowy format base64") from exc
+
+    if len(file_bytes) > max_size:
+        raise ValueError(f"Plik za duzy: max 200MB, otrzymano {len(file_bytes) / 1024 / 1024:.1f}MB")
+
+    if mime_type is not None:
+        if not re.match(r"^[a-z]+/[a-z0-9.+\-]+$", mime_type):
+            raise ValueError("Nieprawidlowy format mime_type")
+    else:
+        mime_type = "application/octet-stream"
+
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
+    now = datetime.now(UTC)
+    date_prefix = f"{now.year}/{now.month:02d}/{now.day:02d}"
+    storage_path = f"{project_slug}/wiki-files/{date_prefix}/{uuid.uuid4().hex}.{ext}"
+
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        await loop.run_in_executor(
+            executor,
+            lambda: minio_upload_object(storage_path, file_bytes, mime_type),
+        )
+
+    async with async_session_factory() as db:
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename=filename,
+            storage_path=storage_path,
+            mime_type=mime_type,
+            size=len(file_bytes),
+            description=description,
+            created_via_ai=True,
+        )
+        db.add(wiki_file)
+        await db.commit()
+        await db.refresh(wiki_file)
+
+    return {
+        "file_id": str(wiki_file.id),
+        "filename": wiki_file.filename,
+        "size": wiki_file.size,
+        "description": wiki_file.description,
+        "uploaded_at": wiki_file.created_at.isoformat(),
+    }
+
+
+@mcp.tool()
+async def get_wiki_file(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    file_id: str,
+) -> dict[str, Any]:
+    """Pobierz zawartosc globalnego pliku Wiki (base64)."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(WikiFile).where(
+                WikiFile.id == uuid.UUID(file_id),
+                WikiFile.project_id == project.id,
+            )
+        )
+        wiki_file = result.scalar_one_or_none()
+        if wiki_file is None:
+            raise ValueError("Plik nie istnieje")
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            data, content_type = await loop.run_in_executor(
+                executor,
+                lambda: minio_get_attachment(wiki_file.storage_path),
+            )
+
+    content_b64 = base64.b64encode(data).decode("ascii")
+    if content_type.startswith("image/"):
+        content_b64 = f"data:{content_type};base64,{content_b64}"
+
+    return {
+        "file_id": str(wiki_file.id),
+        "filename": wiki_file.filename,
+        "mime_type": wiki_file.mime_type,
+        "size": wiki_file.size,
+        "description": wiki_file.description,
+        "content_base64": content_b64,
+    }
+
+
+@mcp.tool()
+async def update_wiki_file(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    file_id: str,
+    description: str | None = None,
+    filename: str | None = None,
+) -> dict[str, Any]:
+    """Zaktualizuj globalny plik Wiki — opis lub nazwe. Podaj tylko pola do zmiany."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(WikiFile).where(
+                WikiFile.id == uuid.UUID(file_id),
+                WikiFile.project_id == project.id,
+            )
+        )
+        wiki_file = result.scalar_one_or_none()
+        if wiki_file is None:
+            raise ValueError("Plik nie istnieje")
+
+        if description is not None:
+            wiki_file.description = description or None
+        if filename is not None:
+            safe = re.sub(r"[^\w.\-]", "_", filename.strip())[:255]
+            if safe:
+                wiki_file.filename = safe
+
+        await db.commit()
+        await db.refresh(wiki_file)
+
+    return {
+        "file_id": str(wiki_file.id),
+        "filename": wiki_file.filename,
+        "description": wiki_file.description,
+        "message": "Plik zaktualizowany",
+    }
+
+
+@mcp.tool()
+async def list_wiki_files(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> list[dict[str, Any]]:
+    """Lista globalnych plikow w repozytorium Wiki projektu."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        result = await db.execute(select(WikiFile).where(WikiFile.project_id == project.id).order_by(WikiFile.created_at.desc()))
+        files = result.scalars().all()
+
+    return [
+        {
+            "file_id": str(f.id),
+            "filename": f.filename,
+            "mime_type": f.mime_type,
+            "size": f.size,
+            "description": f.description,
+            "created_at": f.created_at.isoformat(),
+        }
+        for f in files
+    ]

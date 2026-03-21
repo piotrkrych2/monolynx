@@ -809,8 +809,8 @@ class TestWikiUpload:
         project = await _create_project(db_session, "wu-large")
         await _login_and_add_member(client, db_session, project, "wu-large@test.com")
 
-        # Create file larger than 10 MB
-        large_data = b"\x00" * (10 * 1024 * 1024 + 1)
+        # Create file larger than 200 MB
+        large_data = b"\x00" * (200 * 1024 * 1024 + 1)
         resp = await client.post(
             f"/dashboard/{project.slug}/wiki/upload",
             files={"file": ("huge.png", large_data, "image/png")},
@@ -859,7 +859,7 @@ class TestWikiAttachment:
         assert resp.status_code == 303
         assert "/auth/login" in resp.headers["location"]
 
-    @patch("monolynx.dashboard.wiki.get_attachment", return_value=(b"\x89PNG\r\n\x1a\n", "image/png"))
+    @patch("monolynx.dashboard.wiki.minio_get_attachment", return_value=(b"\x89PNG\r\n\x1a\n", "image/png"))
     async def test_attachment_success(self, mock_get_att, client, db_session):
         project = await _create_project(db_session, "wa-ok")
         await _login_and_add_member(client, db_session, project, "wa-ok@test.com")
@@ -870,7 +870,7 @@ class TestWikiAttachment:
         assert resp.content == b"\x89PNG\r\n\x1a\n"
         mock_get_att.assert_called_once_with(f"{project.slug}/attachments/abc123.png")
 
-    @patch("monolynx.dashboard.wiki.get_attachment", side_effect=Exception("Not found"))
+    @patch("monolynx.dashboard.wiki.minio_get_attachment", side_effect=Exception("Not found"))
     async def test_attachment_not_found(self, mock_get_att, client, db_session):
         project = await _create_project(db_session, "wa-nf")
         await _login_and_add_member(client, db_session, project, "wa-nf@test.com")
@@ -884,7 +884,7 @@ class TestWikiAttachment:
         resp = await client.get("/dashboard/nonexistent-slug/wiki/attachments/test.png")
         assert resp.status_code == 404
 
-    @patch("monolynx.dashboard.wiki.get_attachment", return_value=(b"\xff\xd8\xff\xe0", "image/jpeg"))
+    @patch("monolynx.dashboard.wiki.minio_get_attachment", return_value=(b"\xff\xd8\xff\xe0", "image/jpeg"))
     async def test_attachment_serves_jpeg(self, mock_get_att, client, db_session):
         project = await _create_project(db_session, "wa-jpeg")
         await _login_and_add_member(client, db_session, project, "wa-jpeg@test.com")
