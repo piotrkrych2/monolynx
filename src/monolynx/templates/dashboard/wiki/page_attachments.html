@@ -1,0 +1,73 @@
+{% from "partials/file_icons.html" import file_icon %}
+
+{# Sekcja załączników strony Wiki
+   Zmienne: page (WikiPage z .attachments), project, can_edit (bool) #}
+
+{% if attachments or can_edit %}
+<div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-6">
+    <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+            Załączniki
+            {% if attachments %}
+            <span class="text-sm text-gray-500 font-normal ml-1">({{ attachments|length }})</span>
+            {% endif %}
+        </h3>
+        {% if can_edit %}
+        <button type="button"
+                onclick="document.getElementById('wiki-filepond-section').classList.toggle('hidden')"
+                class="bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition">
+            + Dodaj
+        </button>
+        {% endif %}
+    </div>
+
+    {% if attachments %}
+    <div class="space-y-2 mb-4">
+        {% for att in attachments %}
+        <div class="attachment-item bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex items-center gap-4">
+            {% if att.mime_type and att.mime_type in ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml') %}
+            <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/attachments/{{ att.id }}/{{ att.filename | e }}"
+               target="_blank" class="shrink-0">
+                <img src="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/attachments/{{ att.id }}/{{ att.filename | e }}"
+                     alt="{{ att.filename | e }}"
+                     class="h-16 w-16 object-cover rounded border border-gray-300 dark:border-gray-600">
+            </a>
+            {% else %}
+            <div class="shrink-0 w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded border border-gray-300 dark:border-gray-600 flex items-center justify-center">
+                {{ file_icon(att.mime_type, att.filename, "w-8 h-8") }}
+            </div>
+            {% endif %}
+
+            <div class="flex-1 min-w-0">
+                <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/attachments/{{ att.id }}/{{ att.filename | e }}"
+                   class="text-sm font-medium text-indigo-400 hover:text-indigo-300 transition truncate block"
+                   target="_blank">{{ att.filename | e }}</a>
+                <p class="text-xs text-gray-500 mt-0.5">
+                    {{ (att.size / 1024)|round(1) }} KB
+                    &middot; {{ att.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    {% if att.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded ml-1">AI</span>{% endif %}
+                </p>
+            </div>
+
+            {% if can_edit %}
+            <form hx-post="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/attachments/{{ att.id }}/delete"
+                  hx-confirm="Usunąć załącznik {{ att.filename | e }}?"
+                  hx-target="closest .attachment-item"
+                  hx-swap="outerHTML">
+                <button type="submit" class="text-red-400 hover:text-red-300 text-xs transition shrink-0">Usuń</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-gray-500 text-sm italic mb-4">Brak załączników</p>
+    {% endif %}
+
+    {% if can_edit %}
+    <div id="wiki-filepond-section" class="hidden">
+        <input type="file" id="wiki-filepond-input" multiple>
+    </div>
+    {% endif %}
+</div>
+{% endif %}

@@ -15,6 +15,7 @@ from monolynx.models.base import Base
 if TYPE_CHECKING:
     from monolynx.models.project import Project
     from monolynx.models.user import User
+    from monolynx.models.wiki_attachment import WikiAttachment
     from monolynx.models.wiki_embedding import WikiEmbedding
 
 
@@ -44,3 +45,8 @@ class WikiPage(Base):
     created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
     last_edited_by: Mapped[User] = relationship(foreign_keys=[last_edited_by_id])
     embeddings: Mapped[list[WikiEmbedding]] = relationship(back_populates="wiki_page", cascade="all, delete-orphan")
+    attachments: Mapped[list[WikiAttachment]] = relationship(
+        back_populates="wiki_page",
+        order_by="WikiAttachment.created_at",
+        cascade="all, delete-orphan",
+    )

@@ -109,7 +109,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Your projects.",
         "hero_line2": "AI-first platform.",
         "hero_sub": (
-            "30+ MCP tools, semantic wiki search, and Claude Code skills"
+            "70 MCP tools, semantic wiki search, and Claude Code skills"
             " — Monolynx isn't just another dashboard."
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
@@ -142,7 +142,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Twoje projekty.",
         "hero_line2": "AI-first platforma.",
         "hero_sub": (
-            "30+ narzędzi MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
+            "70 narzędzi MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
             " — Monolynx to nie kolejny dashboard."
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),

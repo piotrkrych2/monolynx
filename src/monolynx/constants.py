@@ -107,3 +107,51 @@ ACTIVITY_ENTITY_TYPES = {"ticket", "sprint", "monitor", "wiki", "member"}
 
 # Invitations
 INVITATION_DAYS = 7
+
+# File type icons -- mapping rozszerzen do kategorii ikon
+FILE_TYPE_CATEGORIES = {
+    "pdf": "pdf",
+    "xls": "excel",
+    "xlsx": "excel",
+    "xlsm": "excel",
+    "csv": "excel",
+    "doc": "word",
+    "docx": "word",
+    "ppt": "powerpoint",
+    "pptx": "powerpoint",
+    "zip": "archive",
+    "rar": "archive",
+    "7z": "archive",
+    "tar": "archive",
+    "gz": "archive",
+    "py": "code",
+    "js": "code",
+    "ts": "code",
+    "json": "code",
+    "xml": "code",
+    "html": "code",
+    "css": "code",
+    "sql": "code",
+    "txt": "text",
+    "md": "text",
+    "log": "text",
+    "rst": "text",
+    "png": "image",
+    "jpg": "image",
+    "jpeg": "image",
+    "gif": "image",
+    "webp": "image",
+    "svg": "image",
+}
+
+FILE_TYPE_LABELS_PL = {
+    "pdf": "PDF",
+    "excel": "Excel",
+    "word": "Word",
+    "powerpoint": "PowerPoint",
+    "archive": "Archiwum",
+    "code": "Kod źródłowy",
+    "text": "Tekst",
+    "image": "Obraz",
+    "default": "Plik",
+}

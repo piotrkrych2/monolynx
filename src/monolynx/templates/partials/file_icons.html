@@ -1,0 +1,63 @@
+{% macro file_icon(mime_type, filename, size="w-8 h-8") %}
+{% set ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else '' %}
+{% set category = {
+    'pdf': 'pdf',
+    'xls': 'excel', 'xlsx': 'excel', 'xlsm': 'excel', 'csv': 'excel',
+    'doc': 'word', 'docx': 'word',
+    'ppt': 'powerpoint', 'pptx': 'powerpoint',
+    'zip': 'archive', 'rar': 'archive', '7z': 'archive', 'tar': 'archive', 'gz': 'archive',
+    'py': 'code', 'js': 'code', 'ts': 'code', 'json': 'code', 'xml': 'code', 'html': 'code', 'css': 'code', 'sh': 'code', 'yaml': 'code', 'yml': 'code', 'toml': 'code',
+    'txt': 'text', 'md': 'text', 'log': 'text', 'rst': 'text',
+    'png': 'image', 'jpg': 'image', 'jpeg': 'image', 'gif': 'image', 'webp': 'image', 'svg': 'image', 'bmp': 'image', 'ico': 'image',
+}.get(ext, 'default') %}
+
+{% if category == 'pdf' %}
+<svg class="{{ size }} text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h3M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z"/>
+    <text x="7" y="10" font-size="4" font-weight="bold" fill="currentColor" stroke="none" font-family="sans-serif">PDF</text>
+</svg>
+{% elif category == 'excel' %}
+<svg class="{{ size }} text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z"/>
+    <line x1="9" y1="9" x2="15" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="9" y1="12" x2="15" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="9" y1="15" x2="15" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="12" y1="9" x2="12" y2="15" stroke="currentColor" stroke-width="1.5"/>
+</svg>
+{% elif category == 'word' %}
+<svg class="{{ size }} text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z"/>
+    <line x1="9" y1="9" x2="15" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="9" y1="12" x2="15" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="9" y1="15" x2="13" y2="15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
+{% elif category == 'powerpoint' %}
+<svg class="{{ size }} text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z"/>
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 8h3.5a1.5 1.5 0 010 3H9v4"/>
+</svg>
+{% elif category == 'archive' %}
+<svg class="{{ size }} text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>
+</svg>
+{% elif category == 'code' %}
+<svg class="{{ size }} text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+</svg>
+{% elif category == 'text' %}
+<svg class="{{ size }} text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+</svg>
+{% elif category == 'image' %}
+<svg class="{{ size }} text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+</svg>
+{% else %}
+<svg class="{{ size }} text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+    <polyline stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" points="14 2 14 8 20 8"/>
+    <line x1="9" y1="13" x2="15" y2="13" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="9" y1="17" x2="13" y2="17" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
+{% endif %}
+{% endmacro %}

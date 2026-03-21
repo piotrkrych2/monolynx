@@ -5,16 +5,16 @@ Revises: e19de60bf3c0
 Create Date: 2026-03-14 20:59:27.455685
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'e48df4ceb99e'
-down_revision: Union[str, None] = 'e19de60bf3c0'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = 'e19de60bf3c0'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

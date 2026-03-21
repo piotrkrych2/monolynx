@@ -2,20 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
+import os
+import re
 import uuid
+from datetime import UTC, datetime
+from functools import partial
 
 from fastapi import APIRouter, Depends, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from monolynx.database import get_db
 from monolynx.models.project import Project
+from monolynx.models.project_member import ProjectMember
+from monolynx.models.wiki_attachment import WikiAttachment
+from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.embeddings import is_enabled as embeddings_enabled
 from monolynx.services.embeddings import search_wiki_pages
-from monolynx.services.minio_client import get_attachment, upload_attachment
+from monolynx.services.minio_client import delete_object as minio_delete_object
+from monolynx.services.minio_client import get_attachment as minio_get_attachment
+from monolynx.services.minio_client import upload_attachment
+from monolynx.services.minio_client import upload_object as minio_upload_object
 from monolynx.services.wiki import (
     create_wiki_page,
     delete_wiki_page,
@@ -30,7 +42,7 @@ from .helpers import _get_user_id, flash, render_project_page, templates
 
 router = APIRouter(prefix="/dashboard", tags=["wiki"])
 
-MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_ATTACHMENT_SIZE = 200 * 1024 * 1024  # 200 MB
 
 
 async def _get_project(slug: str, db: AsyncSession) -> Project | None:
@@ -41,7 +53,7 @@ async def _get_project(slug: str, db: AsyncSession) -> Project | None:
 async def _get_wiki_page(page_id: uuid.UUID, project_id: uuid.UUID, db: AsyncSession) -> WikiPage | None:
     result = await db.execute(
         select(WikiPage)
-        .options(selectinload(WikiPage.created_by), selectinload(WikiPage.last_edited_by))
+        .options(selectinload(WikiPage.created_by), selectinload(WikiPage.last_edited_by), selectinload(WikiPage.attachments))
         .where(WikiPage.id == page_id, WikiPage.project_id == project_id)
     )
     return result.scalar_one_or_none()
@@ -342,6 +354,8 @@ async def wiki_page_detail(
             "rendered_html": rendered_html,
             "breadcrumbs": breadcrumbs,
             "children": children,
+            "attachments": list(page.attachments),
+            "can_edit": True,
             "active_module": "wiki",
         },
         db=db,
@@ -382,6 +396,8 @@ async def wiki_page_edit_form(
             "parent": None,
             "error": None,
             "form_data": {"title": page.title, "content": raw_content, "position": page.position},
+            "attachments": list(page.attachments),
+            "can_edit": True,
         },
         db=db,
     )
@@ -499,7 +515,7 @@ async def wiki_upload(
 
     data = await file.read()
     if len(data) > MAX_ATTACHMENT_SIZE:
-        return JSONResponse({"error": "Plik za duzy (max 10 MB)"}, status_code=400)
+        return JSONResponse({"error": "Plik za duzy (max 200 MB)"}, status_code=400)
 
     content_type = file.content_type or "application/octet-stream"
     minio_path = upload_attachment(project.slug, file.filename, data, content_type)
@@ -529,8 +545,444 @@ async def wiki_attachment(
 
     minio_path = f"{project.slug}/attachments/{filename}"
     try:
-        data, content_type = get_attachment(minio_path)
+        data, content_type = minio_get_attachment(minio_path)
     except Exception:
         return Response("Plik nie istnieje", status_code=404)
 
     return Response(content=data, media_type=content_type)
+
+
+# --- Zalaczniki do stron wiki ---
+
+
+async def _get_membership(db: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID) -> ProjectMember | None:
+    result = await db.execute(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+@router.post(
+    "/{slug}/wiki/pages/{page_id}/attachments/upload",
+    response_model=None,
+)
+async def wiki_page_attachment_upload(
+    request: Request,
+    slug: str,
+    page_id: uuid.UUID,
+    filepond: UploadFile,
+    db: AsyncSession = Depends(get_db),
+) -> PlainTextResponse | JSONResponse | RedirectResponse:
+    """Upload zalacznika do strony wiki (FilePond compatible)."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    if await _get_membership(db, project.id, user_id) is None:
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+
+    page = await _get_wiki_page(page_id, project.id, db)
+    if page is None:
+        return JSONResponse({"error": "Strona nie istnieje"}, status_code=404)
+
+    if filepond.filename is None or filepond.filename == "":
+        return JSONResponse({"error": "Brak nazwy pliku"}, status_code=400)
+
+    safe_filename = os.path.basename(filepond.filename)
+    safe_filename = re.sub(r"[^\w\s\-.]", "_", safe_filename).strip()
+    if not safe_filename:
+        safe_filename = "attachment"
+
+    data = await filepond.read()
+    if len(data) > MAX_ATTACHMENT_SIZE:
+        return JSONResponse({"error": "Plik za duzy (max 200 MB)"}, status_code=400)
+
+    content_type = filepond.content_type or "application/octet-stream"
+    ext = safe_filename.rsplit(".", 1)[-1] if "." in safe_filename else "bin"
+    now = datetime.now(UTC)
+    date_prefix = f"{now.year}/{now.month:02d}/{now.day:02d}"
+    storage_path = f"{project.slug}/wiki-attachments/{page_id}/{date_prefix}/{uuid.uuid4().hex}.{ext}"
+
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, partial(minio_upload_object, storage_path, data, content_type))
+    except Exception:
+        return JSONResponse({"error": "Blad uploadu pliku"}, status_code=500)
+
+    attachment = WikiAttachment(
+        wiki_page_id=page_id,
+        filename=safe_filename,
+        storage_path=storage_path,
+        mime_type=content_type,
+        size=len(data),
+        created_via_ai=False,
+    )
+    db.add(attachment)
+    await db.commit()
+    await db.refresh(attachment)
+
+    return PlainTextResponse(str(attachment.id), status_code=200)
+
+
+@router.get(
+    "/{slug}/wiki/pages/{page_id}/attachments/{attachment_id}/{filename}",
+    response_model=None,
+)
+async def wiki_page_attachment_serve(
+    request: Request,
+    slug: str,
+    page_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse | HTMLResponse | RedirectResponse:
+    """Serwowanie zalacznika strony wiki."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    result = await db.execute(
+        select(WikiAttachment)
+        .join(WikiPage, WikiAttachment.wiki_page_id == WikiPage.id)
+        .where(
+            WikiAttachment.id == attachment_id,
+            WikiPage.id == page_id,
+            WikiPage.project_id == project.id,
+        )
+    )
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        return HTMLResponse("Attachment not found", status_code=404)
+
+    try:
+        loop = asyncio.get_running_loop()
+        data, content_type = await loop.run_in_executor(None, minio_get_attachment, attachment.storage_path)
+    except Exception:
+        return HTMLResponse("Blad pobierania pliku", status_code=500)
+
+    safe_name = attachment.filename.replace('"', "_").replace("\\", "_")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{safe_name}"'},
+    )
+
+
+@router.post(
+    "/{slug}/wiki/pages/{page_id}/attachments/{attachment_id}/delete",
+    response_model=None,
+)
+async def wiki_page_attachment_delete(
+    request: Request,
+    slug: str,
+    page_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    """Usuwanie zalacznika strony wiki."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    if await _get_membership(db, project.id, user_id) is None:
+        return HTMLResponse("Forbidden", status_code=403)
+
+    result = await db.execute(
+        select(WikiAttachment)
+        .join(WikiPage, WikiAttachment.wiki_page_id == WikiPage.id)
+        .where(
+            WikiAttachment.id == attachment_id,
+            WikiPage.id == page_id,
+            WikiPage.project_id == project.id,
+        )
+    )
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        return HTMLResponse("Attachment not found", status_code=404)
+
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, minio_delete_object, attachment.storage_path)
+    except Exception:
+        pass
+
+    await db.delete(attachment)
+    await db.commit()
+
+    return HTMLResponse("", status_code=200)
+
+
+# --- Globalne pliki Wiki ---
+
+
+@router.get("/{slug}/wiki/files/", response_model=None)
+async def wiki_files_list(
+    request: Request,
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+) -> Response | RedirectResponse:
+    """Lista globalnych plikow projektu w repozytorium Wiki."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    result = await db.execute(select(WikiFile).where(WikiFile.project_id == project.id).order_by(WikiFile.created_at.desc()))
+    files = result.scalars().all()
+
+    return await render_project_page(
+        request,
+        "dashboard/wiki/files.html",
+        {
+            "project": project,
+            "files": files,
+            "active_module": "wiki_files",
+        },
+        db=db,
+    )
+
+
+@router.post("/{slug}/wiki/files/upload", response_model=None)
+async def wiki_file_upload(
+    request: Request,
+    slug: str,
+    filepond: UploadFile,
+    db: AsyncSession = Depends(get_db),
+) -> PlainTextResponse | JSONResponse | RedirectResponse:
+    """Upload globalnego pliku wiki (FilePond compatible)."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    if await _get_membership(db, project.id, user_id) is None:
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+
+    if filepond.filename is None or filepond.filename == "":
+        return JSONResponse({"error": "Brak nazwy pliku"}, status_code=400)
+
+    safe_filename = os.path.basename(filepond.filename)
+    safe_filename = re.sub(r"[^\w\s\-.]", "_", safe_filename).strip()
+    if not safe_filename:
+        safe_filename = "file"
+
+    data = await filepond.read()
+    if len(data) > MAX_ATTACHMENT_SIZE:
+        return JSONResponse({"error": "Plik za duzy (max 200 MB)"}, status_code=400)
+
+    content_type = filepond.content_type or "application/octet-stream"
+    ext = safe_filename.rsplit(".", 1)[-1] if "." in safe_filename else "bin"
+    now = datetime.now(UTC)
+    date_prefix = f"{now.year}/{now.month:02d}/{now.day:02d}"
+    storage_path = f"{project.slug}/wiki-files/{date_prefix}/{uuid.uuid4().hex}.{ext}"
+
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, partial(minio_upload_object, storage_path, data, content_type))
+    except Exception:
+        return JSONResponse({"error": "Blad uploadu pliku"}, status_code=500)
+
+    wiki_file = WikiFile(
+        project_id=project.id,
+        filename=safe_filename,
+        storage_path=storage_path,
+        mime_type=content_type,
+        size=len(data),
+        created_via_ai=False,
+    )
+    db.add(wiki_file)
+    await db.commit()
+    await db.refresh(wiki_file)
+
+    return PlainTextResponse(str(wiki_file.id), status_code=200)
+
+
+@router.get("/{slug}/wiki/files/{file_id}/{filename}", response_model=None)
+async def wiki_file_serve(
+    request: Request,
+    slug: str,
+    file_id: uuid.UUID,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse | HTMLResponse | RedirectResponse:
+    """Serwowanie globalnego pliku wiki."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    result = await db.execute(
+        select(WikiFile).where(
+            WikiFile.id == file_id,
+            WikiFile.project_id == project.id,
+        )
+    )
+    wiki_file = result.scalar_one_or_none()
+    if wiki_file is None:
+        return HTMLResponse("File not found", status_code=404)
+
+    try:
+        loop = asyncio.get_running_loop()
+        data, content_type = await loop.run_in_executor(None, minio_get_attachment, wiki_file.storage_path)
+    except Exception:
+        return HTMLResponse("Blad pobierania pliku", status_code=500)
+
+    safe_name = wiki_file.filename.replace('"', "_").replace("\\", "_")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{safe_name}"'},
+    )
+
+
+@router.post("/{slug}/wiki/files/{file_id}/description", response_model=None)
+async def wiki_file_update_description(
+    request: Request,
+    slug: str,
+    file_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response | RedirectResponse:
+    """Aktualizacja opisu globalnego pliku wiki (HTMX inline edit)."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    if await _get_membership(db, project.id, user_id) is None:
+        return HTMLResponse("Forbidden", status_code=403)
+
+    result = await db.execute(
+        select(WikiFile).where(
+            WikiFile.id == file_id,
+            WikiFile.project_id == project.id,
+        )
+    )
+    wiki_file = result.scalar_one_or_none()
+    if wiki_file is None:
+        return HTMLResponse("File not found", status_code=404)
+
+    form = await request.form()
+    description = str(form.get("description", "")).strip()
+    wiki_file.description = description or None
+    await db.commit()
+
+    # Zwróć zaktualizowaną komórkę opisu (HTMX swap)
+    escaped = (description or "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return Response(
+        content=f'<span class="file-description-text cursor-pointer hover:text-indigo-400 transition"'
+        f' hx-get="/dashboard/{slug}/wiki/files/{file_id}/description/edit"'
+        f' hx-swap="outerHTML">'
+        f"{escaped}</span>",
+        status_code=200,
+    )
+
+
+@router.get("/{slug}/wiki/files/{file_id}/description/edit", response_model=None)
+async def wiki_file_description_edit_form(
+    request: Request,
+    slug: str,
+    file_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response | RedirectResponse:
+    """Formularz inline edycji opisu pliku (HTMX)."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    if await _get_membership(db, project.id, user_id) is None:
+        return HTMLResponse("Forbidden", status_code=403)
+
+    result = await db.execute(
+        select(WikiFile).where(
+            WikiFile.id == file_id,
+            WikiFile.project_id == project.id,
+        )
+    )
+    wiki_file = result.scalar_one_or_none()
+    if wiki_file is None:
+        return HTMLResponse("File not found", status_code=404)
+
+    desc_val = (wiki_file.description or "").replace('"', "&quot;")
+    return Response(
+        content=f'<form hx-post="/dashboard/{slug}/wiki/files/{file_id}/description"'
+        f' hx-swap="outerHTML" class="flex items-center gap-2">'
+        f'<input type="text" name="description" value="{desc_val}"'
+        f' class="text-sm bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-200 focus:border-indigo-500 focus:outline-none w-48"'
+        f' placeholder="Dodaj opis..." autofocus>'
+        f'<button type="submit" class="text-indigo-400 hover:text-indigo-300 text-xs">OK</button>'
+        f"</form>",
+        status_code=200,
+    )
+
+
+@router.post("/{slug}/wiki/files/{file_id}/delete", response_model=None)
+async def wiki_file_delete(
+    request: Request,
+    slug: str,
+    file_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    """Usuwanie globalnego pliku wiki."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    if await _get_membership(db, project.id, user_id) is None:
+        return HTMLResponse("Forbidden", status_code=403)
+
+    result = await db.execute(
+        select(WikiFile).where(
+            WikiFile.id == file_id,
+            WikiFile.project_id == project.id,
+        )
+    )
+    wiki_file = result.scalar_one_or_none()
+    if wiki_file is None:
+        return HTMLResponse("File not found", status_code=404)
+
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, minio_delete_object, wiki_file.storage_path)
+    except Exception:
+        pass
+
+    await db.delete(wiki_file)
+    await db.commit()
+
+    flash(request, "Plik zostal usuniety")
+    return RedirectResponse(url=f"/dashboard/{slug}/wiki/files/", status_code=303)

@@ -73,7 +73,7 @@ trivy-scan:
   variables:
     TRIVY_VERSION: "0.69.2"
   before_script:
-    - curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar xzf - -C /usr/local/bin trivy
+#    - curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar xzf - -C /usr/local/bin trivy
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
     - trivy fs --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 requirements/base.txt
