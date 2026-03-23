@@ -16,3 +16,5 @@
 - Empty dict `{}` is falsy — `depth_map={}` triggers backwards-compatible path in `_format_graph_dsl` (no Depth headers)
 - `_format_graph_dsl` importable directly: `from monolynx.mcp_server import _format_graph_dsl`
 - Async iteration mocking for Neo4j: define class with `__aiter__` returning self, `async __anext__` raising StopAsyncIteration; assign `result_mock.__aiter__ = lambda self: AsyncIterEmpty()`
+- `login_session()` always creates a new user — never call it for an existing user (UniqueViolationError on email). Instead create user manually + use `_login_existing_user(client, email)` helper that only calls POST /auth/login
+- For endpoint tests: create User with `is_superuser=True` manually + `await db_session.flush()` + `await _login_existing_user(client, email)` — never use `login_session` when user already exists in session

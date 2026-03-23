@@ -61,6 +61,7 @@
 - get_graph_node testy MON-45: 88/100 APPROVED (34 testy, 5 klas; medium: wrong @pytest.mark.integration marker; low: redundancja z test_mcp_server.py TestFormatGraphDsl)
 - dark/light mode MON-47: iter1=72/100 REQUEST CHANGES (4 standalone templates missing class="dark"/anti-FOUC/darkMode, landing bg-gray-950 hardcoded, logo always white on auth, status badges dark-only, toasts text-gray-900 on colored bg), iter2=88/100 APPROVED (all blockers fixed; low: status badges dark-only, landing no toggle, minor indent)
 - wiki attachments MON-49: 58/100 NEEDS WORK (3 critical: page_detail missing attachments/can_edit context, files.html uses wrong variable name + wrong model attrs, _get_wiki_page missing selectinload; medium: no MIME validation, get_wiki_attachment filename ambiguity, templates.TemplateResponse instead of render_project_page)
+- dashboard statusy MON-50: 88/100 APPROVED (bulk project_stats.py + projects.py paginacja/search/sort + projects.html ikonki; medium: issues_pulse logika inna niż sidebar; minor: unused field import, COALESCE inconsistency, no aria-labels on SVG)
 
 ## Test Patterns Confirmed
 - Test fixture: connection-level transaction with rollback, `expire_on_commit=False` — services calling `db.commit()` work on savepoints
@@ -131,6 +132,14 @@
 - `upload_object()` in minio_client.py — generic version of `upload_attachment()` without auto-UUID naming
 - WikiPage.attachments relationship: `order_by="WikiAttachment.created_at"`, `cascade="all, delete-orphan"`
 - No UniqueConstraint on (wiki_page_id, filename) — duplicate filenames possible, MCP get_wiki_attachment vulnerable
+
+## Project Stats / Dashboard List Patterns
+- `services/project_stats.py` — bulk stats via 5 GROUP BY queries (issues, uptime, heartbeats, SP, activity)
+- `dashboard/projects.py` — paginacja (per_page=10), search (ILIKE name+slug), sort (name/activity asc/desc)
+- Sort by activity uses outerjoin on Ticket.updated_at subquery + nulls_last
+- `_SORT_OPTIONS` is a set whitelist — safe against injection
+- issues_pulse in project_stats uses count>=5 threshold (differs from sidebar.py which uses last_seen recency)
+- Ticket import added to projects.py for activity subquery — not a circular import concern
 
 ## render_project_page helper
 - Located in `dashboard/helpers.py`
