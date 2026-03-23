@@ -70,7 +70,7 @@ Two separate packages in one repo:
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
 - `dashboard/reports.py` — global cross-project work reports with multi-select filtering (project, user, sprint), date range, and PDF export via weasyprint (`/dashboard/reports`)
 
-**Models** (`models/`) — 14 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, Monitor, MonitorCheck, TimeTrackingEntry, WikiPage, WikiEmbedding + Base
+**Models** (`models/`) — 21 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, TicketAttachment, Monitor, MonitorCheck, TimeTrackingEntry, WikiPage, WikiEmbedding, WikiAttachment, WikiFile, ActivityLog, Heartbeat, Label, TicketLabel + OAuth models (OAuthClient, OAuthAuthorizationCode, OAuthAccessToken, OAuthRefreshToken) + Base
 
 **Services**:
 - `services/fingerprint.py` — SHA256 of exception type + app-frame filenames:functions
@@ -96,7 +96,7 @@ Two separate packages in one repo:
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
-- 30+ tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Graph (node/edge CRUD, bulk operations, query, path finding, stats), project summary
+- 70 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Graph (node/edge CRUD, bulk operations, query, path finding, stats), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 
