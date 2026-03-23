@@ -18,3 +18,5 @@
 - Async iteration mocking for Neo4j: define class with `__aiter__` returning self, `async __anext__` raising StopAsyncIteration; assign `result_mock.__aiter__ = lambda self: AsyncIterEmpty()`
 - `login_session()` always creates a new user — never call it for an existing user (UniqueViolationError on email). Instead create user manually + use `_login_existing_user(client, email)` helper that only calls POST /auth/login
 - For endpoint tests: create User with `is_superuser=True` manually + `await db_session.flush()` + `await _login_existing_user(client, email)` — never use `login_session` when user already exists in session
+- `sms_client._send_sms_sync`: patch `monolynx.services.sms_client.urllib.request.urlopen`; set `mock_resp.status = 200` to avoid `%d` format error in logger.info
+- `notifications.send_monitor_alert(monitor, check, db)` — 3 args (not 2!); config uses lists: `email_recipients`, `sms_recipients`, `slack_channels`; patch email/SMS at origin (`monolynx.services.email.send_email`, `monolynx.services.sms_client.send_sms`); Slack via `monolynx.services.notifications._send_slack_webhook_sync`

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
+import starlette.datastructures
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import case, func, select
@@ -58,6 +60,54 @@ def _is_url_safe(url: str) -> str | None:
             return "Adresy prywatne i wewnetrzne sa niedozwolone"
 
     return None
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PHONE_RE = re.compile(r"^\+?[0-9]{7,15}$")
+
+
+def _parse_lines(raw: str) -> list[str]:
+    """Parsuj wieloliniowy textarea na liste niepustych wierszy."""
+    return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+def _parse_notification_config(form: starlette.datastructures.FormData) -> tuple[dict[str, object], str | None]:
+    """Parsuj pola powiadomien z form data. Zwraca (config_dict, error)."""
+    email_enabled = bool(form.get("notification_email_enabled"))
+    sms_enabled = bool(form.get("notification_sms_enabled"))
+    slack_enabled = bool(form.get("notification_slack_enabled"))
+
+    email_recipients = _parse_lines(str(form.get("notification_email_recipients", "") or ""))
+    sms_recipients = _parse_lines(str(form.get("notification_sms_recipients", "") or ""))
+    slack_channels = _parse_lines(str(form.get("notification_slack_channels", "") or ""))
+
+    if email_enabled:
+        for addr in email_recipients:
+            if not _EMAIL_RE.match(addr):
+                return {}, f"Nieprawidlowy format adresu email: {addr}"
+
+    if sms_enabled:
+        for phone in sms_recipients:
+            if not _PHONE_RE.match(phone):
+                return {}, f"Nieprawidlowy format numeru telefonu: {phone}"
+
+    if slack_enabled:
+        for webhook in slack_channels:
+            if not webhook.startswith(("http://", "https://")):
+                return {}, f"Nieprawidlowy URL webhooka Slack: {webhook}"
+            ssrf_err = _is_url_safe(webhook)
+            if ssrf_err:
+                return {}, f"Webhook Slack: {ssrf_err} ({webhook})"
+
+    config: dict[str, object] = {
+        "email_enabled": email_enabled,
+        "email_recipients": email_recipients,
+        "sms_enabled": sms_enabled,
+        "sms_recipients": sms_recipients,
+        "slack_enabled": slack_enabled,
+        "slack_channels": slack_channels,
+    }
+    return config, None
 
 
 async def _get_project(slug: str, db: AsyncSession) -> Project | None:
@@ -214,6 +264,13 @@ async def monitor_create(
         if monitor_count >= MAX_MONITORS_PER_PROJECT:
             error = f"Osiagnieto limit {MAX_MONITORS_PER_PROJECT} monitorow na projekt"
 
+    # Parsowanie notification_config
+    notification_config: dict[str, object] = {}
+    if error is None:
+        notification_config, notif_error = _parse_notification_config(form)
+        if notif_error:
+            error = notif_error
+
     if error:
         return templates.TemplateResponse(
             request,
@@ -229,6 +286,12 @@ async def monitor_create(
                     "name": name or "",
                     "interval_value": interval_value,
                     "interval_unit": interval_unit,
+                    "notification_email_enabled": form.get("notification_email_enabled"),
+                    "notification_email_recipients": form.get("notification_email_recipients", ""),
+                    "notification_sms_enabled": form.get("notification_sms_enabled"),
+                    "notification_sms_recipients": form.get("notification_sms_recipients", ""),
+                    "notification_slack_enabled": form.get("notification_slack_enabled"),
+                    "notification_slack_channels": form.get("notification_slack_channels", ""),
                 },
             },
         )
@@ -239,6 +302,7 @@ async def monitor_create(
         name=name,
         interval_value=interval_value,
         interval_unit=interval_unit,
+        notification_config=notification_config,
     )
     db.add(monitor)
     await db.commit()
