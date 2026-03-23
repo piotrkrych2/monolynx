@@ -54,6 +54,63 @@
             </div>
         </div>
 
+        <!-- Sekcja powiadomień -->
+        <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+            <h3 class="text-base font-semibold text-gray-900 dark:text-white mb-3">Powiadomienia</h3>
+            <p class="text-xs text-gray-500 mb-4">Wybierz kanały, przez które chcesz otrzymywać powiadomienia o awariach i odzyskaniu monitora.</p>
+
+            <!-- Email -->
+            <div class="mb-4">
+                <label class="flex items-center gap-2 cursor-pointer mb-2">
+                    <input type="checkbox" name="notification_email_enabled" id="notification_email_enabled"
+                           {% if form_data and form_data.get('notification_email_enabled') %}checked{% endif %}
+                           class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-indigo-600 focus:ring-indigo-500"
+                           onchange="document.getElementById('email_recipients_group').classList.toggle('hidden', !this.checked)">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">Email</span>
+                </label>
+                <div id="email_recipients_group" class="{% if not (form_data and form_data.get('notification_email_enabled')) %}hidden{% endif %}">
+                    <textarea name="notification_email_recipients" rows="3"
+                              placeholder="Adresy email (po jednym na linię)"
+                              class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 text-sm resize-none">{{ form_data.get('notification_email_recipients', '') if form_data else '' }}</textarea>
+                    <p class="text-xs text-gray-500 mt-1">Podaj adresy email odbiorców, po jednym na linię.</p>
+                </div>
+            </div>
+
+            <!-- SMS -->
+            <div class="mb-4">
+                <label class="flex items-center gap-2 cursor-pointer mb-2">
+                    <input type="checkbox" name="notification_sms_enabled" id="notification_sms_enabled"
+                           {% if form_data and form_data.get('notification_sms_enabled') %}checked{% endif %}
+                           class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-indigo-600 focus:ring-indigo-500"
+                           onchange="document.getElementById('sms_recipients_group').classList.toggle('hidden', !this.checked)">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">SMS (lepszesmsy.pl)</span>
+                </label>
+                <div id="sms_recipients_group" class="{% if not (form_data and form_data.get('notification_sms_enabled')) %}hidden{% endif %}">
+                    <textarea name="notification_sms_recipients" rows="3"
+                              placeholder="Numery telefonu (po jednym na linię, format: +48...)"
+                              class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 text-sm resize-none">{{ form_data.get('notification_sms_recipients', '') if form_data else '' }}</textarea>
+                    <p class="text-xs text-gray-500 mt-1">Podaj numery telefonów odbiorców, po jednym na linię (np. +48123456789).</p>
+                </div>
+            </div>
+
+            <!-- Slack -->
+            <div class="mb-4">
+                <label class="flex items-center gap-2 cursor-pointer mb-2">
+                    <input type="checkbox" name="notification_slack_enabled" id="notification_slack_enabled"
+                           {% if form_data and form_data.get('notification_slack_enabled') %}checked{% endif %}
+                           class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-indigo-600 focus:ring-indigo-500"
+                           onchange="document.getElementById('slack_channels_group').classList.toggle('hidden', !this.checked)">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">Slack</span>
+                </label>
+                <div id="slack_channels_group" class="{% if not (form_data and form_data.get('notification_slack_enabled')) %}hidden{% endif %}">
+                    <textarea name="notification_slack_channels" rows="3"
+                              placeholder="Webhook URLs (po jednym na linię)"
+                              class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 text-sm resize-none">{{ form_data.get('notification_slack_channels', '') if form_data else '' }}</textarea>
+                    <p class="text-xs text-gray-500 mt-1">Podaj Webhook URLs kanałów Slack, po jednym na linię.</p>
+                </div>
+            </div>
+        </div>
+
         <button type="submit"
                 class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded transition">
             Utworz monitor

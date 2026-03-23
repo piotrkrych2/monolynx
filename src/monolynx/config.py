@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     OAUTH_REFRESH_TOKEN_TTL: int = 2592000  # 30 dni
     OAUTH_AUTH_CODE_TTL: int = 600  # 10 min
 
+    # SMS (lepszesmsy.pl)
+    LEPSZESMSY_LICENSE_KEY: str = ""
+
     # Embeddings (RAG search for Wiki)
     OPENAI_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"

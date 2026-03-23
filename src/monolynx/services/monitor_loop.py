@@ -54,6 +54,18 @@ async def _check_single_monitor(
         db.add(check)
         await db.commit()
 
+        if not check.is_success:
+            from monolynx.models.monitor import Monitor as MonitorModel
+            from monolynx.services.notifications import send_monitor_alert
+
+            monitor_result = await db.execute(select(MonitorModel).where(MonitorModel.id == monitor_id))
+            monitor = monitor_result.scalar_one_or_none()
+            if monitor is not None:
+                try:
+                    await send_monitor_alert(monitor, check, db)
+                except Exception:
+                    logger.exception("Failed to send monitor alert for %s", monitor.name)
+
 
 async def run_monitor_checks(
     session_factory: async_sessionmaker[AsyncSession],

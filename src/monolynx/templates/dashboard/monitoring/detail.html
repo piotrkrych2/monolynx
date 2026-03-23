@@ -225,6 +225,63 @@
             </div>
         </div>
         {% endif %}
+
+        {% set nc = monitor.notification_config %}
+        {% if nc and (nc.get('email_enabled') or nc.get('sms_enabled') or nc.get('slack_enabled')) %}
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Powiadomienia</h3>
+            <div class="space-y-3 text-sm">
+
+                {% if nc.get('email_enabled') %}
+                <div>
+                    <div class="flex items-center gap-1.5 mb-1">
+                        <span class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></span>
+                        <span class="text-gray-300 font-medium">Email</span>
+                    </div>
+                    {% set emails = nc.get('email_recipients', []) %}
+                    {% if emails %}
+                    <div class="ml-3.5 space-y-0.5">
+                        {% for addr in emails %}
+                        <p class="text-gray-500 text-xs break-all">{{ addr | e }}</p>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if nc.get('sms_enabled') %}
+                <div>
+                    <div class="flex items-center gap-1.5 mb-1">
+                        <span class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></span>
+                        <span class="text-gray-300 font-medium">SMS</span>
+                    </div>
+                    {% set phones = nc.get('sms_recipients', []) %}
+                    {% if phones %}
+                    <div class="ml-3.5 space-y-0.5">
+                        {% for phone in phones %}
+                        <p class="text-gray-500 text-xs">{{ phone | e }}</p>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if nc.get('slack_enabled') %}
+                <div>
+                    <div class="flex items-center gap-1.5 mb-1">
+                        <span class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></span>
+                        <span class="text-gray-300 font-medium">Slack</span>
+                    </div>
+                    {% set webhooks = nc.get('slack_channels', []) %}
+                    {% if webhooks %}
+                    <p class="ml-3.5 text-gray-500 text-xs">{{ webhooks | length }} webhook{{ 'i' if webhooks | length > 1 else '' }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

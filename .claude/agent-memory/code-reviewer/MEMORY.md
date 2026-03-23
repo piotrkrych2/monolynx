@@ -62,6 +62,7 @@
 - dark/light mode MON-47: iter1=72/100 REQUEST CHANGES (4 standalone templates missing class="dark"/anti-FOUC/darkMode, landing bg-gray-950 hardcoded, logo always white on auth, status badges dark-only, toasts text-gray-900 on colored bg), iter2=88/100 APPROVED (all blockers fixed; low: status badges dark-only, landing no toggle, minor indent)
 - wiki attachments MON-49: 58/100 NEEDS WORK (3 critical: page_detail missing attachments/can_edit context, files.html uses wrong variable name + wrong model attrs, _get_wiki_page missing selectinload; medium: no MIME validation, get_wiki_attachment filename ambiguity, templates.TemplateResponse instead of render_project_page)
 - dashboard statusy MON-50: 88/100 APPROVED (bulk project_stats.py + projects.py paginacja/search/sort + projects.html ikonki; medium: issues_pulse logika inna niż sidebar; minor: unused field import, COALESCE inconsistency, no aria-labels on SVG)
+- monitoring notifications MON-52: iter1=78/100 REQUEST CHANGES (XSS in email HTML, Slack sync blocking async, missing SSRF on Slack URL save), iter2=90/100 APPROVED (all 4 blockers fixed; db-specialist 92, backend-dev 72→88, frontend-dev 88, qa-tester 85)
 
 ## Test Patterns Confirmed
 - Test fixture: connection-level transaction with rollback, `expire_on_commit=False` — services calling `db.commit()` work on savepoints
@@ -140,6 +141,16 @@
 - `_SORT_OPTIONS` is a set whitelist — safe against injection
 - issues_pulse in project_stats uses count>=5 threshold (differs from sidebar.py which uses last_seen recency)
 - Ticket import added to projects.py for activity subquery — not a circular import concern
+
+## Notification Module Patterns (MON-52)
+- notification_config stored as JSONB on Monitor model — keys: email_enabled, email_recipients, sms_enabled, sms_recipients, slack_enabled, slack_channels
+- Debouncing via last_alert_sent_at + ALERT_DEBOUNCE_MINUTES=5
+- SMS via lepszesmsy.pl REST API (LEPSZESMSY_LICENSE_KEY in config.py) — ThreadPoolExecutor pattern like email.py
+- Slack via incoming webhook — SSRF protection in _is_webhook_url_safe (same logic as _is_url_safe in monitoring.py, duplicated)
+- _parse_notification_config in dashboard/monitoring.py — validates email regex, phone regex, webhook URL scheme
+- Email/SMS use fire-and-forget executor pattern, Slack webhook is SYNC in async context (needs fix)
+- Alert triggered in _check_single_monitor (monitor_loop.py) after failed check — re-queries Monitor from DB
+- No "recovery" notification (monitor back up) — only downtime alerts
 
 ## render_project_page helper
 - Located in `dashboard/helpers.py`
