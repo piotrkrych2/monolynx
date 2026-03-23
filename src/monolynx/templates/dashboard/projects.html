@@ -5,37 +5,220 @@
 {% block content %}
 <div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl font-bold">Projekty</h1>
-    <div class="flex items-center gap-3">
-        <a href="/dashboard/create-project"
-           class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
-            Nowy projekt
-        </a>
-    </div>
+    <a href="/dashboard/create-project"
+       class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
+        Nowy projekt
+    </a>
 </div>
 
+<!-- Wyszukiwanie i sortowanie -->
+<form method="get" action="/dashboard/" class="flex items-center gap-3 mb-6 flex-wrap">
+    <div class="flex-1 min-w-[200px]">
+        <input type="text" name="search" value="{{ search or '' }}" placeholder="Szukaj projektu..."
+               class="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-indigo-500">
+    </div>
+    <div>
+        <select name="sort"
+                class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+            <option value="activity_desc" {% if sort == 'activity_desc' %}selected{% endif %}>Ostatnia aktywność ↓</option>
+            <option value="activity_asc" {% if sort == 'activity_asc' %}selected{% endif %}>Ostatnia aktywność ↑</option>
+            <option value="name_asc" {% if sort == 'name_asc' %}selected{% endif %}>Nazwa A-Z</option>
+            <option value="name_desc" {% if sort == 'name_desc' %}selected{% endif %}>Nazwa Z-A</option>
+        </select>
+    </div>
+    <button type="submit"
+            class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded transition">
+        Szukaj
+    </button>
+    {% if search %}
+    <a href="/dashboard/?sort={{ sort }}"
+       class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition">
+        Wyczyść
+    </a>
+    {% endif %}
+</form>
+
 {% if projects %}
-<div class="grid gap-4">
+<div class="grid gap-3">
     {% for project in projects %}
+    {% set s = stats[project.id] %}
+
+    {# 500ki — klasa i etykieta #}
+    {% if s.issues_count == 0 %}
+        {% set issues_color = "text-green-500" %}
+        {% set issues_label = "" %}
+    {% elif s.issues_count < 5 %}
+        {% set issues_color = "text-orange-500" %}
+        {% set issues_label = s.issues_count | string %}
+    {% else %}
+        {% set issues_color = "text-red-500 animate-pulse" %}
+        {% set issues_label = s.issues_count | string %}
+    {% endif %}
+
+    {# Scrum — kolor i etykieta #}
+    {% if s.sp_total == 0 %}
+        {% set scrum_color = "text-green-500" %}
+        {% set scrum_label = "" %}
+    {% elif s.sp_done >= s.sp_total %}
+        {% set scrum_color = "text-green-500" %}
+        {% set scrum_label = "" %}
+    {% elif s.sp_done * 100 // s.sp_total >= 75 %}
+        {% set scrum_color = "text-orange-500" %}
+        {% set scrum_label = s.sp_done | string ~ " / " ~ s.sp_total | string ~ " SP" %}
+    {% else %}
+        {% set scrum_color = "text-red-500" %}
+        {% set scrum_label = s.sp_done | string ~ " / " ~ s.sp_total | string ~ " SP" %}
+    {% endif %}
+
+    {# Monitoring — kolor i etykieta #}
+    {% if s.monitoring_uptime_24h is none %}
+        {% set mon_color = "text-green-500" %}
+        {% set mon_label = "" %}
+    {% elif s.monitoring_uptime_24h < 90 %}
+        {% set mon_color = "text-red-500 animate-pulse" %}
+        {% set mon_label = s.monitoring_uptime_24h | string ~ "%" %}
+    {% elif s.monitoring_uptime_24h < 97 %}
+        {% set mon_color = "text-red-500" %}
+        {% set mon_label = s.monitoring_uptime_24h | string ~ "%" %}
+    {% else %}
+        {% set mon_color = "text-green-500" %}
+        {% set mon_label = "" %}
+    {% endif %}
+
+    {# Heartbeat — kolor i etykieta #}
+    {% if s.heartbeats_down == 0 %}
+        {% set hb_color = "text-green-500" %}
+        {% set hb_label = "" %}
+    {% else %}
+        {% set hb_color = "text-red-500 animate-pulse" %}
+        {% set hb_label = s.heartbeats_down | string %}
+    {% endif %}
+
     <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-indigo-500 transition">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center gap-4">
+            <!-- Główny link projektu -->
             <a href="/dashboard/{{ project.slug }}/500ki/issues" class="flex-1 min-w-0">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ project.name }}</h2>
-                <p class="text-sm text-gray-600 dark:text-gray-400">{{ project.slug }}</p>
+                <h2 class="text-base font-semibold text-gray-900 dark:text-white truncate">{{ project.name }}</h2>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ project.slug }}</p>
             </a>
-            <div class="flex items-center gap-3 ml-4">
-                <span class="text-gray-500 text-sm">{{ project.created_at.strftime('%Y-%m-%d') }}</span>
+
+            <!-- Ikonki statusów modułów -->
+            <div class="flex items-center gap-2 flex-shrink-0">
+
+                <!-- 500ki -->
+                <div class="status-icon relative flex items-center gap-1 {{ issues_color }}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {% if issues_label %}
+                    <span class="text-xs font-medium leading-none">{{ issues_label }}</span>
+                    {% endif %}
+                    <span class="status-tooltip absolute -top-8 left-1/2 -translate-x-1/2 text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-10">500ki — błędy aplikacji</span>
+                </div>
+
+                <!-- Scrum -->
+                <div class="status-icon relative flex items-center gap-1 {{ scrum_color }}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    {% if scrum_label %}
+                    <span class="text-xs font-medium leading-none whitespace-nowrap">{{ scrum_label }}</span>
+                    {% endif %}
+                    <span class="status-tooltip absolute -top-8 left-1/2 -translate-x-1/2 text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-10">Scrum — postęp sprintu</span>
+                </div>
+
+                <!-- Monitoring -->
+                <div class="status-icon relative flex items-center gap-1 {{ mon_color }}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    {% if mon_label %}
+                    <span class="text-xs font-medium leading-none">{{ mon_label }}</span>
+                    {% endif %}
+                    <span class="status-tooltip absolute -top-8 left-1/2 -translate-x-1/2 text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-10">Monitoring — dostępność URL</span>
+                </div>
+
+                <!-- Heartbeat -->
+                <div class="status-icon relative flex items-center gap-1 {{ hb_color }}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                    </svg>
+                    {% if hb_label %}
+                    <span class="text-xs font-medium leading-none">{{ hb_label }}</span>
+                    {% endif %}
+                    <span class="status-tooltip absolute -top-8 left-1/2 -translate-x-1/2 text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-10">Heartbeat — zadania cykliczne</span>
+                </div>
+            </div>
+
+            <!-- Data i ustawienia -->
+            <div class="flex items-center gap-3 flex-shrink-0 ml-1">
+                <span class="text-gray-400 dark:text-gray-500 text-xs">{{ project.created_at.strftime('%Y-%m-%d') }}</span>
                 <a href="/dashboard/{{ project.slug }}/settings"
-                   class="text-gray-600 dark:text-gray-400 hover:text-indigo-400 text-sm transition"
-                   title="Ustawienia projektu">Ustawienia</a>
+                   class="text-gray-500 dark:text-gray-400 hover:text-indigo-400 transition"
+                   title="Ustawienia projektu">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                </a>
             </div>
         </div>
     </div>
     {% endfor %}
 </div>
-{% else %}
-<div class="text-center py-12 text-gray-500">
-    <p class="text-lg">Brak projektów</p>
-    <p class="text-sm mt-2"><a href="/dashboard/create-project" class="text-indigo-400 hover:text-indigo-300">Utwórz pierwszy projekt</a></p>
+
+<!-- Paginacja -->
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between mt-6">
+    <div>
+        {% if has_prev %}
+        <a href="/dashboard/?page={{ page - 1 }}&search={{ search | urlencode }}&sort={{ sort }}"
+           class="border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Poprzednia
+        </a>
+        {% endif %}
+    </div>
+    <span class="text-sm text-gray-500 dark:text-gray-400">Strona {{ page }} z {{ total_pages }}</span>
+    <div>
+        {% if has_next %}
+        <a href="/dashboard/?page={{ page + 1 }}&search={{ search | urlencode }}&sort={{ sort }}"
+           class="border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white text-sm font-medium px-4 py-2 rounded transition">
+            Następna
+        </a>
+        {% endif %}
+    </div>
 </div>
 {% endif %}
+
+{% else %}
+<div class="text-center py-12 text-gray-500">
+    {% if search %}
+    <p class="text-lg">Brak projektów dla "{{ search | e }}"</p>
+    <p class="text-sm mt-2">
+        <a href="/dashboard/?sort={{ sort }}" class="text-indigo-400 hover:text-indigo-300">Wyczyść wyszukiwanie</a>
+    </p>
+    {% else %}
+    <p class="text-lg">Brak projektów</p>
+    <p class="text-sm mt-2"><a href="/dashboard/create-project" class="text-indigo-400 hover:text-indigo-300">Utwórz pierwszy projekt</a></p>
+    {% endif %}
+</div>
+{% endif %}
+
+<style>
+    .status-icon .status-tooltip {
+        visibility: hidden;
+        opacity: 0;
+        background-color: #374151;
+        color: #d1d5db;
+        transition: opacity 0.15s;
+    }
+    .status-icon:hover .status-tooltip {
+        visibility: visible;
+        opacity: 1;
+    }
+    html:not(.dark) .status-icon .status-tooltip {
+        background-color: #1f2937;
+        color: #f3f4f6;
+    }
+</style>
 {% endblock %}
