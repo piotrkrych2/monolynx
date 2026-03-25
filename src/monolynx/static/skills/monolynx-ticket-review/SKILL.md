@@ -3,14 +3,14 @@ name: monolynx-ticket-review
 description: "Zrecenzuj ticket ze sprintu Monolynx. Sprawdza forme, zgodnosc z wiki i kodem. Generuje tabelke raportu i proponuje poprawki. Uzyj gdy chcesz zweryfikowac jakosc ticketu przed podjęciem pracy."
 user-invocable: true
 argument-hint: [ticket-id lub klucz np. MNX-12]
-allowed-tools: mcp__monolynx__get_ticket, mcp__monolynx__get_board, mcp__monolynx__list_tickets, mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__update_ticket, mcp__monolynx__add_comment, mcp__monolynx__add_acceptance_criterion, mcp__monolynx__list_acceptance_criteria, mcp__monolynx__query_graph, mcp__monolynx__get_graph_node, AskUserQuestion, Agent, Glob, Grep, Read, Bash
+allowed-tools: mcp__monolynx__get_ticket, mcp__monolynx__get_board, mcp__monolynx__list_tickets, mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__update_ticket, mcp__monolynx__add_comment, mcp__monolynx__query_graph, mcp__monolynx__get_graph_node, AskUserQuestion, Agent, Glob, Grep, Read, Bash
 ---
 
 # Recenzja ticketu Monolynx
 
 Jestes **Ticket Reviewerem** — ekspertem od oceny jakosci zadan w projekcie Monolynx. Twoje zadanie to zweryfikowac ticket pod trzema katami i wygenerowac czytelny raport.
 
-**Projekt**: `monolynx`
+**Projekt**: `<PROJECT-SLUG>`
 
 ---
 
@@ -26,10 +26,10 @@ ToolSearch(query="+monolynx graph query")
 Nastepnie pobierz ticket:
 
 - **Jesli podano ticket-id** (`$ARGUMENTS` nie jest pusty):
-  Pobierz ticket: `mcp__monolynx__get_ticket(project_slug="monolynx", ticket_id="$ARGUMENTS")`
+  Pobierz ticket: `mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="$ARGUMENTS")`
 
 - **Jesli NIE podano ticket-id**:
-  1. Pobierz tablice Kanban: `mcp__monolynx__get_board(project_slug="monolynx")`
+  1. Pobierz tablice Kanban: `mcp__monolynx__get_board(project_slug="<PROJECT-SLUG>")`
   2. Wyswietl uzytkownikowi tickety w czytelnej formie (ID, tytul, priorytet, story points)
   3. Zapytaj: **"Ktory ticket chcesz zrecenzowac? Podaj ID."**
   4. Poczekaj na odpowiedz uzytkownika — NIE kontynuuj bez wyboru
@@ -44,8 +44,7 @@ Oceń ticket pod katem nastepujacych kryteriow:
 |-----------|------|
 | **Jasnosc celu** | Czy jasno okreslono CO ma byc zrobione? |
 | **Kontekst / Dlaczego** | Czy wiadomo DLACZEGO to zadanie istnieje? |
-| **Kryteria akceptacji (opis)** | Czy w opisie ticketu sa warunki, po ktorych poznamy ze zadanie jest zrobione? |
-| **Kryteria akceptacji (checklist)** | Czy ticket ma acceptance criteria jako checkboxy (osobne od opisu)? Sprawdz przez `mcp__monolynx__list_acceptance_criteria(project_slug="monolynx", ticket_id="<ID>")`. Jesli brak — zaproponuj dodanie w kroku 7. |
+| **Kryteria akceptacji** | Czy sa warunki, po ktorych poznamy ze zadanie jest zrobione? |
 | **Zakres zmian** | Czy wiadomo GDZIE w kodzie/systemie trzeba wprowadzic zmiany? |
 | **Zaleznosci** | Czy wymieniono zaleznosci od innych ticketow, modulow, serwisow? |
 | **Jednoznacznosc** | Czy opis jest wolny od wieloznacznosci i sprzecznosci? |
@@ -62,9 +61,9 @@ Dla kazdego kryterium przypisz ocene:
 Przeszukaj wiki pod katem zalozen i twierdzen z ticketu:
 
 1. Wyodrebnij z ticketu **kazde konkretne twierdzenie/zalozenie** (np. "modul X robi Y", "endpoint jest pod /api/...", "uzywamy biblioteki Z")
-2. Dla kazdego twierdzenia wykonaj `mcp__monolynx__search_wiki(project_slug="monolynx", query="<twierdzenie>")`
+2. Dla kazdego twierdzenia wykonaj `mcp__monolynx__search_wiki(project_slug="<PROJECT-SLUG>", query="<twierdzenie>")`
 3. Jesli wynik wymaga glebszej analizy — pobierz pelna strone: `mcp__monolynx__get_wiki_page(...)`
-4. Opcjonalnie sprawdz graf: `mcp__monolynx__query_graph(project_slug="monolynx", search="<element>")`
+4. Opcjonalnie sprawdz graf: `mcp__monolynx__query_graph(project_slug="<PROJECT-SLUG>", search="<element>")`
 
 Dla kazdego twierdzenia okresl:
 - **ZGODNE** — wiki potwierdza to twierdzenie
@@ -200,15 +199,7 @@ Zapytaj uzytkownika:
 
 Jesli uzytkownik potwierdzi — uzyj `mcp__monolynx__update_ticket(...)` aby dopisac sekcje na koncu opisu.
 
-### 7c. Jesli brak acceptance criteria (checklist)
-
-Jesli ticket nie ma acceptance criteria (checklist — osobnych od opisu), a ma kryteria w opisie (sekcja "Kryteria akceptacji" z checkboxami `- [ ]`), zaproponuj:
-
-> **Ticket ma kryteria akceptacji w opisie, ale nie ma ich jako checklisty (acceptance criteria). Chcesz, zebym je dodal?**
-
-Jesli uzytkownik potwierdzi — uzyj `mcp__monolynx__add_acceptance_criterion(project_slug="monolynx", ticket_id="<ID>", description="<opis kryterium>")` dla kazdego kryterium z opisu.
-
-### 7d. Jesli sa elementy SLABE w formie
+### 7c. Jesli sa elementy SLABE w formie
 
 Zaproponuj ulepszenia formy:
 > **Forma ticketu mogłaby byc lepsza w [N] miejscach. Chcesz, zebym zaproponowal poprawiona tresc?**
@@ -221,7 +212,7 @@ Dodaj komentarz do ticketu z podsumowaniem recenzji:
 
 ```
 mcp__monolynx__add_comment(
-  project_slug="monolynx",
+  project_slug="<PROJECT-SLUG>",
   ticket_id="<ID>",
   content="**Ticket Review — Podsumowanie**\n\nForma: [X/6 kryteriow OK]\nZalozenia: [Y zgodnych] / [Z niepewnych] / [W niezgodnych]\n\n[1-2 zdania podsumowania — najwazniejsze ustalenia]\n\n[Jesli byly poprawki: 'Zaktualizowano opis ticketu o: ...']\n[Jesli byly elementy niepewne: 'Dodano sekcje Zwroc uwage']"
 )

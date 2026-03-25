@@ -9,7 +9,7 @@ import os
 import re
 import uuid
 from collections.abc import Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from functools import partial
 from typing import Any
 
@@ -37,6 +37,7 @@ from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
+from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
 from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.time_tracking_entry import TimeTrackingEntry
@@ -575,6 +576,8 @@ async def ticket_detail(
             selectinload(Ticket.time_entries).selectinload(TimeTrackingEntry.user),
             selectinload(Ticket.issue),
             selectinload(Ticket.attachments),
+            selectinload(Ticket.acceptance_criteria).selectinload(TicketAcceptanceCriterion.created_by_user),
+            selectinload(Ticket.acceptance_criteria).selectinload(TicketAcceptanceCriterion.completed_by_user),
         )
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )
@@ -602,6 +605,7 @@ async def ticket_detail(
             "rendered_comments": rendered_comments,
             "now_date": date.today(),
             "attachments": ticket.attachments,
+            "acceptance_criteria": ticket.acceptance_criteria,
         },
         db=db,
     )
@@ -1395,3 +1399,176 @@ async def sprint_complete(
 
     flash(request, "Sprint zostal zakonczony")
     return RedirectResponse(url=f"/dashboard/{slug}/scrum/sprints", status_code=303)
+
+
+# --- Kryteria akceptacji ---
+
+
+@router.post("/{slug}/scrum/tickets/{ticket_id}/criteria", response_model=None)
+async def criterion_create(
+    request: Request,
+    slug: str,
+    ticket_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
+    if result.scalar_one_or_none() is None:
+        return HTMLResponse("Ticket not found", status_code=404)
+
+    form = await request.form()
+    description = str(form.get("description", "")).strip()
+    if not description:
+        flash(request, "Opis kryterium nie może być pusty", "error")
+        return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)
+
+    max_pos_result = await db.execute(
+        select(func.coalesce(func.max(TicketAcceptanceCriterion.position), -1)).where(TicketAcceptanceCriterion.ticket_id == ticket_id)
+    )
+    max_pos: int = max_pos_result.scalar_one()
+
+    criterion = TicketAcceptanceCriterion(
+        ticket_id=ticket_id,
+        description=description,
+        position=max_pos + 1,
+        created_by_user_id=user_id,
+        created_via_ai=False,
+    )
+    db.add(criterion)
+    await db.commit()
+
+    flash(request, "Kryterium akceptacji dodane pomyślnie")
+    return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)
+
+
+@router.post("/{slug}/scrum/tickets/{ticket_id}/criteria/{criterion_id}/toggle", response_model=None)
+async def criterion_toggle(
+    request: Request,
+    slug: str,
+    ticket_id: uuid.UUID,
+    criterion_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
+    if result.scalar_one_or_none() is None:
+        return HTMLResponse("Ticket not found", status_code=404)
+
+    crit_result = await db.execute(
+        select(TicketAcceptanceCriterion).where(
+            TicketAcceptanceCriterion.id == criterion_id,
+            TicketAcceptanceCriterion.ticket_id == ticket_id,
+        )
+    )
+    criterion = crit_result.scalar_one_or_none()
+    if criterion is None:
+        return HTMLResponse("Criterion not found", status_code=404)
+
+    if criterion.is_completed:
+        criterion.is_completed = False
+        criterion.completed_by_user_id = None
+        criterion.completed_at = None
+        criterion.completed_via_ai = False
+    else:
+        criterion.is_completed = True
+        criterion.completed_by_user_id = user_id
+        criterion.completed_at = datetime.now(UTC)
+        criterion.completed_via_ai = False
+
+    await db.commit()
+
+    return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)
+
+
+@router.post("/{slug}/scrum/tickets/{ticket_id}/criteria/{criterion_id}/edit", response_model=None)
+async def criterion_edit(
+    request: Request,
+    slug: str,
+    ticket_id: uuid.UUID,
+    criterion_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
+    if result.scalar_one_or_none() is None:
+        return HTMLResponse("Ticket not found", status_code=404)
+
+    crit_result = await db.execute(
+        select(TicketAcceptanceCriterion).where(
+            TicketAcceptanceCriterion.id == criterion_id,
+            TicketAcceptanceCriterion.ticket_id == ticket_id,
+        )
+    )
+    criterion = crit_result.scalar_one_or_none()
+    if criterion is None:
+        return HTMLResponse("Criterion not found", status_code=404)
+
+    form = await request.form()
+    description = str(form.get("description", "")).strip()
+    if not description:
+        flash(request, "Opis kryterium nie może być pusty", "error")
+        return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)
+
+    criterion.description = description
+    await db.commit()
+
+    flash(request, "Kryterium akceptacji zaktualizowane pomyślnie")
+    return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)
+
+
+@router.post("/{slug}/scrum/tickets/{ticket_id}/criteria/{criterion_id}/delete", response_model=None)
+async def criterion_delete(
+    request: Request,
+    slug: str,
+    ticket_id: uuid.UUID,
+    criterion_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return HTMLResponse("Project not found", status_code=404)
+
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
+    if result.scalar_one_or_none() is None:
+        return HTMLResponse("Ticket not found", status_code=404)
+
+    crit_result = await db.execute(
+        select(TicketAcceptanceCriterion).where(
+            TicketAcceptanceCriterion.id == criterion_id,
+            TicketAcceptanceCriterion.ticket_id == ticket_id,
+        )
+    )
+    criterion = crit_result.scalar_one_or_none()
+    if criterion is None:
+        return HTMLResponse("Criterion not found", status_code=404)
+
+    await db.delete(criterion)
+    await db.commit()
+
+    flash(request, "Kryterium akceptacji usunięte")
+    return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)

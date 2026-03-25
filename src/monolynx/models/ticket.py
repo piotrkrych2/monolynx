@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from monolynx.models.label import Label
     from monolynx.models.project import Project
     from monolynx.models.sprint import Sprint
+    from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
     from monolynx.models.ticket_attachment import TicketAttachment
     from monolynx.models.ticket_comment import TicketComment
     from monolynx.models.time_tracking_entry import TimeTrackingEntry
@@ -63,6 +64,11 @@ class Ticket(Base):
         back_populates="ticket",
         order_by="TicketAttachment.created_at",
         cascade="all, delete-orphan",
+    )
+    acceptance_criteria: Mapped[list[TicketAcceptanceCriterion]] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="TicketAcceptanceCriterion.position",
     )
 
     @property

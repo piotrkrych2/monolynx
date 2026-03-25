@@ -213,6 +213,20 @@ date +%s
 - **Raport Researchera** (pelny lub odpowiedni fragment)
 - Konkretny zakres pracy dla TEGO agenta
 - Liste powiazanych plikow i zaleznosci z raportu
+- **Liste kryteriow akceptacji przypisanych do TEGO agenta** (jesli ticket ma acceptance criteria)
+
+**WAZNE — Acceptance Criteria**: Jesli ticket posiada kryteria akceptacji, przypisz kazde kryterium do agenta, ktory jest odpowiedzialny za jego realizacje. W prompcie agenta dodaj:
+
+```
+KRYTERIA AKCEPTACJI DO ODHACZENIA (po zakonczeniu pracy):
+- [criterion_id] — [opis kryterium]
+- [criterion_id] — [opis kryterium]
+
+Po zakonczeniu pracy, dla KAZDEGO kryterium ktore zrealizowales, uzyj:
+mcp__monolynx__update_acceptance_criterion(project_slug="monolynx", ticket_id="<ID>", criterion_id="<CID>", is_completed=true)
+```
+
+Jesli kryterium dotyczy wiecej niz jednego agenta — przypisz je do tego, ktory odpowiada za WIEKSZOŚĆ pracy zwiazanej z kryterium.
 
 Przyklad (3 agentow + krytyk w jednej wiadomosci):
 
@@ -278,6 +292,28 @@ mcp__monolynx__log_time(
 )
 ```
 
+### 6f. Weryfikacja kryteriow akceptacji
+
+**CEL**: Upewnic sie, ze WSZYSTKIE kryteria akceptacji ticketu sa odhaczone przed zamknieciem zadania.
+
+1. Pobierz aktualna liste kryteriow:
+
+```
+mcp__monolynx__list_acceptance_criteria(project_slug="monolynx", ticket_id="<ID>")
+```
+
+2. Sprawdz status kazdego kryterium:
+   - **Jesli WSZYSTKIE odhaczone** → przejdz do KROK 7
+   - **Jesli sa nieodhaczone** → dla kazdego nieodhaczonego kryterium:
+     a. Sprawdz czy praca faktycznie zostala wykonana (przegladnij wyniki agentow, git diff, zmodyfikowane pliki)
+     b. **Jesli praca zostala wykonana** — odhacz kryterium:
+        ```
+        mcp__monolynx__update_acceptance_criterion(project_slug="monolynx", ticket_id="<ID>", criterion_id="<CID>", is_completed=true)
+        ```
+     c. **Jesli praca NIE zostala wykonana** — zapisz to kryterium jako niezrealizowane (do raportu w kroku 7)
+
+3. Jesli sa niezrealizowane kryteria — poinformuj uzytkownika w podsumowaniu (KROK 7e)
+
 ## KROK 7: Podsumowanie Team Managera
 
 Po zakonczeniu pracy WSZYSTKICH agentow:
@@ -325,6 +361,7 @@ Wyswietl uzytkownikowi krotkie podsumowanie:
 - Oceny krytyka dla kazdego agenta
 - Laczny czas pracy
 - Status ticketa
+- **Kryteria akceptacji** — ile odhaczonych / ile lacznie. Jesli sa niezrealizowane — wylistuj je z informacja dlaczego nie zostaly odhaczone
 
 ---
 
@@ -341,3 +378,4 @@ Wyswietl uzytkownikowi krotkie podsumowanie:
 9. **Branch musi byc zwalidowany** — KROK 2 jest obowiazkowy, NIE wolno go pominac
 10. **Researcher jest pierwszym krokiem** — KROK 3 jest obowiazkowy. Bez raportu Researchera nie uruchamiaj zespolu agentow (chyba ze uzytkownik swiadomie zrezygnuje z Researchera)
 11. **Praca rownlegla jest obowiazkowa** — w KROK 6 WSZYSCY agenci (developerzy + krytyk) startuja JEDNOCZESNIE w jednej wiadomosci
+12. **Acceptance criteria sa obowiazkowe** — jesli ticket ma kryteria akceptacji, KAZDY agent MUSI odhaczac swoje kryteria po zakonczeniu pracy (krok 6b). Team Manager weryfikuje kompletnosc w kroku 6f PRZED podsumowaniem

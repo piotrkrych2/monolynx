@@ -29,6 +29,7 @@
 - Server-side MIME type validation missing on scrum attachment upload — client-side FilePond only. Stored XSS risk via text/html content-type.
 - Constants defined in mcp_server.py instead of constants.py (LABEL_COLOR_PALETTE, ACTIVITY_ENTITY_TYPES) — recurring pattern drift
 - New features added to some ticket tools but not all (labels in list_tickets/get_ticket but not search_tickets/create/update responses) — consistency gap
+- `scalar() or default` anti-pattern: `0 or -1` returns -1 in Python (0 is falsy). When using COALESCE in SQL, don't add Python-side `or` fallback — it breaks on zero values. Seen in MON-53 position calculation.
 
 ## Ticket ID Lookup
 - Monolynx MCP uses UUID ticket IDs, not key strings like "MON-20". Must search by title/key first.
@@ -63,6 +64,7 @@
 - wiki attachments MON-49: 58/100 NEEDS WORK (3 critical: page_detail missing attachments/can_edit context, files.html uses wrong variable name + wrong model attrs, _get_wiki_page missing selectinload; medium: no MIME validation, get_wiki_attachment filename ambiguity, templates.TemplateResponse instead of render_project_page)
 - dashboard statusy MON-50: 88/100 APPROVED (bulk project_stats.py + projects.py paginacja/search/sort + projects.html ikonki; medium: issues_pulse logika inna niż sidebar; minor: unused field import, COALESCE inconsistency, no aria-labels on SVG)
 - monitoring notifications MON-52: iter1=78/100 REQUEST CHANGES (XSS in email HTML, Slack sync blocking async, missing SSRF on Slack URL save), iter2=90/100 APPROVED (all 4 blockers fixed; db-specialist 92, backend-dev 72→88, frontend-dev 88, qa-tester 85)
+- acceptance criteria MON-53: iter1=74/100 REQUEST CHANGES (lint fail B904, position bug `0 or -1`, light mode text-gray-200, dark-only form styling, dead HTMX attrs, no tests), iter2=88/100 APPROVED (all blockers fixed; low: 4x dark-only styling in template, no description length limit)
 
 ## Test Patterns Confirmed
 - Test fixture: connection-level transaction with rollback, `expire_on_commit=False` — services calling `db.commit()` work on savepoints

@@ -3,7 +3,7 @@ name: monolynx-ticket-review
 description: "Zrecenzuj ticket ze sprintu Monolynx. Sprawdza forme, zgodnosc z wiki i kodem. Generuje tabelke raportu i proponuje poprawki. Uzyj gdy chcesz zweryfikowac jakosc ticketu przed podjęciem pracy."
 user-invocable: true
 argument-hint: [ticket-id lub klucz np. MNX-12]
-allowed-tools: mcp__monolynx__get_ticket, mcp__monolynx__get_board, mcp__monolynx__list_tickets, mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__update_ticket, mcp__monolynx__add_comment, mcp__monolynx__add_acceptance_criterion, mcp__monolynx__list_acceptance_criteria, mcp__monolynx__query_graph, mcp__monolynx__get_graph_node, AskUserQuestion, Agent, Glob, Grep, Read, Bash
+allowed-tools: mcp__monolynx__get_ticket, mcp__monolynx__get_board, mcp__monolynx__list_tickets, mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__update_ticket, mcp__monolynx__add_comment, mcp__monolynx__query_graph, mcp__monolynx__get_graph_node, AskUserQuestion, Agent, Glob, Grep, Read, Bash
 ---
 
 # Recenzja ticketu Monolynx
@@ -44,8 +44,7 @@ Oceń ticket pod katem nastepujacych kryteriow:
 |-----------|------|
 | **Jasnosc celu** | Czy jasno okreslono CO ma byc zrobione? |
 | **Kontekst / Dlaczego** | Czy wiadomo DLACZEGO to zadanie istnieje? |
-| **Kryteria akceptacji (opis)** | Czy w opisie ticketu sa warunki, po ktorych poznamy ze zadanie jest zrobione? |
-| **Kryteria akceptacji (checklist)** | Czy ticket ma acceptance criteria jako checkboxy (osobne od opisu)? Sprawdz przez `mcp__monolynx__list_acceptance_criteria(project_slug="monolynx", ticket_id="<ID>")`. Jesli brak — zaproponuj dodanie w kroku 7. |
+| **Kryteria akceptacji** | Czy sa warunki, po ktorych poznamy ze zadanie jest zrobione? |
 | **Zakres zmian** | Czy wiadomo GDZIE w kodzie/systemie trzeba wprowadzic zmiany? |
 | **Zaleznosci** | Czy wymieniono zaleznosci od innych ticketow, modulow, serwisow? |
 | **Jednoznacznosc** | Czy opis jest wolny od wieloznacznosci i sprzecznosci? |
@@ -200,15 +199,7 @@ Zapytaj uzytkownika:
 
 Jesli uzytkownik potwierdzi — uzyj `mcp__monolynx__update_ticket(...)` aby dopisac sekcje na koncu opisu.
 
-### 7c. Jesli brak acceptance criteria (checklist)
-
-Jesli ticket nie ma acceptance criteria (checklist — osobnych od opisu), a ma kryteria w opisie (sekcja "Kryteria akceptacji" z checkboxami `- [ ]`), zaproponuj:
-
-> **Ticket ma kryteria akceptacji w opisie, ale nie ma ich jako checklisty (acceptance criteria). Chcesz, zebym je dodal?**
-
-Jesli uzytkownik potwierdzi — uzyj `mcp__monolynx__add_acceptance_criterion(project_slug="monolynx", ticket_id="<ID>", description="<opis kryterium>")` dla kazdego kryterium z opisu.
-
-### 7d. Jesli sa elementy SLABE w formie
+### 7c. Jesli sa elementy SLABE w formie
 
 Zaproponuj ulepszenia formy:
 > **Forma ticketu mogłaby byc lepsza w [N] miejscach. Chcesz, zebym zaproponowal poprawiona tresc?**

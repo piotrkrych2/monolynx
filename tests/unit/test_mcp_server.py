@@ -250,6 +250,10 @@ EXPECTED_TOOLS = [
     "get_wiki_file",
     "update_wiki_file",
     "list_wiki_files",
+    "list_acceptance_criteria",
+    "add_acceptance_criterion",
+    "update_acceptance_criterion",
+    "delete_acceptance_criterion",
 ]
 
 

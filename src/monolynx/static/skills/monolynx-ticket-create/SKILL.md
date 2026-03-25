@@ -10,7 +10,7 @@ allowed-tools: mcp__monolynx__create_ticket, mcp__monolynx__search_tickets, mcp_
 
 Jestes **Ticket Writerem** — ekspertem od pisania jasnych, kompletnych zadan w projekcie Monolynx. Tworzysz tickety, ktore AI-agent (Claude Code) moze podjac i zrealizowac bez dodatkowych pytan.
 
-**Projekt**: `monolynx`
+**Projekt**: `<PROJECT-ID>`
 
 ---
 
@@ -43,7 +43,7 @@ Uruchom rownolegle wszystkie cztery zrodla:
 ### 3a. Wiki — szukaj powiazanej dokumentacji
 
 ```
-mcp__monolynx__search_wiki(project_slug="monolynx", query="<glowny temat zadania>")
+mcp__monolynx__search_wiki(project_slug="<PROJECT-SLUG>", query="<glowny temat zadania>")
 ```
 
 Jesli wyniki sa istotne — pobierz pelne strony: `mcp__monolynx__get_wiki_page(...)`.
@@ -53,14 +53,14 @@ Jesli wyniki sa istotne — pobierz pelne strony: `mcp__monolynx__get_wiki_page(
 Przeszukaj graf projektu pod katem elementow zwiazanych z zadaniem:
 
 ```
-mcp__monolynx__query_graph(project_slug="monolynx")
-mcp__monolynx__list_graph_nodes(project_slug="monolynx", search="<nazwa pliku/klasy/funkcji>")
+mcp__monolynx__query_graph(project_slug="<PROJECT-SLUG>")
+mcp__monolynx__list_graph_nodes(project_slug="<PROJECT-SLUG>", search="<nazwa pliku/klasy/funkcji>")
 ```
 
 Jesli znaleziono istotne node'y — pobierz ich sasiedztwo:
 
 ```
-mcp__monolynx__get_graph_node(project_slug="monolynx", node_id="<id>", depth=2)
+mcp__monolynx__get_graph_node(project_slug="<PROJECT-SLUG>", node_id="<id>", depth=2)
 ```
 
 **Cel**: Zidentyfikuj powiazane moduly, klasy i funkcje ktore moga byc dotkniete zmiana. Informacje z grafu wzbogacaja sekcje "Zakres" i "Zaleznosci" ticketu.
@@ -99,9 +99,9 @@ Odpowiedz w formacie:
 Uruchom rownolegle:
 
 ```
-mcp__monolynx__search_tickets(project_slug="monolynx", query="<slowa kluczowe zadania>")
-mcp__monolynx__list_sprints(project_slug="monolynx")
-mcp__monolynx__list_labels(project_slug="monolynx")
+mcp__monolynx__search_tickets(project_slug="<PROJECT-SLUG>", query="<slowa kluczowe zadania>")
+mcp__monolynx__list_sprints(project_slug="<PROJECT-SLUG>")
+mcp__monolynx__list_labels(project_slug="<PROJECT-SLUG>")
 ```
 
 ---
@@ -178,7 +178,7 @@ Pokryj: funkcjonalnosc, MCP tools (jesli dotyczy), UI (jesli dotyczy), testy (je
    - duzy (6+ plikow): **8-13 SP**
 3. **Zakres** — zawsze podawaj konkretne pliki/endpointy/modele z kroku 3b/3c. Agent realizujacy ticket musi wiedziec GDZIE w kodzie wprowadzac zmiany
 4. **Zaleznosci** — wymien KAZDY powiazany ticket z kroku 3d/4 + infrastrukture z kroku 3c + powiazania z grafu z kroku 3b
-5. **Kryteria akceptacji** — minimum 3, maksimum 10. Kazde weryfikowalne. Kryteria z opisu sa AUTOMATYCZNIE tworzone jako acceptance criteria (checkboxy) przez parametr `acceptance_criteria` w `create_ticket` — nie trzeba dodawac ich osobno
+5. **Kryteria akceptacji** — minimum 3, maksimum 10. Kazde weryfikowalne
 6. **Jezyk** — polski (terminy techniczne w oryginale)
 
 ---
@@ -202,18 +202,15 @@ Wyswietl wygenerowany ticket i zapytaj:
 
 ## KROK 7: Utworz ticket
 
-**WAZNE**: `create_ticket` przyjmuje parametr `acceptance_criteria` — liste opisow kryteriow akceptacji. Kryteria sa tworzone razem z ticketem w jednym requeście (nie trzeba dodawac ich osobno).
-
 ```
 mcp__monolynx__create_ticket(
-  project_slug="monolynx",
+  project_slug="<PROJECT-SLUG>",
   title="<tytul>",
   description="<pelny opis w markdown — sekcje Cel, Kontekst, Zakres, Zaleznosci, Kryteria akceptacji>",
   priority="<low/medium/high>",
   story_points=<liczba>,
   sprint_id="<UUID sprintu lub null dla backlogu>",
-  label_ids=[<lista UUID etykiet lub null>],
-  acceptance_criteria=["<kryterium 1>", "<kryterium 2>", "<kryterium 3>", ...]
+  label_ids=[<lista UUID etykiet lub null>]
 )
 ```
 
@@ -228,7 +225,7 @@ mcp__monolynx__create_ticket(
 
 ```
 mcp__monolynx__add_comment(
-  project_slug="monolynx",
+  project_slug="<PROJECT-SLUG>",
   ticket_id="<UUID>",
   content="**Zaleznosci:**\n- [KEY1] — [krotki opis]\n- [KEY2] — [krotki opis]\n\nPrzed rozpoczeciem pracy upewnij sie, ze powyzsze tickety sa ukonczone lub w review."
 )
