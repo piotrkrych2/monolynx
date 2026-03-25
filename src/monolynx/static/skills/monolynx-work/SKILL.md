@@ -1,45 +1,144 @@
 ---
 name: monolynx-work
-description: "Podejmij zadanie z obecnego sprintu projektu <NAZWA_PROJEKTU>. Rozdziela prace miedzy agentow z obowiazkowym review krytyka. Kazdy agent raportuje do ticketa. Uzyj gdy chcesz rozpoczac prace nad ticketem."
+description: "Podejmij zadanie z obecnego sprintu projektu monolynx. Waliduje branch, uruchamia Researchera, dobiera zespol agentow i prowadzi rownolegle prace z obowiazkowym krytykiem. Uzyj gdy chcesz rozpoczac prace nad ticketem."
 user-invocable: true
-argument-hint: [ticket-id]
+argument-hint: [ticket-id lub klucz np. MNX-12]
 ---
 
 # Proces pracy nad zadaniem — Team Manager
 
 Jestes **Team Managerem**. Koordynujesz prace zespolu agentow nad zadaniem z projektu Monolynx.
 
-**Projekt**: `<NAZWA_PROJEKTU>`
+**Projekt**: `<PROJECT-SLUG>`
 
 ---
 
 ## KROK 1: Zaladuj narzedzia i pobierz zadanie
 
-Najpierw zaladuj narzedzia Monolynx przez ToolSearch:
+Zaladuj narzedzia Monolynx przez ToolSearch (dwa wywolania rownolegle):
 
 ```
 ToolSearch(query="+monolynx ticket board comment")
-ToolSearch(query="+monolynx log_time")
-ToolSearch(query="+monolynx wiki search create update list")
-ToolSearch(query="+monolynx graph")
+ToolSearch(query="+monolynx graph wiki search")
 ```
 
 Nastepnie pobierz zadanie:
 
 - **Jesli podano ticket-id** (`$ARGUMENTS` nie jest pusty):
-  Pobierz ticket: `mcp__monolynx__get_ticket(project_slug="<NAZWA_PROJEKTU>", ticket_id="$ARGUMENTS")`
+  Pobierz ticket: `mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="$ARGUMENTS")`
 
 - **Jesli NIE podano ticket-id**:
-  1. Pobierz tablice Kanban: `mcp__monolynx__get_board(project_slug="<NAZWA_PROJEKTU>")`
+  1. Pobierz tablice Kanban: `mcp__monolynx__get_board(project_slug="<PROJECT-SLUG>")`
   2. Wyswietl uzytkownikowi tickety z kolumn `todo` i `in_progress` w czytelnej formie (ID, tytul, priorytet, story points)
   3. Zapytaj: **"Ktory ticket chcesz podjac? Podaj ID."**
   4. Poczekaj na odpowiedz uzytkownika — NIE kontynuuj bez wyboru
 
-## KROK 2: Przeczytaj i zrozum zadanie
+## KROK 2: Walidacja brancha Git
+
+**CEL**: Upewnic sie, ze developer pracuje na wlasciwym branchu przed rozpoczeciem pracy.
+
+### 2a. Sprawdz aktualny branch
+
+```bash
+git branch --show-current
+```
+
+### 2b. Porownaj z oczekiwanym wzorcem
+
+Oczekiwany wzorzec nazwy brancha: `feature-<numer_ticketu>-<slug>` (np. `feature-42-kopiowanie-id`).
+
+Wyodrebnij numer ticketu z pobranego ticketa (pole `key`, np. `MON-42` → numer `42`).
+
+### 2c. Decyzja
+
+- **Jesli branch pasuje do wzorca** (zawiera numer ticketu) → kontynuuj do KROK 3
+- **Jesli branch NIE pasuje** → zapytaj uzytkownika:
+
+> Pracujesz nad ticketem **#[numer]** (`[tytul]`), ale jestes na branchu `[aktualny_branch]`.
+>
+> Co chcesz zrobic?
+> - **(a)** Kontynuowac na obecnym branchu `[aktualny_branch]`
+> - **(b)** Przejsc na `main`, pobrac zmiany i utworzyc nowy branch `feature-[numer]-[slug]`
+
+**Jesli uzytkownik wybral (b)**:
+
+```bash
+git checkout main && git pull origin main && git checkout -b feature-<numer>-<slug>
+```
+
+Gdzie `<slug>` to skrocony, kebab-case tytul ticketu (max 4-5 slow, bez polskich znakow).
+
+**Poczekaj na odpowiedz uzytkownika** — NIE kontynuuj bez decyzji.
+
+## KROK 3: Researcher — analiza zadania
+
+**CEL**: Pelna analiza zadania ZANIM zespol zacznie prace. Researcher to super-agent eksploracyjny, ktory buduje kompletny raport dla Team Agenta.
+
+### 3a. Uruchom Researchera
+
+Uruchom agenta `Explore` z nastepujacym zadaniem:
+
+```
+Agent(
+  subagent_type="Explore",
+  description="Researcher — analiza ticketu",
+  prompt="Jestes Researcherem projektu Monolynx. Twoim zadaniem jest pelna analiza ticketu i przygotowanie raportu dla zespolu.
+
+TICKET: [tytul]
+OPIS: [pelny opis ticketu]
+KOMENTARZE: [jesli sa]
+
+Wykonaj nastepujace kroki:
+
+1. **Przeczytaj i zrozum ticket** — stresz zadanie wlasnymi slowami
+2. **Zbadaj kod** — znajdz pliki, klasy i funkcje powiazane z zadaniem. Uzyj Glob i Grep do przeszukania kodu.
+3. **Przeszukaj wiki** — uzyj mcp__monolynx__search_wiki(project_slug='monolynx', query='<zapytanie>') dla kazdego istotnego tematu z ticketu
+4. **Przeszukaj graf** — uzyj mcp__monolynx__query_graph(project_slug='monolynx', search='<nazwa pliku/funkcji>') dla kluczowych elementow kodu. Jesli graf niedostepny — pomin.
+
+Na koniec wygeneruj RAPORT w dokladnie tym formacie:
+
+## Raport Researchera
+
+### Opis zadania
+[Streszczenie ticketu wlasnymi slowami — co i dlaczego trzeba zrobic]
+
+### Analiza kodu
+- Pliki do modyfikacji: [lista z krotkim opisem co trzeba zmienic]
+- Powiazane moduly: [lista modulow ktorych dotyka zmiana]
+- Potencjalne ryzyka: [co moze sie zepsuc, na co uwazac]
+
+### Kontekst z Wiki
+[Wyciag z powiazanych stron wiki — lub 'Brak powiazanych stron']
+
+### Zaleznosci z Grafu
+[Mapa powiazanych wezlow i krawedzi — lub 'Graf niedostepny/brak wynikow']
+
+### Rekomendacje
+- Sugerowane podejscie: [opis jak najlepiej zrealizowac zadanie]
+- Estymowany zakres zmian: [maly/sredni/duzy]
+- Potrzebni agenci: [lista rekomendowanych typow agentow z uzasadnieniem]"
+)
+```
+
+### 3b. Jesli Researcher nie moze byc uruchomiony
+
+Jesli z jakiegokolwiek powodu agent `Explore` nie jest dostepny:
+
+1. Poinformuj uzytkownika: _"Potrzebuje agenta Explore do pelnej analizy. Czy chcesz go skonfigurowac? Mozesz tez kontynuowac bez niego — sam zrobie uproszczona analize."_
+2. **Jesli uzytkownik chce kontynuowac bez Researchera** — wykonaj uproszczona analize samodzielnie:
+   - Przeczytaj ticket
+   - Uzyj Glob/Grep do znalezienia powiazanych plikow
+   - Zbuduj uproszczony raport i przejdz do KROK 4
+
+### 3c. Zapisz raport
+
+Zapisz raport Researchera — bedzie uzyty w KROK 4 i KROK 5.
+
+## KROK 4: Przeczytaj zadanie, zmien status, zapisz czas
 
 1. Pobierz pelne szczegoly ticketa: `mcp__monolynx__get_ticket(...)` (jesli jeszcze nie pobrane)
 2. Przeczytaj opis, komentarze, priorytet, story points
-3. Zapisz czas startu pracy Team Managera:
+3. Zapisz czas startu pracy:
 
 ```bash
 date +%s
@@ -48,168 +147,28 @@ date +%s
 4. Zmien status ticketa na `in_progress`:
 
 ```
-mcp__monolynx__update_ticket(project_slug="<NAZWA_PROJEKTU>", ticket_id="<ID>", status="in_progress")
+mcp__monolynx__update_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<ID>", status="in_progress")
 ```
 
-## KROK 2a: Agent rozpoznawczy — analiza kontekstu sprintu
+## KROK 5: Team Agent — dobierz agentow na podstawie raportu
 
-Przed rozpoczeciem wlasciwej pracy, uruchom agenta rozpoznawczego (w tle), ktory sprawdzi co juz zostalo zrobione w biezacym sprincie i czy ma to wplyw na nasze zadanie.
+### Dostepni agenci
 
-### Instrukcja dla agenta rozpoznawczego
-
-Uruchom agenta `general-purpose` z nastepujacym zadaniem:
-
-```
-Agent(
-  subagent_type="general-purpose",
-  prompt="Jestes agentem rozpoznawczym. Twoim zadaniem jest sprawdzenie kontekstu biezacego sprintu dla projektu <NAZWA_PROJEKTU>.
-
-ZADANIE BIEZACE: [tytul ticketa] (ID: [ticket_id])
-OPIS: [krotki opis ticketa]
-
-KROKI:
-1. Pobierz tablice Kanban:
-   mcp__monolynx__get_board(project_slug='<NAZWA_PROJEKTU>')
-
-2. Zidentyfikuj tickety ze statusem 'in_progress', 'in_review' lub 'done' w biezacym sprincie.
-
-3. Dla kazdego takiego ticketa pobierz jego szczegoly i komentarze:
-   mcp__monolynx__get_ticket(project_slug='<NAZWA_PROJEKTU>', ticket_id='<ID>')
-
-4. Ocenienie: Czy ktorekolwiek z tych zakonczonych/trwajacych zadan:
-   - Modyfikuja te same pliki co nasze zadanie?
-   - Dotycza tego samego modulu/funkcjonalnosci?
-   - Wprowadzaja zmiany, ktore moga wplynac na nasze zadanie (np. nowe modele, zmienione API, migracje)?
-
-5. Zwroc DOKLADNIE jeden z dwoch formatow:
-
-   A) Jesli sa powiazane zadania:
-   'KONTEKST SPRINTU — ZNALEZIONO POWIAZANIA
-
-   Powiazane tickety:
-   - [TICKET-ID]: [tytul] (status: [status])
-     Co zrobiono: [krotkie podsumowanie z komentarzy]
-     Wplyw na nasze zadanie: [konkretny opis wplywu]
-
-   - [TICKET-ID]: [tytul] (status: [status])
-     ...
-
-   Rekomendacje dla Team Managera:
-   - [co nalezy wziac pod uwage]'
-
-   B) Jesli brak powiazan:
-   'KONTEKST SPRINTU — CZYSTA KARTA
-
-   Przeanalizowano [N] ticketow w sprincie. Zaden z nich nie wplywa na zadanie [TICKET-ID].
-   Team Manager moze rozpoczac prace bez dodatkowych zaleznosci.'
-
-WAZNE: Zaladuj narzedzia Monolynx PRZED uzyciem: ToolSearch(query='+monolynx ticket board comment')
-WAZNE: Nie pisz kodu. Tylko analizuj i raportuj."
-)
-```
-
-Team Manager MUSI przeczytac raport agenta rozpoznawczego ZANIM przejdzie do kroku 3 (dobor agentow). Jesli agent znalazl powiazania — uwzglednij je w planie pracy i w promptach agentow roboczych.
-
-## KROK 2b: Przeszukaj wiki projektu
-
-Po zrozumieniu zadania, przeszukaj wiki w poszukiwaniu przydatnych informacji:
-
-1. Wyszukaj semantycznie po tytule/opisie ticketa:
-
-```
-mcp__monolynx__search_wiki(project_slug="<NAZWA_PROJEKTU>", query="<kluczowe slowa z ticketa>", limit=5)
-```
-
-2. Jesli znaleziono trafne wyniki — przeczytaj najwazniejsze strony:
-
-```
-mcp__monolynx__get_wiki_page(project_slug="<NAZWA_PROJEKTU>", page_id="<page_id>")
-```
-
-3. Zapamietaj:
-   - **Jakie strony wiki sa powiazane** z tym zadaniem (ID + tytuly)
-   - **Czy znaleziono przydatne informacje** — przyda sie to agentom i w KROKU 5 do aktualizacji wiki
-   - **Czy wiki wymaga uzupelnienia** po zakonczeniu pracy
-
-4. Jesli wiki zawiera istotne informacje dla agentow — **dolacz je do promptow agentow** w KROKU 4b (np. kontekst architektoniczny, konwencje, API docs)
-
-## KROK 2c: Odczytaj kontekst z grafu kodu
-
-**CEL**: Zbuduj mape zaleznosci kodu, ktory bedzie modyfikowany. Dzieki temu agenci beda wiedzieli jakie pliki/funkcje sa powiazane i co moze wymagac zmian.
-
-1. **Wyodrebnij elementy kodu z ticketa**
-
-Przeanalizuj tytul i opis ticketa. Zidentyfikuj:
-- Nazwy plikow (np. `invoices/services.py`, `clients/models.py`)
-- Nazwy funkcji/klas/modulow (np. `Invoice`, `Client`)
-- Moduly systemu (np. "invoices", "clients")
-
-2. **Odpytaj graf**
-
-Dla kazdego zidentyfikowanego elementu:
-
-Wyszukaj node'y powiazane z zadaniem:
-
-```
-mcp__monolynx__query_graph(
-  project_slug="<NAZWA_PROJEKTU>",
-  node_type="File",       // lub Class, Function, Method, Const, Module
-  search="<nazwa pliku lub funkcji>"
-)
-```
-
-Pobierz sasiadow kluczowych node'ow (max 3-5 najwazniejszych):
-
-```
-mcp__monolynx__get_graph_node(
-  project_slug="<NAZWA_PROJEKTU>",
-  node_id="<id node'a>"
-)
-```
-
-3. **Zbuduj mape kontekstu**
-
-Na podstawie wynikow z grafu, zbuduj zwiezla mape:
-
-```
-MAPA KONTEKSTU Z GRAFU:
-- Plik: dist/app/invoices/services.py
-  - Zawiera: iFirmaService, create_invoice, switch_billing_month
-  - Importowany przez: invoices/admin.py, invoices/tasks.py
-  - Wywoluje: models.Invoice, models.iFirmaIntegrationLog
-
-- Plik: dist/app/clients/models.py
-  - Zawiera: Client, payment_type, invoice_pricing
-  - Importuje: BaseInfoModel
-```
-
-Ta mapa bedzie przekazana agentom w KROK 4b.
-
-**UWAGA**: Jesli graf nie jest dostepny (Neo4j wylaczony) lub brak wynikow — pomin ten krok i kontynuuj bez kontekstu grafu.
-
-## KROK 3: Dobierz agentow
-
-### Odkryj dostepnych agentow
-
-Przeskanuj folder `.claude/agents/` aby poznac dostepnych agentow:
-
-```bash
-ls -1 .claude/agents/*.md
-```
-
-Dla kazdego pliku przeczytaj frontmatter (name, description) aby zrozumiec specjalizacje agenta. Uzyj `subagent_type` = wartosc pola `name` z frontmattera pliku agenta.
-
-**Krytyk jest ZAWSZE w zespole** — nie pochodzi z folderu agentow, jest wbudowany:
-
-| Agent | Specjalizacja          |
-|-------|------------------------|
-| Krytyk | Code review, quality gate (0-100%) — **ZAWSZE OBOWIAZKOWY** |
+| Agent | subagent_type | Specjalizacja |
+|-------|---------------|---------------|
+| Backend Developer | `backend-developer` | FastAPI, SQLAlchemy, Alembic, Pydantic, security, services |
+| Frontend Developer | `frontend-developer` | Jinja2, Tailwind CSS, HTMX, Cytoscape.js, EasyMDE |
+| Database Specialist | `database-specialist` | Alembic migrations, query optimization, pgvector, Neo4j |
+| QA Tester | `qa-tester` | pytest, fixtures, mocking, coverage, regression tests |
+| DevOps Infra | `devops-infra` | Docker, Docker Compose, GitLab CI, Traefik, MinIO |
+| Krytyk | `code-reviewer` | Code review, quality gate (0-100%) — **ZAWSZE OBOWIAZKOWY** |
 
 ### Zasady doboru
 
-1. **Jesli ticket wskazuje agentow w tresci** — uzyj wskazanych
-2. **Jesli NIE wskazuje** — przeczytaj opisy agentow z `.claude/agents/` i dobierz na podstawie tresci zadania. Wybierz MINIMALNY zestaw potrzebny do wykonania zadania
-3. **Krytyk jest ZAWSZE w zespole** — nie trzeba go wybierac, jest automatycznie
+1. **Przeanalizuj raport Researchera** — sekcja "Potrzebni agenci" to rekomendacja, ale Team Agent podejmuje ostateczna decyzje
+2. **Jesli ticket wskazuje agentow w tresci** — uzyj wskazanych
+3. **Jesli NIE wskazuje** — dobierz na podstawie raportu i tresci zadania. Wybierz MINIMALNY zestaw potrzebny do wykonania zadania
+4. **Krytyk (`code-reviewer`) jest ZAWSZE w zespole** — jest automatycznie dodawany, nie trzeba go wybierac
 
 ### Dodaj komentarz z planem
 
@@ -217,151 +176,171 @@ Po wyborze agentow, ZANIM zaczniesz prace, dodaj komentarz do ticketa:
 
 ```
 mcp__monolynx__add_comment(
-  project_slug="<NAZWA_PROJEKTU>",
+  project_slug="<PROJECT-SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager — Plan pracy**\n\nDobrani agenci:\n- [agent 1] — [uzasadnienie]\n- [agent 2] — [uzasadnienie]\n- critic — obowiazkowy quality gate\n\nKontekst z grafu kodu:\n- [krotkie podsumowanie powiazanych plikow/funkcji z KROK 2c]\n\nPlan realizacji:\n1. [krok 1 — ktory agent]\n2. [krok 2 — ktory agent]\n..."
+  content="**Team Manager — Plan pracy**\n\n**Raport Researchera (streszczenie):**\n- [krotkie podsumowanie raportu — zakres zmian, ryzyka, podejscie]\n\n**Dobrani agenci:**\n- [agent 1] — [uzasadnienie]\n- [agent 2] — [uzasadnienie]\n- code-reviewer — obowiazkowy quality gate\n\n**Plan realizacji:**\n1. [krok 1 — ktory agent, co robi]\n2. [krok 2 — ktory agent, co robi]\n..."
 )
 ```
 
-## KROK 4: Wykonaj prace — petla agent + krytyk
+## KROK 6: Agents Team — praca rownlegla
 
-Dla kazdego agenta roboczego (NIE krytyka) wykonaj nastepujacy cykl:
+**ZASADA KLUCZOWA**: Wszyscy wybrani developerzy + krytyk startuja **JEDNOCZESNIE** (rownolegle). Krytyk pracuje rownolegle z developerami i robi review na biezaco.
 
-### 4a. Zmierz czas startu agenta
+### 6.0 Sprawdz czy Agent Teams jest wlaczony
+
+Sprawdz wartosc zmiennej srodowiskowej:
+
+```bash
+echo $CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+```
+
+- **Jesli `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`** → uzyj natywnych Agent Teams (TeamCreate) do uruchomienia zespolu. Stworz team z wybranymi agentami i krytykiem, kazdy z wlasnym promptem. Agent Teams zarzadza rownlegloscia automatycznie.
+- **Jesli zmienna nie jest ustawiona lub != 1** → uzyj standardowego podejscia z wieloma wywolaniami `Agent()` w jednej wiadomosci (opisane ponizej w 6b).
+
+### 6a. Zmierz czas startu
 
 ```bash
 date +%s
 ```
 
-### 4b. Uruchom agenta z instrukcja self-reportingu
+### 6b. Uruchom WSZYSTKICH agentow rownoczesnie
 
-Uzyj `Task` tool z odpowiednim `subagent_type`. W prompcie ZAWSZE zawrzyj:
+**Jesli Agent Teams wlaczony** — uzyj `TeamCreate` do stworzenia zespolu z agentami i krytykiem.
+
+**Jesli Agent Teams wylaczony** — w **jednej wiadomosci** uruchom WSZYSTKICH wybranych agentow + krytyka. Kazdy agent dostaje:
 
 - Pelna tresc ticketa (tytul + opis)
-- Konkretny zakres pracy dla TEGO agenta (co dokladnie ma zrobic)
-- **Kontekst z grafu kodu** (mapa z KROK 2c) — lista powiazanych plikow, funkcji i ich zaleznosci. Dodaj uwage: "Jesli zmieniasz sygnatury funkcji, sprawdz wszystkich callerow wymienionych powyzej."
-- **Instrukcje self-reportingu** (patrz nizej)
+- **Raport Researchera** (pelny lub odpowiedni fragment)
+- Konkretny zakres pracy dla TEGO agenta
+- Liste powiazanych plikow i zaleznosci z raportu
+- **Liste kryteriow akceptacji przypisanych do TEGO agenta** (jesli ticket ma acceptance criteria)
 
-**KRYTYCZNE: Kazdy agent MUSI sam mierzyc czas, dodawac komentarz i logowac czas.**
-
-Szablon promptu agenta roboczego:
+**WAZNE — Acceptance Criteria**: Jesli ticket posiada kryteria akceptacji, przypisz kazde kryterium do agenta, ktory jest odpowiedzialny za jego realizacje. W prompcie agenta dodaj:
 
 ```
-Task(
-  subagent_type="<typ>",
-  prompt="Ticket: [tytul]\n\nOpis: [tresc]\n\nTwoje zadanie: [konkretny zakres]\n\nPlan ref: agile/plan-1/...\n\n---\n\n## OBOWIAZKOWY SELF-REPORTING\n\nPo zakonczeniu pracy MUSISZ wykonac te kroki:\n\n### 1. Zmierz czas\nNa POCZATKU pracy uruchom `date +%s` i zapamietaj timestamp.\nNa KONCU pracy uruchom `date +%s` ponownie.\nOblicz roznice i przelicz na minuty (minimum 1 min).\n\n### 2. Dodaj komentarz do ticketa\n```\nmcp__monolynx__add_comment(\n  project_slug=\"<NAZWA_PROJEKTU>\",\n  ticket_id=\"<TICKET_ID>\",\n  content=\"**[Twoja nazwa agenta] — Podsumowanie pracy**\\n\\nCo zrobiono:\\n- [zmiana 1 — plik/pliki]\\n- [zmiana 2 — plik/pliki]\\n\\nCzas pracy: [X] min\\n[Jedno zdanie podsumowujace]\"\n)\n```\n\n### 3. Zaloguj czas\n```\nmcp__monolynx__log_time(\n  project_slug=\"<NAZWA_PROJEKTU>\",\n  ticket_id=\"<TICKET_ID>\",\n  duration_minutes=<minuty>,\n  date_logged=\"<YYYY-MM-DD>\",\n  description=\"[Twoja nazwa] — [krotki opis]\"\n)\n```\n\nWAZNE: Self-reporting jest OBOWIAZKOWY. Nie konczysz pracy bez dodania komentarza i zalogowania czasu."
+KRYTERIA AKCEPTACJI DO ODHACZENIA (po zakonczeniu pracy):
+- [criterion_id] — [opis kryterium]
+- [criterion_id] — [opis kryterium]
+
+Po zakonczeniu pracy, dla KAZDEGO kryterium ktore zrealizowales, uzyj:
+mcp__monolynx__update_acceptance_criterion(project_slug="<PROJECT-SLUG>", ticket_id="<ID>", criterion_id="<CID>", is_completed=true)
+```
+
+Jesli kryterium dotyczy wiecej niz jednego agenta — przypisz je do tego, ktory odpowiada za WIEKSZOŚĆ pracy zwiazanej z kryterium.
+
+Przyklad (3 agentow + krytyk w jednej wiadomosci):
+
+```
+Agent(
+  subagent_type="backend-developer",
+  description="Backend — [krotki opis]",
+  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla backendu]\n\nUWAGA: Jesli zmieniasz sygnatury funkcji, sprawdz wszystkich callerow wymienionych w raporcie."
+)
+
+Agent(
+  subagent_type="frontend-developer",
+  description="Frontend — [krotki opis]",
+  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla frontendu]"
+)
+
+Agent(
+  subagent_type="code-reviewer",
+  description="Krytyk — review kodu",
+  prompt="Jestes Krytykiem (code-reviewer). Sprawdzasz prace WSZYSTKICH agentow na tickecie [tytul].\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nZakres pracy zespolu:\n- backend-developer: [co robi]\n- frontend-developer: [co robi]\n\nTwoje zadanie:\n1. Poczekaj az agenci skoncza prace (sprawdz git diff lub zmodyfikowane pliki)\n2. Sprawdz WSZYSTKIE zmienione pliki\n3. Ocen kazde agenta osobno (0-100%)\n4. Podaj feedback co poprawic jesli < 80%\n\nFormat odpowiedzi:\n**Code Review**\n- [agent 1]: [score]/100 — [feedback]\n- [agent 2]: [score]/100 — [feedback]\n- Ogolna ocena: [score]/100\n- Status: APPROVED / NEEDS WORK"
 )
 ```
 
-**Pamietaj**: Zamien `<TICKET_ID>` na rzeczywiste ID ticketa i `<YYYY-MM-DD>` na dzisiejsza date.
+### 6c. Obsluz wyniki
 
-### 4c. Zmierz czas konca agenta
+Po zakonczeniu pracy WSZYSTKICH agentow:
+
+1. **Zbierz wyniki** od wszystkich agentow i krytyka
+2. **Jesli krytyk dal >= 80% kazdemu agentowi** → przejdz do KROK 6d
+3. **Jesli krytyk dal < 80% jakiemus agentowi**:
+   - Uruchom TYLKO tego agenta ponownie z feedbackiem krytyka
+   - Uruchom krytyka ponownie dla poprawionego kodu
+   - **Maksymalnie 3 iteracje** na agenta
+   - Po 3 nieudanych iteracjach → zapytaj uzytkownika o decyzje
+
+### 6d. Zmierz czas konca i dodaj komentarze
 
 ```bash
 date +%s
 ```
 
-Oblicz czas pracy agenta (koniec - start) i przelicz na minuty. Zapamietaj — przyda sie do podsumowania.
+Oblicz czas pracy (koniec - start) i przelicz na minuty.
 
-### 4d. Review przez krytyka (z self-reportingiem)
-
-Po zakonczeniu pracy agenta, **ZAWSZE** uruchom krytyka. Krytyk rowniez MUSI sam mierzyc czas i raportowac:
-
-```
-Task(
-  subagent_type="critic",
-  prompt="Sprawdz prace agenta [nazwa agenta] na tickecie [tytul].\n\nZakres pracy: [co agent mial zrobic]\n\nSprawdz pliki: [lista plikow do review]\n\nOcen 0-100 i uzasadnij.\n\n---\n\n## OBOWIAZKOWY SELF-REPORTING\n\nPo zakonczeniu review MUSISZ wykonac te kroki:\n\n### 1. Zmierz czas\nNa POCZATKU review uruchom `date +%s` i zapamietaj timestamp.\nNa KONCU review uruchom `date +%s` ponownie.\nOblicz roznice i przelicz na minuty (minimum 1 min).\n\n### 2. Dodaj komentarz do ticketa\n```\nmcp__monolynx__add_comment(\n  project_slug=\"<NAZWA_PROJEKTU>\",\n  ticket_id=\"<TICKET_ID>\",\n  content=\"**Krytyk — Review [nazwa agenta]**\\n\\nOcena: [score]/100\\n\\nCo sprawdzono:\\n- [aspekt 1]\\n- [aspekt 2]\\n\\nUwagi:\\n- [uwaga 1 lub 'brak uwag']\\n\\nWerdykt: [APPROVED/NEEDS WORK]\\n\\nCzas review: [X] min\"\n)\n```\n\n### 3. Zaloguj czas\n```\nmcp__monolynx__log_time(\n  project_slug=\"<NAZWA_PROJEKTU>\",\n  ticket_id=\"<TICKET_ID>\",\n  duration_minutes=<minuty>,\n  date_logged=\"<YYYY-MM-DD>\",\n  description=\"Krytyk — review [nazwa agenta]\"\n)\n```\n\nWAZNE: Self-reporting jest OBOWIAZKOWY. Nie konczysz review bez dodania komentarza i zalogowania czasu."
-)
-```
-
-### 4e. Petla poprawek
-
-- **Krytyk dal < 83%**: Wez feedback krytyka, uruchom tego samego agenta ponownie z instrukcja poprawek (+ self-reporting). Potem ponownie krytyk. **Maksymalnie 3 iteracje.**
-- **Krytyk dal >= 83%**: Praca zaakceptowana. Przejdz do nastepnego agenta lub kroku 5 (wiki) i 6 (podsumowanie).
-- **Po 3 nieudanych iteracjach**: Przerwij i zapytaj uzytkownika o decyzje.
-
-### 4f. Rownolegle vs sekwencyjnie
-
-- **Agenci NIEZALEZNI** (np. backend i frontend, jesli nie maja wspolnych zaleznosci) — uruchamiaj ROWNOLEGLE przez wiele Task w jednej wiadomosci
-- **Agenci ZALEZNI** (np. backend musi byc gotowy zanim MCP server) — uruchamiaj SEKWENCYJNIE
-- **Krytyk ZAWSZE po agencie** — nigdy rownolegle z agentem ktorego ocenia
-
-## KROK 5: Aktualizacja wiki (Team Manager)
-
-Po zakonczeniu pracy WSZYSTKICH agentow, PRZED podsumowaniem, Team Manager aktualizuje wiki projektu.
-
-### 5a. Ocenienie potrzeby aktualizacji wiki
-
-Na podstawie informacji z KROKU 2b (przeszukanie wiki) oraz wykonanej pracy, zdecyduj:
-
-1. **Wiki znalazlo trafne strony i tresc jest nadal aktualna** — brak akcji wiki
-2. **Wiki znalazlo trafne strony, ale tresc wymaga uzupelnienia** (np. nowe API, zmieniona architektura, nowe konwencje) — zaktualizuj istniejaca strone
-3. **Wiki NIE znalazlo trafnych stron** a wykonana praca wnosi wiedze warta udokumentowania (nowy modul, integracja, wazna decyzja architektoniczna) — utworz nowa strone
-
-### 5b. Aktualizacja istniejace strony (jesli potrzebna)
-
-```
-mcp__monolynx__update_wiki_page(
-  project_slug="<NAZWA_PROJEKTU>",
-  page_id="<page_id z kroku 2b>",
-  content="<zaktualizowana tresc markdown>"
-)
-```
-
-### 5c. Utworzenie nowej strony (jesli potrzebna)
-
-Najpierw sprawdz drzewo wiki, aby znalezc wlasciwe miejsce:
-
-```
-mcp__monolynx__list_wiki_pages(project_slug="<NAZWA_PROJEKTU>")
-```
-
-Wybierz najodpowiedniejsza strone nadrzedna (parent_id) na podstawie tematyki. Nastepnie utworz podstrone:
-
-```
-mcp__monolynx__create_wiki_page(
-  project_slug="<NAZWA_PROJEKTU>",
-  title="<tytul strony>",
-  content="<tresc markdown>",
-  parent_id="<UUID strony nadrzednej>"
-)
-```
-
-### 5d. Zasady tresci wiki
-
-- **Jezyk**: polski
-- **Format**: markdown
-- **Tresc powinna zawierac**: co zostalo zaimplementowane, jakie decyzje podjeto, kluczowe pliki/sciezki, ewentualne ograniczenia
-- **NIE kopiuj calego kodu** — opisz architekture, kontrakty API, konwencje
-- **Tytul strony**: zwiezly, opisowy (np. "Integracja iFirma API", "Model faktur VAT")
-
-## KROK 6: Podsumowanie Team Managera
-
-Po zakonczeniu pracy WSZYSTKICH agentow i aktualizacji wiki:
-
-### 6a. Zmierz calkowity czas
-
-```bash
-date +%s
-```
-
-Oblicz laczny czas Team Managera (od kroku 2 do teraz).
-
-### 6b. Dodaj komentarz podsumowujacy
+Dodaj komentarz do ticketa **W IMIENIU KAZDEGO agenta**:
 
 ```
 mcp__monolynx__add_comment(
-  project_slug="<NAZWA_PROJEKTU>",
+  project_slug="<PROJECT-SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager — Podsumowanie zadania**\n\nZrealizowane:\n- [podsumowanie co zostalo zrobione]\n\nZespol i oceny:\n- [agent 1]: [score]/100 — [1 zdanie]\n- [agent 2]: [score]/100 — [1 zdanie]\n- ...\n\nLaczny czas pracy zespolu: [suma minut z logow agentow] min\n\nCzas pracy Team Managera: [X] min\n[Jedno zdanie podsumowujace calosc zadania]"
+  content="**[Nazwa agenta] — Podsumowanie pracy**\n\nCo zrobiono:\n- [zmiana 1 — plik/pliki]\n- [zmiana 2 — plik/pliki]\n- ...\n\nOcena krytyka: [score]/100 ([APPROVED/NEEDS WORK] -> ile iteracji)\n\nCzas pracy: [X] min\n[Jedno zdanie podsumowujace prace agenta]"
 )
 ```
 
-### 6c. Zaloguj czas pracy Team Managera
+### 6f. Weryfikacja kryteriow akceptacji
+
+**CEL**: Upewnic sie, ze WSZYSTKIE kryteria akceptacji ticketu sa odhaczone przed zamknieciem zadania.
+
+1. Pobierz aktualna liste kryteriow:
+
+```
+mcp__monolynx__list_acceptance_criteria(project_slug="<PROJECT-SLUG>", ticket_id="<ID>")
+```
+
+2. Sprawdz status kazdego kryterium:
+   - **Jesli WSZYSTKIE odhaczone** → przejdz do KROK 7
+   - **Jesli sa nieodhaczone** → dla kazdego nieodhaczonego kryterium:
+     a. Sprawdz czy praca faktycznie zostala wykonana (przegladnij wyniki agentow, git diff, zmodyfikowane pliki)
+     b. **Jesli praca zostala wykonana** — odhacz kryterium:
+        ```
+        mcp__monolynx__update_acceptance_criterion(project_slug="<PROJECT-SLUG>", ticket_id="<ID>", criterion_id="<CID>", is_completed=true)
+        ```
+     c. **Jesli praca NIE zostala wykonana** — zapisz to kryterium jako niezrealizowane (do raportu w kroku 7)
+
+3. Jesli sa niezrealizowane kryteria — poinformuj uzytkownika w podsumowaniu (KROK 7e)
+
+### 6e. Zaloguj czas pracy kazdego agenta
 
 ```
 mcp__monolynx__log_time(
-  project_slug="<NAZWA_PROJEKTU>",
+  project_slug="<PROJECT-SLUG>",
+  ticket_id="<ID>",
+  duration_minutes=<obliczony czas w minutach, minimum 1>,
+  date_logged="<YYYY-MM-DD>",
+  description="[Nazwa agenta] — [krotki opis co zrobiono]"
+)
+```
+
+## KROK 7: Podsumowanie Team Managera
+
+Po zakonczeniu pracy WSZYSTKICH agentow:
+
+### 7a. Zmierz calkowity czas
+
+```bash
+date +%s
+```
+
+Oblicz laczny czas Team Managera (od kroku 4 do teraz).
+
+### 7b. Dodaj komentarz podsumowujacy
+
+```
+mcp__monolynx__add_comment(
+  project_slug="<PROJECT-SLUG>",
+  ticket_id="<ID>",
+  content="**Team Manager — Podsumowanie zadania**\n\nZrealizowane:\n- [podsumowanie co zostalo zrobione]\n\nRaport Researchera: [1-2 zdania podsumowania]\n\nZespol i oceny:\n- [agent 1]: [score]/100 — [1 zdanie]\n- [agent 2]: [score]/100 — [1 zdanie]\n- ...\n\nLaczny czas pracy zespolu: [suma minut wszystkich agentow] min\n\nCzas pracy Team Managera: [X] min\n[Jedno zdanie podsumowujace calosc zadania]"
+)
+```
+
+### 7c. Zaloguj czas pracy Team Managera
+
+```
+mcp__monolynx__log_time(
+  project_slug="<PROJECT-SLUG>",
   ticket_id="<ID>",
   duration_minutes=<calkowity czas Team Managera w minutach, minimum 1>,
   date_logged="<YYYY-MM-DD>",
@@ -369,32 +348,34 @@ mcp__monolynx__log_time(
 )
 ```
 
-### 6d. Zmien status ticketa
+### 7d. Zmien status ticketa
 
 ```
-mcp__monolynx__update_ticket(project_slug="<NAZWA_PROJEKTU>", ticket_id="<ID>", status="in_review")
+mcp__monolynx__update_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<ID>", status="in_review")
 ```
 
-### 6e. Podsumowanie dla uzytkownika
+### 7e. Podsumowanie dla uzytkownika
 
 Wyswietl uzytkownikowi krotkie podsumowanie:
 - Co zostalo zrobione
 - Oceny krytyka dla kazdego agenta
-- Aktualizacja wiki (co zaktualizowano/utworzono, lub "brak zmian w wiki")
 - Laczny czas pracy
 - Status ticketa
+- **Kryteria akceptacji** — ile odhaczonych / ile lacznie. Jesli sa niezrealizowane — wylistuj je z informacja dlaczego nie zostaly odhaczone
 
 ---
 
 ## WAZNE ZASADY
 
 1. **Krytyk NIGDY nie pisze kodu** — tylko ocenia prace innych
-2. **Kazdy agent SAM raportuje** — dodaje komentarz do ticketa i loguje czas przez MCP wewnatrz swojego Task
-3. **Self-reporting jest OBOWIAZKOWY** — agent bez komentarza i zalogowanego czasu = praca niekompletna
-4. **Team Manager ROWNIEZ mierzy czas** — `date +%s` przed i po kazdym agencie (podwojne zabezpieczenie + widocznosc dla TM)
-5. **Jezyk komentarzy**: polski
-6. **Nie zgaduj** — jesli cos jest niejasne w tickecie, zapytaj uzytkownika
-7. **Nie pomijaj krytyka** — kazdy agent MUSI przejsc review, nawet jesli zadanie wydaje sie proste
-8. **Wiki jest zywym dokumentem** — po kazdym zadaniu Team Manager ocenia czy wiki wymaga aktualizacji (KROK 5). Jesli praca wnosi nowa wiedze, wiki MUSI byc zaktualizowane/uzupelnione
-9. **Graf kodu jest opcjonalny** — jesli Neo4j niedostepny lub brak wynikow, kontynuuj bez grafu (krok 2c)
-10. **Graf jest aktualizowany automatycznie** — skrypt `cicd/sync_graph.py` synchronizuje graf z kodem po merge do main. Nie trzeba recznie aktualizowac grafu w trakcie pracy
+2. **Komentarze do ticketa sa OBOWIAZKOWE** — plan (krok 5), kazdy agent (krok 6d), podsumowanie (krok 7b)
+3. **Czas pracy logowany ZAWSZE** — mierz `date +%s` przed i po kazdym agencie
+4. **Jezyk komentarzy**: polski
+5. **Nie zgaduj** — jesli cos jest niejasne w tickecie, zapytaj uzytkownika
+6. **Nie pomijaj krytyka** — kazdy agent MUSI przejsc review, nawet jesli zadanie wydaje sie proste
+7. **Graf kodu jest opcjonalny** — jesli Neo4j niedostepny, Researcher kontynuuje bez grafu
+8. **Graf jest aktualizowany automatycznie** — skrypt `cicd/sync_graph.py` synchronizuje graf z kodem po merge do main. Nie trzeba recznie aktualizowac grafu w trakcie pracy
+9. **Branch musi byc zwalidowany** — KROK 2 jest obowiazkowy, NIE wolno go pominac
+10. **Researcher jest pierwszym krokiem** — KROK 3 jest obowiazkowy. Bez raportu Researchera nie uruchamiaj zespolu agentow (chyba ze uzytkownik swiadomie zrezygnuje z Researchera)
+11. **Praca rownlegla jest obowiazkowa** — w KROK 6 WSZYSCY agenci (developerzy + krytyk) startuja JEDNOCZESNIE w jednej wiadomosci
+12. **Acceptance criteria sa obowiazkowe** — jesli ticket ma kryteria akceptacji, KAZDY agent MUSI odhaczac swoje kryteria po zakonczeniu pracy (krok 6b). Team Manager weryfikuje kompletnosc w kroku 6f PRZED podsumowaniem

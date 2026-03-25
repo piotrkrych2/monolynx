@@ -18,6 +18,7 @@ from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
+from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
 from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.time_tracking_entry import TimeTrackingEntry
@@ -45,6 +46,7 @@ __all__ = [
     "ProjectMember",
     "Sprint",
     "Ticket",
+    "TicketAcceptanceCriterion",
     "TicketAttachment",
     "TicketComment",
     "TicketLabel",

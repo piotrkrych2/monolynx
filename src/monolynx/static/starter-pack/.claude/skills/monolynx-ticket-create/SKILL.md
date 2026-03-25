@@ -178,7 +178,7 @@ Pokryj: funkcjonalnosc, MCP tools (jesli dotyczy), UI (jesli dotyczy), testy (je
    - duzy (6+ plikow): **8-13 SP**
 3. **Zakres** — zawsze podawaj konkretne pliki/endpointy/modele z kroku 3b/3c. Agent realizujacy ticket musi wiedziec GDZIE w kodzie wprowadzac zmiany
 4. **Zaleznosci** — wymien KAZDY powiazany ticket z kroku 3d/4 + infrastrukture z kroku 3c + powiazania z grafu z kroku 3b
-5. **Kryteria akceptacji** — minimum 3, maksimum 10. Kazde weryfikowalne. Kryteria z opisu sa AUTOMATYCZNIE tworzone jako acceptance criteria (checkboxy) przez parametr `acceptance_criteria` w `create_ticket` — nie trzeba dodawac ich osobno
+5. **Kryteria akceptacji** — minimum 3, maksimum 10. Kazde weryfikowalne
 6. **Jezyk** — polski (terminy techniczne w oryginale)
 
 ---
@@ -202,8 +202,6 @@ Wyswietl wygenerowany ticket i zapytaj:
 
 ## KROK 7: Utworz ticket
 
-**WAZNE**: `create_ticket` przyjmuje parametr `acceptance_criteria` — liste opisow kryteriow akceptacji. Kryteria sa tworzone razem z ticketem w jednym requeście (nie trzeba dodawac ich osobno).
-
 ```
 mcp__monolynx__create_ticket(
   project_slug="monolynx",
@@ -212,8 +210,7 @@ mcp__monolynx__create_ticket(
   priority="<low/medium/high>",
   story_points=<liczba>,
   sprint_id="<UUID sprintu lub null dla backlogu>",
-  label_ids=[<lista UUID etykiet lub null>],
-  acceptance_criteria=["<kryterium 1>", "<kryterium 2>", "<kryterium 3>", ...]
+  label_ids=[<lista UUID etykiet lub null>]
 )
 ```
 

@@ -9,7 +9,7 @@ argument-hint: [monolynx-url]
 
 Twoim zadaniem jest wygenerowac skrypt `cicd/sync_graph.py` i stage w `.gitlab-ci.yml` dla **biezacego projektu Python**. Skrypt analizuje kod zrodlowy (AST) i synchronizuje graf zaleznosci z platforma Monolynx.
 
-**Monolynx URL**: `$ARGUMENTS` (domyslnie: `<WPIS DOMYSLNY URL>`)
+**Monolynx URL**: `$ARGUMENTS` (domyslnie: `https://open.monolynx.com`)
 
 ---
 
@@ -17,12 +17,9 @@ Twoim zadaniem jest wygenerowac skrypt `cicd/sync_graph.py` i stage w `.gitlab-c
 
 ### 1a. Znajdz pakiet Python
 
-Całość kodu aplikacji jest w folderze `dist/app`. reszta to rzeczy, których nie chcemy w grafie.
-Skup się na `dist/app`.
-
 Przeszukaj projekt i ustal:
 
-- **Glowny katalog zrodlowy** — `dist/app`
+- **Glowny katalog zrodlowy** — szukaj w kolejnosci: `src/<nazwa>/`, `<nazwa>/`, `app/`
 - **Nazwa pakietu** — z `pyproject.toml` (pole `name`), `setup.py` lub `setup.cfg`
 - **Framework** — sprawdz importy: `django`, `fastapi`, `flask`, `celery`
 
@@ -102,12 +99,9 @@ Skrypt komunikuje sie z Monolynx przez **MCP Streamable HTTP** (JSON-RPC). Uzyj 
 POST {monolynx_url}/mcp/ HTTP/1.1
 Authorization: Bearer {token}
 Content-Type: application/json
-Accept: application/json
 
 {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"sync_graph","version":"1.0"}},"id":1}
 ```
-**KRYTYCZNE**: Naglowek `Accept: application/json` jest **wymagany** przez serwer MCP. Bez niego serwer zwroci HTTP 406 Not Acceptable z bledem "Client must accept application/json". Dolaczaj go do KAZDEGO requestu.
-
 Odpowiedz zawiera header `Mcp-Session-Id` — zapisz go i dolaczaj do kazdego kolejnego requestu.
 
 2. **Wywolanie narzeadzia** (po inicjalizacji):
@@ -116,7 +110,6 @@ POST {monolynx_url}/mcp/ HTTP/1.1
 Authorization: Bearer {token}
 Mcp-Session-Id: {session_id}
 Content-Type: application/json
-Accept: application/json
 
 {"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_graph_nodes","arguments":{"project_slug":"myproject","limit":1000}},"id":2}
 ```
@@ -182,7 +175,7 @@ Identyczna logika jak analiza AST — dwa przebiegi:
 ```
 python cicd/sync_graph.py [opcje]
 
---monolynx-url    URL instancji Monolynx (default: env MONOLYNX_URL lub <WPIS DOMYSLNY URL>)
+--monolynx-url    URL instancji Monolynx (default: env MONOLYNX_URL lub https://open.monolynx.com)
 --token           Bearer token (default: env MONOLYNX_GRAPH_TOKEN)
 --project-slug    Slug projektu na Monolynx (default: env MONOLYNX_PROJECT_SLUG)
 --src-dir         Katalog zrodlowy (default: auto-detekcja)

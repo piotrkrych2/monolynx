@@ -209,6 +209,121 @@
     </div>
 </div>
 
+<!-- Kryteria akceptacji -->
+{% set criteria_total = ticket.acceptance_criteria | length %}
+{% set criteria_done = ticket.acceptance_criteria | selectattr('is_completed') | list | length %}
+<div class="mt-6" id="criteria-section">
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-3">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Kryteria akceptacji</h3>
+            {% if criteria_total > 0 %}
+            <span class="text-sm text-gray-500">{{ criteria_done }}/{{ criteria_total }}</span>
+            <div class="flex items-center gap-1.5">
+                <div class="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-indigo-500 rounded-full transition-all"
+                         style="width: {{ ((criteria_done / criteria_total) * 100) | round | int }}%"></div>
+                </div>
+                <span class="text-xs text-gray-500">{{ ((criteria_done / criteria_total) * 100) | round | int }}%</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div id="criteria-list" class="space-y-2 mb-4">
+        {% for criterion in ticket.acceptance_criteria %}
+        <div class="criterion-item bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3" id="criterion-{{ criterion.id }}">
+            <div class="flex items-start gap-3">
+                <form method="post"
+                      action="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/criteria/{{ criterion.id }}/toggle"
+                      class="mt-0.5 shrink-0">
+                    <input type="checkbox"
+                           onchange="this.form.submit()"
+                           {% if criterion.is_completed %}checked{% endif %}
+                           class="w-4 h-4 rounded border-gray-600 bg-gray-700 accent-indigo-500 cursor-pointer">
+                </form>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="flex-1">
+                            <p id="criterion-text-{{ criterion.id }}"
+                               class="text-sm {% if criterion.is_completed %}line-through text-gray-500{% else %}text-gray-900 dark:text-gray-200{% endif %}">
+                                {{ criterion.description | e }}
+                            </p>
+                            <div class="edit-form-{{ criterion.id }} hidden mt-2">
+                                <form method="post" action="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/criteria/{{ criterion.id }}/edit">
+                                    <textarea name="description" rows="2" required
+                                              class="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:border-indigo-500 resize-y">{{ criterion.description | e }}</textarea>
+                                    <div class="flex gap-2 mt-1.5">
+                                        <button type="submit"
+                                                class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1 rounded transition">
+                                            Zapisz
+                                        </button>
+                                        <button type="button"
+                                                onclick="document.querySelector('.edit-form-{{ criterion.id }}').classList.add('hidden'); document.getElementById('criterion-text-{{ criterion.id }}').classList.remove('hidden')"
+                                                class="text-gray-400 hover:text-gray-200 text-xs px-2 py-1 transition">
+                                            Anuluj
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0 mt-0.5">
+                            <button type="button"
+                                    onclick="document.querySelector('.edit-form-{{ criterion.id }}').classList.toggle('hidden'); document.getElementById('criterion-text-{{ criterion.id }}').classList.toggle('hidden')"
+                                    class="text-gray-500 hover:text-gray-300 text-xs transition">
+                                Edytuj
+                            </button>
+                            <form method="post" action="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/criteria/{{ criterion.id }}/delete" class="inline">
+                                <button type="submit"
+                                        onclick="return confirm('Usunąć to kryterium?')"
+                                        class="text-red-500 hover:text-red-400 text-xs transition">
+                                    Usuń
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 mt-1.5 text-xs text-gray-500">
+                        <span>{{ criterion.created_by_user.email.split('@')[0] }}</span>
+                        <span>&middot;</span>
+                        <span>{{ criterion.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                        {% if criterion.created_via_ai %}
+                        <span class="bg-purple-600 text-white px-1 rounded">AI</span>
+                        {% endif %}
+                        {% if criterion.is_completed and criterion.completed_by_user %}
+                        <span>&middot;</span>
+                        <span class="text-green-500">
+                            Ukończone przez {{ criterion.completed_by_user.email.split('@')[0] }}
+                            {% if criterion.completed_at %}&middot; {{ criterion.completed_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+                        </span>
+                        {% if criterion.completed_via_ai %}
+                        <span class="bg-purple-600 text-white px-1 rounded">AI</span>
+                        {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if not ticket.acceptance_criteria %}
+    <p class="text-gray-500 text-sm italic mb-4">Brak kryteriów akceptacji</p>
+    {% endif %}
+
+    <form method="post" action="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/criteria"
+          class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+        <label class="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Nowe kryterium akceptacji</label>
+        <textarea name="description" rows="2" required
+                  class="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:border-indigo-500 resize-y"
+                  placeholder="Opisz kryterium akceptacji..."></textarea>
+        <div class="mt-2 flex justify-end">
+            <button type="submit"
+                    class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+                Dodaj kryterium
+            </button>
+        </div>
+    </form>
+</div>
+
 <!-- Zalaczniki -->
 <div class="mt-6">
     <div class="flex items-center justify-between mb-4">

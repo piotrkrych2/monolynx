@@ -18,7 +18,7 @@ Użyj tego Skill'a gdy użytkownik:
 
 ### Krok 1: Ustal projekt
 
-Jeśli użytkownik podał slug projektu (np. "<NAZWA_PROJEKTU>") — użyj go.
+Jeśli użytkownik podał slug projektu (np. "<PROJECT-ID>") — użyj go.
 
 Jeśli NIE podał projektu:
 1. Użyj `mcp__monolynx__list_projects` aby wylistować dostępne projekty
@@ -55,11 +55,3 @@ Podaj:
 - Odpowiadaj w języku, w którym pyta użytkownik
 - Nie kopiuj całych stron — wyciągaj istotne fragmenty
 - Jeśli wiki nie zawiera odpowiedzi, zaproponuj przeszukanie kodu źródłowego
-
-## Przykłady zapytań
-
-- "Sprawdź w monolynx jak działa system licencji"
-- "Co mamy w wiki o API?"
-- "Szukaj w wiki informacji o integracji z Bitrix24"
-- "Monolynx — jakie mamy endpointy?"
-- "Wiki — jak wygląda architektura SMS?"

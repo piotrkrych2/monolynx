@@ -45,6 +45,7 @@ from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
+from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
 from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
@@ -261,6 +262,15 @@ def _format_ticket_detail(
             mime = att.mime_type or "application/octet-stream"
             size_str = _human_size(att.size)
             lines.append(f"- {att.filename} ({mime}, {size_str})")
+
+    criteria = list(ticket.acceptance_criteria) if ticket.acceptance_criteria else []
+    if criteria:
+        lines.append("")
+        lines.append(f"## Acceptance Criteria ({len(criteria)})")
+        for ac in criteria:
+            checkbox = "[x]" if ac.is_completed else "[ ]"
+            ai_str = " (AI)" if ac.created_via_ai else ""
+            lines.append(f"{checkbox} {ac.description}{ai_str}")
 
     comments = list(ticket.comments) if ticket.comments else []
     if comments:
@@ -2146,6 +2156,7 @@ async def get_ticket(
                 selectinload(Ticket.comments).selectinload(TicketComment.author),
                 selectinload(Ticket.labels),
                 selectinload(Ticket.attachments),
+                selectinload(Ticket.acceptance_criteria),
             )
             .where(
                 Ticket.id == resolved_id,
@@ -2171,11 +2182,13 @@ async def create_ticket(
     assignee_email: str | None = None,
     due_date: str | None = None,
     label_ids: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
 ) -> dict[str, Any]:
     """Utworz nowy ticket w projekcie. Oznaczany jako created_via_ai=True.
 
     due_date: opcjonalna data graniczna w formacie YYYY-MM-DD
     label_ids: opcjonalna lista UUID etykiet do przypisania
+    acceptance_criteria: opcjonalna lista opisów kryteriów akceptacji — tworzone razem z ticketem, created_via_ai=True
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -2233,6 +2246,22 @@ async def create_ticket(
             for lb in labels:
                 db.add(TicketLabel(ticket_id=ticket.id, label_id=lb.id))
 
+        criteria_count = 0
+        if acceptance_criteria:
+            for idx, desc in enumerate(acceptance_criteria):
+                desc_stripped = desc.strip()
+                if desc_stripped:
+                    db.add(
+                        TicketAcceptanceCriterion(
+                            ticket_id=ticket.id,
+                            description=desc_stripped,
+                            position=idx,
+                            created_by_user_id=_user.id,
+                            created_via_ai=True,
+                        )
+                    )
+                    criteria_count += 1
+
         await db.commit()
         await db.refresh(ticket)
 
@@ -2243,6 +2272,7 @@ async def create_ticket(
         "status": ticket.status,
         "due_date": ticket.due_date.isoformat() if ticket.due_date else None,
         "created_via_ai": True,
+        "acceptance_criteria_count": criteria_count,
         "message": f"Ticket '{ticket.title}' utworzony",
     }
 
@@ -4341,3 +4371,199 @@ async def list_wiki_files(
         }
         for f in files
     ]
+
+
+# --- Kryteria akceptacji ---
+
+
+@mcp.tool()
+async def list_acceptance_criteria(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_id: str,
+) -> str:
+    """Lista kryteriów akceptacji ticketa. ticket_id: UUID lub klucz (np. MNX-12).
+
+    Zwraca tabele z kolumnami: checkbox, opis, autor, data, AI.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+
+    async with async_session_factory() as db:
+        ticket_result = await db.execute(select(Ticket).where(Ticket.id == resolved_id, Ticket.project_id == project.id))
+        if ticket_result.scalar_one_or_none() is None:
+            raise ValueError("Ticket nie istnieje")
+
+        crit_result = await db.execute(
+            select(TicketAcceptanceCriterion)
+            .options(
+                selectinload(TicketAcceptanceCriterion.created_by_user),
+                selectinload(TicketAcceptanceCriterion.completed_by_user),
+            )
+            .where(TicketAcceptanceCriterion.ticket_id == resolved_id)
+            .order_by(TicketAcceptanceCriterion.position)
+        )
+        criteria = crit_result.scalars().all()
+
+    if not criteria:
+        return "Brak kryteriów akceptacji."
+
+    lines: list[str] = [f"Kryteria akceptacji — {len(criteria)} pozycji\n"]
+    for ac in criteria:
+        checkbox = "[x]" if ac.is_completed else "[ ]"
+        author = ac.created_by_user.email if ac.created_by_user else "—"
+        ai_flag = " (AI)" if ac.created_via_ai else ""
+        date_str = ac.created_at.date().isoformat()
+        completed_str = ""
+        if ac.is_completed and ac.completed_at:
+            completed_by = ac.completed_by_user.email if ac.completed_by_user else "—"
+            completed_str = f" | ukonczone: {ac.completed_at.date().isoformat()} przez {completed_by}"
+        lines.append(f"{checkbox} [{ac.id}] {ac.description}{ai_flag} | autor: {author} | {date_str}{completed_str}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def add_acceptance_criterion(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_id: str,
+    description: str,
+) -> dict[str, Any]:
+    """Dodaj kryterium akceptacji do ticketa. ticket_id: UUID lub klucz (np. MNX-12). Oznaczane jako created_via_ai=True."""
+    user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+
+    if not description.strip():
+        raise ValueError("Opis kryterium nie może być pusty")
+
+    async with async_session_factory() as db:
+        ticket_result = await db.execute(select(Ticket).where(Ticket.id == resolved_id, Ticket.project_id == project.id))
+        if ticket_result.scalar_one_or_none() is None:
+            raise ValueError("Ticket nie istnieje")
+
+        max_pos_result = await db.execute(
+            select(func.coalesce(func.max(TicketAcceptanceCriterion.position), -1)).where(TicketAcceptanceCriterion.ticket_id == resolved_id)
+        )
+        max_pos: int = max_pos_result.scalar_one()
+
+        criterion = TicketAcceptanceCriterion(
+            ticket_id=resolved_id,
+            description=description.strip(),
+            position=max_pos + 1,
+            created_by_user_id=user.id,
+            created_via_ai=True,
+        )
+        db.add(criterion)
+        await db.commit()
+        await db.refresh(criterion)
+
+    return {
+        "id": str(criterion.id),
+        "message": "Kryterium akceptacji dodane",
+        "created_via_ai": True,
+        "position": criterion.position,
+    }
+
+
+@mcp.tool()
+async def update_acceptance_criterion(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_id: str,
+    criterion_id: str,
+    description: str | None = None,
+    is_completed: bool | None = None,
+) -> dict[str, Any]:
+    """Zaktualizuj kryterium akceptacji (opis i/lub status ukończenia). Podaj tylko pola do zmiany.
+
+    ticket_id: UUID lub klucz (np. MNX-12).
+    criterion_id: UUID kryterium.
+    Przy ustawieniu is_completed=True: completed_via_ai=True.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+
+    try:
+        crit_uuid = uuid.UUID(criterion_id)
+    except ValueError:
+        raise ValueError("Nieprawidlowy format criterion_id (oczekiwany UUID)") from None
+
+    async with async_session_factory() as db:
+        ticket_result = await db.execute(select(Ticket).where(Ticket.id == resolved_id, Ticket.project_id == project.id))
+        if ticket_result.scalar_one_or_none() is None:
+            raise ValueError("Ticket nie istnieje")
+
+        crit_result = await db.execute(
+            select(TicketAcceptanceCriterion).where(
+                TicketAcceptanceCriterion.id == crit_uuid,
+                TicketAcceptanceCriterion.ticket_id == resolved_id,
+            )
+        )
+        criterion = crit_result.scalar_one_or_none()
+        if criterion is None:
+            raise ValueError("Kryterium akceptacji nie istnieje w tym tickecie")
+
+        if description is not None:
+            if not description.strip():
+                raise ValueError("Opis kryterium nie może być pusty")
+            criterion.description = description.strip()
+
+        if is_completed is not None:
+            if is_completed and not criterion.is_completed:
+                criterion.is_completed = True
+                criterion.completed_by_user_id = user.id
+                criterion.completed_at = datetime.now(UTC)
+                criterion.completed_via_ai = True
+            elif not is_completed and criterion.is_completed:
+                criterion.is_completed = False
+                criterion.completed_by_user_id = None
+                criterion.completed_at = None
+                criterion.completed_via_ai = False
+
+        await db.commit()
+        await db.refresh(criterion)
+
+    return {
+        "id": str(criterion.id),
+        "message": "Kryterium akceptacji zaktualizowane",
+        "is_completed": criterion.is_completed,
+        "description": criterion.description,
+    }
+
+
+@mcp.tool()
+async def delete_acceptance_criterion(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    ticket_id: str,
+    criterion_id: str,
+) -> dict[str, Any]:
+    """Usuń kryterium akceptacji. ticket_id: UUID lub klucz (np. MNX-12). criterion_id: UUID kryterium."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+
+    try:
+        crit_uuid = uuid.UUID(criterion_id)
+    except ValueError:
+        raise ValueError("Nieprawidlowy format criterion_id (oczekiwany UUID)") from None
+
+    async with async_session_factory() as db:
+        ticket_result = await db.execute(select(Ticket).where(Ticket.id == resolved_id, Ticket.project_id == project.id))
+        if ticket_result.scalar_one_or_none() is None:
+            raise ValueError("Ticket nie istnieje")
+
+        crit_result = await db.execute(
+            select(TicketAcceptanceCriterion).where(
+                TicketAcceptanceCriterion.id == crit_uuid,
+                TicketAcceptanceCriterion.ticket_id == resolved_id,
+            )
+        )
+        criterion = crit_result.scalar_one_or_none()
+        if criterion is None:
+            raise ValueError("Kryterium akceptacji nie istnieje w tym tickecie")
+
+        await db.delete(criterion)
+        await db.commit()
+
+    return {"message": "Kryterium akceptacji usunięte", "id": criterion_id}
