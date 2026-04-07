@@ -40,7 +40,7 @@
                 {% if heartbeat.last_ping_at %}
                 <div class="text-right">
                     <p class="text-xs text-gray-500">Ostatni ping</p>
-                    <p class="text-xs text-gray-700 dark:text-gray-300">{{ heartbeat.last_ping_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-xs text-gray-700 dark:text-gray-300">{{ heartbeat.last_ping_at|localtime('%Y-%m-%d %H:%M') }}</p>
                 </div>
                 {% else %}
                 <span class="text-xs text-gray-600">Brak pingu</span>

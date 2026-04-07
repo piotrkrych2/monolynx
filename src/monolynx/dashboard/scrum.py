@@ -44,6 +44,7 @@ from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.services.minio_client import delete_object as minio_delete_object
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
+from monolynx.services.permissions import require_permission
 from monolynx.services.sprint import complete_sprint, start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
 from monolynx.services.time_tracking import (
@@ -104,6 +105,8 @@ async def backlog(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "read")
 
     # Read filter params
     f_status = request.query_params.get("status", "")
@@ -217,6 +220,8 @@ async def board(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "read")
+
     # Aktywny sprint
     result = await db.execute(select(Sprint).where(Sprint.project_id == project.id, Sprint.status == "active"))
     active_sprint = result.scalar_one_or_none()
@@ -294,6 +299,8 @@ async def ticket_create_form(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "read")
+
     members = await _get_project_members(project.id, db)
     labels = await _get_project_labels(project.id, db)
 
@@ -335,6 +342,8 @@ async def ticket_create(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "write")
 
     form = await request.form()
     title = str(form.get("title", "")).strip()
@@ -440,6 +449,8 @@ async def ticket_create_from_issue(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "write")
 
     # Pobierz issue i sprawdz czy nalezy do projektu
     result = await db.execute(select(Issue).options(selectinload(Issue.tickets)).where(Issue.id == issue_id, Issue.project_id == project.id))
@@ -566,6 +577,8 @@ async def ticket_detail(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "read")
+
     result = await db.execute(
         select(Ticket)
         .options(
@@ -626,6 +639,8 @@ async def ticket_comment_create(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "write")
+
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     if result.scalar_one_or_none() is None:
         return HTMLResponse("Ticket not found", status_code=404)
@@ -667,6 +682,8 @@ async def ticket_attachment_serve(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "read")
 
     # Weryfikacja ze zalacznik nalezy do ticketa w tym projekcie
     result = await db.execute(
@@ -715,15 +732,7 @@ async def ticket_attachment_upload(
     if project is None:
         return JSONResponse({"error": "Project not found"}, status_code=404)
 
-    # Sprawdz membership
-    membership = await db.execute(
-        select(ProjectMember).where(
-            ProjectMember.project_id == project.id,
-            ProjectMember.user_id == user_id,
-        )
-    )
-    if membership.scalar_one_or_none() is None:
-        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    await require_permission(db, user_id, project.id, "scrum", "write")
 
     # Sprawdz czy ticket istnieje i nalezy do projektu
     ticket_result = await db.execute(
@@ -792,15 +801,7 @@ async def ticket_attachment_delete(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    # Sprawdz membership
-    membership = await db.execute(
-        select(ProjectMember).where(
-            ProjectMember.project_id == project.id,
-            ProjectMember.user_id == user_id,
-        )
-    )
-    if membership.scalar_one_or_none() is None:
-        return HTMLResponse("Forbidden", status_code=403)
+    await require_permission(db, user_id, project.id, "scrum", "delete")
 
     # Sprawdz czy attachment istnieje i nalezy do ticketa w projekcie
     result = await db.execute(
@@ -844,6 +845,8 @@ async def ticket_edit_form(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "read")
 
     result = await db.execute(
         select(Ticket)
@@ -900,6 +903,8 @@ async def ticket_edit(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "write")
 
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
@@ -968,6 +973,8 @@ async def ticket_delete(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "delete")
+
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
     if ticket is None:
@@ -999,6 +1006,8 @@ async def ticket_status_update(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "write")
+
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
     if ticket is None:
@@ -1023,6 +1032,8 @@ async def ticket_sprint_update(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "write")
 
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
@@ -1095,6 +1106,8 @@ async def time_tracking_log(
     project = await _get_project(slug, db)
     if project is None:
         return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "write")
 
     try:
         body = await request.json()
@@ -1172,6 +1185,8 @@ async def time_tracking_delete(
     if project is None:
         return JSONResponse({"error": "Project not found"}, status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "delete")
+
     # Walidacja: wpis musi nalezec do projektu z URL
     entry_check = await db.execute(select(TimeTrackingEntry).where(TimeTrackingEntry.id == entry_id))
     entry_obj = entry_check.scalar_one_or_none()
@@ -1205,6 +1220,8 @@ async def sprint_list(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "read")
 
     # Filter & pagination params
     filter_status = request.query_params.get("status", "")
@@ -1273,6 +1290,8 @@ async def sprint_create(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "write")
+
     form = await request.form()
     name = str(form.get("name", "")).strip()
     goal = str(form.get("goal", "")).strip() or None
@@ -1330,6 +1349,8 @@ async def sprint_start(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "write")
+
     error = await start_sprint(sprint_id, project.id, db)
     if error:
         flash(request, error, "error")
@@ -1372,6 +1393,8 @@ async def sprint_complete(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "write")
 
     error = await complete_sprint(sprint_id, project.id, db)
     if error:
@@ -1419,6 +1442,8 @@ async def criterion_create(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "write")
+
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     if result.scalar_one_or_none() is None:
         return HTMLResponse("Ticket not found", status_code=404)
@@ -1463,6 +1488,8 @@ async def criterion_toggle(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "write")
 
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     if result.scalar_one_or_none() is None:
@@ -1510,6 +1537,8 @@ async def criterion_edit(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "scrum", "write")
+
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     if result.scalar_one_or_none() is None:
         return HTMLResponse("Ticket not found", status_code=404)
@@ -1552,6 +1581,8 @@ async def criterion_delete(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "delete")
 
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     if result.scalar_one_or_none() is None:

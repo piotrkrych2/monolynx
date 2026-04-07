@@ -113,12 +113,12 @@
 
                 <div>
                     <span class="text-gray-500">Utworzona</span>
-                    <p class="text-gray-900 dark:text-white mt-1">{{ page.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">{{ page.created_at|localtime('%Y-%m-%d %H:%M') }}</p>
                 </div>
 
                 <div>
                     <span class="text-gray-500">Zaktualizowana</span>
-                    <p class="text-gray-900 dark:text-white mt-1">{{ page.updated_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">{{ page.updated_at|localtime('%Y-%m-%d %H:%M') }}</p>
                 </div>
 
                 <div>

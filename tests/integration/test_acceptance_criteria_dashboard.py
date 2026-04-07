@@ -241,7 +241,7 @@ class TestCriterionToggle:
         db_session.add(ticket)
         await db_session.flush()
 
-        user = User(email="ac-tg01@test.com", password_hash=hash_password("testpass123"))
+        user = User(email="ac-tg01@test.com", password_hash=hash_password("testpass123"), is_superuser=True)
         db_session.add(user)
         await db_session.flush()
 
@@ -278,7 +278,7 @@ class TestCriterionToggle:
         db_session.add(ticket)
         await db_session.flush()
 
-        user = User(email="ac-tg02@test.com", password_hash=hash_password("testpass123"))
+        user = User(email="ac-tg02@test.com", password_hash=hash_password("testpass123"), is_superuser=True)
         db_session.add(user)
         await db_session.flush()
 
@@ -357,7 +357,7 @@ class TestCriterionToggle:
         db_session.add(ticket)
         await db_session.flush()
 
-        user = User(email="ac-tg05@test.com", password_hash=hash_password("testpass123"))
+        user = User(email="ac-tg05@test.com", password_hash=hash_password("testpass123"), is_superuser=True)
         db_session.add(user)
         await db_session.flush()
 
@@ -396,7 +396,7 @@ class TestCriterionEdit:
         db_session.add(ticket)
         await db_session.flush()
 
-        user = User(email="ac-ed01@test.com", password_hash=hash_password("testpass123"))
+        user = User(email="ac-ed01@test.com", password_hash=hash_password("testpass123"), is_superuser=True)
         db_session.add(user)
         await db_session.flush()
 
@@ -429,7 +429,7 @@ class TestCriterionEdit:
         db_session.add(ticket)
         await db_session.flush()
 
-        user = User(email="ac-ed02@test.com", password_hash=hash_password("testpass123"))
+        user = User(email="ac-ed02@test.com", password_hash=hash_password("testpass123"), is_superuser=True)
         db_session.add(user)
         await db_session.flush()
 
@@ -499,7 +499,7 @@ class TestCriterionEdit:
         db_session.add(ticket)
         await db_session.flush()
 
-        user = User(email="ac-ed05@test.com", password_hash=hash_password("testpass123"))
+        user = User(email="ac-ed05@test.com", password_hash=hash_password("testpass123"), is_superuser=True)
         db_session.add(user)
         await db_session.flush()
 
@@ -537,7 +537,7 @@ class TestCriterionDelete:
         db_session.add(ticket)
         await db_session.flush()
 
-        user = User(email="ac-del01@test.com", password_hash=hash_password("testpass123"))
+        user = User(email="ac-del01@test.com", password_hash=hash_password("testpass123"), is_superuser=True)
         db_session.add(user)
         await db_session.flush()
 
@@ -604,7 +604,7 @@ class TestCriterionDelete:
         db_session.add(ticket)
         await db_session.flush()
 
-        user = User(email="ac-del04@test.com", password_hash=hash_password("testpass123"))
+        user = User(email="ac-del04@test.com", password_hash=hash_password("testpass123"), is_superuser=True)
         db_session.add(user)
         await db_session.flush()
 

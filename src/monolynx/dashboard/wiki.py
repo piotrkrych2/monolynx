@@ -28,6 +28,7 @@ from monolynx.services.minio_client import delete_object as minio_delete_object
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment
 from monolynx.services.minio_client import upload_object as minio_upload_object
+from monolynx.services.permissions import require_permission
 from monolynx.services.wiki import (
     create_wiki_page,
     delete_wiki_page,
@@ -76,6 +77,8 @@ async def wiki_index(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "read")
+
     tree = await get_page_tree(project.id, db)
 
     return await render_project_page(
@@ -107,6 +110,8 @@ async def wiki_search(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "wiki", "read")
 
     results: list[dict[str, object]] = []
     enabled = embeddings_enabled()
@@ -145,6 +150,8 @@ async def wiki_page_create_form(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "read")
+
     return await render_project_page(
         request,
         "dashboard/wiki/page_form.html",
@@ -173,6 +180,8 @@ async def wiki_page_create(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "wiki", "write")
 
     form = await request.form()
     title = str(form.get("title", "")).strip()
@@ -234,6 +243,8 @@ async def wiki_child_create_form(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "read")
+
     parent = await _get_wiki_page(page_id, project.id, db)
     if parent is None:
         return HTMLResponse("Strona nie istnieje", status_code=404)
@@ -267,6 +278,8 @@ async def wiki_child_create(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "wiki", "write")
 
     parent = await _get_wiki_page(page_id, project.id, db)
     if parent is None:
@@ -333,6 +346,8 @@ async def wiki_page_detail(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "read")
+
     page = await _get_wiki_page(page_id, project.id, db)
     if page is None:
         return HTMLResponse("Strona nie istnieje", status_code=404)
@@ -380,6 +395,8 @@ async def wiki_page_edit_form(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "read")
+
     page = await _get_wiki_page(page_id, project.id, db)
     if page is None:
         return HTMLResponse("Strona nie istnieje", status_code=404)
@@ -417,6 +434,8 @@ async def wiki_page_edit(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "wiki", "write")
 
     page = await _get_wiki_page(page_id, project.id, db)
     if page is None:
@@ -482,6 +501,8 @@ async def wiki_page_delete(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "delete")
+
     page = await _get_wiki_page(page_id, project.id, db)
     if page is None:
         return HTMLResponse("Strona nie istnieje", status_code=404)
@@ -509,6 +530,8 @@ async def wiki_upload(
     project = await _get_project(slug, db)
     if project is None:
         return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    await require_permission(db, user_id, project.id, "wiki", "write")
 
     if file is None or file.filename is None:
         return JSONResponse({"error": "Brak pliku"}, status_code=400)
@@ -542,6 +565,8 @@ async def wiki_attachment(
     project = await _get_project(slug, db)
     if project is None:
         return Response("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "wiki", "read")
 
     minio_path = f"{project.slug}/attachments/{filename}"
     try:
@@ -585,8 +610,7 @@ async def wiki_page_attachment_upload(
     if project is None:
         return JSONResponse({"error": "Project not found"}, status_code=404)
 
-    if await _get_membership(db, project.id, user_id) is None:
-        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    await require_permission(db, user_id, project.id, "wiki", "write")
 
     page = await _get_wiki_page(page_id, project.id, db)
     if page is None:
@@ -652,6 +676,8 @@ async def wiki_page_attachment_serve(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "read")
+
     result = await db.execute(
         select(WikiAttachment)
         .join(WikiPage, WikiAttachment.wiki_page_id == WikiPage.id)
@@ -699,8 +725,7 @@ async def wiki_page_attachment_delete(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    if await _get_membership(db, project.id, user_id) is None:
-        return HTMLResponse("Forbidden", status_code=403)
+    await require_permission(db, user_id, project.id, "wiki", "delete")
 
     result = await db.execute(
         select(WikiAttachment)
@@ -745,6 +770,8 @@ async def wiki_files_list(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "read")
+
     result = await db.execute(select(WikiFile).where(WikiFile.project_id == project.id).order_by(WikiFile.created_at.desc()))
     files = result.scalars().all()
 
@@ -776,8 +803,7 @@ async def wiki_file_upload(
     if project is None:
         return JSONResponse({"error": "Project not found"}, status_code=404)
 
-    if await _get_membership(db, project.id, user_id) is None:
-        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    await require_permission(db, user_id, project.id, "wiki", "write")
 
     if filepond.filename is None or filepond.filename == "":
         return JSONResponse({"error": "Brak nazwy pliku"}, status_code=400)
@@ -835,6 +861,8 @@ async def wiki_file_serve(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "wiki", "read")
+
     result = await db.execute(
         select(WikiFile).where(
             WikiFile.id == file_id,
@@ -875,8 +903,7 @@ async def wiki_file_update_description(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    if await _get_membership(db, project.id, user_id) is None:
-        return HTMLResponse("Forbidden", status_code=403)
+    await require_permission(db, user_id, project.id, "wiki", "write")
 
     result = await db.execute(
         select(WikiFile).where(
@@ -920,8 +947,7 @@ async def wiki_file_description_edit_form(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    if await _get_membership(db, project.id, user_id) is None:
-        return HTMLResponse("Forbidden", status_code=403)
+    await require_permission(db, user_id, project.id, "wiki", "read")
 
     result = await db.execute(
         select(WikiFile).where(
@@ -962,8 +988,7 @@ async def wiki_file_delete(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
-    if await _get_membership(db, project.id, user_id) is None:
-        return HTMLResponse("Forbidden", status_code=403)
+    await require_permission(db, user_id, project.id, "wiki", "delete")
 
     result = await db.execute(
         select(WikiFile).where(

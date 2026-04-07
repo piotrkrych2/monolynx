@@ -158,3 +158,17 @@
 - Located in `dashboard/helpers.py`
 - Adds `sidebar_badges` to context via `get_sidebar_badges(project.id, db)`
 - All normal renders should use it; error renders use `templates.TemplateResponse` directly (established pattern)
+
+## RBAC Module (MON-54)
+- Role model: per-project roles with JSON permissions dict {module: [actions]}
+- ProjectMember.role renamed to role_name + new role_id FK to roles table
+- CRITICAL: rename role→role_name breaks 11 places in mcp_server.py, 3 in settings.py, 6 in templates, 25+ tests
+- Migration creates 3 system roles (Owner/Admin/Member) per project with data migration
+- Uses JSON instead of JSONB (inconsistent with rest of project which uses JSONB everywhere)
+- FK role_id missing ondelete="SET NULL"
+- Role.members relationship missing cascade
+- PERMISSION_MODULES tuple in constants.py covers: 500ki, scrum, monitoring, heartbeat, wiki, connections, settings, reports, users
+- RoleCreate schema allows is_system=True from API — needs service-layer guard
+- RBAC MON-54: iter1=75/100 REQUEST CHANGES (breaking changes blocker, JSON→JSONB, missing ondelete), iter2=88/100 APPROVED (all blockers fixed; low: RoleUpdate missing empty name check, dead test_is_system test)
+- RBAC MON-55: iter1=52, iter2=55, iter3=88/100 APPROVED (backend-dev 90, integrator 88, MCP fixer 90, QA tester 92; 83 require_permission calls in 7 dashboard modules, 5 MCP tools migrated, 23 tests passed; minor: dead _get_membership in wiki.py, lint in tests, scalar_one in get_project)
+- RBAC MON-56 UI: iter1=52/100 NEEDS WORK (6 endpoints missing, sidebar not impl), iter2=84/100 REQUEST CHANGES (all 6 endpoints present, sidebar implemented; BLOCKER: role_delete uses settings:write instead of settings:delete; medium: N+1 query in roles_list, no submitted_permissions on error; low: cascade delete-orphan on Role.members contradicts business logic)

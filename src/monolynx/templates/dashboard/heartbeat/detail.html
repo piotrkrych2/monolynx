@@ -96,7 +96,7 @@ curl -s {{ ping_url }}
                     <span class="text-gray-500">Ostatni ping</span>
                     <p class="text-gray-900 dark:text-white mt-1">
                         {% if heartbeat.last_ping_at %}
-                        {{ heartbeat.last_ping_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                        {{ heartbeat.last_ping_at|localtime }}
                         {% else %}
                         <span class="text-gray-500">Brak pingu</span>
                         {% endif %}
@@ -105,7 +105,7 @@ curl -s {{ ping_url }}
 
                 <div>
                     <span class="text-gray-500">Utworzony</span>
-                    <p class="text-gray-900 dark:text-white mt-1">{{ heartbeat.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">{{ heartbeat.created_at|localtime('%Y-%m-%d %H:%M') }}</p>
                 </div>
             </div>
         </div>

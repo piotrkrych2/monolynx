@@ -264,7 +264,7 @@ class TestProjectListSuperuser:
         await db_session.flush()
 
         # Regular user -- not a member of the project
-        await login_session(client, db_session, email="authsvc-regular@test.com")
+        await login_session(client, db_session, email="authsvc-regular@test.com", is_superuser=False)
 
         resp = await client.get("/dashboard/", follow_redirects=False)
         assert resp.status_code == 200

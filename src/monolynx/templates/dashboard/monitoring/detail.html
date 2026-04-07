@@ -43,6 +43,10 @@
                             {% if monitor.is_active %}Wylacz{% else %}Wlacz{% endif %}
                         </button>
                     </form>
+                    <form method="post" action="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}/test-alert" class="inline">
+                        <button type="submit" class="text-sm text-gray-600 dark:text-gray-400 hover:text-indigo-400 transition"
+                                title="Wyślij testowy alert (email/SMS/Slack)">Test alert</button>
+                    </form>
                     <form method="post" action="/dashboard/{{ project.slug }}/monitoring/{{ monitor.id }}/delete" class="inline">
                         <button type="submit" class="text-sm text-gray-600 dark:text-gray-400 hover:text-red-400 transition"
                                 onclick="return confirm('Czy na pewno chcesz usunąć ten monitor?')">Usuń</button>
@@ -76,7 +80,7 @@
                     <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
                         {% for check in checks %}
                         <tr>
-                            <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ check.checked_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                            <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ check.checked_at|localtime }}</td>
                             <td class="px-4 py-3">
                                 {% if check.is_success %}
                                 <span class="inline-flex items-center gap-1.5">
@@ -175,7 +179,7 @@
 
                 <div>
                     <span class="text-gray-500">Utworzony</span>
-                    <p class="text-gray-900 dark:text-white mt-1">{{ monitor.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">{{ monitor.created_at|localtime('%Y-%m-%d %H:%M') }}</p>
                 </div>
             </div>
         </div>

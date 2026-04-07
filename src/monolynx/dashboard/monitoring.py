@@ -20,6 +20,7 @@ from monolynx.database import get_db
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.project import Project
+from monolynx.services.permissions import require_permission
 
 from .helpers import _get_user_id, flash, render_project_page, templates
 
@@ -137,6 +138,8 @@ async def monitor_list(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "monitoring", "read")
+
     # Pobierz monitory z ostatnim checkiem (subquery na max checked_at)
     latest_check_sq = (
         select(
@@ -197,6 +200,8 @@ async def monitor_create_form(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "monitoring", "read")
+
     return await render_project_page(
         request,
         "dashboard/monitoring/create.html",
@@ -225,6 +230,8 @@ async def monitor_create(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "monitoring", "write")
 
     form = await request.form()
     url = str(form.get("url", "")).strip()
@@ -368,6 +375,8 @@ async def monitor_detail(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "monitoring", "read")
+
     monitor = await _get_monitor(monitor_id, project.id, db)
     if monitor is None:
         return HTMLResponse("Monitor not found", status_code=404)
@@ -442,6 +451,8 @@ async def monitor_toggle(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "monitoring", "write")
+
     monitor = await _get_monitor(monitor_id, project.id, db)
     if monitor is None:
         return HTMLResponse("Monitor not found", status_code=404)
@@ -476,6 +487,8 @@ async def monitor_delete(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "monitoring", "delete")
+
     monitor = await _get_monitor(monitor_id, project.id, db)
     if monitor is None:
         return HTMLResponse("Monitor not found", status_code=404)
@@ -485,3 +498,54 @@ async def monitor_delete(
 
     flash(request, "Monitor zostal usuniety")
     return RedirectResponse(url=f"/dashboard/{slug}/monitoring/", status_code=303)
+
+
+# --- Test alert ---
+
+
+@router.post("/{slug}/monitoring/{monitor_id}/test-alert", response_model=None)
+async def monitor_test_alert(
+    request: Request,
+    slug: str,
+    monitor_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    await require_permission(db, user_id, project.id, "monitoring", "write")
+
+    monitor = await _get_monitor(monitor_id, project.id, db)
+    if monitor is None:
+        return RedirectResponse(url=f"/dashboard/{slug}/monitoring/", status_code=303)
+
+    notification_config = monitor.notification_config or {}
+    if not notification_config:
+        flash(request, "Monitor nie ma skonfigurowanych powiadomien (email/SMS/Slack)", "error")
+        return RedirectResponse(url=f"/dashboard/{slug}/monitoring/{monitor_id}", status_code=303)
+
+    from monolynx.services.notifications import send_monitor_alert
+
+    # Tworzymy fake check do testu
+    class _FakeCheck:
+        status_code = 0
+        error_message = "TEST ALERT — to jest testowe powiadomienie"
+
+    # Tymczasowo wyzeruj debounce zeby test zawsze przeszedl
+    original_last_alert = monitor.last_alert_sent_at
+    monitor.last_alert_sent_at = None
+
+    try:
+        await send_monitor_alert(monitor, _FakeCheck(), db)
+        flash(request, "Testowy alert wyslany — sprawdz email/SMS/Slack", "success")
+    except Exception as e:
+        flash(request, f"Blad wysylania alertu: {e}", "error")
+        monitor.last_alert_sent_at = original_last_alert
+        await db.commit()
+
+    return RedirectResponse(url=f"/dashboard/{slug}/monitoring/{monitor_id}", status_code=303)

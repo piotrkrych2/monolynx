@@ -16,6 +16,7 @@ from monolynx.models.oauth import (
 )
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
@@ -44,6 +45,7 @@ __all__ = [
     "OAuthRefreshToken",
     "Project",
     "ProjectMember",
+    "Role",
     "Sprint",
     "Ticket",
     "TicketAcceptanceCriterion",

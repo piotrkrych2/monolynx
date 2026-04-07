@@ -6,7 +6,7 @@
 ## Quick reference
 - Test DB: `open_sentry_test`
 - All tests run inside Docker: `docker compose exec app python -m pytest ...`
-- `EXPECTED_TOOLS` list in `test_mcp_server.py` must be updated when new MCP tools are added
+- `EXPECTED_TOOLS` list in `test_mcp_server.py` must be updated when new MCP tools are added (currently 77 tools including: list_roles, create_role, update_role, delete_role, assign_role, get_member_permissions)
 - `mock_factory` fixture replaces `commit()` with `flush()` — critical for test isolation with outer transaction rollback
 - Always patch `monolynx.mcp_server._is_url_safe` (return_value=None) for happy-path monitor tests to bypass SSRF check
 - For tools using `_get_user_member_and_project`: patch both `async_session_factory` AND `verify_mcp_token` — the helper calls both internally

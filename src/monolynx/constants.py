@@ -155,3 +155,53 @@ FILE_TYPE_LABELS_PL = {
     "image": "Obraz",
     "default": "Plik",
 }
+
+# --- Permissions (RBAC) ---
+PERMISSION_MODULES = (
+    "500ki",
+    "scrum",
+    "monitoring",
+    "heartbeat",
+    "wiki",
+    "connections",
+    "settings",
+    "reports",
+    "users",
+)
+
+PERMISSION_ACTIONS = ("read", "write", "delete")
+
+MODULE_LABELS = {
+    "500ki": "500ki (Błędy)",
+    "scrum": "Scrum",
+    "monitoring": "Monitoring",
+    "heartbeat": "Heartbeat",
+    "wiki": "Wiki",
+    "connections": "Połączenia",
+    "settings": "Ustawienia",
+    "reports": "Raporty",
+    "users": "Użytkownicy",
+}
+
+ACTION_LABELS = {
+    "read": "Odczyt",
+    "write": "Zapis",
+    "delete": "Usuwanie",
+}
+
+# Default permissions for system roles
+DEFAULT_ROLE_PERMISSIONS = {
+    "owner": {m: list(PERMISSION_ACTIONS) for m in PERMISSION_MODULES},
+    "admin": {m: list(PERMISSION_ACTIONS) if m not in ("users", "settings") else ["read", "write"] for m in PERMISSION_MODULES},
+    "member": {
+        "500ki": ["read"],
+        "scrum": ["read", "write"],
+        "monitoring": ["read"],
+        "heartbeat": ["read"],
+        "wiki": ["read", "write"],
+        "connections": ["read"],
+        "settings": ["read"],
+        "reports": ["read"],
+        "users": ["read"],
+    },
+}

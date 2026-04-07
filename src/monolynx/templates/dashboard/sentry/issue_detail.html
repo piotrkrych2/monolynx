@@ -74,11 +74,11 @@
         </div>
         <div>
             <span class="text-gray-500">Pierwsze</span>
-            <p class="text-gray-900 dark:text-white">{{ issue.first_seen.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+            <p class="text-gray-900 dark:text-white">{{ issue.first_seen|localtime }}</p>
         </div>
         <div>
             <span class="text-gray-500">Ostatnie</span>
-            <p class="text-gray-900 dark:text-white">{{ issue.last_seen.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+            <p class="text-gray-900 dark:text-white">{{ issue.last_seen|localtime }}</p>
         </div>
     </div>
 </div>
@@ -90,7 +90,7 @@
     <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
         <div class="flex items-center justify-between mb-3">
             <span class="text-xs font-mono text-gray-500">{{ event.id }}</span>
-            <span class="text-xs text-gray-600 dark:text-gray-400">{{ event.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+            <span class="text-xs text-gray-600 dark:text-gray-400">{{ event.timestamp|localtime }}</span>
         </div>
 
         {% if event.exception %}

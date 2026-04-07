@@ -28,6 +28,8 @@ from monolynx.constants import (
     INTERVAL_UNITS,
     INVITATION_DAYS,
     LABEL_COLOR_PALETTE,
+    PERMISSION_ACTIONS,
+    PERMISSION_MODULES,
     PRIORITIES,
     TICKET_STATUSES,
 )
@@ -43,6 +45,7 @@ from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
@@ -64,6 +67,7 @@ from monolynx.services.mcp_auth import verify_mcp_token
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
 from monolynx.services.minio_client import upload_object as minio_upload_object
+from monolynx.services.permissions import check_permission, get_user_permissions
 from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
@@ -677,9 +681,7 @@ async def get_project(
                 ProjectMember.user_id == user.id,
             )
         )
-        role = role_result.scalar_one_or_none()
-        if role is None:
-            raise ValueError("Uzytkownik nie jest czlonkiem projektu")
+        role = role_result.scalar_one()
 
         # Liczba czlonkow
         members_count = (
@@ -763,16 +765,9 @@ async def update_project(
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        # Sprawdz role - tylko owner/admin moze edytowac projekt
-        result = await db.execute(
-            select(ProjectMember.role).where(
-                ProjectMember.project_id == project.id,
-                ProjectMember.user_id == user.id,
-            )
-        )
-        role = result.scalar_one_or_none()
-        if role not in ("owner", "admin"):
-            raise ValueError("Tylko owner lub admin moze edytowac projekt")
+        # Sprawdz uprawnienia - settings:write
+        if not await check_permission(db, user.id, project.id, "settings", "write"):
+            raise ValueError("Brak uprawnienia do edycji projektu (settings:write)")
 
         # Walidacja new_slug
         if new_slug is not None:
@@ -834,16 +829,9 @@ async def delete_project(
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        # Sprawdz role - tylko owner moze usunac projekt
-        result = await db.execute(
-            select(ProjectMember.role).where(
-                ProjectMember.project_id == project.id,
-                ProjectMember.user_id == user.id,
-            )
-        )
-        role = result.scalar_one_or_none()
-        if role not in ("owner",):
-            raise ValueError("Tylko owner moze usunac projekt")
+        # Sprawdz uprawnienia - settings:delete
+        if not await check_permission(db, user.id, project.id, "settings", "delete"):
+            raise ValueError("Brak uprawnienia do usuniecia projektu (settings:delete)")
 
         # Pobierz projekt do edycji w tej sesji
         proj_result = await db.execute(select(Project).where(Project.id == project.id))
@@ -889,9 +877,7 @@ async def invite_member(
         raise ValueError("Rola musi byc 'member' lub 'admin' (owner nie moze byc przyznany przez zaproszenie)")
 
     # Sprawdz uprawnienia wywołujacego
-    _calling_user, calling_member, project = await _get_user_member_and_project(ctx, project_slug)
-    if calling_member.role not in ("owner", "admin"):
-        raise ValueError("Tylko owner lub admin moze zapraszac czlonkow do projektu")
+    calling_user, _calling_member, project = await _get_user_member_and_project(ctx, project_slug)
 
     email = email.strip().lower()
     if not email:
@@ -900,6 +886,8 @@ async def invite_member(
         raise ValueError("Nieprawidlowy format adresu email")
 
     async with async_session_factory() as db:
+        if not await check_permission(db, calling_user.id, project.id, "users", "write"):
+            raise ValueError("Brak uprawnienia do zapraszania czlonkow do projektu (users:write)")
         # Sprawdz czy user juz istnieje w systemie (takze nieaktywny)
         any_user_result = await db.execute(select(User).where(User.email == email))
         any_user = any_user_result.scalar_one_or_none()
@@ -1155,9 +1143,7 @@ async def remove_member(
 
     Zwraca: { message }
     """
-    _calling_user, calling_member, project = await _get_user_member_and_project(ctx, project_slug)
-    if calling_member.role not in ("owner", "admin"):
-        raise ValueError("Tylko owner lub admin moze usuwac czlonkow z projektu")
+    calling_user, _calling_member, project = await _get_user_member_and_project(ctx, project_slug)
 
     email = email.strip().lower()
     if not email:
@@ -1166,6 +1152,8 @@ async def remove_member(
         raise ValueError("Nieprawidlowy format adresu email")
 
     async with async_session_factory() as db:
+        if not await check_permission(db, calling_user.id, project.id, "users", "delete"):
+            raise ValueError("Brak uprawnienia do usuniecia czlonkow z projektu (users:delete)")
         # Znajdz uzytkownika po emailu
         user_result = await db.execute(select(User).where(User.email == email))
         target_user = user_result.scalar_one_or_none()
@@ -1758,16 +1746,9 @@ async def delete_monitor(
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        # Sprawdz role - tylko owner/admin moze usuwac monitor
-        role_result = await db.execute(
-            select(ProjectMember.role).where(
-                ProjectMember.project_id == project.id,
-                ProjectMember.user_id == user.id,
-            )
-        )
-        role = role_result.scalar_one_or_none()
-        if role not in ("owner", "admin"):
-            raise ValueError("Tylko owner lub admin moze usuwac monitor")
+        # Sprawdz uprawnienia - monitoring:delete
+        if not await check_permission(db, user.id, project.id, "monitoring", "delete"):
+            raise ValueError("Brak uprawnienia do usuniecia monitora (monitoring:delete)")
 
         result = await db.execute(
             select(Monitor).where(
@@ -4567,3 +4548,314 @@ async def delete_acceptance_criterion(
         await db.commit()
 
     return {"message": "Kryterium akceptacji usunięte", "id": criterion_id}
+
+
+@mcp.tool()
+async def list_roles(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> str:
+    """Lista ról w projekcie z uprawnieniami."""
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "settings", "read"):
+            raise ValueError("Brak uprawnienia do przegladu rol (settings:read)")
+
+        result = await db.execute(select(Role).where(Role.project_id == project.id).order_by(Role.is_system.desc(), Role.name))
+        roles = result.scalars().all()
+
+    if not roles:
+        return "Brak zdefiniowanych ról w projekcie."
+
+    lines = ["Name                 | System | Permissions summary                          | ID"]
+    lines.append("-" * 100)
+    for role in roles:
+        perms_summary = ", ".join(f"{mod}:[{','.join(actions)}]" for mod, actions in role.permissions.items() if actions) or "(brak)"
+        system_label = "tak" if role.is_system else "nie"
+        name_col = role.name[:20].ljust(20)
+        perms_col = perms_summary[:44].ljust(44)
+        lines.append(f"{name_col} | {system_label.ljust(6)} | {perms_col} | {role.id}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def create_role(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    name: str,
+    permissions: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Utwórz nową rolę z określonymi uprawnieniami.
+
+    permissions: dict mapujący moduł na listę akcji, np. {"scrum": ["read", "write"], "wiki": ["read"]}
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    name = name.strip()
+    if not name:
+        raise ValueError("Nazwa roli nie moze byc pusta")
+    if len(name) > 50:
+        raise ValueError("Nazwa roli nie moze byc dluzsza niz 50 znakow")
+
+    invalid_modules = set(permissions.keys()) - set(PERMISSION_MODULES)
+    if invalid_modules:
+        raise ValueError(f"Nieprawidlowe moduly: {', '.join(sorted(invalid_modules))}. Dozwolone: {', '.join(PERMISSION_MODULES)}")
+
+    for mod, actions in permissions.items():
+        invalid_actions = set(actions) - set(PERMISSION_ACTIONS)
+        if invalid_actions:
+            allowed = ", ".join(PERMISSION_ACTIONS)
+            raise ValueError(f"Nieprawidlowe akcje dla modulu '{mod}': {', '.join(sorted(invalid_actions))}. Dozwolone: {allowed}")
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "settings", "write"):
+            raise ValueError("Brak uprawnienia do tworzenia rol (settings:write)")
+
+        role = Role(
+            name=name,
+            project_id=project.id,
+            permissions=permissions,
+            is_system=False,
+        )
+        db.add(role)
+        try:
+            await db.commit()
+            await db.refresh(role)
+        except IntegrityError:
+            await db.rollback()
+            raise ValueError(f"Rola o nazwie '{name}' juz istnieje w projekcie '{project_slug}'") from None
+
+    return {
+        "id": str(role.id),
+        "name": role.name,
+        "permissions": role.permissions,
+        "message": f"Rola '{name}' zostala utworzona.",
+    }
+
+
+@mcp.tool()
+async def update_role(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    role_id: str,
+    name: str | None = None,
+    permissions: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    """Zaktualizuj istniejącą rolę (nazwę i/lub uprawnienia).
+
+    role_id: UUID roli do edycji.
+    name: nowa nazwa (opcjonalne).
+    permissions: nowe uprawnienia jako dict modul -> lista akcji (opcjonalne).
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    try:
+        role_uuid = uuid.UUID(role_id)
+    except ValueError:
+        raise ValueError("Nieprawidlowy format role_id (oczekiwany UUID)") from None
+
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Nazwa roli nie moze byc pusta")
+        if len(name) > 50:
+            raise ValueError("Nazwa roli nie moze byc dluzsza niz 50 znakow")
+
+    if permissions is not None:
+        invalid_modules = set(permissions.keys()) - set(PERMISSION_MODULES)
+        if invalid_modules:
+            raise ValueError(f"Nieprawidlowe moduly: {', '.join(sorted(invalid_modules))}. Dozwolone: {', '.join(PERMISSION_MODULES)}")
+        for mod, actions in permissions.items():
+            invalid_actions = set(actions) - set(PERMISSION_ACTIONS)
+            if invalid_actions:
+                allowed = ", ".join(PERMISSION_ACTIONS)
+                raise ValueError(f"Nieprawidlowe akcje dla modulu '{mod}': {', '.join(sorted(invalid_actions))}. Dozwolone: {allowed}")
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "settings", "write"):
+            raise ValueError("Brak uprawnienia do edycji rol (settings:write)")
+
+        role_result = await db.execute(select(Role).where(Role.id == role_uuid, Role.project_id == project.id))
+        role = role_result.scalar_one_or_none()
+        if role is None:
+            raise ValueError(f"Rola '{role_id}' nie istnieje w projekcie '{project_slug}'")
+
+        if name is not None:
+            if role.is_system:
+                raise ValueError("Nie mozna zmienic nazwy roli systemowej")
+            role.name = name
+
+        if permissions is not None:
+            role.permissions = permissions
+
+        try:
+            await db.commit()
+            await db.refresh(role)
+        except IntegrityError:
+            await db.rollback()
+            raise ValueError(f"Rola o nazwie '{name}' juz istnieje w projekcie '{project_slug}'") from None
+
+    return {
+        "id": str(role.id),
+        "name": role.name,
+        "permissions": role.permissions,
+        "message": f"Rola '{role.name}' zostala zaktualizowana.",
+    }
+
+
+@mcp.tool()
+async def delete_role(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    role_id: str,
+) -> dict[str, Any]:
+    """Usuń rolę z projektu.
+
+    role_id: UUID roli do usuniecia.
+    Nie mozna usunac ról systemowych ani ról przypisanych do czlonkow projektu.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    try:
+        role_uuid = uuid.UUID(role_id)
+    except ValueError:
+        raise ValueError("Nieprawidlowy format role_id (oczekiwany UUID)") from None
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "settings", "delete"):
+            raise ValueError("Brak uprawnienia do usuwania rol (settings:delete)")
+
+        role_result = await db.execute(select(Role).where(Role.id == role_uuid, Role.project_id == project.id))
+        role = role_result.scalar_one_or_none()
+        if role is None:
+            raise ValueError(f"Rola '{role_id}' nie istnieje w projekcie '{project_slug}'")
+
+        if role.is_system:
+            raise ValueError(f"Nie mozna usunac roli systemowej '{role.name}'")
+
+        members_count_result = await db.execute(select(func.count(ProjectMember.id)).where(ProjectMember.role_id == role_uuid))
+        members_count = members_count_result.scalar_one()
+        if members_count > 0:
+            raise ValueError(
+                f"Nie mozna usunac roli '{role.name}' — jest przypisana do {members_count} czlonka/czlonkow projektu. "
+                "Najpierw przypisz tym czlonkom inna role."
+            )
+
+        role_name = role.name
+        await db.delete(role)
+        await db.commit()
+
+    return {"message": f"Rola '{role_name}' zostala usunieta z projektu '{project_slug}'"}
+
+
+@mcp.tool()
+async def assign_role(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    user_email: str,
+    role_id: str,
+) -> dict[str, Any]:
+    """Przypisz rolę RBAC do członka projektu.
+
+    user_email: email czlonka projektu.
+    role_id: UUID roli do przypisania.
+    """
+    calling_user, project = await _get_user_and_project(ctx, project_slug)
+
+    user_email = user_email.strip().lower()
+    if not user_email:
+        raise ValueError("Email nie moze byc pusty")
+    if "@" not in user_email or len(user_email) > 255:
+        raise ValueError("Nieprawidlowy format adresu email")
+
+    try:
+        role_uuid = uuid.UUID(role_id)
+    except ValueError:
+        raise ValueError("Nieprawidlowy format role_id (oczekiwany UUID)") from None
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, calling_user.id, project.id, "settings", "write"):
+            raise ValueError("Brak uprawnienia do przypisywania rol (settings:write)")
+
+        # Znajdz uzytkownika po emailu
+        target_user_result = await db.execute(select(User).where(User.email == user_email, User.is_active.is_(True)))
+        target_user = target_user_result.scalar_one_or_none()
+        if target_user is None:
+            raise ValueError(f"Uzytkownik '{user_email}' nie istnieje lub jest dezaktywowany")
+
+        # Znajdz membership
+        member_result = await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == target_user.id,
+            )
+        )
+        member = member_result.scalar_one_or_none()
+        if member is None:
+            raise ValueError(f"Uzytkownik '{user_email}' nie jest czlonkiem projektu '{project_slug}'")
+
+        # Znajdz role
+        role_result = await db.execute(select(Role).where(Role.id == role_uuid, Role.project_id == project.id))
+        role = role_result.scalar_one_or_none()
+        if role is None:
+            raise ValueError(f"Rola '{role_id}' nie istnieje w projekcie '{project_slug}'")
+
+        member.role_id = role.id
+        member.role = role.name.lower()
+
+        await db.commit()
+
+    return {
+        "message": f"Rola '{role.name}' zostala przypisana do uzytkownika '{user_email}' w projekcie '{project_slug}'.",
+        "user_email": user_email,
+        "role_id": str(role.id),
+        "role_name": role.name,
+    }
+
+
+@mcp.tool()
+async def get_member_permissions(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    user_email: str,
+) -> dict[str, Any]:
+    """Zwróć uprawnienia RBAC członka projektu.
+
+    user_email: email czlonka projektu, ktorego uprawnienia chcemy sprawdzic.
+    """
+    calling_user, project = await _get_user_and_project(ctx, project_slug)
+
+    user_email = user_email.strip().lower()
+    if not user_email:
+        raise ValueError("Email nie moze byc pusty")
+    if "@" not in user_email or len(user_email) > 255:
+        raise ValueError("Nieprawidlowy format adresu email")
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, calling_user.id, project.id, "settings", "read"):
+            raise ValueError("Brak uprawnienia do przegladu uprawnien (settings:read)")
+
+        target_user_result = await db.execute(select(User).where(User.email == user_email, User.is_active.is_(True)))
+        target_user = target_user_result.scalar_one_or_none()
+        if target_user is None:
+            raise ValueError(f"Uzytkownik '{user_email}' nie istnieje lub jest dezaktywowany")
+
+        member_result = await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == target_user.id,
+            )
+        )
+        member = member_result.scalar_one_or_none()
+        if member is None:
+            raise ValueError(f"Uzytkownik '{user_email}' nie jest czlonkiem projektu '{project_slug}'")
+
+        perms = await get_user_permissions(db, target_user.id, project.id)
+
+    return {
+        "user_email": user_email,
+        "project_slug": project_slug,
+        "permissions": perms,
+    }

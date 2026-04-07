@@ -86,9 +86,9 @@
                 <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ sprint.goal }}</p>
                 {% endif %}
                 <div class="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                    <span>{{ sprint.start_date.strftime('%Y-%m-%d') }}</span>
+                    <span>{{ sprint.start_date|localtime('%Y-%m-%d') }}</span>
                     {% if sprint.end_date %}
-                    <span>- {{ sprint.end_date.strftime('%Y-%m-%d') }}</span>
+                    <span>- {{ sprint.end_date|localtime('%Y-%m-%d') }}</span>
                     {% endif %}
                     {% set stats = sprint_stats[sprint.id|string] %}
                     <span>&middot; {{ stats.ticket_count }} {{ 'ticket' if stats.ticket_count == 1 else 'ticketow' }} &middot; {{ stats.sp_sum }} SP</span>
