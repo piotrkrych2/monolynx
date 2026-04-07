@@ -114,11 +114,17 @@ def sample_event_payload():
     }
 
 
-async def login_session(client, db_session, email="test@example.com"):
-    """Tworzy uzytkownika i loguje go, zwraca client z sesja."""
+async def login_session(client, db_session, email="test@example.com", is_superuser: bool = True):
+    """Tworzy uzytkownika i loguje go, zwraca client z sesja.
+
+    Domyslnie tworzy superusera (is_superuser=True) zeby omijac sprawdzenie RBAC
+    w endpointach ktore wywoluja require_permission. Ustaw is_superuser=False
+    jezeli test ma weryfikowac zachowanie dla zwyklego usera.
+    """
     user = User(
         email=email,
         password_hash=hash_password("testpass123"),
+        is_superuser=is_superuser,
     )
     db_session.add(user)
     await db_session.flush()

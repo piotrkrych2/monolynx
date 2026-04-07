@@ -167,7 +167,7 @@
 
                 <div>
                     <span class="text-gray-500">Utworzony</span>
-                    <p class="text-gray-900 dark:text-white mt-1">{{ ticket.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                    <p class="text-gray-900 dark:text-white mt-1">{{ ticket.created_at|localtime('%Y-%m-%d %H:%M') }}</p>
                 </div>
             </div>
         </div>
@@ -188,7 +188,7 @@
                     <span>Ostatnio</span>
                     <span class="text-gray-900 dark:text-white">
                         {% if ticket.issue.last_seen %}
-                            {{ ticket.issue.last_seen.strftime("%Y-%m-%d %H:%M") }}
+                            {{ ticket.issue.last_seen|localtime("%Y-%m-%d %H:%M") }}
                         {% else %}
                             &mdash;
                         {% endif %}
@@ -284,7 +284,7 @@
                     <div class="flex flex-wrap items-center gap-2 mt-1.5 text-xs text-gray-500">
                         <span>{{ criterion.created_by_user.email.split('@')[0] }}</span>
                         <span>&middot;</span>
-                        <span>{{ criterion.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                        <span>{{ criterion.created_at|localtime('%Y-%m-%d %H:%M') }}</span>
                         {% if criterion.created_via_ai %}
                         <span class="bg-purple-600 text-white px-1 rounded">AI</span>
                         {% endif %}
@@ -292,7 +292,7 @@
                         <span>&middot;</span>
                         <span class="text-green-500">
                             Ukończone przez {{ criterion.completed_by_user.email.split('@')[0] }}
-                            {% if criterion.completed_at %}&middot; {{ criterion.completed_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+                            {% if criterion.completed_at %}&middot; {{ criterion.completed_at|localtime('%Y-%m-%d %H:%M') }}{% endif %}
                         </span>
                         {% if criterion.completed_via_ai %}
                         <span class="bg-purple-600 text-white px-1 rounded">AI</span>
@@ -361,7 +361,7 @@
                    target="_blank">{{ att.filename | e }}</a>
                 <p class="text-xs text-gray-500 mt-0.5">
                     {{ (att.size / 1024)|round(1) }} KB
-                    &middot; {{ att.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    &middot; {{ att.created_at|localtime('%Y-%m-%d %H:%M') }}
                     {% if att.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded ml-1">AI</span>{% endif %}
                 </p>
             </div>
@@ -404,7 +404,7 @@
             <div class="flex items-center justify-between mb-2">
                 <span class="text-sm font-medium text-indigo-400">{{ item.comment.author.email.split('@')[0] }}</span>
                 {% if item.comment.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded ml-1">AI</span>{% endif %}
-                <span class="text-xs text-gray-500">{{ item.comment.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                <span class="text-xs text-gray-500">{{ item.comment.created_at|localtime('%Y-%m-%d %H:%M') }}</span>
             </div>
             <div class="prose dark:prose-invert prose-sm max-w-none
                         prose-a:text-indigo-600 dark:prose-a:text-indigo-400 prose-a:no-underline hover:prose-a:text-indigo-700 dark:hover:prose-a:text-indigo-300

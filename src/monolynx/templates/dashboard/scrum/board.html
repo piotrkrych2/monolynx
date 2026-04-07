@@ -16,7 +16,7 @@
     <div class="flex items-center justify-between mb-2">
         <div class="flex items-center gap-3">
             <h2 class="text-gray-900 dark:text-white font-semibold">{{ sprint.name }}</h2>
-            <span class="text-xs text-gray-500">{{ sprint.start_date.strftime('%Y-%m-%d') }}{% if sprint.end_date %} - {{ sprint.end_date.strftime('%Y-%m-%d') }}{% endif %}</span>
+            <span class="text-xs text-gray-500">{{ sprint.start_date|localtime('%Y-%m-%d') }}{% if sprint.end_date %} - {{ sprint.end_date|localtime('%Y-%m-%d') }}{% endif %}</span>
         </div>
         <span class="text-sm text-gray-600 dark:text-gray-400" data-sp-label>{{ sp_done }} / {{ sp_total }} SP</span>
     </div>

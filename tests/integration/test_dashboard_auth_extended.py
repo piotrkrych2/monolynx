@@ -22,6 +22,7 @@ import pytest
 
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.user import User
 from monolynx.services.auth import hash_password
 from tests.conftest import login_session
@@ -319,10 +320,19 @@ class TestMemberRoleExtended:
     """Dodatkowe testy zmiany roli czlonka."""
 
     async def test_change_role_to_owner(self, client, db_session):
-        """Zmiana roli czlonka na owner."""
+        """Zmiana roli czlonka przez role_id (RBAC)."""
         project = _make_project("spe-mrl-own")
         db_session.add(project)
         await db_session.flush()
+
+        # Tworz role systemowa "owner" dla projektu
+        owner_role = Role(
+            name="owner",
+            project_id=project.id,
+            permissions={},
+            is_system=True,
+        )
+        db_session.add(owner_role)
 
         target_user = User(
             email="spe-mrl-own-target@test.com",
@@ -342,16 +352,17 @@ class TestMemberRoleExtended:
         await login_session(client, db_session, email="spe-mrl-own@test.com")
         resp = await client.post(
             f"/dashboard/{project.slug}/settings/members/{member.id}/role",
-            data={"role": "owner"},
+            data={"role_id": str(owner_role.id)},
             follow_redirects=False,
         )
         assert resp.status_code == 303
 
         await db_session.refresh(member)
         assert member.role == "owner"
+        assert member.role_id == owner_role.id
 
-    async def test_change_role_with_empty_role_defaults(self, client, db_session):
-        """Zmiana roli z pustym polem role -- form default 'member'."""
+    async def test_change_role_with_empty_role_id_no_change(self, client, db_session):
+        """Brak role_id w formularzu -- rola czlonka nie zmienia sie."""
         project = _make_project("spe-mrl-norole")
         db_session.add(project)
         await db_session.flush()
@@ -372,12 +383,14 @@ class TestMemberRoleExtended:
         await db_session.flush()
 
         await login_session(client, db_session, email="spe-mrl-norole@test.com")
+        # Wysylamy form bez role_id -- nic nie powinno sie zmienic
         resp = await client.post(
             f"/dashboard/{project.slug}/settings/members/{member.id}/role",
-            data={"role": "member"},
+            data={},
             follow_redirects=False,
         )
         assert resp.status_code == 303
 
         await db_session.refresh(member)
-        assert member.role == "member"
+        # Rola nie powinna sie zmienic
+        assert member.role == "admin"

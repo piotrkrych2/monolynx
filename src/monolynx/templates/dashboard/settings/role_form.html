@@ -1,0 +1,131 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}{% if role %}Edytuj rolę - {{ role.name | e }}{% else %}Nowa rola{% endif %} - {{ project.name }} - Monolynx{% endblock %}
+
+{% block module_content %}
+<div class="max-w-3xl">
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
+            {% if role %}Edytuj rolę{% else %}Nowa rola{% endif %}
+        </h1>
+        <p class="text-sm text-gray-500 mt-1">
+            <a href="/dashboard/{{ project.slug }}/settings" class="hover:text-gray-700 dark:hover:text-gray-300 transition">Ustawienia</a>
+            <span class="mx-1">/</span>
+            <a href="/dashboard/{{ project.slug }}/settings/roles" class="hover:text-gray-700 dark:hover:text-gray-300 transition">Role</a>
+            <span class="mx-1">/</span>
+            <span>{% if role %}{{ role.name | e }}{% else %}Nowa{% endif %}</span>
+        </p>
+    </div>
+
+    {% if error %}
+    <div class="bg-red-50 dark:bg-red-900/50 border border-red-300 dark:border-red-500 text-red-800 dark:text-red-300 px-4 py-2 rounded mb-4">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="{% if role %}/dashboard/{{ project.slug }}/settings/roles/{{ role.id }}/edit{% else %}/dashboard/{{ project.slug }}/settings/roles/create{% endif %}"
+          class="space-y-6">
+
+        <!-- Nazwa roli -->
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Nazwa roli <span class="text-red-400">*</span>
+            </label>
+            <input type="text" name="name"
+                value="{{ role.name | e if role else (name | e if name is defined else '') }}"
+                required
+                {% if role and role.is_system %}readonly{% endif %}
+                placeholder="np. Developer, Tester, Obserwator"
+                class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 {% if role and role.is_system %}opacity-60 cursor-not-allowed{% endif %}">
+            {% if role and role.is_system %}
+            <p class="text-xs text-gray-500 mt-1">Nazwy ról systemowych nie można zmienić.</p>
+            {% endif %}
+        </div>
+
+        <!-- Matryca uprawnień -->
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Uprawnienia</h2>
+            <p class="text-xs text-gray-500 mb-4">Zaznacz uprawnienia dla tej roli w każdym module.</p>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b border-gray-200 dark:border-gray-700">
+                            <th class="text-left pb-3 pr-4 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide min-w-[140px]">
+                                Moduł
+                            </th>
+                            {% for action in permission_actions %}
+                            <th class="text-center pb-3 px-4 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide min-w-[90px]">
+                                {{ action_labels.get(action, action) }}
+                            </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                        {% for module in permission_modules %}
+                        <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition">
+                            <td class="py-3 pr-4 font-medium text-gray-700 dark:text-gray-300">
+                                {{ module_labels.get(module, module) }}
+                            </td>
+                            {% for action in permission_actions %}
+                            {% set is_checked = false %}
+                            {% if role and role.permissions %}
+                                {% if role.permissions.get(module) and action in role.permissions.get(module, []) %}
+                                    {% set is_checked = true %}
+                                {% endif %}
+                            {% elif submitted_permissions is defined %}
+                                {% if submitted_permissions.get(module) and action in submitted_permissions.get(module, []) %}
+                                    {% set is_checked = true %}
+                                {% endif %}
+                            {% endif %}
+                            <td class="py-3 px-4 text-center">
+                                <input type="checkbox"
+                                    name="perm_{{ module }}_{{ action }}"
+                                    id="perm_{{ module }}_{{ action }}"
+                                    {% if is_checked %}checked{% endif %}
+                                    class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer">
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Skróty: zaznacz wszystko / odznacz wszystko -->
+            <div class="flex items-center gap-4 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <span class="text-xs text-gray-500">Szybkie akcje:</span>
+                <button type="button" onclick="toggleAllPermissions(true)"
+                    class="text-xs text-indigo-400 hover:text-indigo-300 transition">
+                    Zaznacz wszystkie
+                </button>
+                <button type="button" onclick="toggleAllPermissions(false)"
+                    class="text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition">
+                    Odznacz wszystkie
+                </button>
+            </div>
+        </div>
+
+        <!-- Przyciski akcji -->
+        <div class="flex items-center gap-3">
+            <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded transition">
+                {% if role %}Zapisz zmiany{% else %}Utwórz rolę{% endif %}
+            </button>
+            <a href="/dashboard/{{ project.slug }}/settings/roles"
+                class="text-gray-500 hover:text-gray-300 text-sm transition">
+                Anuluj
+            </a>
+        </div>
+    </form>
+</div>
+
+<script>
+function toggleAllPermissions(checked) {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"][name^="perm_"]');
+    checkboxes.forEach(function(cb) {
+        cb.checked = checked;
+    });
+}
+</script>
+{% endblock %}

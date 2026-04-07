@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from monolynx.models.issue import Issue
     from monolynx.models.monitor import Monitor
     from monolynx.models.project_member import ProjectMember
+    from monolynx.models.role import Role
     from monolynx.models.sprint import Sprint
     from monolynx.models.ticket import Ticket
     from monolynx.models.wiki_file import WikiFile
@@ -39,6 +40,7 @@ class Project(Base):
     issues: Mapped[list[Issue]] = relationship(back_populates="project")
     members: Mapped[list[ProjectMember]] = relationship(back_populates="project")
     monitors: Mapped[list[Monitor]] = relationship(back_populates="project")
+    roles: Mapped[list[Role]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sprints: Mapped[list[Sprint]] = relationship(back_populates="project")
     tickets: Mapped[list[Ticket]] = relationship(back_populates="project")
     wiki_pages: Mapped[list[WikiPage]] = relationship(back_populates="project")

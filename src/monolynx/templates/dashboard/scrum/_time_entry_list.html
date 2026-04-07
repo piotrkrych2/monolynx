@@ -19,7 +19,7 @@
                             {% set mins = entry.duration_minutes % 60 %}
                             {% if hours > 0 %}{{ hours }}h {% endif %}{{ mins }}m
                         </span>
-                        <span class="text-xs text-gray-500">{{ entry.date_logged.strftime('%Y-%m-%d') }}</span>
+                        <span class="text-xs text-gray-500">{{ entry.date_logged|localtime('%Y-%m-%d') }}</span>
                     </div>
                     {% if entry.description %}
                     <p class="text-gray-600 dark:text-gray-400 text-xs mt-1 truncate">{{ entry.description }}</p>

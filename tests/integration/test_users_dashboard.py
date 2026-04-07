@@ -44,7 +44,7 @@ class TestUserList:
 
     async def test_user_list_forbidden_for_regular_user(self, client, db_session):
         """GET /dashboard/users dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-list-reg@test.com")
+        await login_session(client, db_session, email="usr-list-reg@test.com", is_superuser=False)
         resp = await client.get("/dashboard/users")
         assert resp.status_code == 403
         assert "Brak uprawnien" in resp.text
@@ -70,7 +70,7 @@ class TestUserCreateForm:
 
     async def test_create_form_forbidden_for_regular_user(self, client, db_session):
         """GET /dashboard/users/create dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-crf-reg@test.com")
+        await login_session(client, db_session, email="usr-crf-reg@test.com", is_superuser=False)
         resp = await client.get("/dashboard/users/create")
         assert resp.status_code == 403
         assert "Brak uprawnien" in resp.text
@@ -99,7 +99,7 @@ class TestUserCreate:
 
     async def test_create_forbidden_for_regular_user(self, client, db_session):
         """POST /dashboard/users/create dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-cr-reg@test.com")
+        await login_session(client, db_session, email="usr-cr-reg@test.com", is_superuser=False)
         resp = await client.post(
             "/dashboard/users/create",
             data={"email": "new@test.com"},
@@ -197,7 +197,7 @@ class TestResendInvite:
 
     async def test_resend_forbidden_for_regular_user(self, client, db_session):
         """POST /dashboard/users/{id}/resend-invite dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-ri-reg@test.com")
+        await login_session(client, db_session, email="usr-ri-reg@test.com", is_superuser=False)
         fake_id = uuid.uuid4()
         resp = await client.post(f"/dashboard/users/{fake_id}/resend-invite")
         assert resp.status_code == 403
@@ -250,7 +250,7 @@ class TestUserEditForm:
 
     async def test_edit_form_forbidden_for_regular_user(self, client, db_session):
         """GET /dashboard/users/{id} dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-ef-reg@test.com")
+        await login_session(client, db_session, email="usr-ef-reg@test.com", is_superuser=False)
         fake_id = uuid.uuid4()
         resp = await client.get(f"/dashboard/users/{fake_id}")
         assert resp.status_code == 403
@@ -322,7 +322,7 @@ class TestUserEdit:
 
     async def test_edit_forbidden_for_regular_user(self, client, db_session):
         """POST /dashboard/users/{id} dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-ed-reg@test.com")
+        await login_session(client, db_session, email="usr-ed-reg@test.com", is_superuser=False)
         fake_id = uuid.uuid4()
         resp = await client.post(
             f"/dashboard/users/{fake_id}",
@@ -442,7 +442,7 @@ class TestUserActivate:
 
     async def test_activate_forbidden_for_regular_user(self, client, db_session):
         """POST /dashboard/users/{id}/activate dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-act-reg@test.com")
+        await login_session(client, db_session, email="usr-act-reg@test.com", is_superuser=False)
         fake_id = uuid.uuid4()
         resp = await client.post(
             f"/dashboard/users/{fake_id}/activate",
@@ -540,7 +540,7 @@ class TestUserDeactivate:
 
     async def test_deactivate_forbidden_for_regular_user(self, client, db_session):
         """POST /dashboard/users/{id}/deactivate dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-deact-reg@test.com")
+        await login_session(client, db_session, email="usr-deact-reg@test.com", is_superuser=False)
         fake_id = uuid.uuid4()
         resp = await client.post(f"/dashboard/users/{fake_id}/deactivate")
         assert resp.status_code == 403
@@ -607,7 +607,7 @@ class TestUserProjectAdd:
 
     async def test_project_add_forbidden_for_regular_user(self, client, db_session):
         """POST /dashboard/users/{id}/projects/add dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-pa-reg@test.com")
+        await login_session(client, db_session, email="usr-pa-reg@test.com", is_superuser=False)
         fake_id = uuid.uuid4()
         resp = await client.post(
             f"/dashboard/users/{fake_id}/projects/add",
@@ -807,7 +807,7 @@ class TestUserProjectRemove:
 
     async def test_project_remove_forbidden_for_regular_user(self, client, db_session):
         """POST /dashboard/users/{id}/projects/{mid}/remove dla zwyklego usera zwraca 403."""
-        await login_session(client, db_session, email="usr-pr-reg@test.com")
+        await login_session(client, db_session, email="usr-pr-reg@test.com", is_superuser=False)
         fake_uid = uuid.uuid4()
         fake_mid = uuid.uuid4()
         resp = await client.post(

@@ -111,7 +111,7 @@
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Użyj narzędzi</h2>
         </div>
 
-        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-gray-900 dark:text-white">70 narzędzi</strong> we wszystkich modułach:</p>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-gray-900 dark:text-white">76 narzędzi</strong> we wszystkich modułach:</p>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
             <div>
@@ -131,6 +131,17 @@
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_members</code> <span class="text-gray-500">— lista członków projektu</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">invite_member</code> <span class="text-gray-500">— zaproś do projektu</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">remove_member</code> <span class="text-gray-500">— usuń z projektu</span></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Role (RBAC)</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">list_roles</code> <span class="text-gray-500">— lista ról z uprawnieniami</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">create_role</code> <span class="text-gray-500">— utwórz rolę z matrycą uprawnień</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">update_role</code> <span class="text-gray-500">— edytuj rolę</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">delete_role</code> <span class="text-gray-500">— usuń rolę (nie systemową)</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">assign_role</code> <span class="text-gray-500">— przypisz rolę członkowi</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_member_permissions</code> <span class="text-gray-500">— sprawdź uprawnienia</span></li>
                 </ul>
             </div>
             <div>

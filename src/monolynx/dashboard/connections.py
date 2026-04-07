@@ -19,6 +19,7 @@ from monolynx.constants import (
 from monolynx.database import get_db
 from monolynx.models.project import Project
 from monolynx.services import graph as graph_service
+from monolynx.services.permissions import require_permission
 
 from .helpers import _get_user_id, flash, render_project_page
 
@@ -49,6 +50,8 @@ async def connections_index(
     project = await _get_project(slug, db)
     if not project:
         return RedirectResponse("/dashboard/", status_code=302)
+
+    await require_permission(db, user_id, project.id, "connections", "read")
 
     # Sprawdz czy graf jest dostepny
     graph_enabled = graph_service.is_enabled() and graph_service._driver is not None
@@ -93,6 +96,8 @@ async def node_list(
     if not project:
         return RedirectResponse("/dashboard/", status_code=302)
 
+    await require_permission(db, user_id, project.id, "connections", "read")
+
     nodes: list[dict[str, Any]] = []
     graph_enabled = graph_service.is_enabled() and graph_service._driver is not None
     if graph_enabled:
@@ -136,6 +141,8 @@ async def node_create_form(
     if not project:
         return RedirectResponse("/dashboard/", status_code=302)
 
+    await require_permission(db, user_id, project.id, "connections", "read")
+
     graph_enabled = graph_service.is_enabled() and graph_service._driver is not None
 
     return await render_project_page(
@@ -164,6 +171,8 @@ async def node_create(
     project = await _get_project(slug, db)
     if not project:
         return RedirectResponse("/dashboard/", status_code=302)
+
+    await require_permission(db, user_id, project.id, "connections", "write")
 
     form = await request.form()
     name = str(form.get("name", "")).strip()
@@ -221,6 +230,8 @@ async def edge_create_form(
     if not project:
         return RedirectResponse("/dashboard/", status_code=302)
 
+    await require_permission(db, user_id, project.id, "connections", "read")
+
     nodes: list[dict[str, Any]] = []
     graph_enabled = graph_service.is_enabled() and graph_service._driver is not None
     if graph_enabled:
@@ -254,6 +265,8 @@ async def edge_create(
     project = await _get_project(slug, db)
     if not project:
         return RedirectResponse("/dashboard/", status_code=302)
+
+    await require_permission(db, user_id, project.id, "connections", "write")
 
     form = await request.form()
     source_id = str(form.get("source_id", "")).strip()
@@ -301,6 +314,8 @@ async def node_delete(
     if not project:
         return RedirectResponse("/dashboard/", status_code=302)
 
+    await require_permission(db, user_id, project.id, "connections", "delete")
+
     try:
         deleted = await graph_service.delete_node(project.id, node_id)
         if deleted:
@@ -329,6 +344,8 @@ async def graph_api(
     project = await _get_project(slug, db)
     if not project:
         return JSONResponse({"error": "Not found"}, status_code=404)
+
+    await require_permission(db, user_id, project.id, "connections", "read")
 
     graph_enabled = graph_service.is_enabled() and graph_service._driver is not None
     if not graph_enabled:

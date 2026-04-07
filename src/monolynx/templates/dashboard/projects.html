@@ -152,7 +152,7 @@
 
             <!-- Data i ustawienia -->
             <div class="flex items-center gap-3 flex-shrink-0 ml-1">
-                <span class="text-gray-400 dark:text-gray-500 text-xs">{{ project.created_at.strftime('%Y-%m-%d') }}</span>
+                <span class="text-gray-400 dark:text-gray-500 text-xs">{{ project.created_at|localtime('%Y-%m-%d') }}</span>
                 <a href="/dashboard/{{ project.slug }}/settings"
                    class="text-gray-500 dark:text-gray-400 hover:text-indigo-400 transition"
                    title="Ustawienia projektu">

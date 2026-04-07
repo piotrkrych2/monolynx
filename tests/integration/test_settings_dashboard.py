@@ -7,6 +7,7 @@ import pytest
 
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.user import User
 from monolynx.services.auth import hash_password
 from tests.conftest import login_session
@@ -379,6 +380,11 @@ class TestMemberRole:
     async def test_change_role_success(self, client, db_session):
         """Zmiana roli czlonka projektu."""
         project = await _create_project(db_session, slug="sp-mrl-ok")
+
+        admin_role = Role(name="Admin", project_id=project.id, permissions={"settings": ["read", "write"]}, is_system=True)
+        db_session.add(admin_role)
+        await db_session.flush()
+
         target_user = User(
             email="sp-mrl-target@test.com",
             password_hash=hash_password("pass123"),
@@ -397,13 +403,14 @@ class TestMemberRole:
         await login_session(client, db_session, email="sp-mrl-ok@test.com")
         resp = await client.post(
             f"/dashboard/{project.slug}/settings/members/{member.id}/role",
-            data={"role": "admin"},
+            data={"role_id": str(admin_role.id)},
             follow_redirects=False,
         )
         assert resp.status_code == 303
 
         await db_session.refresh(member)
         assert member.role == "admin"
+        assert member.role_id == admin_role.id
 
     async def test_change_role_invalid_role_ignored(self, client, db_session):
         """Nieprawidlowa rola nie zmienia aktualnej roli."""

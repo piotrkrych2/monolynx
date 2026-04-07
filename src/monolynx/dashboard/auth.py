@@ -41,8 +41,10 @@ def _google_enabled() -> bool:
     return bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET)
 
 
-@router.get("/auth/login", response_class=HTMLResponse)
-async def login_page(request: Request) -> HTMLResponse:
+@router.get("/auth/login", response_class=HTMLResponse, response_model=None)
+async def login_page(request: Request) -> HTMLResponse | RedirectResponse:
+    if request.session.get("user_id"):
+        return RedirectResponse(url="/dashboard/", status_code=303)
     return templates.TemplateResponse(
         request,
         "auth/login.html",

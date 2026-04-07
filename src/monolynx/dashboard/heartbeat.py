@@ -21,6 +21,7 @@ from monolynx.services.heartbeat import (
     get_heartbeat_status,
     update_heartbeat,
 )
+from monolynx.services.permissions import require_permission
 
 from .helpers import _get_user_id, flash, render_project_page, templates
 
@@ -58,6 +59,8 @@ async def heartbeat_list(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "heartbeat", "read")
+
     result = await db.execute(select(Heartbeat).where(Heartbeat.project_id == project.id).order_by(Heartbeat.created_at.desc()))
     heartbeats = list(result.scalars().all())
 
@@ -94,6 +97,8 @@ async def heartbeat_create_form(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "heartbeat", "read")
+
     return await render_project_page(
         request,
         "dashboard/heartbeat/create.html",
@@ -120,6 +125,8 @@ async def heartbeat_create(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "heartbeat", "write")
 
     form = await request.form()
     name = str(form.get("name", "")).strip()
@@ -224,6 +231,8 @@ async def heartbeat_detail(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "heartbeat", "read")
+
     heartbeat = await _get_heartbeat(heartbeat_id, project.id, db)
     if heartbeat is None:
         return HTMLResponse("Heartbeat not found", status_code=404)
@@ -267,6 +276,8 @@ async def heartbeat_edit_form(
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
 
+    await require_permission(db, user_id, project.id, "heartbeat", "read")
+
     heartbeat = await _get_heartbeat(heartbeat_id, project.id, db)
     if heartbeat is None:
         return HTMLResponse("Heartbeat not found", status_code=404)
@@ -303,6 +314,8 @@ async def heartbeat_edit(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "heartbeat", "write")
 
     heartbeat = await _get_heartbeat(heartbeat_id, project.id, db)
     if heartbeat is None:
@@ -409,6 +422,8 @@ async def heartbeat_delete(
     project = await _get_project(slug, db)
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "heartbeat", "delete")
 
     heartbeat = await _get_heartbeat(heartbeat_id, project.id, db)
     if heartbeat is None:

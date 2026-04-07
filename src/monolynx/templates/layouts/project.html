@@ -11,6 +11,7 @@
             <p class="text-xs text-gray-500 mb-4 truncate">{{ project.slug }}</p>
 
             <nav class="space-y-1">
+                {% if not permissions or permissions.get('500ki', {}).get('read') %}
                 <a href="/dashboard/{{ project.slug }}/500ki/issues"
                    class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
                           {% if active_module == '500ki' %}bg-indigo-600 text-white{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white{% endif %}">
@@ -24,6 +25,8 @@
                     </span>
                     {% endif %}
                 </a>
+                {% endif %}
+                {% if not permissions or permissions.get('scrum', {}).get('read') %}
                 <a href="/dashboard/{{ project.slug }}/scrum/board"
                    class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
                           {% if active_module == 'scrum' %}bg-indigo-600 text-white{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white{% endif %}">
@@ -32,6 +35,8 @@
                     </svg>
                     Scrum
                 </a>
+                {% endif %}
+                {% if not permissions or permissions.get('monitoring', {}).get('read') %}
                 <a href="/dashboard/{{ project.slug }}/monitoring/"
                    class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
                           {% if active_module == 'monitoring' %}bg-indigo-600 text-white{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white{% endif %}">
@@ -46,6 +51,8 @@
                     </span>
                     {% endif %}
                 </a>
+                {% endif %}
+                {% if not permissions or permissions.get('heartbeat', {}).get('read') %}
                 <a href="/dashboard/{{ project.slug }}/heartbeat/"
                    class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
                           {% if active_module == 'heartbeat' %}bg-indigo-600 text-white{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white{% endif %}">
@@ -59,6 +66,8 @@
                     </span>
                     {% endif %}
                 </a>
+                {% endif %}
+                {% if not permissions or permissions.get('wiki', {}).get('read') %}
                 <a href="/dashboard/{{ project.slug }}/wiki/"
                    class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
                           {% if active_module == 'wiki' %}bg-indigo-600 text-white{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white{% endif %}">
@@ -75,6 +84,8 @@
                     </svg>
                     Pliki
                 </a>
+                {% endif %}
+                {% if not permissions or permissions.get('connections', {}).get('read') %}
                 <a href="/dashboard/{{ project.slug }}/connections/"
                    class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
                           {% if active_module == 'connections' %}bg-indigo-600 text-white{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white{% endif %}">
@@ -83,6 +94,7 @@
                     </svg>
                     Połączenia
                 </a>
+                {% endif %}
                 <a href="/dashboard/{{ project.slug }}/settings"
                    class="flex items-center gap-2 px-3 py-2 rounded text-sm transition
                           {% if active_module == 'settings' %}bg-indigo-600 text-white{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white{% endif %}">

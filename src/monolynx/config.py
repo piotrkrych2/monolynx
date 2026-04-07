@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     OAUTH_REFRESH_TOKEN_TTL: int = 2592000  # 30 dni
     OAUTH_AUTH_CODE_TTL: int = 600  # 10 min
 
+    # Timezone (do wyswietlania dat w UI)
+    APP_TIMEZONE: str = "Europe/Warsaw"
+
     # SMS (lepszesmsy.pl)
     LEPSZESMSY_LICENSE_KEY: str = ""
 

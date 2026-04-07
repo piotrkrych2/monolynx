@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from monolynx.database import get_db
 from monolynx.models.issue import Issue
 from monolynx.models.project import Project
+from monolynx.services.permissions import require_permission
 
 from .helpers import _get_user_id, render_project_page
 
@@ -33,6 +34,8 @@ async def issue_list(
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "500ki", "read")
 
     result = await db.execute(select(Issue).where(Issue.project_id == project.id).order_by(Issue.last_seen.desc()))
     issues = result.scalars().all()
@@ -64,6 +67,8 @@ async def issue_detail(
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "500ki", "read")
 
     result = await db.execute(
         select(Issue).options(selectinload(Issue.events), selectinload(Issue.tickets)).where(Issue.id == issue_id, Issue.project_id == project.id)
@@ -98,6 +103,8 @@ async def setup_guide(
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
+
+    await require_permission(db, user_id, project.id, "500ki", "read")
 
     return await render_project_page(
         request,

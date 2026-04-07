@@ -254,6 +254,12 @@ EXPECTED_TOOLS = [
     "add_acceptance_criterion",
     "update_acceptance_criterion",
     "delete_acceptance_criterion",
+    "list_roles",
+    "create_role",
+    "update_role",
+    "delete_role",
+    "assign_role",
+    "get_member_permissions",
 ]
 
 
@@ -2290,7 +2296,7 @@ class TestDeleteMonitor:
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
             patch("monolynx.mcp_server.verify_mcp_token", _verify_member),
-            pytest.raises(ValueError, match="Tylko owner lub admin"),
+            pytest.raises(ValueError, match="Brak uprawnienia"),
         ):
             await delete_monitor(ctx, mcp_project.slug, str(monitor.id))
 
@@ -4472,7 +4478,7 @@ class TestInviteMember:
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify_regular),
-            pytest.raises(ValueError, match="Tylko owner lub admin"),
+            pytest.raises(ValueError, match="Brak uprawnienia"),
         ):
             await invite_member(ctx, mcp_project.slug, "someone@test.com")
 
@@ -4642,7 +4648,7 @@ class TestRemoveMember:
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify_regular),
-            pytest.raises(ValueError, match="Tylko owner lub admin"),
+            pytest.raises(ValueError, match="Brak uprawnienia"),
         ):
             await remove_member(ctx, mcp_project.slug, "anyone@test.com")
 
