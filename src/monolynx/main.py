@@ -109,18 +109,19 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Your projects.",
         "hero_line2": "AI-first platform.",
         "hero_sub": (
-            "70 MCP tools, semantic wiki search, and Claude Code skills"
+            "93 MCP tools, semantic wiki search, and Claude Code skills"
             " — Monolynx isn't just another dashboard."
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
         "modules_title": "Everything you need",
-        "modules_sub": "Six integrated modules that cover the full project lifecycle.",
+        "modules_sub": "Seven integrated modules that cover the full project lifecycle.",
         "m_500ki": "Error tracking with smart fingerprinting. Catch exceptions from your apps with a lightweight SDK.",
         "m_scrum": "Backlog, Kanban board, sprints, and story points. Everything for agile project management.",
         "m_monitoring": "URL health checks with uptime tracking, response time history, and instant alerts.",
         "m_heartbeat": "Cron job monitoring with dead man's switch. Get alerted when your scheduled tasks stop running.",
         "m_wiki": "Markdown documentation with page hierarchy, image uploads, and AI-powered semantic search.",
         "m_connections": "Interactive dependency graph powered by Neo4j. Visualize how your code modules relate to each other.",
+        "m_settlements": "Cross-project billing with status workflow (draft → sent → paid), ticket freezing, and attachment management.",
         "mcp_title": "AI-native with MCP",
         "mcp_desc": (
             "Monolynx speaks <mcp_link>Model Context Protocol</mcp_link>."
@@ -142,18 +143,21 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Twoje projekty.",
         "hero_line2": "AI-first platforma.",
         "hero_sub": (
-            "70 narzędzi MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
+            "93 narzędzia MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
             " — Monolynx to nie kolejny dashboard."
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
         "modules_title": "Wszystko, czego potrzebujesz",
-        "modules_sub": "Sześć zintegrowanych modułów obejmujących cały cykl życia projektu.",
+        "modules_sub": "Siedem zintegrowanych modułów obejmujących cały cykl życia projektu.",
         "m_500ki": "Śledzenie błędów z inteligentnym fingerprintingiem. Przechwytuj wyjątki z aplikacji za pomocą lekkiego SDK.",
         "m_scrum": "Backlog, tablica Kanban, sprinty i story pointy. Wszystko do zwinnego zarządzania projektami.",
         "m_monitoring": "Monitorowanie URL z historią uptimeu, czasami odpowiedzi i natychmiastowymi alertami.",
         "m_heartbeat": "Monitoring zadań cron z dead man's switch. Otrzymuj alerty, gdy zaplanowane zadania przestaną działać.",
         "m_wiki": "Dokumentacja w Markdown z hierarchią stron, uploadem obrazów i semantycznym wyszukiwaniem AI.",
         "m_connections": "Interaktywny graf zależności oparty na Neo4j. Wizualizuj powiązania między modułami kodu.",
+        "m_settlements": (
+            "Rozliczenia cross-project z workflow statusów (draft → wysłane → opłacone), zamrażaniem ticketów i zarządzaniem załącznikami."
+        ),
         "mcp_title": "AI-native z MCP",
         "mcp_desc": (
             "Monolynx obsługuje <mcp_link>Model Context Protocol</mcp_link>."

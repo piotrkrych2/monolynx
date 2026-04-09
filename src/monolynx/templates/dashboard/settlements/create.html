@@ -1,0 +1,136 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Nowe rozliczenie - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+
+<!-- Breadcrumbs -->
+<nav class="flex text-sm text-gray-500 dark:text-gray-400 mb-4">
+    <a href="/dashboard/{{ project.slug }}/rozliczenia/" class="hover:text-gray-900 dark:hover:text-white hover:underline transition">Rozliczenia</a>
+    <span class="mx-2">/</span>
+    <span class="text-gray-900 dark:text-white">Nowe rozliczenie</span>
+</nav>
+
+<div class="max-w-2xl">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-6">Nowe rozliczenie</h1>
+
+    <form method="post" action="/dashboard/{{ project.slug }}/rozliczenia/create" class="space-y-5">
+
+        <!-- Nazwa -->
+        <div>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1" for="name">Nazwa</label>
+            <input type="text" id="name" name="name" required maxlength="200"
+                   value="{{ form_data.name | default('') | e }}"
+                   class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <!-- Okres -->
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1" for="period_from">Okres od</label>
+                <input type="date" id="period_from" name="period_from" required
+                       value="{{ form_data.period_from.isoformat() if form_data.period_from else '' }}"
+                       class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1" for="period_to">Okres do</label>
+                <input type="date" id="period_to" name="period_to" required
+                       value="{{ form_data.period_to.isoformat() if form_data.period_to else '' }}"
+                       class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+            </div>
+        </div>
+
+        <!-- Projekty (multi-select) -->
+        <div>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1" for="project_ids">
+                Projekty
+                <span class="text-gray-400 dark:text-gray-500 ml-1 font-normal">(przytrzymaj Ctrl/Cmd, aby wybrać kilka)</span>
+            </label>
+            {% set selected_ids = form_data.project_ids if form_data.project_ids is defined and form_data.project_ids else [] %}
+            <select id="project_ids" name="project_ids" multiple size="6" required
+                    class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+                {% for p in all_projects %}
+                <option value="{{ p.id }}"
+                    {% if selected_ids %}
+                        {% if p.id in selected_ids %}selected{% endif %}
+                    {% elif p.id == current_project_id %}
+                        selected
+                    {% endif %}>
+                    {{ p.name | e }}
+                </option>
+                {% endfor %}
+            </select>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Bieżący projekt musi być zaznaczony.</p>
+        </div>
+
+        <!-- Notatki (EasyMDE) -->
+        <div>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1" for="settlement-notes">Notatki</label>
+            <textarea id="settlement-notes" name="notes" rows="6">{{ form_data.notes | default('') | e }}</textarea>
+        </div>
+
+        <!-- Przyciski -->
+        <div class="flex items-center gap-3 pt-2">
+            <button type="submit"
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-5 py-2 rounded transition">
+                Utwórz
+            </button>
+            <a href="/dashboard/{{ project.slug }}/rozliczenia/"
+               class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition">
+                Anuluj
+            </a>
+        </div>
+
+    </form>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+<script>
+var easyMDE = new EasyMDE({
+    element: document.getElementById('settlement-notes'),
+    spellChecker: false,
+    autofocus: false,
+    status: false,
+    toolbar: [
+        "bold", "italic", "heading", "|",
+        "quote", "unordered-list", "ordered-list", "|",
+        "link", "code", "table", "|",
+        "preview", "side-by-side", "|",
+        "guide"
+    ],
+    minHeight: "180px",
+});
+</script>
+
+<style>
+/* EasyMDE ciemny motyw */
+html.dark .EasyMDEContainer .CodeMirror {
+    background-color: #374151;
+    color: #e5e7eb;
+    border-color: #4b5563;
+}
+html.dark .EasyMDEContainer .CodeMirror-cursor {
+    border-left-color: #e5e7eb;
+}
+html.dark .editor-toolbar {
+    border-color: #4b5563;
+    background-color: #1f2937;
+}
+html.dark .editor-toolbar button {
+    color: #9ca3af !important;
+}
+html.dark .editor-toolbar button:hover,
+html.dark .editor-toolbar button.active {
+    color: #fff !important;
+    background-color: #374151;
+}
+html.dark .editor-preview {
+    background-color: #1f2937;
+    color: #e5e7eb;
+}
+html.dark .editor-preview pre {
+    background-color: #374151;
+}
+</style>
+{% endblock %}

@@ -17,6 +17,10 @@ from monolynx.models.oauth import (
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.role import Role
+from monolynx.models.settlement import Settlement
+from monolynx.models.settlement_attachment import SettlementAttachment
+from monolynx.models.settlement_project import SettlementProject
+from monolynx.models.settlement_ticket import SettlementTicket
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
@@ -46,6 +50,10 @@ __all__ = [
     "Project",
     "ProjectMember",
     "Role",
+    "Settlement",
+    "SettlementAttachment",
+    "SettlementProject",
+    "SettlementTicket",
     "Sprint",
     "Ticket",
     "TicketAcceptanceCriterion",

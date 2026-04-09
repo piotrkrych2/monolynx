@@ -24,7 +24,7 @@ from monolynx.schemas.roles import RoleCreate, RoleResponse, RoleUpdate
 @pytest.mark.unit
 class TestPermissionConstants:
     def test_permission_modules_count(self):
-        assert len(PERMISSION_MODULES) == 9
+        assert len(PERMISSION_MODULES) == 10
 
     def test_permission_modules_zawiera_oczekiwane(self):
         expected = {
@@ -37,6 +37,7 @@ class TestPermissionConstants:
             "settings",
             "reports",
             "users",
+            "rozliczenia",
         }
         assert set(PERMISSION_MODULES) == expected
 

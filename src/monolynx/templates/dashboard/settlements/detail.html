@@ -1,0 +1,321 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}ROZ-{{ settlement.number }} — {{ settlement.name }} - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<!-- Breadcrumbs -->
+<nav class="flex text-sm text-gray-500 dark:text-gray-400 mb-4">
+    <a href="/dashboard/{{ project.slug }}/rozliczenia/" class="hover:text-gray-900 dark:hover:text-white hover:underline transition">Rozliczenia</a>
+    <span class="mx-2">/</span>
+    <span class="text-gray-900 dark:text-white">ROZ-{{ settlement.number }} — {{ settlement.name | e }}</span>
+</nav>
+
+<!-- Header -->
+<div class="flex items-start justify-between mb-6">
+    <div>
+        <div class="flex items-center gap-3 mb-1">
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
+                <span class="font-mono text-indigo-600 dark:text-indigo-400">ROZ-{{ settlement.number }}</span>
+                — {{ settlement.name | e }}
+            </h1>
+            {% if settlement.status == 'draft' %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200">Szkic</span>
+            {% elif settlement.status == 'sent' %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Wysłane</span>
+            {% elif settlement.status == 'paid' %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Opłacone</span>
+            {% else %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200">{{ settlement.status | e }}</span>
+            {% endif %}
+        </div>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+            Okres: {{ settlement.period_from | localtime('%Y-%m-%d') }} – {{ settlement.period_to | localtime('%Y-%m-%d') }}
+        </p>
+    </div>
+</div>
+
+<!-- Grid 2-kolumnowy: main (2/3) + sidebar (1/3) -->
+<div class="grid grid-cols-3 gap-6">
+    <!-- Main content -->
+    <div class="col-span-2 space-y-6">
+
+        <!-- Metadane -->
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+            <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-3">Informacje</h2>
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                <div>
+                    <dt class="text-gray-500 dark:text-gray-400">Utworzone przez</dt>
+                    <dd class="text-gray-900 dark:text-white mt-0.5">{{ settlement.created_by.email | e }}</dd>
+                </div>
+                <div>
+                    <dt class="text-gray-500 dark:text-gray-400">Data utworzenia</dt>
+                    <dd class="text-gray-900 dark:text-white mt-0.5">{{ settlement.created_at | localtime('%Y-%m-%d %H:%M') }}</dd>
+                </div>
+                <div>
+                    <dt class="text-gray-500 dark:text-gray-400">Ostatnia aktualizacja</dt>
+                    <dd class="text-gray-900 dark:text-white mt-0.5">{{ settlement.updated_at | localtime('%Y-%m-%d %H:%M') }}</dd>
+                </div>
+                <div>
+                    <dt class="text-gray-500 dark:text-gray-400">Data wysłania</dt>
+                    <dd class="text-gray-900 dark:text-white mt-0.5">
+                        {% if settlement.sent_at %}{{ settlement.sent_at | localtime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
+                    </dd>
+                </div>
+                <div>
+                    <dt class="text-gray-500 dark:text-gray-400">Data opłacenia</dt>
+                    <dd class="text-gray-900 dark:text-white mt-0.5">
+                        {% if settlement.paid_at %}{{ settlement.paid_at | localtime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
+                    </dd>
+                </div>
+            </dl>
+        </div>
+
+        <!-- Projekty -->
+        {% if settlement.projects %}
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+            <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-3">Projekty ({{ settlement.projects | length }})</h2>
+            <ul class="space-y-1">
+                {% for p in settlement.projects %}
+                <li class="text-sm">
+                    <a href="/dashboard/{{ p.slug }}/rozliczenia/{{ settlement.id }}"
+                       class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline transition">
+                        {{ p.name | e }}
+                    </a>
+                    {% if p.id == project.id %}
+                    <span class="text-xs text-gray-500 ml-1">(bieżący)</span>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- Powiązane tickety -->
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+            <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-3">
+                Powiązane tickety ({{ tickets_with_projects | length }})
+            </h2>
+            {% if tickets_with_projects %}
+            <div class="divide-y divide-gray-200 dark:divide-gray-700">
+                {% for ticket in tickets_with_projects %}
+                <div class="flex items-center justify-between py-2.5 first:pt-0 last:pb-0 gap-3">
+                    <div class="min-w-0 flex-1 flex items-baseline gap-2">
+                        <a href="/dashboard/{{ ticket.project.slug }}/scrum/tickets/{{ ticket.id }}"
+                           class="font-mono text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline text-xs transition flex-shrink-0"
+                           title="{{ ticket.project.code }}-{{ ticket.number }}">
+                            {{ ticket.project.code }}-{{ ticket.number }}
+                        </a>
+                        <span class="text-sm text-gray-900 dark:text-white truncate" title="{{ ticket.title | e }}">{{ ticket.title | e }}</span>
+                        {% if ticket.project.id != project.id %}
+                        <span class="text-xs text-gray-500 flex-shrink-0">(z {{ ticket.project.code }})</span>
+                        {% endif %}
+                    </div>
+                    <div class="flex items-center gap-3 flex-shrink-0">
+                        <span class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                            {{ ticket.status | e }}
+                        </span>
+                        {% if can_edit_tickets and settlement.status == 'draft' %}
+                        <form method="post"
+                              action="/dashboard/{{ ticket.project.slug }}/rozliczenia/{{ settlement.id }}/tickets/{{ ticket.id }}/unlink"
+                              class="inline">
+                            <button type="submit"
+                                    class="text-xs text-red-400 hover:text-red-300 transition">Odepnij</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-500">Brak powiązanych ticketów.</p>
+            {% endif %}
+
+            {% if can_edit_tickets and settlement.status == 'draft' %}
+            <div class="mt-4">
+                <label for="ticket-search-input" class="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                    Dodaj ticket
+                </label>
+                <input type="text"
+                       id="ticket-search-input"
+                       name="q"
+                       placeholder="Wyszukaj po numerze lub tytule…"
+                       hx-get="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/tickets/search"
+                       hx-trigger="input changed delay:250ms, focus"
+                       hx-target="#ticket-search-results"
+                       hx-swap="innerHTML"
+                       autocomplete="off"
+                       class="w-full rounded bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100 text-sm px-3 py-2 focus:outline-none focus:border-indigo-500">
+                <div id="ticket-search-results"
+                     class="mt-1 max-h-64 overflow-y-auto rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 empty:hidden"></div>
+                <p class="mt-1 text-xs text-gray-500">Kliknij wynik, aby dodać ticket do rozliczenia.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Załączniki -->
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Załączniki</h2>
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ settlement.attachments | list | length }} plików</span>
+            </div>
+
+            {# Formularz uploadu — tylko dla draft + write #}
+            {% if permissions.get('rozliczenia', {}).get('write') and settlement.status == 'draft' %}
+                {% include 'dashboard/settlements/_attachment_upload.html' %}
+            {% endif %}
+
+            {# Lista grupowana po kategorii i stanie #}
+            {% set all_attachments = settlement.attachments | list %}
+
+            {% if all_attachments %}
+                {% set categories = [
+                    ('invoice', 'Faktura'),
+                    ('report', 'Raport'),
+                    ('acceptance_protocol', 'Protokół odbioru'),
+                    ('other', 'Inne'),
+                ] %}
+
+                <div class="space-y-5">
+                    {% for cat_key, cat_label in categories %}
+                        {% set cat_attachments = all_attachments | selectattr('category', 'equalto', cat_key) | list %}
+                        {% if cat_attachments %}
+                            <div>
+                                <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{{ cat_label }}</h3>
+
+                                {# Szkice #}
+                                {% set drafts = cat_attachments | selectattr('state', 'equalto', 'draft') | list %}
+                                {% if drafts %}
+                                    <div class="mb-3">
+                                        <p class="text-xs text-gray-500 dark:text-gray-500 mb-1.5">Szkice ({{ drafts | length }})</p>
+                                        <ul class="space-y-2">
+                                            {% for att in drafts %}
+                                                {% include 'dashboard/settlements/_attachment_item.html' %}
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                {% endif %}
+
+                                {# Podpisane #}
+                                {% set signed = cat_attachments | selectattr('state', 'equalto', 'signed') | list %}
+                                {% if signed %}
+                                    <div>
+                                        <p class="text-xs text-gray-500 dark:text-gray-500 mb-1.5">Podpisane ({{ signed | length }})</p>
+                                        <ul class="space-y-2">
+                                            {% for att in signed %}
+                                                {% include 'dashboard/settlements/_attachment_item.html' %}
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-sm text-gray-500 dark:text-gray-500">Brak załączników.</p>
+            {% endif %}
+        </div>
+
+        <!-- Notatki -->
+        {% if notes_html %}
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+            <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-3">Notatki</h2>
+            <div class="prose prose-sm dark:prose-invert max-w-none">
+                {{ notes_html | safe }}
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+
+    <!-- Sidebar -->
+    <div class="col-span-1 space-y-4">
+        {% if permissions.get('rozliczenia', {}).get('write') or permissions.get('rozliczenia', {}).get('delete') %}
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+            <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-3">Akcje</h2>
+            <div class="space-y-2">
+                {% if permissions.get('rozliczenia', {}).get('write') and settlement.status == 'draft' %}
+                <a href="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/edit"
+                   class="flex items-center justify-center w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded transition">
+                    Edytuj
+                </a>
+                {% endif %}
+                {% if permissions.get('rozliczenia', {}).get('write') %}
+                {% if settlement.status == 'draft' %}
+                <form method="post"
+                      action="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/status"
+                      class="w-full">
+                    <input type="hidden" name="new_status" value="sent">
+                    <button type="submit"
+                            class="flex items-center justify-center w-full px-4 py-2 text-sm font-medium text-white bg-yellow-600 hover:bg-yellow-500 rounded transition">
+                        Wyślij (oznacz jako wysłane)
+                    </button>
+                </form>
+                {% elif settlement.status == 'sent' %}
+                <form method="post"
+                      action="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/status"
+                      class="w-full">
+                    <input type="hidden" name="new_status" value="paid">
+                    <button type="submit"
+                            class="flex items-center justify-center w-full px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-500 rounded transition">
+                        Oznacz jako opłacone
+                    </button>
+                </form>
+                <form method="post"
+                      action="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/status"
+                      class="w-full">
+                    <input type="hidden" name="new_status" value="draft">
+                    <button type="submit"
+                            class="flex items-center justify-center w-full px-4 py-2 text-sm font-medium text-gray-100 border border-gray-600 bg-gray-800 hover:bg-gray-700 rounded transition"
+                            onclick="return confirm('Cofnięcie do draft odmrozi powiązane tickety. Kontynuować?');">
+                        Cofnij do szkicu
+                    </button>
+                </form>
+                {% elif settlement.status == 'paid' %}
+                <form method="post"
+                      action="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/status"
+                      class="w-full">
+                    <input type="hidden" name="new_status" value="sent">
+                    <button type="submit"
+                            class="flex items-center justify-center w-full px-4 py-2 text-sm font-medium text-gray-100 border border-gray-600 bg-gray-800 hover:bg-gray-700 rounded transition"
+                            onclick="return confirm('Cofnięcie do statusu wysłane. Kontynuować?');">
+                        Cofnij do wysłanego
+                    </button>
+                </form>
+                {% endif %}
+                {% endif %}
+                {% if permissions.get('rozliczenia', {}).get('delete') and settlement.status == 'draft' %}
+                <form method="post"
+                      action="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/delete"
+                      onsubmit="return confirm('Na pewno usunąć rozliczenie ROZ-{{ settlement.number }}? Operacja jest soft delete.');">
+                    <button type="submit"
+                            class="flex items-center justify-center w-full px-4 py-2 text-sm font-medium text-red-400 bg-red-50 dark:bg-red-900/20 dark:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/40 rounded transition">
+                        Usuń
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Szybki podgląd metadanych w sidebarze -->
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+            <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-3">Podsumowanie</h2>
+            <dl class="space-y-2 text-sm">
+                <div class="flex justify-between">
+                    <dt class="text-gray-500 dark:text-gray-400">Projekty</dt>
+                    <dd class="text-gray-900 dark:text-white font-medium">{{ settlement.projects | length }}</dd>
+                </div>
+                <div class="flex justify-between">
+                    <dt class="text-gray-500 dark:text-gray-400">Tickety</dt>
+                    <dd class="text-gray-900 dark:text-white font-medium">{{ tickets_with_projects | length }}</dd>
+                </div>
+                <div class="flex justify-between">
+                    <dt class="text-gray-500 dark:text-gray-400">Załączniki</dt>
+                    <dd class="text-gray-900 dark:text-white font-medium">{{ settlement.attachments | length }}</dd>
+                </div>
+            </dl>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -12,6 +12,8 @@ from .reports import router as reports_router
 from .scrum import router as scrum_router
 from .sentry import router as sentry_router
 from .settings import router as settings_router
+from .settlements import router as settlements_router
+from .settlements_global import router as settlements_global_router
 from .users import router as users_router
 from .wiki import router as wiki_router
 
@@ -23,6 +25,7 @@ router.include_router(projects_router)
 router.include_router(profile_router)
 router.include_router(users_router)
 router.include_router(reports_router)
+router.include_router(settlements_global_router)
 router.include_router(settings_router)
 router.include_router(scrum_router)
 router.include_router(sentry_router)
@@ -30,3 +33,4 @@ router.include_router(monitoring_router)
 router.include_router(heartbeat_router)
 router.include_router(wiki_router)
 router.include_router(connections_router)
+router.include_router(settlements_router)

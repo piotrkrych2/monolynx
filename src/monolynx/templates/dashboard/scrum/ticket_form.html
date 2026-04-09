@@ -113,6 +113,22 @@
         </div>
         {% endif %}
 
+        {% if can_edit_settlements and available_settlements %}
+        <div>
+            <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Rozliczenia (tylko draft)</label>
+            <select name="settlement_ids" multiple
+                    class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+                {% for s in available_settlements %}
+                <option value="{{ s.id }}"
+                        {% if current_settlement_ids and s.id in current_settlement_ids %}selected{% endif %}>
+                    ROZ-{{ s.number }} — {{ s.name | e }}
+                </option>
+                {% endfor %}
+            </select>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Trzymaj Ctrl/Cmd aby zaznaczyć wiele.</p>
+        </div>
+        {% endif %}
+
         <button type="submit"
             class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded transition">
             {% if ticket %}Zapisz zmiany{% else %}Utwórz ticket{% endif %}

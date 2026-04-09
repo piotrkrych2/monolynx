@@ -35,6 +35,8 @@ from monolynx.models.issue import Issue
 from monolynx.models.label import Label, TicketLabel
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.settlement import Settlement
+from monolynx.models.settlement_project import SettlementProject
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
@@ -44,7 +46,8 @@ from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.services.minio_client import delete_object as minio_delete_object
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
-from monolynx.services.permissions import require_permission
+from monolynx.services.permissions import check_permission, require_permission
+from monolynx.services.settlements import is_ticket_frozen, validate_settlement_ticket_link
 from monolynx.services.sprint import complete_sprint, start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
 from monolynx.services.time_tracking import (
@@ -591,6 +594,7 @@ async def ticket_detail(
             selectinload(Ticket.attachments),
             selectinload(Ticket.acceptance_criteria).selectinload(TicketAcceptanceCriterion.created_by_user),
             selectinload(Ticket.acceptance_criteria).selectinload(TicketAcceptanceCriterion.completed_by_user),
+            selectinload(Ticket.settlements).selectinload(Settlement.projects),
         )
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )
@@ -602,6 +606,11 @@ async def ticket_detail(
 
     rendered_description = render_markdown_html(ticket.description) if ticket.description else ""
     rendered_comments = [{"comment": c, "html": render_markdown_html(c.content)} for c in ticket.comments]
+
+    can_see_settlements = await check_permission(db, user_id, project.id, "rozliczenia", "read")
+    can_edit_settlements = await check_permission(db, user_id, project.id, "rozliczenia", "write")
+    ticket_settlements = [s for s in ticket.settlements if s.is_active] if can_see_settlements else []
+    frozen = is_ticket_frozen(ticket)
 
     return await render_project_page(
         request,
@@ -619,6 +628,10 @@ async def ticket_detail(
             "now_date": date.today(),
             "attachments": ticket.attachments,
             "acceptance_criteria": ticket.acceptance_criteria,
+            "settlements_visible": can_see_settlements,
+            "ticket_settlements": ticket_settlements,
+            "can_edit_settlements": can_edit_settlements,
+            "frozen": frozen,
         },
         db=db,
     )
@@ -850,12 +863,22 @@ async def ticket_edit_form(
 
     result = await db.execute(
         select(Ticket)
-        .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint), selectinload(Ticket.labels))
+        .options(
+            selectinload(Ticket.assignee),
+            selectinload(Ticket.sprint),
+            selectinload(Ticket.labels),
+            selectinload(Ticket.settlements).selectinload(Settlement.projects),
+        )
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )
     ticket = result.scalar_one_or_none()
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
+
+    frozen = is_ticket_frozen(ticket)
+    if frozen:
+        flash(request, "Ticket zamrozony — powiazany z rozliczeniem w statusie sent/paid", "error")
+        return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)
 
     members = await _get_project_members(project.id, db)
     labels = await _get_project_labels(project.id, db)
@@ -866,6 +889,24 @@ async def ticket_edit_form(
         )
     )
     sprints = result.scalars().all()
+
+    can_edit_settlements = await check_permission(db, user_id, project.id, "rozliczenia", "write")
+    available_settlements: list[Settlement] = []
+    if can_edit_settlements:
+        avail_result = await db.execute(
+            select(Settlement)
+            .join(SettlementProject, SettlementProject.settlement_id == Settlement.id)
+            .where(
+                SettlementProject.project_id == project.id,
+                Settlement.status == "draft",
+                Settlement.is_active.is_(True),
+            )
+            .options(selectinload(Settlement.projects))
+            .distinct()
+        )
+        available_settlements = list(avail_result.scalars().unique().all())
+
+    current_settlement_ids = {s.id for s in ticket.settlements if s.is_active}
 
     return await render_project_page(
         request,
@@ -880,6 +921,9 @@ async def ticket_edit_form(
             "statuses": TICKET_STATUSES,
             "error": None,
             "active_module": "scrum",
+            "can_edit_settlements": can_edit_settlements,
+            "available_settlements": available_settlements,
+            "current_settlement_ids": current_settlement_ids,
         },
         db=db,
     )
@@ -906,10 +950,19 @@ async def ticket_edit(
 
     await require_permission(db, user_id, project.id, "scrum", "write")
 
-    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
+    result = await db.execute(
+        select(Ticket)
+        .options(selectinload(Ticket.settlements).selectinload(Settlement.projects))
+        .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
+    )
     ticket = result.scalar_one_or_none()
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
+
+    frozen = is_ticket_frozen(ticket)
+    if frozen:
+        flash(request, "Ticket zamrozony — powiazany z rozliczeniem w statusie sent/paid", "error")
+        return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)
 
     form = await request.form()
     title = str(form.get("title", "")).strip()
@@ -952,6 +1005,31 @@ async def ticket_edit(
     for lid in valid_label_ids:
         db.add(TicketLabel(ticket_id=ticket_id, label_id=lid))
 
+    # Sync settlements: tylko jesli user ma rozliczenia:write
+    can_edit_settlements = await check_permission(db, user_id, project.id, "rozliczenia", "write")
+    if can_edit_settlements:
+        settlement_ids_raw = [str(v) for v in form.getlist("settlement_ids")]
+        new_settlements: list[Settlement] = []
+        for raw_sid in settlement_ids_raw:
+            try:
+                sid = uuid.UUID(raw_sid)
+            except ValueError:
+                continue
+            s_result = await db.execute(
+                select(Settlement).options(selectinload(Settlement.projects)).where(Settlement.id == sid, Settlement.is_active.is_(True))
+            )
+            settlement = s_result.scalar_one_or_none()
+            if settlement is None:
+                continue
+            try:
+                await validate_settlement_ticket_link(db, settlement, ticket)
+            except ValueError as e:
+                flash(request, str(e), "error")
+                continue
+            new_settlements.append(settlement)
+        # Nadpisz settlements (zachowaj sent/paid — frozen check powyzej gwarantuje ich brak)
+        ticket.settlements = new_settlements
+
     await db.commit()
     flash(request, "Ticket zostal zaktualizowany")
     ticket_url = f"/dashboard/{slug}/scrum/tickets/{ticket_id}"
@@ -975,10 +1053,14 @@ async def ticket_delete(
 
     await require_permission(db, user_id, project.id, "scrum", "delete")
 
-    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
+    result = await db.execute(select(Ticket).options(selectinload(Ticket.settlements)).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
     ticket = result.scalar_one_or_none()
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
+
+    if is_ticket_frozen(ticket):
+        flash(request, "Ticket zamrozony — powiazany z rozliczeniem w statusie sent/paid", "error")
+        return RedirectResponse(url=f"/dashboard/{slug}/scrum/tickets/{ticket_id}", status_code=303)
 
     await db.delete(ticket)
     await db.commit()
@@ -1013,6 +1095,7 @@ async def ticket_status_update(
     if ticket is None:
         return HTMLResponse("Ticket not found", status_code=404)
 
+    # UWAGA: frozen tickety MOGA zmieniac status (user explicit decision) -- tylko pelna edycja jest blokowana
     ticket.status = new_status
     await db.commit()
     return HTMLResponse("OK", status_code=200)

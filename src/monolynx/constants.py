@@ -167,6 +167,7 @@ PERMISSION_MODULES = (
     "settings",
     "reports",
     "users",
+    "rozliczenia",
 )
 
 PERMISSION_ACTIONS = ("read", "write", "delete")
@@ -181,6 +182,7 @@ MODULE_LABELS = {
     "settings": "Ustawienia",
     "reports": "Raporty",
     "users": "Użytkownicy",
+    "rozliczenia": "Rozliczenia",
 }
 
 ACTION_LABELS = {
@@ -189,10 +191,61 @@ ACTION_LABELS = {
     "delete": "Usuwanie",
 }
 
+# Settlement attachments
+SETTLEMENT_ATTACHMENT_MAX_SIZE = 200 * 1024 * 1024  # 200 MB
+MAX_ATTACHMENTS_PER_SETTLEMENT = 50
+
+SETTLEMENT_CATEGORIES = frozenset({"invoice", "report", "acceptance_protocol", "other"})
+
+SETTLEMENT_STATES = frozenset({"draft", "sent", "paid"})
+
+SETTLEMENT_ATTACHMENT_STATES = frozenset({"draft", "signed"})
+
+SETTLEMENT_ATTACHMENT_STATE_LABELS: dict[str, str] = {
+    "draft": "Szkic",
+    "signed": "Podpisany",
+}
+
+SETTLEMENT_ALLOWED_EXT = frozenset(
+    {
+        ".pdf",
+        ".xls",
+        ".xlsx",
+        ".doc",
+        ".docx",
+        ".odt",
+        ".ods",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".txt",
+        ".csv",
+        ".md",
+        ".rtf",
+        ".zip",
+        ".7z",
+    }
+)
+
+SETTLEMENT_CATEGORY_LABELS = {
+    "invoice": "Faktura",
+    "report": "Raport",
+    "acceptance_protocol": "Protokół odbioru",
+    "other": "Inne",
+}
+
+SETTLEMENT_STATE_LABELS = {
+    "draft": "Szkic",
+    "sent": "Wysłane",
+    "paid": "Opłacone",
+}
+
 # Default permissions for system roles
 DEFAULT_ROLE_PERMISSIONS = {
     "owner": {m: list(PERMISSION_ACTIONS) for m in PERMISSION_MODULES},
-    "admin": {m: list(PERMISSION_ACTIONS) if m not in ("users", "settings") else ["read", "write"] for m in PERMISSION_MODULES},
+    "admin": {m: list(PERMISSION_ACTIONS) if m not in ("users", "settings", "rozliczenia") else ["read", "write"] for m in PERMISSION_MODULES},
     "member": {
         "500ki": ["read"],
         "scrum": ["read", "write"],
@@ -203,5 +256,6 @@ DEFAULT_ROLE_PERMISSIONS = {
         "settings": ["read"],
         "reports": ["read"],
         "users": ["read"],
+        "rozliczenia": [],
     },
 }

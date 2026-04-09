@@ -17,6 +17,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from monolynx.config import settings as app_settings
@@ -46,6 +47,8 @@ from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.role import Role
+from monolynx.models.settlement import Settlement
+from monolynx.models.settlement_project import SettlementProject
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
@@ -68,6 +71,29 @@ from monolynx.services.minio_client import get_attachment as minio_get_attachmen
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
 from monolynx.services.minio_client import upload_object as minio_upload_object
 from monolynx.services.permissions import check_permission, get_user_permissions
+from monolynx.services.settlements import (
+    change_settlement_status as svc_change_settlement_status,
+)
+from monolynx.services.settlements import (
+    create_settlement as svc_create_settlement,
+)
+from monolynx.services.settlements import (
+    delete_settlement as svc_delete_settlement,
+)
+from monolynx.services.settlements import (
+    delete_settlement_attachment as svc_delete_settlement_attachment,
+)
+from monolynx.services.settlements import (
+    get_settlement_attachment_bytes,
+    is_ticket_frozen,
+    validate_settlement_ticket_link,
+)
+from monolynx.services.settlements import (
+    update_settlement as svc_update_settlement,
+)
+from monolynx.services.settlements import (
+    upload_settlement_attachment as svc_upload_settlement_attachment,
+)
 from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
@@ -560,6 +586,11 @@ def _format_tickets_table(
         rows.append(f"{key:<8} | {title:<40} | {status:<11} | {priority:<6} | {assignee:<21} | {sprint:<17} | {sp:<2} | {due:<10} | {labels}")
 
     return "\n".join(rows)
+
+
+async def _can_read_settlements(db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID) -> bool:
+    """Sprawdza czy user ma rozliczenia:read w projekcie."""
+    return await check_permission(db, user_id, project_id, "rozliczenia", "read")
 
 
 async def _get_user_and_project(ctx: Context[Any, Any], project_slug: str) -> tuple[User, Project]:
@@ -1991,7 +2022,12 @@ async def list_tickets(
 
         result = await db.execute(
             select(Ticket)
-            .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint), selectinload(Ticket.labels))
+            .options(
+                selectinload(Ticket.assignee),
+                selectinload(Ticket.sprint),
+                selectinload(Ticket.labels),
+                selectinload(Ticket.settlements),
+            )
             .where(*conditions)
             .order_by(Ticket.order, Ticket.created_at.desc())
             .limit(per_page)
@@ -2034,7 +2070,7 @@ async def search_tickets(
     """
     from sqlalchemy import or_
 
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
     per_page = 20
 
     async with async_session_factory() as db:
@@ -2083,28 +2119,46 @@ async def search_tickets(
 
         result = await db.execute(
             select(Ticket)
-            .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint))
+            .options(
+                selectinload(Ticket.assignee),
+                selectinload(Ticket.sprint),
+                selectinload(Ticket.settlements),
+            )
             .where(*conditions)
             .order_by(Ticket.order, Ticket.created_at.desc())
             .limit(per_page)
             .offset((page - 1) * per_page)
         )
         tickets = result.scalars().all()
+        can_read = await _can_read_settlements(db, user.id, project.id)
+
+    def _settlement_dict(s: Settlement) -> dict[str, Any]:
+        return {
+            "id": str(s.id),
+            "number": s.number,
+            "name": s.name,
+            "status": s.status,
+            "period_from": s.period_from.isoformat() if s.period_from else None,
+            "period_to": s.period_to.isoformat() if s.period_to else None,
+        }
+
+    def _ticket_row(t: Ticket) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "id": str(t.id),
+            "key": f"{project.code}-{t.number}",
+            "title": t.title,
+            "status": t.status,
+            "priority": t.priority,
+            "story_points": t.story_points,
+            "assignee": t.assignee.email if t.assignee else None,
+            "due_date": t.due_date.isoformat() if t.due_date else None,
+        }
+        if can_read:
+            row["settlements"] = [_settlement_dict(s) for s in t.settlements if s.is_active]
+        return row
 
     return {
-        "results": [
-            {
-                "id": str(t.id),
-                "key": f"{project.code}-{t.number}",
-                "title": t.title,
-                "status": t.status,
-                "priority": t.priority,
-                "story_points": t.story_points,
-                "assignee": t.assignee.email if t.assignee else None,
-                "due_date": t.due_date.isoformat() if t.due_date else None,
-            }
-            for t in tickets
-        ],
+        "results": [_ticket_row(t) for t in tickets],
         "total": total,
         "page": page,
         "total_pages": total_pages,
@@ -2125,7 +2179,7 @@ async def get_ticket(
     assignee, story points, due date, labels, daty, flaga AI, UUID), opcjonalny opis,
     liste zalacznikow oraz komentarze.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
     resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     async with async_session_factory() as db:
@@ -2138,6 +2192,7 @@ async def get_ticket(
                 selectinload(Ticket.labels),
                 selectinload(Ticket.attachments),
                 selectinload(Ticket.acceptance_criteria),
+                selectinload(Ticket.settlements),
             )
             .where(
                 Ticket.id == resolved_id,
@@ -2148,7 +2203,20 @@ async def get_ticket(
         if ticket is None:
             raise ValueError("Ticket nie istnieje")
 
-    return _format_ticket_detail(ticket, project.code)
+        can_read = await _can_read_settlements(db, user.id, project.id)
+
+    detail = _format_ticket_detail(ticket, project.code)
+
+    if can_read and ticket.settlements:
+        active_settlements = [s for s in ticket.settlements if s.is_active]
+        if active_settlements:
+            lines = [detail, "", "## Rozliczenia"]
+            for s in active_settlements:
+                period = f"{s.period_from} - {s.period_to}"
+                lines.append(f"- ROZ-{s.number} | {s.name} | {s.status} | {period} | ID: {s.id}")
+            detail = "\n".join(lines)
+
+    return detail
 
 
 @mcp.tool()
@@ -2284,7 +2352,9 @@ async def update_ticket(
 
     async with async_session_factory() as db:
         result = await db.execute(
-            select(Ticket).where(
+            select(Ticket)
+            .options(selectinload(Ticket.settlements))
+            .where(
                 Ticket.id == resolved_id,
                 Ticket.project_id == project.id,
             )
@@ -2292,6 +2362,12 @@ async def update_ticket(
         ticket = result.scalar_one_or_none()
         if ticket is None:
             raise ValueError("Ticket nie istnieje")
+
+        if is_ticket_frozen(ticket):
+            # Frozen ticket: dozwolona tylko zmiana statusu (wszystkie inne pola musza byc None)
+            other_fields = (title, description, priority, story_points, sprint_id, assignee_email, due_date, label_ids)
+            if any(f is not None for f in other_fields):
+                raise ValueError("Ticket zamrozony — dozwolona tylko zmiana statusu. Pelna edycja zablokowana dla rozliczen sent/paid.")
 
         if title is not None:
             title = title.strip()
@@ -2378,7 +2454,9 @@ async def delete_ticket(
 
     async with async_session_factory() as db:
         result = await db.execute(
-            select(Ticket).where(
+            select(Ticket)
+            .options(selectinload(Ticket.settlements))
+            .where(
                 Ticket.id == resolved_id,
                 Ticket.project_id == project.id,
             )
@@ -2386,6 +2464,9 @@ async def delete_ticket(
         ticket = result.scalar_one_or_none()
         if ticket is None:
             raise ValueError("Ticket nie istnieje")
+
+        if is_ticket_frozen(ticket):
+            raise ValueError("Ticket zamrozony — powiazany z rozliczeniem w statusie sent/paid")
 
         title = ticket.title
         await db.delete(ticket)
@@ -2557,7 +2638,9 @@ async def bulk_update_tickets(
 
         if valid_uuids:
             tickets_result = await db.execute(
-                select(Ticket).where(
+                select(Ticket)
+                .options(selectinload(Ticket.settlements))
+                .where(
                     Ticket.id.in_(valid_uuids.keys()),
                     Ticket.project_id == project.id,
                 )
@@ -2568,6 +2651,11 @@ async def bulk_update_tickets(
                 ticket = found_tickets.get(ticket_uuid)
                 if ticket is None:
                     failed.append({"id": ticket_id_str, "reason": "Ticket nie istnieje"})
+                    continue
+
+                # Frozen ticket: dozwolona tylko zmiana statusu (wszystkie inne pola musza byc None)
+                if is_ticket_frozen(ticket) and any(f is not None for f in (priority, assignee_email, sprint_id, due_date)):
+                    failed.append({"id": ticket_id_str, "reason": "Ticket zamrozony — dozwolona tylko zmiana statusu"})
                     continue
 
                 try:
@@ -4859,3 +4947,615 @@ async def get_member_permissions(
         "project_slug": project_slug,
         "permissions": perms,
     }
+
+
+# --- Rozliczenia (Settlements) ---
+
+
+async def _get_settlement_for_mcp(
+    db: AsyncSession,
+    settlement_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> Settlement:
+    """Pobierz settlement z eager load + walidacja M2M dla MCP."""
+    result = await db.execute(
+        select(Settlement)
+        .join(SettlementProject, SettlementProject.settlement_id == Settlement.id)
+        .where(
+            Settlement.id == settlement_id,
+            Settlement.is_active.is_(True),
+            SettlementProject.project_id == project_id,
+        )
+        .options(
+            selectinload(Settlement.projects.and_(Project.is_active.is_(True))),
+            selectinload(Settlement.tickets).selectinload(Ticket.project),
+            selectinload(Settlement.attachments),
+            selectinload(Settlement.created_by),
+        )
+    )
+    settlement = result.scalar_one_or_none()
+    if settlement is None:
+        raise ValueError("Rozliczenie nie istnieje lub brak dostepu")
+    return settlement
+
+
+def _settlement_to_dict(s: Settlement) -> dict[str, Any]:
+    """Konwertuj obiekt Settlement do dict dla MCP."""
+    return {
+        "settlement_id": str(s.id),
+        "number": s.number,
+        "name": s.name,
+        "status": s.status,
+        "period_from": s.period_from.isoformat(),
+        "period_to": s.period_to.isoformat(),
+        "notes": s.notes,
+        "is_active": s.is_active,
+        "created_at": s.created_at.isoformat(),
+        "updated_at": s.updated_at.isoformat(),
+        "sent_at": s.sent_at.isoformat() if s.sent_at else None,
+        "paid_at": s.paid_at.isoformat() if s.paid_at else None,
+        "created_by_email": s.created_by.email if s.created_by else None,
+        "projects": [{"project_id": str(p.id), "name": p.name, "slug": p.slug} for p in (s.projects or [])],
+        "ticket_count": len(s.tickets or []),
+        "attachment_count": len(s.attachments or []),
+    }
+
+
+@mcp.tool()
+async def list_settlements(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    status: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    page: int = 1,
+) -> dict[str, Any]:
+    """Lista rozliczen projektu z filtrowaniem i paginacja.
+
+    status: draft | sent | paid (opcjonalnie).
+    date_from / date_to: YYYY-MM-DD (filtruje po period_from/period_to).
+    Wymaga rozliczenia:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+    per_page = 20
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "read"):
+            raise ValueError("Brak uprawnienia rozliczenia:read")
+
+        conditions = [
+            SettlementProject.project_id == project.id,
+            Settlement.is_active.is_(True),
+        ]
+        if status and status in {"draft", "sent", "paid"}:
+            conditions.append(Settlement.status == status)
+        if date_from:
+            conditions.append(Settlement.period_from >= date.fromisoformat(date_from))
+        if date_to:
+            conditions.append(Settlement.period_to <= date.fromisoformat(date_to))
+
+        count_result = await db.execute(
+            select(func.count(Settlement.id.distinct())).join(SettlementProject, SettlementProject.settlement_id == Settlement.id).where(*conditions)
+        )
+        total = count_result.scalar() or 0
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+
+        result = await db.execute(
+            select(Settlement)
+            .join(SettlementProject, SettlementProject.settlement_id == Settlement.id)
+            .where(*conditions)
+            .options(
+                selectinload(Settlement.projects.and_(Project.is_active.is_(True))),
+                selectinload(Settlement.tickets),
+                selectinload(Settlement.attachments),
+                selectinload(Settlement.created_by),
+            )
+            .order_by(Settlement.created_at.desc())
+            .distinct()
+            .limit(per_page)
+            .offset((page - 1) * per_page)
+        )
+        settlements = list(result.scalars().unique().all())
+
+    return {
+        "settlements": [_settlement_to_dict(s) for s in settlements],
+        "page": page,
+        "total_pages": total_pages,
+        "total": total,
+    }
+
+
+@mcp.tool()
+async def get_settlement(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+) -> dict[str, Any]:
+    """Pobierz szczegoly rozliczenia (projekty, tickety, zalaczniki).
+
+    Wymaga rozliczenia:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "read"):
+            raise ValueError("Brak uprawnienia rozliczenia:read")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+    result = _settlement_to_dict(settlement)
+    result["tickets"] = [
+        {
+            "ticket_id": str(t.id),
+            "key": f"{t.project.code}-{t.number}" if t.project else str(t.id),
+            "title": t.title,
+            "status": t.status,
+            "project_slug": t.project.slug if t.project else None,
+        }
+        for t in (settlement.tickets or [])
+    ]
+    result["attachments"] = [
+        {
+            "attachment_id": str(a.id),
+            "filename": a.filename,
+            "size": a.size,
+            "category": a.category,
+            "state": a.state,
+            "mime_type": a.mime_type,
+            "created_at": a.created_at.isoformat(),
+        }
+        for a in (settlement.attachments or [])
+    ]
+    return result
+
+
+@mcp.tool()
+async def create_settlement(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    name: str,
+    period_from: str,
+    period_to: str,
+    additional_project_slugs: list[str] | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Utworz nowe rozliczenie.
+
+    period_from / period_to: YYYY-MM-DD.
+    additional_project_slugs: opcjonalna lista slug-ow dodatkowych projektow.
+    Wymaga rozliczenia:write we wszystkich projektach (biezacym + dodatkowych).
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "write"):
+            raise ValueError("Brak uprawnienia rozliczenia:write")
+
+        project_ids: list[uuid.UUID] = [project.id]
+
+        if additional_project_slugs:
+            for slug in additional_project_slugs:
+                slug = slug.strip()
+                if not slug:
+                    continue
+                extra_result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
+                extra_project = extra_result.scalar_one_or_none()
+                if extra_project is None:
+                    raise ValueError(f"Projekt '{slug}' nie istnieje lub jest nieaktywny")
+                if not await check_permission(db, user.id, extra_project.id, "rozliczenia", "write"):
+                    raise ValueError(f"Brak uprawnienia rozliczenia:write w projekcie '{slug}'")
+                if extra_project.id not in project_ids:
+                    project_ids.append(extra_project.id)
+
+        settlement = await svc_create_settlement(
+            db=db,
+            user_id=user.id,
+            name=name,
+            period_from=date.fromisoformat(period_from),
+            period_to=date.fromisoformat(period_to),
+            project_ids=project_ids,
+            notes=notes,
+        )
+
+        # Re-load z relacjami
+        settlement = await _get_settlement_for_mcp(db, settlement.id, project.id)
+
+    return _settlement_to_dict(settlement)
+
+
+@mcp.tool()
+async def update_settlement(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+    name: str | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
+    project_slugs: list[str] | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Edytuj rozliczenie (tylko draft).
+
+    project_slugs: jesli podane -- zastepuje liste projektow (musi zawierac biezacy projekt).
+    Wymaga rozliczenia:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "write"):
+            raise ValueError("Brak uprawnienia rozliczenia:write")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+        # Aktualne wartosci jako defaults
+        new_name = name if name is not None else settlement.name
+        new_period_from = date.fromisoformat(period_from) if period_from else settlement.period_from
+        new_period_to = date.fromisoformat(period_to) if period_to else settlement.period_to
+        new_notes = notes if notes is not None else settlement.notes
+
+        # Resolve project_ids
+        if project_slugs is not None:
+            new_project_ids: list[uuid.UUID] = []
+            for slug in project_slugs:
+                slug = slug.strip()
+                if not slug:
+                    continue
+                p_result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
+                p = p_result.scalar_one_or_none()
+                if p is None:
+                    raise ValueError(f"Projekt '{slug}' nie istnieje lub jest nieaktywny")
+                if p.id not in new_project_ids:
+                    new_project_ids.append(p.id)
+            if not new_project_ids:
+                raise ValueError("Lista projektow nie moze byc pusta")
+        else:
+            new_project_ids = [p.id for p in settlement.projects]
+
+        settlement = await svc_update_settlement(
+            db=db,
+            settlement=settlement,
+            user_id=user.id,
+            name=new_name,
+            period_from=new_period_from,
+            period_to=new_period_to,
+            project_ids=new_project_ids,
+            notes=new_notes,
+        )
+        settlement = await _get_settlement_for_mcp(db, settlement.id, project.id)
+
+    return _settlement_to_dict(settlement)
+
+
+@mcp.tool()
+async def delete_settlement(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+) -> dict[str, Any]:
+    """Usun rozliczenie (soft delete, tylko draft).
+
+    Wymaga rozliczenia:delete.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "delete"):
+            raise ValueError("Brak uprawnienia rozliczenia:delete")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+        await svc_delete_settlement(db=db, settlement=settlement, user_id=user.id)
+
+    return {"deleted": True, "settlement_id": settlement_id}
+
+
+@mcp.tool()
+async def change_settlement_status(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+    new_status: str,
+) -> dict[str, Any]:
+    """Zmien status rozliczenia (draft->sent->paid, sent->draft, paid->sent).
+
+    Wymaga rozliczenia:write we wszystkich projektach powiazanych z rozliczeniem.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "write"):
+            raise ValueError("Brak uprawnienia rozliczenia:write")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+        settlement = await svc_change_settlement_status(
+            db=db,
+            settlement=settlement,
+            user_id=user.id,
+            new_status=new_status,
+        )
+
+    return {
+        "settlement_id": settlement_id,
+        "status": settlement.status,
+        "sent_at": settlement.sent_at.isoformat() if settlement.sent_at else None,
+        "paid_at": settlement.paid_at.isoformat() if settlement.paid_at else None,
+    }
+
+
+@mcp.tool()
+async def link_ticket_to_settlement(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+    ticket_id: str,
+) -> dict[str, Any]:
+    """Podepnij ticket do rozliczenia (tylko draft, ticket musi byc z projektu M2M).
+
+    Wymaga rozliczenia:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "write"):
+            raise ValueError("Brak uprawnienia rozliczenia:write")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+        ticket_result = await db.execute(select(Ticket).options(selectinload(Ticket.project)).where(Ticket.id == uuid.UUID(ticket_id)))
+        ticket = ticket_result.scalar_one_or_none()
+        if ticket is None:
+            raise ValueError("Ticket nie istnieje")
+
+        await validate_settlement_ticket_link(db, settlement, ticket)
+
+        linked_ids = {t.id for t in settlement.tickets}
+        if ticket.id not in linked_ids:
+            settlement.tickets.append(ticket)
+            await db.commit()
+
+    return {"linked": True, "settlement_id": settlement_id, "ticket_id": ticket_id}
+
+
+@mcp.tool()
+async def unlink_ticket_from_settlement(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+    ticket_id: str,
+) -> dict[str, Any]:
+    """Odepnij ticket od rozliczenia (tylko draft).
+
+    Wymaga rozliczenia:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "write"):
+            raise ValueError("Brak uprawnienia rozliczenia:write")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+        if settlement.status != "draft":
+            raise ValueError("Mozna odpiac ticket tylko od rozliczenia w statusie draft")
+
+        ticket_to_remove = next((t for t in settlement.tickets if t.id == uuid.UUID(ticket_id)), None)
+        if ticket_to_remove is None:
+            raise ValueError("Ticket nie jest podpiety do tego rozliczenia")
+
+        settlement.tickets.remove(ticket_to_remove)
+        await db.commit()
+
+    return {"unlinked": True, "settlement_id": settlement_id, "ticket_id": ticket_id}
+
+
+@mcp.tool()
+async def list_settlement_tickets(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+) -> list[dict[str, Any]]:
+    """Lista ticketow podpietych do rozliczenia.
+
+    Wymaga rozliczenia:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "read"):
+            raise ValueError("Brak uprawnienia rozliczenia:read")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+    return [
+        {
+            "ticket_id": str(t.id),
+            "key": f"{t.project.code}-{t.number}" if t.project else str(t.id),
+            "title": t.title,
+            "status": t.status,
+            "project_slug": t.project.slug if t.project else None,
+        }
+        for t in (settlement.tickets or [])
+    ]
+
+
+@mcp.tool()
+async def list_settlement_attachments(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+) -> list[dict[str, Any]]:
+    """Lista metadanych zalacznikow rozliczenia (bez zawartosci pliku).
+
+    Wymaga rozliczenia:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "read"):
+            raise ValueError("Brak uprawnienia rozliczenia:read")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+        # Pobierz email uploadera dla kazdego zalacznika
+        uploader_ids = {a.uploaded_by_id for a in (settlement.attachments or [])}
+        uploader_map: dict[uuid.UUID, str] = {}
+        if uploader_ids:
+            uploaders_result = await db.execute(select(User).where(User.id.in_(uploader_ids)))
+            for u in uploaders_result.scalars().all():
+                uploader_map[u.id] = u.email
+
+    return [
+        {
+            "attachment_id": str(a.id),
+            "filename": a.filename,
+            "size": a.size,
+            "category": a.category,
+            "state": a.state,
+            "mime_type": a.mime_type,
+            "uploaded_by_email": uploader_map.get(a.uploaded_by_id),
+            "created_at": a.created_at.isoformat(),
+        }
+        for a in (settlement.attachments or [])
+    ]
+
+
+@mcp.tool()
+async def add_settlement_attachment(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+    file_base64: str,
+    filename: str,
+    category: str,
+    state: str,
+    mime_type: str | None = None,
+) -> dict[str, Any]:
+    """Dodaj zalacznik do rozliczenia. Plik zakodowany w base64.
+
+    category: invoice | report | acceptance_protocol | other.
+    state: draft | signed.
+    Maksymalny rozmiar: 200MB. Wymaga rozliczenia:write.
+    """
+    max_size = 200 * 1024 * 1024  # 200MB
+
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    # Walidacja i sanityzacja filename
+    if not filename or not filename.strip():
+        raise ValueError("Nazwa pliku nie moze byc pusta")
+    filename = os.path.basename(filename.strip())
+    filename = re.sub(r'[\x00-\x1f"\\]', "_", filename)
+    if not filename or filename in (".", ".."):
+        raise ValueError("Nieprawidlowa nazwa pliku")
+    if len(filename) > 255:
+        raise ValueError("Nazwa pliku nie moze przekraczac 255 znakow")
+
+    # Walidacja base64
+    if not file_base64 or not file_base64.strip():
+        raise ValueError("Zawartosc pliku (file_base64) nie moze byc pusta")
+
+    try:
+        file_bytes = base64.b64decode(file_base64, validate=True)
+    except Exception as exc:
+        raise ValueError("Nieprawidlowy format base64") from exc
+
+    if len(file_bytes) > max_size:
+        raise ValueError(f"Plik za duzy: max 200MB, otrzymano {len(file_bytes) / 1024 / 1024:.1f}MB")
+
+    if mime_type is not None and not re.match(r"^[a-z]+/[a-z0-9.+\-]+$", mime_type):
+        raise ValueError("Nieprawidlowy format mime_type, oczekiwano np. application/pdf, image/png")
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "write"):
+            raise ValueError("Brak uprawnienia rozliczenia:write")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+        attachment = await svc_upload_settlement_attachment(
+            db=db,
+            settlement=settlement,
+            user_id=user.id,
+            file_bytes=file_bytes,
+            filename=filename,
+            mime_type=mime_type,
+            category=category,
+            state=state,
+        )
+        await db.commit()
+
+    return {
+        "attachment_id": str(attachment.id),
+        "filename": attachment.filename,
+        "size": attachment.size,
+        "uploaded_at": attachment.created_at.isoformat(),
+    }
+
+
+@mcp.tool()
+async def get_settlement_attachment(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+    attachment_id: str,
+) -> dict[str, Any]:
+    """Pobierz zawartosc zalacznika rozliczenia (base64 + mime_type).
+
+    Wymaga rozliczenia:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "read"):
+            raise ValueError("Brak uprawnienia rozliczenia:read")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+        matching = [a for a in (settlement.attachments or []) if a.id == uuid.UUID(attachment_id)]
+        if not matching:
+            raise ValueError("Zalacznik nie istnieje")
+        attachment = matching[0]
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            file_bytes, content_type = await loop.run_in_executor(
+                executor,
+                lambda: get_settlement_attachment_bytes(attachment),
+            )
+
+    return {
+        "attachment_id": str(attachment.id),
+        "filename": attachment.filename,
+        "mime_type": content_type,
+        "size": attachment.size,
+        "file_base64": base64.b64encode(file_bytes).decode("utf-8"),
+    }
+
+
+@mcp.tool()
+async def delete_settlement_attachment(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    settlement_id: str,
+    attachment_id: str,
+) -> dict[str, Any]:
+    """Usun zalacznik rozliczenia (MinIO + DB, tylko draft).
+
+    Wymaga rozliczenia:delete.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "rozliczenia", "delete"):
+            raise ValueError("Brak uprawnienia rozliczenia:delete")
+
+        settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+
+        matching = [a for a in (settlement.attachments or []) if a.id == uuid.UUID(attachment_id)]
+        if not matching:
+            raise ValueError("Zalacznik nie istnieje")
+        attachment = matching[0]
+
+        await svc_delete_settlement_attachment(db=db, attachment=attachment, user_id=user.id)
+        await db.commit()
+
+    return {"deleted": True, "attachment_id": attachment_id}

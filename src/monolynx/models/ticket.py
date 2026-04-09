@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from monolynx.models.issue import Issue
     from monolynx.models.label import Label
     from monolynx.models.project import Project
+    from monolynx.models.settlement import Settlement
     from monolynx.models.sprint import Sprint
     from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
     from monolynx.models.ticket_attachment import TicketAttachment
@@ -60,6 +61,7 @@ class Ticket(Base):
         cascade="all, delete-orphan",
     )
     labels: Mapped[list[Label]] = relationship(secondary="ticket_labels", back_populates="tickets", lazy="selectin")
+    settlements: Mapped[list[Settlement]] = relationship(secondary="settlement_tickets", back_populates="tickets")
     attachments: Mapped[list[TicketAttachment]] = relationship(
         back_populates="ticket",
         order_by="TicketAttachment.created_at",

@@ -111,7 +111,7 @@
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Użyj narzędzi</h2>
         </div>
 
-        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-gray-900 dark:text-white">76 narzędzi</strong> we wszystkich modułach:</p>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-gray-900 dark:text-white">93 narzędzi</strong> we wszystkich modułach:</p>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
             <div>
@@ -193,6 +193,34 @@
                     <li class="text-sm"><code class="text-indigo-300 font-mono">list_comments</code> <span class="text-gray-500">— komentarze do ticketu</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">add_comment</code> <span class="text-gray-500">— dodaj komentarz</span></li>
                     <li class="text-sm"><code class="text-indigo-300 font-mono">log_time</code> <span class="text-gray-500">— zaloguj czas pracy</span></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Rozliczenia — CRUD</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">list_settlements</code> <span class="text-gray-500">— lista rozliczeń projektu (z filtrami)</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_settlement</code> <span class="text-gray-500">— szczegóły rozliczenia</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">create_settlement</code> <span class="text-gray-500">— utwórz rozliczenie (cross-project)</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">update_settlement</code> <span class="text-gray-500">— edytuj draft</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">delete_settlement</code> <span class="text-gray-500">— usuń draft (soft delete)</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">change_settlement_status</code> <span class="text-gray-500">— draft ↔ sent ↔ paid</span></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Rozliczenia — Tickety</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">list_settlement_tickets</code> <span class="text-gray-500">— tickety powiązane z rozliczeniem</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">link_ticket_to_settlement</code> <span class="text-gray-500">— podepnij ticket (tylko draft)</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">unlink_ticket_from_settlement</code> <span class="text-gray-500">— odepnij ticket</span></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Rozliczenia — Załączniki</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">list_settlement_attachments</code> <span class="text-gray-500">— lista plików (bez bytes)</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">add_settlement_attachment</code> <span class="text-gray-500">— upload base64 do MinIO</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_settlement_attachment</code> <span class="text-gray-500">— pobierz plik jako base64</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">delete_settlement_attachment</code> <span class="text-gray-500">— usuń załącznik (tylko draft)</span></li>
                 </ul>
             </div>
             <div>
