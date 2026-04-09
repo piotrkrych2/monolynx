@@ -6,6 +6,17 @@
 {% block module_content %}
 {% include "dashboard/scrum/_nav.html" %}
 
+{% if frozen %}
+<div class="mb-4 rounded-lg border border-amber-600 bg-amber-900/20 p-3 text-amber-300 text-sm">
+  🔒 Ticket zamrożony
+  {% if settlements_visible %}
+    — powiązany z rozliczeniem wysłanym/opłaconym. Edycja i zmiana statusu są zablokowane.
+  {% else %}
+    — skontaktuj się z administratorem projektu.
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="grid grid-cols-3 gap-6">
     <!-- Glowna tresc -->
     <div class="col-span-2">
@@ -32,14 +43,18 @@
                         {% if ticket.created_via_ai %}<span class="text-xs bg-purple-600 text-white px-1 rounded">AI</span>{% endif %}
                     </div>
                     <div class="flex items-center gap-2">
+                        {% if not frozen %}
                         <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/edit"
                            class="text-sm text-gray-600 dark:text-gray-400 hover:text-indigo-400 transition">Edytuj</a>
+                        {% endif %}
                         <button onclick="document.getElementById('time-entry-modal').showModal()"
                                 class="text-sm text-gray-600 dark:text-gray-400 hover:text-green-400 transition">Zaloguj czas</button>
+                        {% if not frozen %}
                         <form method="post" action="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket.id }}/delete" class="inline">
                             <button type="submit" class="text-sm text-gray-600 dark:text-gray-400 hover:text-red-400 transition"
                                     onclick="return confirm('Czy na pewno chcesz usunac ten ticket?')">Usun</button>
                         </form>
+                        {% endif %}
                     </div>
                 </div>
                 <h1 class="text-xl font-bold text-gray-900 dark:text-white">{{ ticket.title }}</h1>
@@ -204,6 +219,35 @@
                     </span>
                 </div>
             </div>
+        </div>
+        {% endif %}
+
+        {% if settlements_visible %}
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3">Rozliczenia</h3>
+            {% if ticket_settlements %}
+            <ul class="space-y-2">
+                {% for s in ticket_settlements %}
+                <li class="flex items-center justify-between gap-2">
+                    <a href="/dashboard/{{ project.slug }}/rozliczenia/{{ s.id }}"
+                       class="text-sm text-blue-400 hover:text-blue-300 transition truncate">
+                        ROZ-{{ s.number }} — {{ s.name | e }}
+                        <span class="ml-1 text-xs text-gray-500">({{ s.status }})</span>
+                    </a>
+                    {% if can_edit_settlements and s.status == 'draft' %}
+                    <form method="post"
+                          action="/dashboard/{{ project.slug }}/rozliczenia/{{ s.id }}/tickets/{{ ticket.id }}/unlink"
+                          class="inline shrink-0">
+                        <button type="submit"
+                                class="text-xs text-red-400 hover:text-red-300 transition">Odepnij</button>
+                    </form>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-xs text-gray-500">Brak powiązań z rozliczeniami.</p>
+            {% endif %}
         </div>
         {% endif %}
     </div>

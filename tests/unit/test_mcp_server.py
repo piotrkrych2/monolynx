@@ -260,6 +260,19 @@ EXPECTED_TOOLS = [
     "delete_role",
     "assign_role",
     "get_member_permissions",
+    "list_settlements",
+    "get_settlement",
+    "create_settlement",
+    "update_settlement",
+    "delete_settlement",
+    "change_settlement_status",
+    "link_ticket_to_settlement",
+    "unlink_ticket_from_settlement",
+    "list_settlement_tickets",
+    "list_settlement_attachments",
+    "add_settlement_attachment",
+    "get_settlement_attachment",
+    "delete_settlement_attachment",
 ]
 
 

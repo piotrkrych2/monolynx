@@ -1,0 +1,33 @@
+{# Partial: pojedynczy załącznik na liście. Wymaga kontekstu: att (attachment), project, settlement, permissions #}
+<li class="flex items-center justify-between bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md px-4 py-3">
+    <div class="flex-1 min-w-0">
+        <a href="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/attachments/{{ att.id }}"
+           class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline font-medium text-sm truncate block transition"
+           title="{{ att.filename | e }}">
+            {{ att.filename | e }}
+        </a>
+        <div class="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
+            {% set size_kb = att.size / 1024 %}
+            {% if size_kb < 1024 %}
+                {{ "%.1f"|format(size_kb) }} KB
+            {% else %}
+                {{ "%.1f"|format(size_kb / 1024) }} MB
+            {% endif %}
+            &middot;
+            {{ att.created_at.strftime('%Y-%m-%d %H:%M') }}
+        </div>
+    </div>
+
+    {% if permissions.get('rozliczenia', {}).get('delete') and settlement.status == 'draft' %}
+        <form method="post"
+              action="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/attachments/{{ att.id }}/delete"
+              onsubmit="return confirm('Na pewno usunąć załącznik {{ att.filename | e }}?');"
+              class="ml-4 flex-shrink-0">
+            <button type="submit"
+                    class="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm font-medium transition"
+                    title="Usuń załącznik">
+                Usuń
+            </button>
+        </form>
+    {% endif %}
+</li>

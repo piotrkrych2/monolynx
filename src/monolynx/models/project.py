@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from monolynx.models.monitor import Monitor
     from monolynx.models.project_member import ProjectMember
     from monolynx.models.role import Role
+    from monolynx.models.settlement import Settlement
     from monolynx.models.sprint import Sprint
     from monolynx.models.ticket import Ticket
     from monolynx.models.wiki_file import WikiFile
@@ -43,5 +44,6 @@ class Project(Base):
     roles: Mapped[list[Role]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sprints: Mapped[list[Sprint]] = relationship(back_populates="project")
     tickets: Mapped[list[Ticket]] = relationship(back_populates="project")
+    settlements: Mapped[list[Settlement]] = relationship(secondary="settlement_projects", back_populates="projects")
     wiki_pages: Mapped[list[WikiPage]] = relationship(back_populates="project")
     wiki_files: Mapped[list[WikiFile]] = relationship(back_populates="project", cascade="all, delete-orphan")

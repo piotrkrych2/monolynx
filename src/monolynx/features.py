@@ -12,6 +12,7 @@ _ICON_HEARTBEAT = '<svg class="w-6 h-6 text-pink-400" fill="none" stroke="curren
 _ICON_WIKI = '<svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25"/></svg>'
 _ICON_CONNECTIONS = '<svg class="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z"/></svg>'
 _ICON_REPORTS = '<svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/></svg>'
+_ICON_SETTLEMENTS = '<svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V12Zm-12 0h.008v.008H6V12Z"/></svg>'
 
 
 def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
@@ -43,6 +44,12 @@ def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
             "color": "cyan",
             "name": "Reports" if lang == "en" else "Raporty",
             "short": "Work analytics & PDF export" if lang == "en" else "Analityka pracy i eksport PDF",
+        },
+        {
+            "slug": "settlements",
+            "color": "emerald",
+            "name": "Settlements" if lang == "en" else "Rozliczenia",
+            "short": "Cross-project billing & attachments" if lang == "en" else "Rozliczenia cross-project i załączniki",
         },
     ]
     return [m for m in all_modules if m["slug"] != exclude]
@@ -1018,6 +1025,234 @@ def _feature_reports(lang: str) -> dict[str, Any]:
     }
 
 
+def _feature_settlements(lang: str) -> dict[str, Any]:
+    if lang == "pl":
+        return {
+            "title": "Rozliczenia — Billing cross-project",
+            "screenshot": None,
+            "screenshot_2": None,
+            "color": "emerald",
+            "icon": _ICON_SETTLEMENTS,
+            "badge": "Billing",
+            "headline": "Wystawiaj rozliczenia, zamrażaj tickety i pilnuj budżetu projektów",
+            "description": (
+                "Moduł Rozliczeń pozwala łączyć tickety z wielu projektów w jedno rozliczenie, "
+                "prowadzić je przez workflow statusów (draft → wysłane → opłacone) i zarządzać załącznikami "
+                "(faktury, raporty, protokoły odbioru). Po wysłaniu rozliczenia tickety są zamrażane — "
+                "edycja zablokowana, ale status nadal można zmieniać na tablicy Kanban."
+            ),
+            "screenshot_hint": "Lista rozliczeń z filtrami statusu i licznikami powiązań",
+            "screenshot_hint_2": None,
+            "features": [
+                {
+                    "title": "Cross-project M2M",
+                    "desc": "Jedno rozliczenie może obejmować wiele projektów. Tickety podpinasz z każdego z powiązanych projektów — idealne dla freelancerów i agencji.",
+                },
+                {
+                    "title": "Workflow statusów (dwukierunkowy)",
+                    "desc": "Draft → Wysłane → Opłacone z automatycznymi timestampami (sent_at, paid_at). Cofanie statusów dozwolone — admin może odmrozić tickety gdy trzeba.",
+                },
+                {
+                    "title": "Zamrażanie ticketów",
+                    "desc": "Po wysłaniu rozliczenia powiązane tickety są zamrażane — pełna edycja (tytuł, opis, priorytet) zablokowana. Sam status nadal można zmieniać drag-dropem na Kanbanie.",
+                },
+                {
+                    "title": "Załączniki z kategoriami",
+                    "desc": "Upload faktur, raportów, protokołów odbioru do MinIO z kategoriami (invoice, report, acceptance_protocol, other) i stanem (draft/signed). Limit 200MB, 10 plików na rozliczenie.",
+                },
+                {
+                    "title": "RBAC z granularnością",
+                    "desc": "Uprawnienia rozliczenia:read/write/delete per projekt. User bez uprawnień nie widzi sekcji na ticketach (ukryta w HTML i MCP) — nie tylko disabled.",
+                },
+                {
+                    "title": "Globalny widok cross-project",
+                    "desc": "Strona /dashboard/rozliczenia pokazuje rozliczenia z wszystkich projektów, do których masz dostęp. Filtry po projektach, statusie i dacie.",
+                },
+            ],
+            "steps": [
+                {
+                    "title": "Utwórz rozliczenie",
+                    "desc": "Nowe rozliczenie (ROZ-N) z okresem, nazwą i wybranymi projektami. Wymaga rozliczenia:write w każdym z projektów.",
+                },
+                {
+                    "title": "Podepnij tickety",
+                    "desc": "Search z autocomplete (HTMX) — szukaj po numerze (MNX-12) lub tytule. Tylko tickety z projektów settlement.",
+                },
+                {
+                    "title": "Dodaj załączniki",
+                    "desc": "Upload faktury, raportu lub protokołu odbioru. Kategorie i stan (draft/signed) do wyboru. Podgląd/pobranie/usuwanie.",
+                },
+                {
+                    "title": "Wyślij i zamroź",
+                    "desc": "Zmień status na 'Wysłane' — tickety stają się zamrożone (edycja 403), ale status na Kanbanie dalej działa.",
+                },
+                {
+                    "title": "Oznacz jako opłacone",
+                    "desc": "Po otrzymaniu zapłaty — klik 'Oznacz jako opłacone'. paid_at ustawiany, sent_at zachowany. Tickety nadal zamrożone.",
+                },
+                {
+                    "title": "Cofnij jeśli trzeba",
+                    "desc": "Admin może cofnąć status (paid → sent → draft). Tickety automatycznie odmrażają się przy draft.",
+                },
+            ],
+            "ai_intro": "Wszystkie operacje na rozliczeniach dostępne przez MCP — agent AI może tworzyć rozliczenia, podpinać tickety, uploadować załączniki (base64) i zmieniać statusy. RBAC egzekwowany przez każdy tool.",
+            "mcp_tools": [
+                {"name": "list_settlements", "desc": "Lista rozliczeń projektu z filtrami (status, okres, strony)."},
+                {"name": "get_settlement", "desc": "Szczegóły rozliczenia: projekty, tickety, załączniki, status, timestampy."},
+                {"name": "create_settlement", "desc": "Utwórz rozliczenie cross-project (walidacja write we wszystkich projektach)."},
+                {"name": "update_settlement", "desc": "Edycja rozliczenia w statusie draft (nazwa, okres, projekty, notatki)."},
+                {"name": "delete_settlement", "desc": "Soft delete rozliczenia w statusie draft."},
+                {"name": "change_settlement_status", "desc": "Workflow draft ↔ sent ↔ paid z walidacją przejść i timestampami."},
+                {"name": "link_ticket_to_settlement", "desc": "Podepnij ticket (tylko draft + walidacja cross-project)."},
+                {"name": "unlink_ticket_from_settlement", "desc": "Odepnij ticket od rozliczenia."},
+                {"name": "list_settlement_tickets", "desc": "Lista powiązanych ticketów (klucze + tytuły + statusy)."},
+                {
+                    "name": "add_settlement_attachment",
+                    "desc": "Upload pliku jako base64 → MinIO. Kategorie: invoice/report/acceptance_protocol/other.",
+                },
+                {"name": "get_settlement_attachment", "desc": "Pobierz załącznik jako base64 z mime_type i filename."},
+                {"name": "list_settlement_attachments", "desc": "Lista metadanych załączników (bez bytes)."},
+                {"name": "delete_settlement_attachment", "desc": "Usuń załącznik (tylko draft)."},
+            ],
+            "tech_details": [
+                {
+                    "label": "Model danych",
+                    "value": "Settlement + M2M SettlementProject + M2M SettlementTicket + 1:N SettlementAttachment. Soft delete (is_active=False).",
+                },
+                {
+                    "label": "Workflow",
+                    "value": "ALLOWED_SETTLEMENT_TRANSITIONS: dict[str, frozenset[str]] — state machine z walidacją przejść i timestampami (sent_at, paid_at).",
+                },
+                {
+                    "label": "Storage",
+                    "value": "MinIO dla załączników, PostgreSQL dla metadanych. Upload i download w ThreadPoolExecutor (async-friendly).",
+                },
+                {
+                    "label": "Freeze logic",
+                    "value": "is_ticket_frozen(ticket) — dynamiczna funkcja sprawdza czy ticket jest podpięty do settlement w status sent/paid. Automatyczne odmrożenie gdy settlement wraca do draft.",
+                },
+                {
+                    "label": "RBAC",
+                    "value": "Nowy klucz 'rozliczenia' w PERMISSION_MODULES (read/write/delete). Walidacja per projekt — cross-project settlements wymagają write we wszystkich projektach.",
+                },
+                {
+                    "label": "Regresja z MON-62",
+                    "value": "Zamrażanie chroni integralność wysłanych rozliczeń. Same status update jest dozwolone dla frozen ticketów (drag-drop na Kanbanie) — pełna edycja zablokowana.",
+                },
+            ],
+            "other_modules": _other_modules("settlements", lang),
+        }
+    return {
+        "title": "Settlements — Cross-project billing",
+        "screenshot": None,
+        "screenshot_2": None,
+        "color": "emerald",
+        "icon": _ICON_SETTLEMENTS,
+        "badge": "Billing",
+        "headline": "Issue settlements, freeze tickets, and track project budgets",
+        "description": (
+            "The Settlements module lets you combine tickets from multiple projects into a single settlement, "
+            "drive it through a status workflow (draft → sent → paid), and manage attachments "
+            "(invoices, reports, acceptance protocols). Once a settlement is sent, linked tickets are frozen — "
+            "editing is locked, but status changes on the Kanban board still work."
+        ),
+        "screenshot_hint": "Settlement list with status filters and relation counters",
+        "screenshot_hint_2": None,
+        "features": [
+            {
+                "title": "Cross-project M2M",
+                "desc": "A single settlement can span multiple projects. Link tickets from any of the related projects — perfect for freelancers and agencies.",
+            },
+            {
+                "title": "Bidirectional status workflow",
+                "desc": "Draft → Sent → Paid with automatic timestamps (sent_at, paid_at). Reverse transitions allowed — admins can unfreeze tickets when needed.",
+            },
+            {
+                "title": "Ticket freezing",
+                "desc": "After sending a settlement, linked tickets are frozen — full editing (title, description, priority) is locked. Status changes via Kanban drag-drop still work.",
+            },
+            {
+                "title": "Categorized attachments",
+                "desc": "Upload invoices, reports, acceptance protocols to MinIO with categories (invoice, report, acceptance_protocol, other) and state (draft/signed). 200MB limit, 10 files per settlement.",
+            },
+            {
+                "title": "Granular RBAC",
+                "desc": "rozliczenia:read/write/delete permissions per project. Users without permission don't see the section on tickets (hidden in HTML and MCP) — not just disabled.",
+            },
+            {
+                "title": "Global cross-project view",
+                "desc": "The /dashboard/rozliczenia page shows settlements across all projects you have access to. Filter by projects, status, and date.",
+            },
+        ],
+        "steps": [
+            {
+                "title": "Create a settlement",
+                "desc": "New settlement (ROZ-N) with period, name, and selected projects. Requires rozliczenia:write in each project.",
+            },
+            {
+                "title": "Link tickets",
+                "desc": "HTMX autocomplete search — find by number (MNX-12) or title. Only tickets from settlement's projects are shown.",
+            },
+            {
+                "title": "Attach files",
+                "desc": "Upload invoices, reports, or acceptance protocols. Choose category and state (draft/signed). Preview/download/delete.",
+            },
+            {
+                "title": "Send and freeze",
+                "desc": "Change status to 'Sent' — tickets become frozen (editing returns 403), but Kanban status updates still work.",
+            },
+            {"title": "Mark as paid", "desc": "After payment — click 'Mark as paid'. paid_at is set, sent_at preserved. Tickets stay frozen."},
+            {
+                "title": "Revert if needed",
+                "desc": "Admins can revert status (paid → sent → draft). Tickets automatically unfreeze when settlement returns to draft.",
+            },
+        ],
+        "ai_intro": "All settlement operations are exposed via MCP — the AI agent can create settlements, link tickets, upload attachments (base64), and change statuses. RBAC is enforced by each tool.",
+        "mcp_tools": [
+            {"name": "list_settlements", "desc": "List project settlements with filters (status, period, page)."},
+            {"name": "get_settlement", "desc": "Settlement details: projects, tickets, attachments, status, timestamps."},
+            {"name": "create_settlement", "desc": "Create a cross-project settlement (write permission validated in all projects)."},
+            {"name": "update_settlement", "desc": "Edit a draft settlement (name, period, projects, notes)."},
+            {"name": "delete_settlement", "desc": "Soft delete a draft settlement."},
+            {"name": "change_settlement_status", "desc": "Draft ↔ sent ↔ paid workflow with transition validation and timestamps."},
+            {"name": "link_ticket_to_settlement", "desc": "Link a ticket (draft only + cross-project validation)."},
+            {"name": "unlink_ticket_from_settlement", "desc": "Unlink a ticket from a settlement."},
+            {"name": "list_settlement_tickets", "desc": "List linked tickets (keys + titles + statuses)."},
+            {"name": "add_settlement_attachment", "desc": "Upload a file as base64 → MinIO. Categories: invoice/report/acceptance_protocol/other."},
+            {"name": "get_settlement_attachment", "desc": "Download attachment as base64 with mime_type and filename."},
+            {"name": "list_settlement_attachments", "desc": "List attachment metadata (no bytes)."},
+            {"name": "delete_settlement_attachment", "desc": "Delete attachment (draft only)."},
+        ],
+        "tech_details": [
+            {
+                "label": "Data model",
+                "value": "Settlement + M2M SettlementProject + M2M SettlementTicket + 1:N SettlementAttachment. Soft delete (is_active=False).",
+            },
+            {
+                "label": "Workflow",
+                "value": "ALLOWED_SETTLEMENT_TRANSITIONS: dict[str, frozenset[str]] — state machine with transition validation and timestamps (sent_at, paid_at).",
+            },
+            {
+                "label": "Storage",
+                "value": "MinIO for attachments, PostgreSQL for metadata. Upload and download run in ThreadPoolExecutor (async-friendly).",
+            },
+            {
+                "label": "Freeze logic",
+                "value": "is_ticket_frozen(ticket) — dynamic function checks if a ticket is linked to a settlement in sent/paid status. Automatic unfreeze when settlement returns to draft.",
+            },
+            {
+                "label": "RBAC",
+                "value": "New 'rozliczenia' key in PERMISSION_MODULES (read/write/delete). Per-project validation — cross-project settlements require write permission in all projects.",
+            },
+            {
+                "label": "MON-62 regression",
+                "value": "Freezing protects the integrity of sent settlements. Status-only updates are allowed on frozen tickets (Kanban drag-drop) — full editing is blocked.",
+            },
+        ],
+        "other_modules": _other_modules("settlements", lang),
+    }
+
+
 _FEATURES: dict[str, Any] = {
     "500ki": _feature_500ki,
     "scrum": _feature_scrum,
@@ -1026,4 +1261,5 @@ _FEATURES: dict[str, Any] = {
     "wiki": _feature_wiki,
     "connections": _feature_connections,
     "reports": _feature_reports,
+    "settlements": _feature_settlements,
 }

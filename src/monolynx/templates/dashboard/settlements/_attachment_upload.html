@@ -1,0 +1,50 @@
+{# Partial: formularz uploadu załącznika. Wymaga kontekstu: project, settlement #}
+<form method="post"
+      action="/dashboard/{{ project.slug }}/rozliczenia/{{ settlement.id }}/attachments"
+      enctype="multipart/form-data"
+      class="bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4 space-y-4">
+
+    <div>
+        <label for="attachment-file" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Plik</label>
+        <input type="file" id="attachment-file" name="file" required
+               class="block w-full text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800
+                      border border-gray-300 dark:border-gray-600 rounded-md
+                      file:bg-indigo-600 file:text-white file:border-0 file:px-4 file:py-2 file:rounded-l-md
+                      file:cursor-pointer hover:file:bg-indigo-700 file:mr-3" />
+        <p class="text-xs text-gray-500 dark:text-gray-500 mt-1">Maks. 200 MB. Dozwolone: PDF, DOC(X), XLS(X), obrazy, TXT, CSV, ZIP, 7Z.</p>
+    </div>
+
+    <div>
+        <label for="attachment-category" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Kategoria</label>
+        <select id="attachment-category" name="category" required
+                class="block w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600
+                       text-gray-900 dark:text-gray-100 rounded-md px-3 py-2 text-sm focus:outline-none
+                       focus:ring-2 focus:ring-indigo-500">
+            <option value="invoice">Faktura</option>
+            <option value="report">Raport</option>
+            <option value="acceptance_protocol">Protokół odbioru</option>
+            <option value="other" selected>Inne</option>
+        </select>
+    </div>
+
+    <div>
+        <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Stan</span>
+        <div class="flex items-center gap-6">
+            <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input type="radio" name="state" value="draft" checked
+                       class="text-indigo-600 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600" />
+                <span>Szkic</span>
+            </label>
+            <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input type="radio" name="state" value="signed"
+                       class="text-indigo-600 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600" />
+                <span>Podpisany</span>
+            </label>
+        </div>
+    </div>
+
+    <button type="submit"
+            class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-md transition">
+        Dodaj załącznik
+    </button>
+</form>

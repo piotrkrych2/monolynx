@@ -20,3 +20,7 @@
 - For endpoint tests: create User with `is_superuser=True` manually + `await db_session.flush()` + `await _login_existing_user(client, email)` — never use `login_session` when user already exists in session
 - `sms_client._send_sms_sync`: patch `monolynx.services.sms_client.urllib.request.urlopen`; set `mock_resp.status = 200` to avoid `%d` format error in logger.info
 - `notifications.send_monitor_alert(monitor, check, db)` — 3 args (not 2!); config uses lists: `email_recipients`, `sms_recipients`, `slack_channels`; patch email/SMS at origin (`monolynx.services.email.send_email`, `monolynx.services.sms_client.send_sms`); Slack via `monolynx.services.notifications._send_slack_webhook_sync`
+- HTMX PATCH `/status` endpoint expects JSON body (`json={"status": "..."}` in httpx), NOT form data — endpoint calls `await request.json()`
+- Settlements RBAC: `member` role has `rozliczenia: []` (no access); `owner` and `admin` have `rozliczenia: ["read", "write"]`; superuser bypasses all checks
+- Settlement M2M setup in tests: create Settlement + SettlementProject manually; for linking ticket use ORM `settlement.tickets.append(ticket)` after `selectinload(Settlement.tickets)`
+- `_login_existing_user(client, email)` pattern confirmed as canonical approach — reused in `test_settlements_scrum_integration.py`
