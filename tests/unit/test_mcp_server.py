@@ -273,6 +273,7 @@ EXPECTED_TOOLS = [
     "add_settlement_attachment",
     "get_settlement_attachment",
     "delete_settlement_attachment",
+    "install_monolynx_skills",
 ]
 
 

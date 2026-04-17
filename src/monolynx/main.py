@@ -109,7 +109,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Your projects.",
         "hero_line2": "AI-first platform.",
         "hero_sub": (
-            "93 MCP tools, semantic wiki search, and Claude Code skills"
+            "94 MCP tools, semantic wiki search, and Claude Code skills"
             " — Monolynx isn't just another dashboard."
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
@@ -129,6 +129,18 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " search your wiki, query your dependency graph,"
             " and more — all through natural language."
         ),
+        "skills_title": "Claude Code skills — one prompt, zero setup",
+        "skills_sub": (
+            "The flagship MCP tool install_monolynx_skills drops the full ticket"
+            " workflow into any project connected to Monolynx — no ZIPs,"
+            " no manual placeholder replacement."
+        ),
+        "skills_prompt_label": "Just say it in Claude",
+        "skills_prompt": "Install the default Monolynx skills for project acme-inc.",
+        "skills_what_label": "You get",
+        "skills_what_1": "/monolynx-ticket-create, /monolynx-ticket-review, /monolynx-work — the full workflow",
+        "skills_what_2": "/monolynx-search (RAG wiki), /monolynx-create-graph-ci-script, /monolynx-help",
+        "skills_what_3": "Placeholders replaced with your project slug automatically",
         "oss_title": "Open Source",
         "oss_desc": (
             "Monolynx is free and open source. Self-host it on your own infrastructure,"
@@ -143,7 +155,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Twoje projekty.",
         "hero_line2": "AI-first platforma.",
         "hero_sub": (
-            "93 narzędzia MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
+            "94 narzędzia MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
             " — Monolynx to nie kolejny dashboard."
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
@@ -165,6 +177,18 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " przeszukiwać wiki, odpytywać graf zależności"
             " i wiele więcej — wszystko w języku naturalnym."
         ),
+        "skills_title": "Skille Claude Code — jeden prompt, zero konfiguracji",
+        "skills_sub": (
+            "Flagowe narzędzie MCP install_monolynx_skills dorzuca pełny workflow ticketowy"
+            " do dowolnego projektu podłączonego do Monolynx — bez ZIP-ów"
+            " i ręcznego podmieniania placeholderów."
+        ),
+        "skills_prompt_label": "Po prostu powiedz Claude'owi",
+        "skills_prompt": "Zainstaluj domyślne skille Monolynx dla projektu acme-inc.",
+        "skills_what_label": "Co dostajesz",
+        "skills_what_1": "/monolynx-ticket-create, /monolynx-ticket-review, /monolynx-work — pełny workflow",
+        "skills_what_2": "/monolynx-search (RAG wiki), /monolynx-create-graph-ci-script, /monolynx-help",
+        "skills_what_3": "Placeholdery automatycznie podmieniane na slug Twojego projektu",
         "oss_title": "Open Source",
         "oss_desc": (
             "Monolynx jest darmowy i open source. Hostuj go na własnej infrastrukturze,"

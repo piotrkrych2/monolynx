@@ -11,6 +11,7 @@ import secrets
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -113,6 +114,9 @@ from monolynx.services.wiki import (
 )
 
 logger = logging.getLogger("monolynx.mcp")
+
+_STATIC_SKILLS_DIR = Path(__file__).resolve().parent / "static" / "skills"
+_SKILL_SLUG_PLACEHOLDERS = ("<PROJECT-SLUG>", "<PROJECT-ID>")
 
 
 def _build_allowed_hosts() -> list[str]:
@@ -5559,3 +5563,115 @@ async def delete_settlement_attachment(
         await db.commit()
 
     return {"deleted": True, "attachment_id": attachment_id}
+
+
+def _list_available_skills() -> list[str]:
+    """Zwroc nazwy dostepnych skilli (subdirs z plikiem SKILL.md)."""
+    if not _STATIC_SKILLS_DIR.is_dir():
+        return []
+    names = []
+    for entry in sorted(_STATIC_SKILLS_DIR.iterdir()):
+        if entry.is_dir() and (entry / "SKILL.md").is_file():
+            names.append(entry.name)
+    return names
+
+
+def _render_skill_content(raw: str, project_slug: str) -> str:
+    """Podmien placeholdery projektu w tresci SKILL.md."""
+    content = raw
+    for placeholder in _SKILL_SLUG_PLACEHOLDERS:
+        content = content.replace(placeholder, project_slug)
+    return content
+
+
+def _parse_skill_frontmatter(raw: str) -> dict[str, Any]:
+    """Wyciagnij frontmatter YAML z poczatku SKILL.md."""
+    import yaml  # type: ignore[import-untyped]
+
+    if not raw.startswith("---\n"):
+        return {}
+    end = raw.find("\n---", 4)
+    if end == -1:
+        return {}
+    try:
+        data = yaml.safe_load(raw[4:end]) or {}
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+@mcp.tool()
+async def install_monolynx_skills(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    skill_names: list[str] | None = None,
+) -> dict[str, Any]:
+    """Pobierz domyslne skille Monolynx do zapisu w `.claude/skills/` projektu uzytkownika.
+
+    Dwa tryby:
+    - `skill_names=None` (domyslnie): zwraca LISTE dostepnych skilli z nazwami i opisami
+      (bez pelnej tresci). Uzyj zeby zobaczyc co jest dostepne.
+    - `skill_names=[...]`: zwraca PELNA tresc wskazanych skilli do zapisu na dysk.
+      Placeholdery `<PROJECT-SLUG>` i `<PROJECT-ID>` sa podmieniane na `project_slug`.
+
+    Argumenty:
+    - `project_slug`: slug projektu Monolynx (wymagany; weryfikuje czlonkostwo uzytkownika)
+    - `skill_names`: opcjonalna lista nazw skilli do pobrania pelnej tresci
+
+    Zwraca (tryb listy):
+    - `project_slug`, `available` (nazwy), `catalog`: [{name, description}]
+
+    Zwraca (tryb pelny):
+    - `project_slug`, `available`, `skills`: [{name, relative_path, content}]
+      gdzie `relative_path` to docelowa sciezka (np. `.claude/skills/monolynx-work/SKILL.md`)
+
+    Zalecane uzycie: najpierw wywolaj bez `skill_names` zeby zobaczyc katalog, potem
+    pobieraj pelna tresc per 1-3 skille aby uniknac przekroczenia limitu odpowiedzi.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    available = _list_available_skills()
+    if not available:
+        raise ValueError("Brak skilli do zainstalowania (katalog static/skills pusty lub niedostepny)")
+
+    if skill_names is None:
+        catalog: list[dict[str, str]] = []
+        for name in available:
+            raw = (_STATIC_SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8")
+            meta = _parse_skill_frontmatter(raw)
+            catalog.append(
+                {
+                    "name": name,
+                    "description": str(meta.get("description", "")).strip(),
+                }
+            )
+        return {
+            "project_slug": project.slug,
+            "available": available,
+            "catalog": catalog,
+            "hint": "Wywolaj ponownie z `skill_names=[...]` aby pobrac pelna tresc wybranych skilli.",
+        }
+
+    unknown = [n for n in skill_names if n not in available]
+    if unknown:
+        raise ValueError(f"Nieznane skille: {', '.join(unknown)}. Dostepne: {', '.join(available)}")
+    selected = list(dict.fromkeys(skill_names))
+
+    skills: list[dict[str, str]] = []
+    for name in selected:
+        skill_file = _STATIC_SKILLS_DIR / name / "SKILL.md"
+        raw = skill_file.read_text(encoding="utf-8")
+        content = _render_skill_content(raw, project.slug)
+        skills.append(
+            {
+                "name": name,
+                "relative_path": f".claude/skills/{name}/SKILL.md",
+                "content": content,
+            }
+        )
+
+    return {
+        "project_slug": project.slug,
+        "available": available,
+        "skills": skills,
+    }
