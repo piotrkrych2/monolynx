@@ -18,7 +18,7 @@ Self-hosted project platform — error tracking, Scrum, uptime monitoring, wiki 
 - **Backend**: Python 3.12, FastAPI (async), SQLAlchemy 2, Alembic
 - **Database**: PostgreSQL 16 (pgvector), Neo4j 5, MinIO
 - **Frontend**: Jinja2 templates, Tailwind CSS (CDN), HTMX
-- **AI**: MCP server (70 tools), OpenAI embeddings for wiki search
+- **AI**: MCP server (94 tools), OpenAI embeddings for wiki search
 - **Infrastructure**: Docker multi-stage build, Traefik-ready
 
 ## Quick start (development)
@@ -124,7 +124,7 @@ TRAEFIK_APP_CERTRESOLVER=letsencrypt
 
 ## MCP (Model Context Protocol)
 
-Monolynx exposes 70 tools via MCP — manage tickets, search wiki, query graphs, and more through Claude Desktop or any MCP client.
+Monolynx exposes 94 tools via MCP — manage tickets, search wiki, query graphs, and more through Claude Desktop or any MCP client.
 
 ```json
 {
@@ -144,7 +144,20 @@ Generate API tokens at `/dashboard/profile/tokens`.
 
 ## How to work (Claude Code skills)
 
-Monolynx ships with Claude Code skills that define a complete ticket workflow — from idea to implementation. Install them from `.claude/skills/` or download from the project website.
+Monolynx ships with Claude Code skills that define a complete ticket workflow — from idea to implementation. The flagship MCP tool `install_monolynx_skills` bootstraps every skill straight into your project's `.claude/skills/`, so any workspace connected to Monolynx MCP can be provisioned in one command.
+
+### `install_monolynx_skills` — the king skill installer
+
+The MCP tool `install_monolynx_skills(project_slug, skill_names=None)` returns ready-to-save Monolynx skills for any project — with `<PROJECT-SLUG>` / `<PROJECT-ID>` placeholders already substituted for your project. Two modes:
+
+- `skill_names=None` → lightweight catalog (names + descriptions)
+- `skill_names=[...]` → full content of selected skills, written by Claude to `.claude/skills/<name>/SKILL.md`
+
+```
+"Install the default Monolynx skills for project acme-inc."
+```
+
+Claude calls the tool, receives the skill payloads, and writes them on disk. No ZIP download, no manual replacement of placeholders — works from any project that has the Monolynx MCP connector wired in.
 
 ### Workflow: create → review → work
 
@@ -178,7 +191,17 @@ Picks up a ticket for implementation. The skill validates your git branch, runs 
 
 **What happens**: validates branch naming (`feature-<number>-<slug>`), runs Researcher (wiki + graph + code analysis), selects the minimal agent team, posts a work plan as a ticket comment, runs all agents + critic in parallel, logs time for each agent, and sets ticket status to `in_review` when done.
 
-### Additional skill
+### Additional skills
+
+#### `/monolynx-search [question]`
+
+Semantic RAG search across your project wiki. Use when you need architecture, API, integration, or coding-standard answers from the docs.
+
+```
+/monolynx-search how does authentication work in the API?
+```
+
+**What happens**: resolves the project slug, runs `search_wiki` against the pgvector index, and returns the most relevant chunks with page references.
 
 #### `/monolynx-create-graph-ci-script`
 
@@ -229,7 +252,7 @@ src/monolynx/
 ├── dashboard/           # Web UI routes (all modules)
 ├── services/            # Business logic (auth, fingerprint, monitoring, wiki, graph...)
 ├── templates/           # Jinja2 templates
-├── mcp_server.py        # FastMCP server (70 tools)
+├── mcp_server.py        # FastMCP server (94 tools)
 ├── cli.py               # CLI commands (graph sync, maintenance)
 └── worker.py            # Standalone monitoring worker
 sdk/                     # Django SDK package
