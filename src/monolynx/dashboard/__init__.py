@@ -16,6 +16,7 @@ from .settlements import router as settlements_router
 from .settlements_global import router as settlements_global_router
 from .users import router as users_router
 from .wiki import router as wiki_router
+from .work_plan import router as work_plan_router
 
 router = APIRouter()
 router.include_router(auth_router)
@@ -25,6 +26,7 @@ router.include_router(projects_router)
 router.include_router(profile_router)
 router.include_router(users_router)
 router.include_router(reports_router)
+router.include_router(work_plan_router)
 router.include_router(settlements_global_router)
 router.include_router(settings_router)
 router.include_router(scrum_router)

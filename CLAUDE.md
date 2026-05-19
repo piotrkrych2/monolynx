@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this project?
 
-Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), a Wiki module (markdown pages with semantic RAG search via pgvector), and a Connections module (code dependency graph visualization using Neo4j). The architecture supports adding new modules via the sidebar navigation.
+Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), a Wiki module (markdown pages with semantic RAG search via pgvector), a Connections module (code dependency graph visualization using Neo4j), and a Work Plan / Gantt module (personal per-user cross-project scheduling with Gantt and calendar views). The architecture supports adding new modules via the sidebar navigation.
 
 ## Commands
 
@@ -69,8 +69,9 @@ Two separate packages in one repo:
 - `dashboard/connections.py` — Connections module: graph visualization with Cytoscape.js, node/edge CRUD forms, graph API endpoint (`/dashboard/{slug}/connections/*`); graceful degradation when Neo4j unavailable
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
 - `dashboard/reports.py` — global cross-project work reports with multi-select filtering (project, user, sprint), date range, and PDF export via weasyprint (`/dashboard/reports`)
+- `dashboard/work_plan.py`: Work Plan module (prefix `/dashboard/plan`): personal per-user cross-project scheduling via junction model (`User x Ticket x Date`), Gantt view (frappe-gantt) and monthly calendar, REST endpoints for entries CRUD plus JSON data and ticket autocomplete; independent of sprint assignment
 
-**Models** (`models/`) — 21 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, TicketAttachment, Monitor, MonitorCheck, TimeTrackingEntry, WikiPage, WikiEmbedding, WikiAttachment, WikiFile, ActivityLog, Heartbeat, Label, TicketLabel + OAuth models (OAuthClient, OAuthAuthorizationCode, OAuthAccessToken, OAuthRefreshToken) + Base
+**Models** (`models/`) — 22 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, TicketAttachment, Monitor, MonitorCheck, TimeTrackingEntry, WorkPlanEntry, WikiPage, WikiEmbedding, WikiAttachment, WikiFile, ActivityLog, Heartbeat, Label, TicketLabel + OAuth models (OAuthClient, OAuthAuthorizationCode, OAuthAccessToken, OAuthRefreshToken) + Base
 
 **Services**:
 - `services/fingerprint.py` — SHA256 of exception type + app-frame filenames:functions
@@ -88,6 +89,7 @@ Two separate packages in one repo:
 - `services/embeddings.py` — RAG search: text chunking via tiktoken, OpenAI embeddings (`text-embedding-3-small`), pgvector cosine similarity search; ThreadPoolExecutor for async; graceful degradation when `OPENAI_API_KEY` not set
 - `services/minio_client.py` — MinIO object storage for wiki markdown files and attachments
 - `services/graph.py` — Neo4j graph database: async driver singleton, CRUD for nodes/edges, query operations (get_graph, find_path, get_neighbors, get_stats); graceful degradation pattern (like embeddings.py) — `is_enabled()`, try/except, None fallback when `ENABLE_GRAPH_DB=false`
+- `services/work_plan.py`: Work Plan scheduling: `schedule()`, `update()` (uses `_UNSET` sentinel for partial PATCH of `notes`), `unschedule()`, `list_for_user_range()` (max 90 days, eager loads ticket+project), `today_for_user()`, `schedule_for_ticket()`; validates project membership and entry ownership, handles `IntegrityError` from the unique constraint
 
 **Worker** (`worker.py`):
 - Standalone entry point (`python -m monolynx.worker`) — runs monitor checker loop without web server
@@ -96,7 +98,7 @@ Two separate packages in one repo:
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
-- 70 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Graph (node/edge CRUD, bulk operations, query, path finding, stats), project summary
+- 100 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Graph (node/edge CRUD, bulk operations, query, path finding, stats), Work Plan (`schedule_ticket`, `update_work_plan_entry`, `delete_work_plan_entry`, `list_work_plan`, `get_today_tasks`, `get_ticket_schedule`), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 
@@ -175,6 +177,12 @@ Two separate packages in one repo:
 /dashboard/{slug}/wiki/attachments/{filename}  — serve wiki attachments
 /dashboard/reports                              — global work reports (cross-project)
 /dashboard/reports/pdf                          — PDF export of work reports
+/dashboard/plan/                                : Work Plan view (Gantt or calendar mode)
+/dashboard/plan/api/data                        : JSON entries in date range (GET, max 90 days)
+/dashboard/plan/api/tickets/search              : ticket autocomplete (GET, limit 20)
+/dashboard/plan/entries                         : create entry (POST)
+/dashboard/plan/entries/{entry_id}              : update entry (PATCH)
+/dashboard/plan/entries/{entry_id}              : delete entry (DELETE, owner only)
 /mcp                                           — MCP server (Bearer token auth)
 ```
 
@@ -206,6 +214,7 @@ Two separate packages in one repo:
 - Docker uses `pgvector/pgvector:pg16` image for PostgreSQL with vector extension support
 - Neo4j graph database for Connections module; node types: File, Class, Method, Function, Const, Module; edge types: CONTAINS, CALLS, IMPORTS, INHERITS, USES, IMPLEMENTS; data isolated per project via `project_id` property; graceful degradation when `ENABLE_GRAPH_DB=false`
 - Cytoscape.js (CDN v3.30.4) for interactive graph visualization; force-directed layout (cose); node/edge coloring by type; filtering via checkboxes; side panel with node details on click
+- Work Plan uses a junction model `WorkPlanEntry` (`user_id`, `ticket_id`, `scheduled_date`) with `UniqueConstraint(user_id, ticket_id, scheduled_date)`; enables per-user cross-project scheduling independent of sprint assignment; the cross-project list returns only entries owned by the current user from projects where they have membership (no cross-project data leak); frappe-gantt renders the Gantt view, calendar mode is a custom monthly grid
 
 ## Test patterns
 

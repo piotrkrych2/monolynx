@@ -1,5 +1,23 @@
 """Stale uzywane w modulach (statusy, priorytety, etykiety)."""
 
+# 500ki / Issues
+ISSUE_STATUSES = ("unresolved", "resolved", "ignored")
+
+ISSUE_STATUS_LABELS = {
+    "unresolved": "Nierozwiązane",
+    "resolved": "Rozwiązane",
+    "ignored": "Zignorowane",
+}
+
+ISSUE_SORT_FIELDS = ("last_seen", "event_count")
+
+ISSUE_SORT_FIELD_LABELS = {
+    "last_seen": "Ostatnie wystąpienie",
+    "event_count": "Liczba wystąpień",
+}
+
+ISSUE_SORT_ORDERS = ("asc", "desc")
+
 TICKET_STATUSES = ("backlog", "todo", "in_progress", "in_review", "done")
 
 BOARD_STATUSES = ("todo", "in_progress", "in_review", "done")

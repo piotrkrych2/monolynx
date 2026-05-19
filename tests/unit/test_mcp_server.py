@@ -274,7 +274,25 @@ EXPECTED_TOOLS = [
     "get_settlement_attachment",
     "delete_settlement_attachment",
     "install_monolynx_skills",
+    "schedule_ticket",
+    "update_work_plan_entry",
+    "delete_work_plan_entry",
+    "list_work_plan",
+    "get_today_tasks",
+    "get_ticket_schedule",
 ]
+
+# Narzedzia ktore nie wymagaja project_slug (operuja po ticket_id, entry_id, lub cross-project).
+_TOOLS_WITHOUT_PROJECT_SLUG = {
+    "list_projects",
+    "create_project",
+    "schedule_ticket",
+    "update_work_plan_entry",
+    "delete_work_plan_entry",
+    "list_work_plan",
+    "get_today_tasks",
+    "get_ticket_schedule",
+}
 
 
 @pytest.mark.unit
@@ -303,14 +321,13 @@ class TestMcpToolRegistration:
             assert "properties" in tool.inputSchema, f"{tool.name} brak properties w schemacie"
 
     async def test_all_tools_require_project_slug_except_list_projects(self):
-        """Wszystkie narzedzia poza list_projects wymagaja project_slug."""
+        """Wszystkie narzedzia poza wyjatkami wymagaja project_slug."""
         tools = await mcp.list_tools()
         for tool in tools:
             props = tool.inputSchema.get("properties", {})
-            if tool.name in ("list_projects", "create_project"):
-                assert "project_slug" not in props
-            else:
-                assert "project_slug" in props, f"{tool.name} nie ma parametru project_slug"
+            if tool.name in _TOOLS_WITHOUT_PROJECT_SLUG:
+                continue
+            assert "project_slug" in props, f"{tool.name} nie ma parametru project_slug"
 
 
 @pytest.mark.unit

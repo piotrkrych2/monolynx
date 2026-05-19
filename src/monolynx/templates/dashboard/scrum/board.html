@@ -108,6 +108,16 @@
                     {% endif %}
                 </div>
                 {% endif %}
+                {% if ticket.nearest_scheduled_date %}
+                <div class="mt-1.5">
+                    <span class="inline-flex items-center px-1.5 py-0.5 text-xs rounded
+                                 {% if ticket.nearest_scheduled_date == now_date %}bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200
+                                 {% else %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200{% endif %}"
+                          title="Zaplanowanie na {{ ticket.nearest_scheduled_date.isoformat() }}">
+                        {{ ticket.nearest_scheduled_date.isoformat() }}
+                    </span>
+                </div>
+                {% endif %}
                 <!-- Czas pracy -->
                 {% if ticket_minutes > 0 %}
                 <div class="flex items-center gap-1 mt-1.5">
