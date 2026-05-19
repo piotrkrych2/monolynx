@@ -1,0 +1,129 @@
+{# Sekcja zaplanowania dla ticketu — MON-69 #}
+<div id="work-plan-section" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+  <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3 flex items-center gap-2">
+    Zaplanowanie
+    {% if work_plan_entries %}
+      <span class="text-xs font-normal text-gray-500 dark:text-gray-500">({{ work_plan_entries | length }})</span>
+    {% endif %}
+  </h3>
+
+  {% if work_plan_entries %}
+    {% set weekday_names = ["poniedzialek", "wtorek", "sroda", "czwartek", "piatek", "sobota", "niedziela"] %}
+    <ul class="space-y-2 mb-3">
+      {% for entry in work_plan_entries %}
+      <li class="flex items-center justify-between bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded px-3 py-2" id="wp-entry-{{ entry.id }}">
+        <div class="flex items-center gap-2 flex-wrap text-sm">
+          <span class="font-mono text-gray-900 dark:text-white text-xs">{{ entry.scheduled_date|localtime('%Y-%m-%d') }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">({{ weekday_names[entry.scheduled_date.weekday()] }})</span>
+          {% if entry.position %}
+            <span class="text-xs text-gray-500 dark:text-gray-400">poz. {{ entry.position }}</span>
+          {% endif %}
+          {% if entry.notes %}
+            <span class="text-xs text-gray-500 dark:text-gray-300 italic">{{ entry.notes | e }}</span>
+          {% endif %}
+        </div>
+        <button
+          type="button"
+          onclick="deleteWorkPlanEntry('{{ entry.id }}', '{{ entry.scheduled_date|localtime('%Y-%m-%d') }}', '{{ project.slug }}', '{{ ticket.id }}')"
+          class="text-xs text-red-500 hover:text-red-400 transition flex-shrink-0 ml-2"
+          title="Usun zaplanowanie">
+          Usun
+        </button>
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="text-xs text-gray-500 dark:text-gray-400 mb-3 italic">Brak zaplanowan dla tego ticketu.</p>
+  {% endif %}
+
+  <form id="work-plan-form" onsubmit="submitWorkPlan(event, '{{ project.slug }}', '{{ ticket.id }}')" class="flex items-end gap-2 flex-wrap">
+    <div class="flex-1 min-w-[140px]">
+      <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Zaplanuj na</label>
+      <input type="date" id="wp-date" name="scheduled_date" required
+             class="w-full px-2 py-1.5 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+    </div>
+    <div class="flex-1 min-w-[160px]">
+      <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Notatka (opcjonalnie)</label>
+      <input type="text" id="wp-notes" name="notes" maxlength="1000" placeholder="..."
+             class="w-full px-2 py-1.5 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+    </div>
+    <button type="submit" id="wp-submit-btn"
+            class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded transition flex-shrink-0">
+      Dodaj
+    </button>
+  </form>
+  <p id="wp-error" class="text-xs text-red-500 mt-1 hidden"></p>
+</div>
+
+<script>
+(function() {
+    async function _wpRefresh(slug, ticketId) {
+        try {
+            const resp = await fetch('/dashboard/' + slug + '/scrum/tickets/' + ticketId + '/work-plan');
+            if (resp.ok) {
+                const html = await resp.text();
+                const tmp = document.createElement('div');
+                tmp.innerHTML = html;
+                const section = document.getElementById('work-plan-section');
+                if (section && tmp.firstElementChild) {
+                    section.replaceWith(tmp.firstElementChild);
+                }
+            }
+        } catch (_) {
+            window.location.reload();
+        }
+    }
+
+    window.submitWorkPlan = async function(event, slug, ticketId) {
+        event.preventDefault();
+        const dateVal = document.getElementById('wp-date').value;
+        const notesVal = (document.getElementById('wp-notes').value || '').trim() || null;
+        const btn = document.getElementById('wp-submit-btn');
+        const errEl = document.getElementById('wp-error');
+
+        if (!dateVal) return;
+        btn.disabled = true;
+        btn.textContent = '...';
+        errEl.classList.add('hidden');
+
+        try {
+            const resp = await fetch('/dashboard/plan/entries', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticket_id: ticketId, scheduled_date: dateVal, notes: notesVal })
+            });
+
+            if (resp.ok) {
+                await _wpRefresh(slug, ticketId);
+            } else {
+                const data = await resp.json().catch(() => ({}));
+                errEl.textContent = data.detail || 'Wystapil blad';
+                errEl.classList.remove('hidden');
+                btn.disabled = false;
+                btn.textContent = 'Dodaj';
+            }
+        } catch (_) {
+            errEl.textContent = 'Blad polaczenia';
+            errEl.classList.remove('hidden');
+            btn.disabled = false;
+            btn.textContent = 'Dodaj';
+        }
+    };
+
+    window.deleteWorkPlanEntry = async function(entryId, dateStr, slug, ticketId) {
+        if (!confirm('Usunac zaplanowanie na ' + dateStr + '?')) return;
+
+        try {
+            const resp = await fetch('/dashboard/plan/entries/' + entryId, { method: 'DELETE' });
+            if (resp.ok) {
+                await _wpRefresh(slug, ticketId);
+            } else {
+                const data = await resp.json().catch(() => ({}));
+                alert(data.detail || 'Wystapil blad');
+            }
+        } catch (_) {
+            alert('Blad polaczenia');
+        }
+    };
+})();
+</script>

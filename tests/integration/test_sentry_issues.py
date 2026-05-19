@@ -34,7 +34,12 @@ class TestIssueList:
         assert "/auth/login" in resp.headers["location"]
 
     async def test_issue_list_empty(self, client, db_session):
-        """Lista issues jest pusta -- wyswietla komunikat."""
+        """Lista issues jest pusta -- wyswietla komunikat.
+
+        Po MON-65: domyslny filtr to 'unresolved', wiec pusty projekt wyswietla
+        'Brak issues w wybranym statusie'. Komunikat 'Brak bledow' pojawia sie
+        tylko przy ?status=all i pustej bazie.
+        """
         project = Project(
             name="SI Empty",
             slug="si-empty",
@@ -48,7 +53,25 @@ class TestIssueList:
         await login_session(client, db_session, email="si-empty@test.com")
         resp = await client.get(f"/dashboard/{project.slug}/500ki/issues")
         assert resp.status_code == 200
-        assert "Brak bledow" in resp.text
+        # Domyslny filtr unresolved + brak issues -> "Brak issues w wybranym statusie"
+        assert "Brak issues w wybranym statusie" in resp.text
+
+    async def test_issue_list_empty_all_statuses(self, client, db_session):
+        """Przy ?status=all i braku issues wyswietla 'Brak bledow'."""
+        project = Project(
+            name="SI Empty All",
+            slug="si-empty-all",
+            code="SIEA",
+            api_key=secrets.token_urlsafe(32),
+            is_active=True,
+        )
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="si-empty-all@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues?status=all")
+        assert resp.status_code == 200
+        assert "Brak" in resp.text
 
     async def test_issue_list_shows_issue(self, client, db_session):
         """Lista issues wyswietla istniejacy issue."""
@@ -79,7 +102,11 @@ class TestIssueList:
         assert "5x" in resp.text
 
     async def test_issue_list_shows_multiple_issues(self, client, db_session):
-        """Lista issues wyswietla wiele issues."""
+        """Lista issues wyswietla wiele issues przy ?status=all.
+
+        Po MON-65: domyslny filtr to 'unresolved'. Zeby zobaczyc wszystkie
+        issues (unresolved + resolved) nalezy uzyc ?status=all.
+        """
         project = Project(
             name="SI Multi",
             slug="si-multi",
@@ -108,7 +135,8 @@ class TestIssueList:
         await db_session.flush()
 
         await login_session(client, db_session, email="si-multi@test.com")
-        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues")
+        # Uzywamy ?status=all zeby zobaczyc oba issues (unresolved i resolved)
+        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues?status=all")
         assert resp.status_code == 200
         assert "TypeError: NoneType" in resp.text
         assert "KeyError: missing_key" in resp.text

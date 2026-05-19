@@ -33,6 +33,7 @@ from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_embedding import WikiEmbedding
 from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
+from monolynx.models.work_plan import WorkPlanEntry
 
 __all__ = [
     "ActivityLog",
@@ -67,4 +68,5 @@ __all__ = [
     "WikiEmbedding",
     "WikiFile",
     "WikiPage",
+    "WorkPlanEntry",
 ]

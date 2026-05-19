@@ -7,13 +7,12 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monolynx.constants import ISSUE_STATUSES
 from monolynx.database import get_db
 from monolynx.models.issue import Issue
 from monolynx.schemas.issues import StatusUpdate
 
 router = APIRouter(prefix="/api/v1", tags=["issues"])
-
-VALID_STATUSES = {"unresolved", "resolved", "ignored"}
 
 
 @router.patch("/issues/{issue_id}/status")
@@ -22,10 +21,10 @@ async def update_issue_status(
     body: StatusUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    if body.status not in VALID_STATUSES:
+    if body.status not in set(ISSUE_STATUSES):
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}",
+            detail=f"Invalid status. Must be one of: {', '.join(ISSUE_STATUSES)}",
         )
 
     issue = await db.get(Issue, issue_id)

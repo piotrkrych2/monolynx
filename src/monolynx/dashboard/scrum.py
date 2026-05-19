@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime
 from functools import partial
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
@@ -43,6 +43,8 @@ from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterio
 from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.time_tracking_entry import TimeTrackingEntry
+from monolynx.models.work_plan import WorkPlanEntry
+from monolynx.services import work_plan as work_plan_service
 from monolynx.services.minio_client import delete_object as minio_delete_object
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
@@ -159,15 +161,37 @@ async def backlog(
     total_pages = max(1, (total_count + per_page - 1) // per_page)
     page = min(page, total_pages)
 
+    # Correlated subquery: najblizsze zaplanowanie biezacego usera (>= dzis)
+    today = date.today()
+    nearest_subq = (
+        select(func.min(WorkPlanEntry.scheduled_date))
+        .where(
+            WorkPlanEntry.ticket_id == Ticket.id,
+            WorkPlanEntry.user_id == user_id,
+            WorkPlanEntry.scheduled_date >= today,
+        )
+        .correlate(Ticket)
+        .scalar_subquery()
+    )
+
     # Main query with eager loads
-    query = select(Ticket).options(selectinload(Ticket.assignee), selectinload(Ticket.sprint), selectinload(Ticket.labels)).where(*conditions)
+    query = (
+        select(Ticket, nearest_subq.label("nearest_scheduled_date"))
+        .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint), selectinload(Ticket.labels))
+        .where(*conditions)
+    )
     if not show_completed_sprints:
         query = query.outerjoin(Sprint, Ticket.sprint_id == Sprint.id).where(sprint_join_filter)
 
     query = query.order_by(Ticket.order, Ticket.created_at.desc())
     query = query.limit(per_page).offset((page - 1) * per_page)
-    result = await db.execute(query)
-    tickets = result.scalars().all()
+    rows = (await db.execute(query)).all()
+
+    tickets: list[Ticket] = []
+    for row in rows:
+        t = row[0]
+        t.nearest_scheduled_date = row[1]
+        tickets.append(t)
 
     members = await _get_project_members(project.id, db)
 
@@ -201,6 +225,7 @@ async def backlog(
             "total_count": total_count,
             "has_next": page < total_pages,
             "has_prev": page > 1,
+            "now_date": today,
         },
         db=db,
     )
@@ -236,13 +261,31 @@ async def board(
     ticket_time_map: dict[str, int] = {}
 
     if active_sprint:
+        # Correlated subquery: najblizsze zaplanowanie biezacego usera (>= dzis)
+        board_today = date.today()
+        board_nearest_subq = (
+            select(func.min(WorkPlanEntry.scheduled_date))
+            .where(
+                WorkPlanEntry.ticket_id == Ticket.id,
+                WorkPlanEntry.user_id == user_id,
+                WorkPlanEntry.scheduled_date >= board_today,
+            )
+            .correlate(Ticket)
+            .scalar_subquery()
+        )
+
         ticket_result = await db.execute(
-            select(Ticket)
+            select(Ticket, board_nearest_subq.label("nearest_scheduled_date"))
             .options(selectinload(Ticket.assignee), selectinload(Ticket.labels))
             .where(Ticket.sprint_id == active_sprint.id)
             .order_by(Ticket.order)
         )
-        tickets = ticket_result.scalars().all()
+        board_rows = ticket_result.all()
+        tickets = []
+        for row in board_rows:
+            t = row[0]
+            t.nearest_scheduled_date = row[1]
+            tickets.append(t)
 
         # Agregacja czasu pracy -- jeden query dla wszystkich ticketów sprintu
         ticket_ids = [t.id for t in tickets]
@@ -612,6 +655,8 @@ async def ticket_detail(
     ticket_settlements = [s for s in ticket.settlements if s.is_active] if can_see_settlements else []
     frozen = is_ticket_frozen(ticket)
 
+    work_plan_entries = await work_plan_service.schedule_for_ticket(db, user_id, ticket.id)
+
     return await render_project_page(
         request,
         "dashboard/scrum/ticket_detail.html",
@@ -632,8 +677,49 @@ async def ticket_detail(
             "ticket_settlements": ticket_settlements,
             "can_edit_settlements": can_edit_settlements,
             "frozen": frozen,
+            "work_plan_entries": work_plan_entries,
         },
         db=db,
+    )
+
+
+@router.get(
+    "/{slug}/scrum/tickets/{ticket_id}/work-plan",
+    response_class=HTMLResponse,
+    response_model=None,
+)
+async def ticket_work_plan_section(
+    request: Request,
+    slug: str,
+    ticket_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse:
+    """Zwraca fragment HTMX sekcji 'Zaplanowanie' dla danego ticketu (po swap)."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        raise HTTPException(status_code=401)
+
+    project = await _get_project(slug, db)
+    if project is None:
+        raise HTTPException(status_code=404)
+
+    await require_permission(db, user_id, project.id, "scrum", "read")
+
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id, Ticket.project_id == project.id))
+    ticket = result.scalar_one_or_none()
+    if ticket is None:
+        raise HTTPException(status_code=404)
+
+    work_plan_entries = await work_plan_service.schedule_for_ticket(db, user_id, ticket.id)
+
+    return templates.TemplateResponse(
+        request,
+        "dashboard/scrum/_work_plan_section.html",
+        {
+            "ticket": ticket,
+            "project": project,
+            "work_plan_entries": work_plan_entries,
+        },
     )
 
 

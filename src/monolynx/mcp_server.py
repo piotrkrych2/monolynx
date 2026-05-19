@@ -59,7 +59,10 @@ from monolynx.models.user import User
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
+from monolynx.models.work_plan import WorkPlanEntry
+from monolynx.schemas.work_plan import WorkPlanEntryResponse
 from monolynx.services import graph as graph_service
+from monolynx.services import work_plan as work_plan_service
 from monolynx.services.activity import get_activity_log as svc_get_activity_log
 from monolynx.services.burndown import get_burndown_data as svc_get_burndown_data
 from monolynx.services.email import send_invitation_email
@@ -112,6 +115,7 @@ from monolynx.services.wiki import (
 from monolynx.services.wiki import (
     update_wiki_page as svc_update_wiki_page,
 )
+from monolynx.services.work_plan import _UNSET as _WORK_PLAN_UNSET
 
 logger = logging.getLogger("monolynx.mcp")
 
@@ -5675,3 +5679,274 @@ async def install_monolynx_skills(
         "available": available,
         "skills": skills,
     }
+
+
+# --- Plan pracy ---
+
+_TICKET_KEY_GLOBAL_RE = re.compile(r"^([A-Za-z]{1,10})-(\d+)$")
+
+
+async def _resolve_ticket_globally(ticket_id_str: str) -> uuid.UUID:
+    """Zamien ticket_id (UUID lub klucz globalny np. MON-70) na UUID ticketa.
+
+    Nie wymaga project_id — resolwuje po project.code + ticket.number.
+    """
+    try:
+        return uuid.UUID(ticket_id_str)
+    except ValueError:
+        pass
+
+    match = _TICKET_KEY_GLOBAL_RE.match(ticket_id_str.strip())
+    if not match:
+        raise ValueError(f"Nieprawidlowy identyfikator ticketa: '{ticket_id_str}'. Podaj UUID lub klucz (np. MON-12)")
+
+    code = match.group(1).upper()
+    number = int(match.group(2))
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Ticket.id)
+            .join(Project, Ticket.project_id == Project.id)
+            .where(
+                func.upper(Project.code) == code,
+                Ticket.number == number,
+                Project.is_active.is_(True),
+            )
+        )
+        ticket_uuid = result.scalar_one_or_none()
+        if ticket_uuid is None:
+            raise ValueError(f"Ticket '{ticket_id_str}' nie istnieje")
+        return ticket_uuid
+
+
+@mcp.tool()
+async def schedule_ticket(
+    ctx: Context[Any, Any],
+    ticket_id: str,
+    scheduled_date: str,
+    position: int = 0,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Zaplanuj ticket na konkretny dzien w planie pracy.
+
+    ticket_id: UUID ticketa lub klucz (np. MON-12).
+    scheduled_date: data w formacie YYYY-MM-DD.
+    position: kolejnosc w danym dniu (0 = pierwszy, domyslnie 0).
+    notes: opcjonalna notatka do wpisu.
+
+    Zwraca utworzony wpis planu pracy z kluczem i titulem ticketa.
+    Jesli ticket byl juz zaplanowany na ten dzien, zwraca blad z entry_id istniejacego wpisu.
+    """
+    user = await _auth(ctx)
+
+    try:
+        date_obj = date.fromisoformat(scheduled_date)
+    except ValueError:
+        raise ValueError("Data musi byc w formacie YYYY-MM-DD") from None
+
+    ticket_uuid = await _resolve_ticket_globally(ticket_id)
+
+    async with async_session_factory() as db:
+        result = await work_plan_service.schedule(db, user.id, ticket_uuid, date_obj, position, notes)
+
+    if isinstance(result, str):
+        # Sprawdz czy to konflikt unique — pobierz istniejacy entry
+        if "juz zaplanowany" in result:
+            async with async_session_factory() as db:
+                existing = await db.execute(
+                    select(WorkPlanEntry)
+                    .options(selectinload(WorkPlanEntry.ticket).selectinload(Ticket.project))
+                    .where(
+                        WorkPlanEntry.user_id == user.id,
+                        WorkPlanEntry.ticket_id == ticket_uuid,
+                        WorkPlanEntry.scheduled_date == date_obj,
+                    )
+                )
+                existing_entry = existing.scalar_one_or_none()
+            if existing_entry is not None:
+                raise ValueError(f"Ticket juz zaplanowany na ten dzien. entry_id: {existing_entry.id}")
+        raise ValueError(result)
+
+    return WorkPlanEntryResponse.from_entry(result).model_dump(mode="json")
+
+
+@mcp.tool()
+async def update_work_plan_entry(
+    ctx: Context[Any, Any],
+    entry_id: str,
+    scheduled_date: str | None = None,
+    position: int | None = None,
+    notes: str = "__UNSET__",
+) -> dict[str, Any]:
+    """Zaktualizuj wpis planu pracy (PATCH).
+
+    entry_id: UUID wpisu.
+    scheduled_date: nowa data YYYY-MM-DD (opcjonalnie).
+    position: nowa kolejnosc w dniu (opcjonalnie).
+    notes: notatka. Pomin ten parametr zeby nie zmieniac notatki,
+           podaj null/None zeby wyczysc, podaj string zeby ustawic.
+
+    Wartosc domyslna "__UNSET__" oznacza brak zmiany pola notes.
+    """
+    user = await _auth(ctx)
+
+    try:
+        entry_uuid = uuid.UUID(entry_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy UUID wpisu: '{entry_id}'") from None
+
+    parsed_date: date | None = None
+    if scheduled_date is not None:
+        try:
+            parsed_date = date.fromisoformat(scheduled_date)
+        except ValueError:
+            raise ValueError("Data musi byc w formacie YYYY-MM-DD") from None
+
+    # Mapuj string sentinel na Python sentinel
+    if notes == "__UNSET__":
+        notes_arg: Any = _WORK_PLAN_UNSET
+    else:
+        notes_arg = notes  # None lub string
+
+    async with async_session_factory() as db:
+        result = await work_plan_service.update(
+            db,
+            user.id,
+            entry_uuid,
+            scheduled_date=parsed_date,
+            position=position,
+            notes=notes_arg,
+        )
+
+    if isinstance(result, str):
+        raise ValueError(result)
+
+    return WorkPlanEntryResponse.from_entry(result).model_dump(mode="json")
+
+
+@mcp.tool()
+async def delete_work_plan_entry(
+    ctx: Context[Any, Any],
+    entry_id: str,
+) -> dict[str, Any]:
+    """Usun wpis planu pracy.
+
+    entry_id: UUID wpisu do usuniecia.
+    Zwraca potwierdzenie usuniecia lub blad (np. brak wpisu, brak dostepu).
+    """
+    user = await _auth(ctx)
+
+    try:
+        entry_uuid = uuid.UUID(entry_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy UUID wpisu: '{entry_id}'") from None
+
+    async with async_session_factory() as db:
+        error = await work_plan_service.unschedule(db, user.id, entry_uuid)
+
+    if error is not None:
+        raise ValueError(error)
+
+    return {"success": True, "message": "Wpis usuniety"}
+
+
+@mcp.tool()
+async def list_work_plan(
+    ctx: Context[Any, Any],
+    start_date: str,
+    end_date: str,
+    project_slug: str | None = None,
+) -> list[dict[str, Any]]:
+    """Lista wpisow planu pracy w podanym zakresie dat.
+
+    start_date, end_date: daty w formacie YYYY-MM-DD.
+    Maksymalny zakres: 90 dni.
+    project_slug: opcjonalne filtrowanie po projekcie.
+
+    Zwraca liste wpisow posortowanych po dacie i pozycji.
+    """
+    user = await _auth(ctx)
+
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except ValueError:
+        raise ValueError("Daty musza byc w formacie YYYY-MM-DD") from None
+
+    if (end - start).days > 90:
+        raise ValueError("Zakres nie moze przekraczac 90 dni")
+
+    project_ids: list[uuid.UUID] | None = None
+    if project_slug is not None:
+        async with async_session_factory() as db:
+            proj_result = await db.execute(
+                select(Project.id).where(
+                    Project.slug == project_slug,
+                    Project.is_active.is_(True),
+                )
+            )
+            project_id = proj_result.scalar_one_or_none()
+        if project_id is None:
+            raise ValueError(f"Projekt '{project_slug}' nie istnieje")
+        project_ids = [project_id]
+
+    async with async_session_factory() as db:
+        entries = await work_plan_service.list_for_user_range(db, user.id, start, end, project_ids=project_ids)
+
+    return [WorkPlanEntryResponse.from_entry(e).model_dump(mode="json") for e in entries]
+
+
+@mcp.tool()
+async def get_today_tasks(
+    ctx: Context[Any, Any],
+    project_slug: str | None = None,
+) -> list[dict[str, Any]]:
+    """Zwroc zadania zaplanowane na dzisiaj.
+
+    project_slug: opcjonalne — jesli podany, zwraca tylko zadania z tego projektu.
+    Bez parametru zwraca zadania ze wszystkich projektow uzytkownika.
+
+    Zwraca liste wpisow posortowanych po pozycji.
+    """
+    user = await _auth(ctx)
+
+    if project_slug is not None:
+        async with async_session_factory() as db:
+            proj_result = await db.execute(
+                select(Project.id).where(
+                    Project.slug == project_slug,
+                    Project.is_active.is_(True),
+                )
+            )
+            project_id = proj_result.scalar_one_or_none()
+        if project_id is None:
+            raise ValueError(f"Projekt '{project_slug}' nie istnieje")
+
+        async with async_session_factory() as db:
+            entries = await work_plan_service.today_for_user_in_project(db, user.id, project_id)
+    else:
+        async with async_session_factory() as db:
+            entries = await work_plan_service.today_for_user(db, user.id)
+
+    return [WorkPlanEntryResponse.from_entry(e).model_dump(mode="json") for e in entries]
+
+
+@mcp.tool()
+async def get_ticket_schedule(
+    ctx: Context[Any, Any],
+    ticket_id: str,
+) -> list[dict[str, Any]]:
+    """Pobierz harmonogram danego ticketa — wszystkie zaplanowane dni dla biezacego uzytkownika.
+
+    ticket_id: UUID ticketa lub klucz (np. MON-12).
+
+    Zwraca liste wpisow posortowanych po dacie i pozycji.
+    """
+    user = await _auth(ctx)
+
+    ticket_uuid = await _resolve_ticket_globally(ticket_id)
+
+    async with async_session_factory() as db:
+        entries = await work_plan_service.schedule_for_ticket(db, user.id, ticket_uuid)
+
+    return [WorkPlanEntryResponse.from_entry(e).model_dump(mode="json") for e in entries]

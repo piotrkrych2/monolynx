@@ -1,0 +1,557 @@
+{% extends "layouts/base.html" %}
+{% block title %}Plan pracy - Monolynx{% endblock %}
+{% block main_class %}max-w-7xl{% endblock %}
+{% block content %}
+
+<div class="mb-6 flex items-center justify-between">
+    <div>
+        <h2 class="text-xl font-bold text-gray-900 dark:text-white">Plan pracy</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mt-0.5">Planuj zadania na konkretne dni, cross-project.</p>
+    </div>
+    <button type="button" id="open-plan-modal"
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded transition">
+        + Dodaj zaplanowanie
+    </button>
+</div>
+
+{# Filtry #}
+<form method="get" action="/dashboard/plan/" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
+    <input type="hidden" name="view" value="{{ view }}">
+    <div class="flex flex-wrap gap-3 items-end">
+        <div>
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Od</label>
+            <input type="date" name="start" value="{{ start_date }}"
+                   class="bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Do</label>
+            <input type="date" name="end" value="{{ end_date }}"
+                   class="bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        {% if projects %}
+        <div>
+            <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Projekty</label>
+            <select name="project_ids" multiple
+                    class="bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 min-w-[180px]">
+                {% for p in projects %}
+                <option value="{{ p.id }}"
+                    {% if p.id|string in selected_project_ids %}selected{% endif %}>
+                    {{ p.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        <div class="flex gap-2">
+            <button type="submit"
+                    class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm font-medium transition">
+                Filtruj
+            </button>
+            <a href="/dashboard/plan/"
+               class="px-4 py-1.5 border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300 rounded text-sm font-medium transition">
+                Wyczysc
+            </a>
+        </div>
+    </div>
+</form>
+
+{# Zakładki widoku #}
+<div class="flex items-center gap-1 mb-4 border-b border-gray-200 dark:border-gray-700">
+    <a href="?view=gantt&start={{ start_date }}&end={{ end_date }}{% for pid in selected_project_ids %}&project_ids={{ pid }}{% endfor %}"
+       class="px-4 py-2 text-sm font-medium transition
+              {% if view == 'gantt' %}border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400{% else %}text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300{% endif %}">
+        Gantt
+    </a>
+    <a href="?view=calendar&start={{ start_date }}&end={{ end_date }}{% for pid in selected_project_ids %}&project_ids={{ pid }}{% endfor %}"
+       class="px-4 py-2 text-sm font-medium transition
+              {% if view == 'calendar' %}border-b-2 border-indigo-600 text-indigo-600 dark:text-indigo-400{% else %}text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300{% endif %}">
+        Kalendarz
+    </a>
+</div>
+
+{# Dane dla JS #}
+<script id="plan-entries-data" type="application/json">{{ entries | tojson }}</script>
+<script id="plan-meta" type="application/json">
+{"view": "{{ view }}", "start_date": "{{ start_date }}", "end_date": "{{ end_date }}"}
+</script>
+<script id="plan-project-ids" type="application/json">{{ selected_project_ids | tojson }}</script>
+
+{# Pusty stan #}
+{% if not entries %}
+<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+    <div class="flex flex-col items-center justify-center py-16 text-center">
+        <svg class="w-12 h-12 mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+        </svg>
+        <p class="text-gray-500 dark:text-gray-400 mb-2">Brak zaplanowanych zadań w wybranym zakresie.</p>
+        <p class="text-sm text-gray-400 dark:text-gray-500">Zaplanuj pierwszy ticket przyciskiem powyżej lub przez MCP.</p>
+    </div>
+</div>
+{% endif %}
+
+{# Widok: Gantt #}
+{% if view == 'gantt' %}
+<div id="gantt-container"
+     class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 overflow-x-auto {% if not entries %}hidden{% endif %}">
+    <div id="gantt-chart"></div>
+</div>
+{% endif %}
+
+{# Widok: Kalendarz #}
+{% if view == 'calendar' %}
+<div id="calendar-container"
+     class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 {% if not entries %}hidden{% endif %}">
+    <div id="calendar-grid" class="grid grid-cols-7 gap-1">
+        {% for dn in ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"] %}
+        <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 text-center py-1 border-b border-gray-200 dark:border-gray-700">
+            {{ dn }}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# Modal: dodaj zaplanowanie #}
+<div id="plan-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl max-w-md w-full p-6">
+        <div class="flex justify-between items-center mb-5">
+            <h2 class="text-lg font-bold text-gray-900 dark:text-white">Dodaj zaplanowanie</h2>
+            <button id="close-plan-modal"
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition text-xl leading-none">
+                &times;
+            </button>
+        </div>
+        <form id="plan-form">
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Ticket</label>
+                <input type="text" id="ticket-search"
+                       placeholder="Wpisz kod lub tytuł..."
+                       autocomplete="off"
+                       class="w-full px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+                <div id="ticket-results"
+                     class="mt-1 max-h-40 overflow-y-auto bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm hidden shadow-lg"></div>
+                <input type="hidden" id="selected-ticket-id" name="ticket_id">
+                <div id="selected-ticket-display"
+                     class="mt-1.5 text-xs text-indigo-600 dark:text-indigo-400 font-medium"></div>
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data</label>
+                <input type="date" id="scheduled-date" required
+                       class="w-full px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+            </div>
+            <div class="mb-5">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Notatki</label>
+                <textarea id="notes" rows="2"
+                          class="w-full px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+            </div>
+            <div id="form-error" class="hidden mb-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded px-3 py-2"></div>
+            <div class="flex justify-end gap-2">
+                <button type="button" id="cancel-plan-modal"
+                        class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 rounded text-sm font-medium transition">
+                    Anuluj
+                </button>
+                <button type="submit" id="plan-submit-btn"
+                        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm font-medium transition">
+                    Dodaj
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# Modal: szczegóły dnia (kalendarz) #}
+<div id="day-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl max-w-lg w-full p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 id="day-modal-title" class="text-lg font-bold text-gray-900 dark:text-white"></h2>
+            <button id="close-day-modal"
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition text-xl leading-none">
+                &times;
+            </button>
+        </div>
+        <div id="day-modal-content" class="divide-y divide-gray-200 dark:divide-gray-700"></div>
+    </div>
+</div>
+
+{# Frappe Gantt CSS #}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css">
+
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    // --- Dane z serwera ---
+    const entries = JSON.parse(document.getElementById('plan-entries-data').textContent);
+    const meta = JSON.parse(document.getElementById('plan-meta').textContent);
+    const selectedProjectIds = JSON.parse(document.getElementById('plan-project-ids').textContent);
+    const view = meta.view;
+    const startDate = meta.start_date;
+    const endDate = meta.end_date;
+
+    // --- Helpers ---
+
+    function projectColor(slug) {
+        let h = 0;
+        for (let i = 0; i < slug.length; i++) {
+            h = (h * 31 + slug.charCodeAt(i)) & 0xffff;
+        }
+        return 'hsl(' + (h % 360) + ', 65%, 55%)';
+    }
+
+    function formatDatePL(isoDate) {
+        const d = new Date(isoDate + 'T00:00:00');
+        return d.toLocaleDateString('pl-PL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    }
+
+    // --- Modal obsługa ---
+    const planModal = document.getElementById('plan-modal');
+    const dayModal = document.getElementById('day-modal');
+
+    document.getElementById('open-plan-modal').addEventListener('click', function () {
+        planModal.classList.remove('hidden');
+    });
+    document.getElementById('close-plan-modal').addEventListener('click', function () {
+        planModal.classList.add('hidden');
+    });
+    document.getElementById('cancel-plan-modal').addEventListener('click', function () {
+        planModal.classList.add('hidden');
+    });
+    planModal.addEventListener('click', function (e) {
+        if (e.target === planModal) planModal.classList.add('hidden');
+    });
+
+    document.getElementById('close-day-modal').addEventListener('click', function () {
+        dayModal.classList.add('hidden');
+    });
+    dayModal.addEventListener('click', function (e) {
+        if (e.target === dayModal) dayModal.classList.add('hidden');
+    });
+
+    // --- GANTT ---
+    if (view === 'gantt' && entries.length > 0) {
+        const tasks = entries.map(function (e) {
+            return {
+                id: e.id,
+                name: e.ticket_key + ' ' + e.ticket_title,
+                start: e.scheduled_date,
+                end: e.scheduled_date,
+                progress: 0,
+                custom_class: 'bar-project-' + e.project_slug,
+            };
+        });
+
+        try {
+            new Gantt('#gantt-chart', tasks, {
+                view_mode: 'Day',
+                on_date_change: function (task, start) {
+                    var newDate = start.toISOString().split('T')[0];
+                    fetch('/dashboard/plan/entries/' + task.id, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ scheduled_date: newDate }),
+                    }).then(function (res) {
+                        if (!res.ok) {
+                            res.json().then(function (err) {
+                                alert('Błąd: ' + (err.detail || 'nie udało się zapisać'));
+                                location.reload();
+                            });
+                        }
+                    }).catch(function () {
+                        alert('Błąd sieci. Odśwież stronę.');
+                        location.reload();
+                    });
+                },
+                on_click: function (task) {
+                    var entry = entries.find(function (e) { return e.id === task.id; });
+                    if (entry) showEntryConfirmDelete(entry);
+                },
+            });
+
+            // Kolory pasków wg projektu
+            var styleEl = document.createElement('style');
+            var seen = {};
+            entries.forEach(function (e) {
+                if (!seen[e.project_slug]) {
+                    styleEl.textContent += '.bar-project-' + e.project_slug + ' .bar { fill: ' + projectColor(e.project_slug) + ' !important; }\n';
+                    seen[e.project_slug] = true;
+                }
+            });
+            document.head.appendChild(styleEl);
+        } catch (err) {
+            console.error('Gantt init error:', err);
+        }
+    }
+
+    // --- KALENDARZ ---
+    if (view === 'calendar') {
+        renderCalendar();
+    }
+
+    function renderCalendar() {
+        var grid = document.getElementById('calendar-grid');
+        if (!grid) return;
+
+        var s = new Date(startDate + 'T00:00:00');
+        var e = new Date(endDate + 'T00:00:00');
+
+        // Wyrównaj do poniedziałku
+        var firstMonday = new Date(s);
+        var dow = firstMonday.getDay() || 7;
+        firstMonday.setDate(firstMonday.getDate() - (dow - 1));
+
+        var lastSunday = new Date(e);
+        var ldow = lastSunday.getDay() || 7;
+        lastSunday.setDate(lastSunday.getDate() + (7 - ldow));
+
+        // Grupowanie wpisów po dacie
+        var byDate = {};
+        entries.forEach(function (en) {
+            if (!byDate[en.scheduled_date]) byDate[en.scheduled_date] = [];
+            byDate[en.scheduled_date].push(en);
+        });
+
+        var cursor = new Date(firstMonday);
+        while (cursor <= lastSunday) {
+            var iso = cursor.toISOString().split('T')[0];
+            var cellEntries = byDate[iso] || [];
+            var inRange = cursor >= s && cursor <= e;
+
+            var cell = document.createElement('div');
+            cell.className = 'min-h-[90px] border border-gray-200 dark:border-gray-700 rounded p-1 text-xs '
+                + (inRange
+                    ? 'bg-gray-50 dark:bg-gray-750'
+                    : 'bg-gray-100 dark:bg-gray-900 opacity-50');
+
+            var dateLabel = document.createElement('div');
+            dateLabel.className = 'font-semibold text-gray-600 dark:text-gray-300 mb-1 text-right';
+            dateLabel.textContent = cursor.getDate();
+            cell.appendChild(dateLabel);
+
+            var shown = cellEntries.slice(0, 3);
+            shown.forEach(function (en) {
+                var tag = document.createElement('div');
+                tag.className = 'rounded px-1 py-0.5 text-white truncate cursor-pointer mb-0.5 hover:opacity-80 transition';
+                tag.style.backgroundColor = projectColor(en.project_slug);
+                tag.title = en.ticket_key + ': ' + en.ticket_title + ' (' + en.project_name + ')';
+                tag.textContent = en.ticket_key + ' ' + en.ticket_title;
+                tag.addEventListener('click', function () { showEntryConfirmDelete(en); });
+                cell.appendChild(tag);
+            });
+
+            if (cellEntries.length > 3) {
+                var more = document.createElement('button');
+                more.type = 'button';
+                more.className = 'text-indigo-600 dark:text-indigo-400 underline text-xs mt-0.5';
+                more.textContent = '+' + (cellEntries.length - 3) + ' więcej';
+                more.addEventListener('click', function (capturedIso, capturedEntries) {
+                    return function () { showDayDetail(capturedIso, capturedEntries); };
+                }(iso, cellEntries));
+                cell.appendChild(more);
+            }
+
+            grid.appendChild(cell);
+            cursor.setDate(cursor.getDate() + 1);
+        }
+    }
+
+    function showDayDetail(iso, dayEntries) {
+        document.getElementById('day-modal-title').textContent = formatDatePL(iso);
+        var content = document.getElementById('day-modal-content');
+        content.innerHTML = '';
+
+        dayEntries.forEach(function (en) {
+            var row = document.createElement('div');
+            row.className = 'flex justify-between items-center py-2.5 gap-3';
+
+            var labelDiv = document.createElement('div');
+            labelDiv.className = 'min-w-0';
+
+            var keySpan = document.createElement('span');
+            keySpan.className = 'font-mono text-xs font-semibold text-gray-900 dark:text-white';
+            keySpan.textContent = en.ticket_key;
+
+            var titleSpan = document.createElement('span');
+            titleSpan.className = 'ml-1.5 text-sm text-gray-700 dark:text-gray-300';
+            titleSpan.textContent = en.ticket_title;
+
+            var projSpan = document.createElement('span');
+            projSpan.className = 'ml-1.5 text-xs text-gray-400';
+            projSpan.textContent = '(' + en.project_name + ')';
+
+            labelDiv.appendChild(keySpan);
+            labelDiv.appendChild(titleSpan);
+            labelDiv.appendChild(projSpan);
+
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'flex-shrink-0 text-red-600 dark:text-red-400 text-xs hover:text-red-700 transition';
+            btn.textContent = 'Usuń';
+            btn.addEventListener('click', function (capturedId) {
+                return function () { deleteEntry(capturedId); };
+            }(en.id));
+
+            row.appendChild(labelDiv);
+            row.appendChild(btn);
+            content.appendChild(row);
+        });
+
+        dayModal.classList.remove('hidden');
+    }
+
+    function showEntryConfirmDelete(entry) {
+        if (confirm(entry.ticket_key + ': ' + entry.ticket_title + '\n\nUsunąć z planu?')) {
+            deleteEntry(entry.id);
+        }
+    }
+
+    function deleteEntry(id) {
+        fetch('/dashboard/plan/entries/' + id, { method: 'DELETE' })
+            .then(function (res) {
+                if (res.ok) {
+                    location.reload();
+                } else {
+                    alert('Błąd usuwania wpisu.');
+                }
+            }).catch(function () {
+                alert('Błąd sieci.');
+            });
+    }
+
+    // --- AUTOCOMPLETE TICKETÓW W MODALU ---
+    var searchInput = document.getElementById('ticket-search');
+    var resultsDiv = document.getElementById('ticket-results');
+    var ticketIdInput = document.getElementById('selected-ticket-id');
+    var ticketDisplay = document.getElementById('selected-ticket-display');
+    var searchTimer = null;
+
+    if (searchInput) {
+        searchInput.addEventListener('input', function () {
+            var q = searchInput.value.trim();
+            clearTimeout(searchTimer);
+            if (q.length < 2) {
+                resultsDiv.classList.add('hidden');
+                return;
+            }
+            searchTimer = setTimeout(function () {
+                var params = new URLSearchParams({ q: q });
+                selectedProjectIds.forEach(function (pid) { params.append('project_ids', pid); });
+
+                fetch('/dashboard/plan/api/tickets/search?' + params.toString())
+                    .then(function (res) { return res.json(); })
+                    .then(function (tickets) {
+                        resultsDiv.innerHTML = '';
+                        if (!tickets.length) {
+                            var empty = document.createElement('div');
+                            empty.className = 'px-3 py-2 text-gray-500 dark:text-gray-400';
+                            empty.textContent = 'Brak wyników';
+                            resultsDiv.appendChild(empty);
+                        } else {
+                            tickets.forEach(function (t) {
+                                var row = document.createElement('div');
+                                row.className = 'px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer border-b border-gray-100 dark:border-gray-600 last:border-0';
+
+                                var keySpan = document.createElement('span');
+                                keySpan.className = 'font-mono text-xs font-semibold text-gray-700 dark:text-gray-300 mr-1.5';
+                                keySpan.textContent = t.key;
+
+                                var titleSpan = document.createElement('span');
+                                titleSpan.className = 'text-gray-900 dark:text-white';
+                                titleSpan.textContent = t.title;
+
+                                var projSpan = document.createElement('span');
+                                projSpan.className = 'text-xs text-gray-400 ml-1';
+                                projSpan.textContent = '(' + t.project_name + ')';
+
+                                row.appendChild(keySpan);
+                                row.appendChild(titleSpan);
+                                row.appendChild(projSpan);
+
+                                row.addEventListener('click', function (capturedT) {
+                                    return function () {
+                                        ticketIdInput.value = capturedT.id;
+                                        searchInput.value = capturedT.key + ' ' + capturedT.title;
+                                        ticketDisplay.textContent = 'Projekt: ' + capturedT.project_name;
+                                        resultsDiv.classList.add('hidden');
+                                    };
+                                }(t));
+                                resultsDiv.appendChild(row);
+                            });
+                        }
+                        resultsDiv.classList.remove('hidden');
+                    })
+                    .catch(function () {
+                        resultsDiv.innerHTML = '';
+                        var err = document.createElement('div');
+                        err.className = 'px-3 py-2 text-red-500 dark:text-red-400';
+                        err.textContent = 'Błąd wyszukiwania';
+                        resultsDiv.appendChild(err);
+                        resultsDiv.classList.remove('hidden');
+                    });
+            }, 250);
+        });
+
+        // Ukryj dropdown po kliknięciu poza nim
+        document.addEventListener('click', function (e) {
+            if (!searchInput.contains(e.target) && !resultsDiv.contains(e.target)) {
+                resultsDiv.classList.add('hidden');
+            }
+        });
+    }
+
+    // --- SUBMIT FORMULARZA ---
+    var planForm = document.getElementById('plan-form');
+    var submitBtn = document.getElementById('plan-submit-btn');
+    if (planForm) {
+        planForm.addEventListener('submit', function (ev) {
+            ev.preventDefault();
+            var errorEl = document.getElementById('form-error');
+            errorEl.classList.add('hidden');
+
+            var tid = ticketIdInput.value;
+            var scheduledDate = document.getElementById('scheduled-date').value;
+            var notes = document.getElementById('notes').value;
+
+            if (!tid || !scheduledDate) {
+                errorEl.textContent = 'Wybierz ticket i datę.';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Zapisuję...';
+
+            fetch('/dashboard/plan/entries', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ticket_id: tid,
+                    scheduled_date: scheduledDate,
+                    position: 0,
+                    notes: notes || null,
+                }),
+            }).then(function (res) {
+                if (res.ok) {
+                    location.reload();
+                } else {
+                    return res.json().then(function (err) {
+                        errorEl.textContent = err.detail || 'Błąd zapisu';
+                        errorEl.classList.remove('hidden');
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Dodaj';
+                    });
+                }
+            }).catch(function () {
+                errorEl.textContent = 'Błąd sieci';
+                errorEl.classList.remove('hidden');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Dodaj';
+            });
+        });
+    }
+
+})();
+</script>
+
+{% endblock %}

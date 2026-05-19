@@ -64,7 +64,10 @@ class TestIssueListCoverage:
         assert "app/models.py in get_attribute" in resp.text
 
     async def test_issue_list_with_resolved_status(self, client, db_session):
-        """Issue ze statusem 'resolved' wyswietla zielona kropke."""
+        """Issue ze statusem 'resolved' wyswietla zielona kropke przy ?status=resolved.
+
+        Po MON-65: domyslny filtr ukrywa resolved. Uzyj ?status=resolved.
+        """
         project = _make_project("cov-il-resolved")
         db_session.add(project)
         await db_session.flush()
@@ -80,7 +83,8 @@ class TestIssueListCoverage:
         await db_session.flush()
 
         await login_session(client, db_session, email="cov-il-resolved@test.com")
-        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues")
+        # Po MON-65: uzyj ?status=resolved zeby zobaczyc resolved issues
+        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues?status=resolved")
         assert resp.status_code == 200
         assert "IOError: disk full" in resp.text
         assert "10x" in resp.text
@@ -88,7 +92,10 @@ class TestIssueListCoverage:
         assert "bg-green-500" in resp.text
 
     async def test_issue_list_with_ignored_status(self, client, db_session):
-        """Issue ze statusem 'ignored' wyswietla szara kropke."""
+        """Issue ze statusem 'ignored' wyswietla szara kropke przy ?status=ignored.
+
+        Po MON-65: domyslny filtr ukrywa ignored. Uzyj ?status=ignored.
+        """
         project = _make_project("cov-il-ignored")
         db_session.add(project)
         await db_session.flush()
@@ -104,7 +111,8 @@ class TestIssueListCoverage:
         await db_session.flush()
 
         await login_session(client, db_session, email="cov-il-ignored@test.com")
-        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues")
+        # Po MON-65: uzyj ?status=ignored zeby zobaczyc ignored issues
+        resp = await client.get(f"/dashboard/{project.slug}/500ki/issues?status=ignored")
         assert resp.status_code == 200
         assert "DeprecationWarning: old API" in resp.text
         # Gray dot for ignored status
