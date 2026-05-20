@@ -65,8 +65,8 @@ async def schedule(
         await db.rollback()
         return "Ticket juz zaplanowany na ten dzien"
 
+    await db.commit()
     # Przeladuj z relacjami
-    await db.refresh(entry)
     result2 = await db.execute(
         select(WorkPlanEntry).options(selectinload(WorkPlanEntry.ticket).selectinload(Ticket.project)).where(WorkPlanEntry.id == entry.id)
     )
@@ -111,6 +111,7 @@ async def update(
         await db.rollback()
         return "Ticket juz zaplanowany na ten dzien"
 
+    await db.commit()
     result2 = await db.execute(
         select(WorkPlanEntry).options(selectinload(WorkPlanEntry.ticket).selectinload(Ticket.project)).where(WorkPlanEntry.id == entry.id)
     )
@@ -128,7 +129,7 @@ async def unschedule(db: AsyncSession, user_id: uuid.UUID, entry_id: uuid.UUID) 
         return "Brak dostepu"
 
     await db.delete(entry)
-    await db.flush()
+    await db.commit()
     return None
 
 
