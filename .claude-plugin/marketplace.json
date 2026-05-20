@@ -1,0 +1,12 @@
+{
+  "name": "monolynx",
+  "description": "Oficjalny marketplace platformy Monolynx: plugin do zarządzania projektami (Scrum, 500ki, Monitoring, Wiki, Połączenia) z agentami AI i serwerem MCP.",
+  "owner": { "name": "Monolynx", "url": "https://monolynx.com" },
+  "plugins": [
+    {
+      "name": "monolynx",
+      "source": "./plugin",
+      "description": "Monolynx: skille, agenci i zdalny serwer MCP dla Claude Code."
+    }
+  ]
+}

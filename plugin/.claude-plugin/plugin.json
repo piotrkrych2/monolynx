@@ -1,0 +1,27 @@
+{
+  "name": "monolynx",
+  "version": "1.0.0",
+  "description": "Monolynx: platforma multi-modułowa (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy). Skille, agenci i zdalny serwer MCP dla Claude Code.",
+  "homepage": "https://monolynx.com",
+  "author": { "name": "Monolynx" },
+  "userConfig": {
+    "mcp_token": {
+      "type": "string",
+      "title": "Token API Monolynx",
+      "description": "Token API Monolynx (osk_...). Wygeneruj w panelu: /dashboard/profile/tokens.",
+      "sensitive": true,
+      "required": true
+    },
+    "mcp_endpoint": {
+      "type": "string",
+      "title": "URL serwera MCP",
+      "description": "URL zdalnego serwera MCP Monolynx.",
+      "default": "https://monolynx.com/mcp"
+    },
+    "project_slug": {
+      "type": "string",
+      "title": "Domyślny slug projektu",
+      "description": "Domyślny slug projektu Monolynx (fallback gdy brak MONOLYNX_PROJECT_SLUG w .env projektu)."
+    }
+  }
+}

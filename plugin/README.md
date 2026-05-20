@@ -1,0 +1,126 @@
+# Monolynx: plugin Claude Code
+
+Plugin Monolynx pakuje w jeden, instalowalny zestaw to, czego potrzebujesz, żeby pracować z platformą Monolynx bezpośrednio z Claude Code:
+
+- **6 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (praca z ticketami, tworzenie i recenzja zadań, wyszukiwanie w wiki, pomoc, generowanie skryptu CI grafu zależności),
+- **7 agentów** wyspecjalizowanych w rolach zespołu (backend, frontend, baza danych, DevOps, QA, code review, dokumentacja),
+- **zdalny serwer MCP** Monolynx (HTTP, autoryzacja Bearer), który udostępnia narzędzia do Scrum, 500ki, Monitoringu, Wiki, Połączeń i Planu pracy.
+
+Plugin nie zawiera kopii serwera MCP. Deklaruje jedynie dostęp do istniejącego, zdalnego serwera Monolynx pod adresem z konfiguracji.
+
+## Wymagania
+
+Zanim zainstalujesz plugin, przygotuj:
+
+1. **Konto Monolynx** z dostępem do co najmniej jednego projektu (członkostwo w projekcie jest weryfikowane po stronie serwera MCP).
+2. **Token API** w formacie `osk_...`. Wygeneruj go w panelu: `/dashboard/profile/tokens` (przycisk tworzenia tokenu). Token wyświetlany jest tylko raz przy tworzeniu, skopiuj go od razu.
+3. **Claude Code CLI** w wersji obsługującej pluginy i marketplace (komendy `/plugin`).
+
+## Instalacja
+
+Instalacja przebiega w dwóch krokach: najpierw dodajesz marketplace (źródło pluginu), potem instalujesz z niego plugin `monolynx`.
+
+### Z lokalnego repozytorium (tryb deweloperski)
+
+Wskaż katalog zawierający `.claude-plugin/marketplace.json` (root repozytorium):
+
+```text
+/plugin marketplace add /Users/piotrkrych/projects/monolynx/monolynx
+/plugin install monolynx@monolynx
+```
+
+Zapis `monolynx@monolynx` oznacza: plugin o nazwie `monolynx` ze źródła (marketplace) o nazwie `monolynx`.
+
+### Ze zdalnego repozytorium
+
+Wskaż adres repozytorium z `marketplace.json`:
+
+```text
+/plugin marketplace add <url-repo>
+/plugin install monolynx@monolynx
+```
+
+Po instalacji Claude Code poprosi o uzupełnienie konfiguracji (`userConfig`). Sprawdź dostępność komend wpisując `/monolynx:help`.
+
+## Konfiguracja (`userConfig`)
+
+Plugin pyta o trzy parametry przy instalacji. Możesz je później zmienić przez `/plugin`.
+
+| Parametr | Wymagany | Wartość domyślna | Opis |
+|----------|----------|------------------|------|
+| `mcp_token` | tak | brak | Token API Monolynx (`osk_...`). Oznaczony jako `sensitive`, trafia do keychain systemu, nie jest zapisywany jako zwykły tekst. Trafia do nagłówka `Authorization: Bearer <token>` zdalnego serwera MCP. |
+| `mcp_endpoint` | nie | `https://monolynx.com/mcp` | URL zdalnego serwera MCP. Zmień tylko jeśli korzystasz z własnej instancji Monolynx. |
+| `project_slug` | nie | brak | Domyślny slug projektu. Używany jako fallback, gdy w projekcie nie ma `MONOLYNX_PROJECT_SLUG`. |
+
+### Token API (`mcp_token`)
+
+1. Zaloguj się do Monolynx i otwórz `/dashboard/profile/tokens`.
+2. Utwórz nowy token, skopiuj wartość `osk_...` (pokazywana raz).
+3. Wklej ją podczas konfiguracji pluginu. Ponieważ pole jest `sensitive`, Claude Code zapisze token w keychain, a nie w plikach konfiguracyjnych w repozytorium.
+
+Token możesz w każdej chwili unieważnić w tym samym panelu (`/revoke`). Po unieważnieniu wygeneruj nowy i zaktualizuj konfigurację pluginu.
+
+### Punkt końcowy MCP (`mcp_endpoint`)
+
+Domyślnie plugin łączy się z `https://monolynx.com/mcp`. Połączenie jest typu HTTP, z autoryzacją Bearer (`${user_config.mcp_token}`). Adres podmień tylko dla self-hosted instancji.
+
+### Ustalanie slug projektu (`project_slug`)
+
+Skille pluginu pracują w kontekście jednego projektu. Slug ustalany jest w stałej kolejności:
+
+1. **`MONOLYNX_PROJECT_SLUG`** z pliku `.env` projektu, w którym pracujesz (najwyższy priorytet, ustawienie per repozytorium),
+2. **`user_config.project_slug`** z konfiguracji pluginu (fallback globalny dla użytkownika),
+3. **`"monolynx"`** jako ostateczna wartość domyślna.
+
+Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin obsługują wiele projektów. Wystarczy w danym repozytorium ustawić `MONOLYNX_PROJECT_SLUG` w `.env`, a skille automatycznie zadziałają na właściwym projekcie. `user_config.project_slug` jest wygodny, gdy najczęściej pracujesz z jednym projektem i nie chcesz ustawiać go w każdym repozytorium.
+
+## Zawartość pluginu
+
+### Skille (komendy `/monolynx:*`)
+
+| Komenda | Opis |
+|---------|------|
+| `/monolynx:work` | Podejmij zadanie z aktualnego sprintu: walidacja brancha, research, dobór zespołu agentów i praca równoległa z obowiązkowym krytykiem. |
+| `/monolynx:ticket-create` | Utwórz nowy ticket: zbiera kontekst z wiki, kodu i grafu zależności, generuje opis w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zależności). |
+| `/monolynx:ticket-review` | Zrecenzuj ticket ze sprintu: sprawdza formę, zgodność z wiki i kodem, generuje tabelkę raportu i proponuje poprawki. |
+| `/monolynx:search` | Szukaj informacji w wiki projektu (architektura, API, integracje, standardy kodu) przez wyszukiwanie semantyczne. |
+| `/monolynx:help` | Wyświetl instrukcję użycia skilli Monolynx: flow pracy z ticketami oraz skille dodatkowe. |
+| `/monolynx:create-graph-ci-script` | Wygeneruj skrypt CI synchronizujący graf zależności kodu z Monolynx (analiza projektu Python: Django, FastAPI, Flask), tworzy `cicd/sync_graph.py` i stage w `.gitlab-ci.yml`. |
+
+### Agenci
+
+Plugin dostarcza 7 agentów do delegowania pracy w odpowiednich rolach:
+
+- **backend-developer**: implementacja backendu (FastAPI, SQLAlchemy, async).
+- **frontend-developer**: szablony, HTMX, Tailwind, warstwa UI.
+- **database-specialist**: modele, migracje Alembic, zapytania, indeksy.
+- **devops-infra**: Docker, CI/CD, infrastruktura, deployment.
+- **qa-tester**: testy (pytest), scenariusze, pokrycie.
+- **code-reviewer**: recenzja kodu, jakość, bezpieczeństwo.
+- **technical-writer**: dokumentacja (CLAUDE.md, wiki, README, SDK, przewodniki).
+
+## Migracja i kompatybilność
+
+Plugin to **preferowana ścieżka** dla użytkowników Claude Code CLI. Nie zastępuje jednak dotychczasowego mechanizmu instalacji skilli, oba istnieją równolegle.
+
+### Decyzja: `install_monolynx_skills` i kopie skilli pozostają
+
+Narzędzie MCP `install_monolynx_skills` oraz kopie skilli w repozytorium **pozostają i nie są usuwane**:
+
+- `src/monolynx/static/skills/`: źródło skilli pobieranych przez `install_monolynx_skills`,
+- `src/monolynx/static/starter-pack/`: gotowy pakiet startowy do ręcznej instalacji.
+
+Są one **alternatywą dla użytkowników niekorzystających z mechanizmu pluginów**, między innymi:
+
+- dostęp przez claude.ai (web), bez CLI i bez możliwości dodania marketplace,
+- środowiska, w których nie da się dodać marketplace ani zainstalować pluginu,
+- ręczna instalacja skilli do `.claude/skills/` projektu (narzędzie zwraca treść skilla z podmienionymi placeholderami `<PROJECT-SLUG>` i `<PROJECT-ID>`, gotową do zapisu na dysk).
+
+Innymi słowy:
+
+- **Plugin**: preferowana, jednorazowa instalacja dla Claude Code CLI (skille + agenci + zdalny MCP w jednym).
+- **`install_monolynx_skills`**: ścieżka manualna / fallback dla środowisk bez pluginów.
+
+### Serwer MCP bez zmian funkcjonalnych
+
+`src/monolynx/mcp_server.py` **pozostaje bez zmian funkcjonalnych**. Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. W pliku `.mcp.json` pluginu deklaruje wyłącznie dostęp (HTTP + Bearer) do **istniejącego** serwera MCP pod adresem `${user_config.mcp_endpoint}`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.

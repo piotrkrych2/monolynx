@@ -111,7 +111,7 @@
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Użyj narzędzi</h2>
         </div>
 
-        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-gray-900 dark:text-white">94 narzędzi</strong> we wszystkich modułach:</p>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">Po połączeniu Claude Code ma dostęp do <strong class="text-gray-900 dark:text-white">100 narzędzi</strong> we wszystkich modułach:</p>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
             <div>
@@ -276,6 +276,17 @@
                     <li class="text-sm"><code class="text-indigo-300 font-mono">get_graph_stats</code> <span class="text-gray-500">— statystyki grafu</span></li>
                 </ul>
             </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Plan pracy / Gantt</h3>
+                <ul class="space-y-1">
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">schedule_ticket</code> <span class="text-gray-500">— zaplanuj ticket na dany dzień</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">update_work_plan_entry</code> <span class="text-gray-500">— przesuń/edytuj wpis planu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">delete_work_plan_entry</code> <span class="text-gray-500">— usuń wpis z planu</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">list_work_plan</code> <span class="text-gray-500">— wpisy w zakresie dat (cross-project)</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_today_tasks</code> <span class="text-gray-500">— zadania zaplanowane na dziś</span></li>
+                    <li class="text-sm"><code class="text-indigo-300 font-mono">get_ticket_schedule</code> <span class="text-gray-500">— harmonogram danego ticketu</span></li>
+                </ul>
+            </div>
         </div>
 
         <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">Przykład użycia w Claude Code:</p>
@@ -292,6 +303,43 @@
     <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
         <div class="flex items-center gap-3 mb-4">
             <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">4</span>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Zainstaluj plugin Claude Code (zalecane)</h2>
+        </div>
+
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">
+            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz skille i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code> oraz gotowy zdalny serwer MCP, bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code>.
+        </p>
+
+        <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-x-auto mb-4">
+            <code class="text-green-400 font-mono text-sm whitespace-pre">/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git
+/plugin install monolynx@monolynx</code>
+        </div>
+
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">
+            W konfiguracji pluginu ustaw token (<code class="text-indigo-300 font-mono text-sm">mcp_token</code>, format <code class="text-indigo-300 font-mono text-sm">osk_...</code>, wygenerowany w Kroku 1), opcjonalnie <code class="text-indigo-300 font-mono text-sm">mcp_endpoint</code> (domyślnie <code class="text-indigo-300 font-mono text-sm">https://monolynx.com/mcp</code>) i <code class="text-indigo-300 font-mono text-sm">project_slug</code>.
+        </p>
+
+        <p class="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-2">Po instalacji dostępne komendy</p>
+        <div class="flex flex-wrap gap-2 mb-5">
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:work</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:ticket-create</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:ticket-review</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:search</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:help</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:create-graph-ci-script</code>
+        </div>
+
+        <div class="bg-gray-100/40 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 rounded-lg p-3">
+            <p class="text-gray-600 dark:text-gray-400 text-xs">
+                <code class="text-indigo-300 font-mono text-xs">install_monolynx_skills</code> oraz paczka ZIP poniżej (Krok 5) pozostają jako alternatywa dla środowisk bez mechanizmu pluginów (np. claude.ai web).
+            </p>
+        </div>
+    </div>
+
+    <!-- Krok 5 -->
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">5</span>
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Zainstaluj skille Claude Code</h2>
         </div>
 

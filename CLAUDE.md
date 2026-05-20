@@ -101,6 +101,13 @@ Two separate packages in one repo:
 - 100 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Graph (node/edge CRUD, bulk operations, query, path finding, stats), Work Plan (`schedule_ticket`, `update_work_plan_entry`, `delete_work_plan_entry`, `list_work_plan`, `get_today_tasks`, `get_ticket_schedule`), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
+- `install_monolynx_skills` tool serves skill copies from `static/skills/` for manual install into a project's `.claude/skills/` (used by claude.ai web and environments without plugin support)
+
+**Claude Code plugin** (`plugin/`):
+- Bundles skills (`/monolynx:*` commands), 7 role agents, and remote MCP access into one installable plugin; marketplace manifest at `.claude-plugin/marketplace.json` (root), plugin manifest at `plugin/.claude-plugin/plugin.json`
+- `userConfig`: `mcp_token` (sensitive, keychain), `mcp_endpoint` (default `https://monolynx.com/mcp`), `project_slug` (optional fallback)
+- Skill project slug resolution order: `MONOLYNX_PROJECT_SLUG` from project `.env` → `user_config.project_slug` → `"monolynx"`; works cross-project
+- Preferred path for Claude Code CLI users; `install_monolynx_skills` remains the manual/fallback path. Plugin only declares access to the existing MCP server; `mcp_server.py` is unchanged. See `plugin/README.md`
 
 **Template layout system**:
 - `layouts/base.html` — base layout (login, project list)

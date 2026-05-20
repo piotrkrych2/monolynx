@@ -7,11 +7,14 @@
 <section class="relative pt-32 pb-16 overflow-hidden">
     <div class="absolute inset-0 bg-gradient-to-b from-{{ f.color }}-950/20 via-gray-950 to-gray-950"></div>
     <div class="relative max-w-4xl mx-auto px-6">
-        <div class="flex items-center gap-3 mb-6 animate-fade-in-up">
-            <div class="w-12 h-12 bg-{{ f.color }}-500/10 rounded-xl flex items-center justify-center">
-                {{ f.icon | safe }}
+        <div class="flex items-start justify-between gap-4 mb-6">
+            <div class="flex items-center gap-3 animate-fade-in-up">
+                <div class="w-12 h-12 bg-{{ f.color }}-500/10 rounded-xl flex items-center justify-center">
+                    {{ f.icon | safe }}
+                </div>
+                <span class="text-xs font-mono text-{{ f.color }}-400 bg-{{ f.color }}-500/10 px-3 py-1 rounded-full uppercase tracking-wider">{{ f.badge }}</span>
             </div>
-            <span class="text-xs font-mono text-{{ f.color }}-400 bg-{{ f.color }}-500/10 px-3 py-1 rounded-full uppercase tracking-wider">{{ f.badge }}</span>
+            {% if md_url %}{% include "partials/_copy_page.html" %}{% endif %}
         </div>
         <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight leading-tight mb-6 animate-fade-in-up">
             {{ f.headline }}
