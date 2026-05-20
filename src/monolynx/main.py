@@ -109,12 +109,12 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Your projects.",
         "hero_line2": "AI-first platform.",
         "hero_sub": (
-            "94 MCP tools, semantic wiki search, and Claude Code skills"
+            "100 MCP tools, semantic wiki search, and Claude Code skills"
             " — Monolynx isn't just another dashboard."
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
         "modules_title": "Everything you need",
-        "modules_sub": "Seven integrated modules that cover the full project lifecycle.",
+        "modules_sub": "Nine integrated modules that cover the full project lifecycle.",
         "m_500ki": "Error tracking with smart fingerprinting. Catch exceptions from your apps with a lightweight SDK.",
         "m_scrum": "Backlog, Kanban board, sprints, and story points. Everything for agile project management.",
         "m_monitoring": "URL health checks with uptime tracking, response time history, and instant alerts.",
@@ -122,12 +122,13 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_wiki": "Markdown documentation with page hierarchy, image uploads, and AI-powered semantic search.",
         "m_connections": "Interactive dependency graph powered by Neo4j. Visualize how your code modules relate to each other.",
         "m_settlements": "Cross-project billing with status workflow (draft → sent → paid), ticket freezing, and attachment management.",
-        "mcp_title": "AI-native with MCP",
+        "m_reports": "Cross-project work reports with multi-select filters, date ranges, and PDF export for stakeholders.",
+        "m_work_plan": "Personal cross-project scheduling on a Gantt chart and monthly calendar, independent of sprint assignment.",
+        "mcp_title": "Connect to Claude",
         "mcp_desc": (
-            "Monolynx speaks <mcp_link>Model Context Protocol</mcp_link>."
-            " Connect Claude Desktop or any MCP client to manage tickets,"
-            " search your wiki, query your dependency graph,"
-            " and more — all through natural language."
+            "Add Monolynx to Claude.ai as a custom connector over HTTPS, or wire it into"
+            " any client that speaks the <mcp_link>Model Context Protocol</mcp_link>."
+            " Manage tickets, search your wiki, and query your dependency graph in natural language."
         ),
         "skills_title": "Claude Code skills — one prompt, zero setup",
         "skills_sub": (
@@ -155,12 +156,12 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Twoje projekty.",
         "hero_line2": "AI-first platforma.",
         "hero_sub": (
-            "94 narzędzia MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
+            "100 narzędzi MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
             " — Monolynx to nie kolejny dashboard."
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
         "modules_title": "Wszystko, czego potrzebujesz",
-        "modules_sub": "Siedem zintegrowanych modułów obejmujących cały cykl życia projektu.",
+        "modules_sub": "Dziewięć zintegrowanych modułów obejmujących cały cykl życia projektu.",
         "m_500ki": "Śledzenie błędów z inteligentnym fingerprintingiem. Przechwytuj wyjątki z aplikacji za pomocą lekkiego SDK.",
         "m_scrum": "Backlog, tablica Kanban, sprinty i story pointy. Wszystko do zwinnego zarządzania projektami.",
         "m_monitoring": "Monitorowanie URL z historią uptimeu, czasami odpowiedzi i natychmiastowymi alertami.",
@@ -170,12 +171,13 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_settlements": (
             "Rozliczenia cross-project z workflow statusów (draft → wysłane → opłacone), zamrażaniem ticketów i zarządzaniem załącznikami."
         ),
-        "mcp_title": "AI-native z MCP",
+        "m_reports": "Raporty pracy cross-project z multi-select filtrami, zakresem dat i eksportem PDF dla stakeholderów.",
+        "m_work_plan": "Osobiste planowanie cross-project na wykresie Gantta i kalendarzu, niezależne od przypisania do sprintu.",
+        "mcp_title": "Połącz z Claude",
         "mcp_desc": (
-            "Monolynx obsługuje <mcp_link>Model Context Protocol</mcp_link>."
-            " Połącz Claude Desktop lub dowolnego klienta MCP, aby zarządzać ticketami,"
-            " przeszukiwać wiki, odpytywać graf zależności"
-            " i wiele więcej — wszystko w języku naturalnym."
+            "Dodaj Monolynx do Claude.ai jako własny konektor po HTTPS albo podłącz go do"
+            " dowolnego klienta obsługującego <mcp_link>Model Context Protocol</mcp_link>."
+            " Zarządzaj ticketami, przeszukuj wiki i odpytuj graf zależności w języku naturalnym."
         ),
         "skills_title": "Skille Claude Code — jeden prompt, zero konfiguracji",
         "skills_sub": (
@@ -205,6 +207,148 @@ def _landing_redirect() -> RedirectResponse:
     return RedirectResponse(url="/auth/login", status_code=302)
 
 
+@app.get("/llms.txt", include_in_schema=False)
+async def llms_txt() -> Response:
+    """Serve llms.txt at site root for LLM consumption (llmstxt.org standard)."""
+    llms_path = _STATIC_DIR / "llms.txt"
+    if not llms_path.is_file():
+        return Response(status_code=404, content="Not Found")
+    return Response(content=llms_path.read_text(encoding="utf-8"), media_type="text/plain; charset=utf-8")
+
+
+def _markdown_response(content: str) -> Response:
+    return Response(content=content, media_type="text/markdown; charset=utf-8")
+
+
+def _landing_markdown(lang: str) -> str:
+    t = _LANDING_I18N[lang]
+    base = "https://monolynx.com"
+    modules = [
+        ("500ki", "500s" if lang == "en" else "500ki", t["m_500ki"]),
+        ("scrum", "Scrum", t["m_scrum"]),
+        ("monitoring", "Monitoring", t["m_monitoring"]),
+        ("heartbeat", "Heartbeat", t["m_heartbeat"]),
+        ("wiki", "Wiki", t["m_wiki"]),
+        ("connections", "Connections" if lang == "en" else "Połączenia", t["m_connections"]),
+        ("reports", "Reports" if lang == "en" else "Raporty", t["m_reports"]),
+        ("settlements", "Settlements" if lang == "en" else "Rozliczenia", t["m_settlements"]),
+        ("work_plan", "Work Plan / Gantt" if lang == "en" else "Plan pracy / Gantt", t["m_work_plan"]),
+    ]
+    mcp_desc = t["mcp_desc"].replace("<mcp_link>", "").replace("</mcp_link>", "")
+    is_pl = lang == "pl"
+    lines = ["# Monolynx", "", f"> {t['hero_sub']}", "", f"## {t['modules_title']}", "", t["modules_sub"], ""]
+    for slug, name, desc in modules:
+        lines.append(f"- [{name}]({base}/features/{slug}.md?lang={lang}): {desc}")
+    lines += ["", f"## {t['mcp_title']}", "", mcp_desc, ""]
+
+    lines.append("### Custom Connector")
+    lines.append("")
+    if is_pl:
+        lines += [
+            "Dodaj Monolynx bezpośrednio w Claude.ai (web lub desktop) jako własny konektor po HTTPS:",
+            "",
+            "1. W Claude.ai otwórz Ustawienia, Konektory.",
+            "2. Kliknij Dodaj własny konektor i wklej adres konektora.",
+            "3. Autoryzuj połączenie tokenem Monolynx.",
+            "",
+            "Adres konektora: `https://your-instance/mcp` (zastąp `your-instance` adresem swojej instancji).",
+            "",
+        ]
+    else:
+        lines += [
+            "Add Monolynx directly in Claude.ai (web or desktop) as a custom connector over HTTPS:",
+            "",
+            "1. In Claude.ai open Settings, Connectors.",
+            "2. Click Add custom connector and paste the connector URL.",
+            "3. Authorize the connection with your Monolynx token.",
+            "",
+            "Connector URL: `https://your-instance/mcp` (replace `your-instance` with your instance host).",
+            "",
+        ]
+
+    lines.append("### MCP")
+    lines.append("")
+    lines.append(
+        "Dla Claude Code lub dowolnego klienta MCP dodaj wpis do `.mcp.json`:"
+        if is_pl
+        else "For Claude Code or any MCP client, add an entry to `.mcp.json`:"
+    )
+    lines += [
+        "",
+        "```json",
+        "{",
+        '  "mcpServers": {',
+        '    "monolynx": {',
+        '      "type": "http",',
+        '      "url": "https://your-instance/mcp",',
+        '      "headers": { "Authorization": "Bearer YOUR_TOKEN" }',
+        "    }",
+        "  }",
+        "}",
+        "```",
+        "",
+        (
+            "Serwer MCP udostępnia 100 narzędzi we wszystkich modułach (uwierzytelnianie tokenem Bearer)."
+            if is_pl
+            else "The MCP server exposes 100 tools across all modules (Bearer token authentication)."
+        ),
+        "",
+    ]
+
+    lines.append("### Plugin Claude Code" if is_pl else "### Claude Code plugin")
+    lines.append("")
+    if is_pl:
+        lines += [
+            "Zainstaluj Monolynx jako natywny plugin Claude Code (skille, agenci i zdalny serwer MCP):",
+            "",
+            "```bash",
+            "/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git",
+            "/plugin install monolynx@monolynx",
+            "```",
+            "",
+            "W konfiguracji pluginu ustaw token (`mcp_token`, format `osk_...`), opcjonalnie `mcp_endpoint` "
+            "(domyślnie `https://monolynx.com/mcp`) i `project_slug`. Po instalacji dostępne są komendy: "
+            "`/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
+            "`/monolynx:help`, `/monolynx:create-graph-ci-script`.",
+            "",
+        ]
+    else:
+        lines += [
+            "Install Monolynx as a native Claude Code plugin (skills, agents, and the remote MCP server):",
+            "",
+            "```bash",
+            "/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git",
+            "/plugin install monolynx@monolynx",
+            "```",
+            "",
+            "In the plugin config set your token (`mcp_token`, `osk_...` format), optionally `mcp_endpoint` "
+            "(defaults to `https://monolynx.com/mcp`) and `project_slug`. After install the commands are: "
+            "`/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
+            "`/monolynx:help`, `/monolynx:create-graph-ci-script`.",
+            "",
+        ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+@app.get("/index.md", include_in_schema=False)
+async def landing_markdown(lang: str = "en") -> Response:
+    if lang not in _LANDING_I18N:
+        lang = "en"
+    return _markdown_response(_landing_markdown(lang))
+
+
+@app.get("/features/{slug}.md", include_in_schema=False)
+async def feature_markdown_page(slug: str, lang: str = "en") -> Response:
+    from monolynx.features import feature_markdown
+
+    if lang not in ("en", "pl"):
+        lang = "en"
+    content = feature_markdown(slug, lang)
+    if content is None:
+        return Response(status_code=404, content="Not Found")
+    return _markdown_response(content)
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def landing_page(request: Request, lang: str = "en") -> Response:
     if settings.SKIP_LANDING_PAGE:
@@ -220,6 +364,7 @@ async def landing_page(request: Request, lang: str = "en") -> Response:
             "active_page": "home",
             "lang_switch_url": "/?lang=pl",
             "lang_switch_url_en": "/?lang=en",
+            "md_url": f"/index.md?lang={lang}",
             "app_url": settings.APP_URL,
         },
     )
@@ -246,6 +391,7 @@ async def feature_page(request: Request, slug: str, lang: str = "en") -> Respons
             "active_page": "feature",
             "lang_switch_url": f"/features/{slug}?lang=pl",
             "lang_switch_url_en": f"/features/{slug}?lang=en",
+            "md_url": f"/features/{slug}.md?lang={lang}",
             "app_url": settings.APP_URL,
         },
     )

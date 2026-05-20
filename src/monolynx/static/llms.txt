@@ -1,0 +1,32 @@
+# Monolynx
+
+> Monolynx is an open-source, AI-first project platform that speaks the Model Context Protocol (MCP) natively. It bundles nine integrated modules (error tracking, Scrum, monitoring, heartbeats, wiki with RAG search, code dependency graph, work reports, cross-project billing, and a personal Gantt planner) into one self-hostable application that an AI agent can operate as if it were a member of the team.
+
+Monolynx is built for teams that work alongside AI agents. Every module is reachable both through a web dashboard (HTML, server-rendered) and through 100 MCP tools, so an assistant like Claude can read issues, manage tickets and sprints, search documentation semantically, query the dependency graph, and plan work across projects using natural language. The platform is open source and self-hosted, so teams keep full ownership of their data.
+
+The UI and documentation are bilingual (Polish-first, with English available via `?lang=en`). The backend is FastAPI (async Python); data lives in PostgreSQL with the pgvector extension for embeddings, Neo4j for the dependency graph, and MinIO for object storage. Notes for LLMs: the public marketing pages below are safe to read; the dashboard and MCP endpoint require authentication (a Bearer token managed per user).
+
+## Modules
+
+- [500s (Error tracking)](https://monolynx.com/features/500ki?lang=en): Automatic exception grouping via smart fingerprinting, with a lightweight Django SDK that captures errors in the background.
+- [Scrum](https://monolynx.com/features/scrum?lang=en): Backlog, Kanban board, sprints, and story points for agile project management, including comments, labels, attachments, and time logging.
+- [Monitoring](https://monolynx.com/features/monitoring?lang=en): URL health checks with uptime tracking, response-time history, and SSRF-protected checks run by a background worker.
+- [Heartbeat](https://monolynx.com/features/heartbeat?lang=en): Cron-job monitoring with a dead man's switch that alerts when scheduled tasks stop reporting in.
+- [Wiki](https://monolynx.com/features/wiki?lang=en): Markdown documentation with a page hierarchy, image uploads, and AI-powered semantic search (RAG) backed by pgvector.
+- [Connections](https://monolynx.com/features/connections?lang=en): Interactive code dependency graph powered by Neo4j, visualizing how modules, classes, and functions relate.
+- [Reports](https://monolynx.com/features/reports?lang=en): Cross-project work reports with multi-select filters, date ranges, PDF export, and separate tracking of AI vs. manual time entries.
+- [Settlements](https://monolynx.com/features/settlements?lang=en): Cross-project billing with a status workflow (draft, sent, paid), ticket freezing, and attachment management.
+- [Work Plan / Gantt](https://monolynx.com/features/work_plan?lang=en): Personal per-user scheduling of tickets from any project on a Gantt chart and monthly calendar, independent of sprint assignment.
+
+## AI and MCP
+
+- [Homepage](https://monolynx.com/?lang=en): Product overview, the nine modules, and how Monolynx works as an AI-native platform.
+- MCP endpoint: `https://monolynx.com/mcp` exposes 100 MCP tools across all modules, authenticated with an `Authorization: Bearer` token. Configure it in any MCP client (for example Claude Code via `.mcp.json`).
+- Claude Code plugin (recommended): install Monolynx as a native plugin with `/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git` then `/plugin install monolynx@monolynx`. It bundles the skills and agents as `/monolynx:*` commands (for example `/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:search`) plus the remote MCP server; set your Bearer token in the plugin config (`mcp_token`).
+- Claude Code skills (manual alternative): the `install_monolynx_skills` MCP tool installs a ready-made ticket workflow into a connected project (`/monolynx-ticket-create`, `/monolynx-ticket-review`, `/monolynx-work`, `/monolynx-search`, and more), with project placeholders filled in automatically.
+- Capabilities for agents: browse and triage errors, create tickets from issues, manage sprints and the Kanban board, log work time, run semantic wiki search, build and query the dependency graph, and schedule cross-project work.
+
+## About
+
+- [Source code (GitLab)](https://gitlab.com/piotrkrych/monolynx): Monolynx is free and open source. Self-host it on your own infrastructure and customize it to your needs.
+- [Contact](https://monolynx.com/contact?lang=en): Get in touch about Monolynx.

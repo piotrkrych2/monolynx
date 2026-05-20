@@ -13,6 +13,7 @@ _ICON_WIKI = '<svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentCol
 _ICON_CONNECTIONS = '<svg class="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z"/></svg>'
 _ICON_REPORTS = '<svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/></svg>'
 _ICON_SETTLEMENTS = '<svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V12Zm-12 0h.008v.008H6V12Z"/></svg>'
+_ICON_WORK_PLAN = '<svg class="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"/></svg>'
 
 
 def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
@@ -51,6 +52,12 @@ def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
             "name": "Settlements" if lang == "en" else "Rozliczenia",
             "short": "Cross-project billing & attachments" if lang == "en" else "Rozliczenia cross-project i załączniki",
         },
+        {
+            "slug": "work_plan",
+            "color": "sky",
+            "name": "Work Plan / Gantt" if lang == "en" else "Plan pracy / Gantt",
+            "short": "Personal cross-project scheduling" if lang == "en" else "Osobiste planowanie cross-project",
+        },
     ]
     return [m for m in all_modules if m["slug"] != exclude]
 
@@ -62,6 +69,50 @@ def get_feature_content(slug: str, lang: str) -> dict[str, Any] | None:
         return None
     result: dict[str, Any] = builder(lang)
     return result
+
+
+def feature_markdown(slug: str, lang: str) -> str | None:
+    """Render a feature page as plain Markdown for LLM consumption."""
+    f = get_feature_content(slug, lang)
+    if f is None:
+        return None
+
+    is_pl = lang == "pl"
+    lines: list[str] = [f"# {f['title']}", "", f"> {f['headline']}", "", f["description"], ""]
+
+    if f.get("features"):
+        lines.append("## " + ("Funkcje" if is_pl else "Features"))
+        lines.append("")
+        for item in f["features"]:
+            lines.append(f"- **{item['title']}**: {item['desc']}")
+        lines.append("")
+
+    if f.get("steps"):
+        lines.append("## " + ("Jak to działa" if is_pl else "How it works"))
+        lines.append("")
+        for i, step in enumerate(f["steps"], start=1):
+            lines.append(f"{i}. **{step['title']}**: {step['desc']}")
+        lines.append("")
+
+    if f.get("ai_intro") or f.get("mcp_tools"):
+        lines.append("## " + ("AI i MCP" if is_pl else "AI and MCP"))
+        lines.append("")
+        if f.get("ai_intro"):
+            lines.append(f["ai_intro"])
+            lines.append("")
+        for tool in f.get("mcp_tools", []):
+            lines.append(f"- `{tool['name']}`: {tool['desc']}")
+        if f.get("mcp_tools"):
+            lines.append("")
+
+    if f.get("tech_details"):
+        lines.append("## " + ("Szczegóły techniczne" if is_pl else "Technical details"))
+        lines.append("")
+        for detail in f["tech_details"]:
+            lines.append(f"- **{detail['label']}**: {detail['value']}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _feature_500ki(lang: str) -> dict[str, Any]:
@@ -1025,6 +1076,159 @@ def _feature_reports(lang: str) -> dict[str, Any]:
     }
 
 
+def _feature_work_plan(lang: str) -> dict[str, Any]:
+    if lang == "pl":
+        return {
+            "title": "Plan pracy / Gantt",
+            "screenshot": None,
+            "screenshot_2": None,
+            "color": "sky",
+            "icon": _ICON_WORK_PLAN,
+            "badge": "Work Planning",
+            "headline": "Planuj swoją pracę w wielu projektach na jednym wykresie Gantta",
+            "description": (
+                "Osobisty harmonogram per-użytkownik, niezależny od przypisania do sprintu. "
+                "Planuj tickety z dowolnych projektów, do których należysz, na konkretne dni. "
+                "Przeglądaj plan jako wykres Gantta lub kalendarz miesięczny, przesuwaj zadania metodą drag and drop."
+            ),
+            "screenshot_hint": "Wykres Gantta z zaplanowanymi ticketami z wielu projektów",
+            "screenshot_hint_2": None,
+            "features": [
+                {
+                    "title": "Planowanie cross-project",
+                    "desc": "Jeden harmonogram obejmuje tickety ze wszystkich projektów, do których masz dostęp. Widzisz wyłącznie własne wpisy, bez wycieku danych między projektami.",
+                },
+                {
+                    "title": "Junction model (User x Ticket x Date)",
+                    "desc": "Wpis łączy użytkownika, ticket i datę. Unikalny constraint pilnuje, by ten sam ticket nie był zaplanowany dwa razy na ten sam dzień.",
+                },
+                {
+                    "title": "Widok Gantt",
+                    "desc": "Oś czasu oparta o frappe-gantt. Zadania jako poziome paski, przesuwanie zmienia datę wpisu w czasie rzeczywistym.",
+                },
+                {"title": "Widok kalendarza", "desc": "Miesięczna siatka z zadaniami w komórkach dni. Szybki przegląd obciążenia w skali miesiąca."},
+                {
+                    "title": "Integracja z ticketami",
+                    "desc": "Sekcja planu w szczegółach ticketu plus badge w kartach na backlogu i tablicy Kanban. Planowanie bez opuszczania widoku ticketu.",
+                },
+                {
+                    "title": "Autoryzacja per-użytkownik",
+                    "desc": "Edytować i usuwać wpis może tylko jego właściciel. Planowanie wymaga członkostwa w projekcie ticketu.",
+                },
+            ],
+            "steps": [
+                {"title": "Otwórz Plan pracy", "desc": "Widok jest globalny, dostępny z głównej nawigacji. Domyślnie pokazuje bieżący miesiąc."},
+                {
+                    "title": "Zaplanuj ticket",
+                    "desc": "Wyszukaj ticket przez autocomplete i przypisz mu datę. Wpis pojawia się na Gantcie i w kalendarzu.",
+                },
+                {"title": "Przesuwaj zadania", "desc": "Drag and drop na wykresie Gantta zmienia datę wpisu. Filtruj widok po projektach."},
+                {
+                    "title": "Zarządzaj planem",
+                    "desc": "Edytuj notatki, przesuń na inny dzień lub usuń wpis. Zmiany dotyczą tylko Twojego harmonogramu.",
+                },
+            ],
+            "ai_intro": (
+                "Agent AI może planować Twoją pracę przez MCP: dodawać tickety do harmonogramu, "
+                "przesuwać je między dniami, sprawdzać zadania na dziś i odczytywać harmonogram konkretnego ticketu, 6 narzędzi MCP."
+            ),
+            "mcp_tools": [
+                {"name": "schedule_ticket", "desc": "Zaplanuj ticket na dany dzień"},
+                {"name": "update_work_plan_entry", "desc": "Przesuń lub edytuj wpis planu (data, pozycja, notatki)"},
+                {"name": "delete_work_plan_entry", "desc": "Usuń wpis z planu (tylko właściciel)"},
+                {"name": "list_work_plan", "desc": "Wpisy w zakresie dat, cross-project, max 90 dni"},
+                {"name": "get_today_tasks", "desc": "Zadania zaplanowane na dziś"},
+                {"name": "get_ticket_schedule", "desc": "Harmonogram konkretnego ticketu"},
+            ],
+            "tech_details": [
+                {
+                    "label": "Model danych",
+                    "value": "WorkPlanEntry (user_id, ticket_id, scheduled_date, position, notes). UniqueConstraint(user_id, ticket_id, scheduled_date), indeks (user_id, scheduled_date).",
+                },
+                {"label": "Routing", "value": "Prefix /dashboard/plan. REST: POST/PATCH/DELETE /entries, GET /api/data, GET /api/tickets/search."},
+                {
+                    "label": "Izolacja danych",
+                    "value": "Lista cross-project zwraca tylko wpisy bieżącego użytkownika z projektów, do których ma członkostwo.",
+                },
+                {"label": "Frontend", "value": "frappe-gantt dla osi czasu, własna miesięczna siatka dla widoku kalendarza."},
+            ],
+            "other_modules": _other_modules("work_plan", lang),
+        }
+    return {
+        "title": "Work Plan / Gantt",
+        "screenshot": None,
+        "screenshot_2": None,
+        "color": "sky",
+        "icon": _ICON_WORK_PLAN,
+        "badge": "Work Planning",
+        "headline": "Plan your work across multiple projects on a single Gantt chart",
+        "description": (
+            "Personal per-user scheduling, independent of sprint assignment. "
+            "Schedule tickets from any project you belong to on specific days. "
+            "View your plan as a Gantt chart or monthly calendar, and reschedule tasks with drag and drop."
+        ),
+        "screenshot_hint": "Gantt chart with scheduled tickets across multiple projects",
+        "screenshot_hint_2": None,
+        "features": [
+            {
+                "title": "Cross-project scheduling",
+                "desc": "A single schedule spans tickets from every project you can access. You only ever see your own entries, with no data leak between projects.",
+            },
+            {
+                "title": "Junction model (User x Ticket x Date)",
+                "desc": "An entry links a user, a ticket, and a date. A unique constraint prevents scheduling the same ticket twice on the same day.",
+            },
+            {
+                "title": "Gantt view",
+                "desc": "Timeline powered by frappe-gantt. Tasks render as horizontal bars, dragging updates the entry date in real time.",
+            },
+            {"title": "Calendar view", "desc": "Monthly grid with tasks inside day cells. A quick overview of your workload across the month."},
+            {
+                "title": "Ticket integration",
+                "desc": "A plan section in the ticket detail plus a badge on backlog and Kanban cards. Schedule without leaving the ticket view.",
+            },
+            {
+                "title": "Per-user authorization",
+                "desc": "Only the owner can edit or delete an entry. Scheduling requires membership in the ticket's project.",
+            },
+        ],
+        "steps": [
+            {"title": "Open Work Plan", "desc": "The view is global, accessible from the main navigation. It defaults to the current month."},
+            {
+                "title": "Schedule a ticket",
+                "desc": "Find a ticket via autocomplete and assign it a date. The entry appears on the Gantt and the calendar.",
+            },
+            {"title": "Move tasks around", "desc": "Drag and drop on the Gantt chart changes the entry date. Filter the view by project."},
+            {"title": "Manage the plan", "desc": "Edit notes, move to another day, or delete an entry. Changes only affect your own schedule."},
+        ],
+        "ai_intro": (
+            "The AI agent can plan your work via MCP: add tickets to the schedule, "
+            "move them between days, check today's tasks, and read a specific ticket's schedule, 6 MCP tools."
+        ),
+        "mcp_tools": [
+            {"name": "schedule_ticket", "desc": "Schedule a ticket on a given day"},
+            {"name": "update_work_plan_entry", "desc": "Move or edit a plan entry (date, position, notes)"},
+            {"name": "delete_work_plan_entry", "desc": "Delete a plan entry (owner only)"},
+            {"name": "list_work_plan", "desc": "Entries in a date range, cross-project, max 90 days"},
+            {"name": "get_today_tasks", "desc": "Tasks scheduled for today"},
+            {"name": "get_ticket_schedule", "desc": "Schedule for a specific ticket"},
+        ],
+        "tech_details": [
+            {
+                "label": "Data model",
+                "value": "WorkPlanEntry (user_id, ticket_id, scheduled_date, position, notes). UniqueConstraint(user_id, ticket_id, scheduled_date), index (user_id, scheduled_date).",
+            },
+            {"label": "Routing", "value": "Prefix /dashboard/plan. REST: POST/PATCH/DELETE /entries, GET /api/data, GET /api/tickets/search."},
+            {
+                "label": "Data isolation",
+                "value": "The cross-project list returns only the current user's entries from projects they are a member of.",
+            },
+            {"label": "Frontend", "value": "frappe-gantt for the timeline, a custom monthly grid for the calendar view."},
+        ],
+        "other_modules": _other_modules("work_plan", lang),
+    }
+
+
 def _feature_settlements(lang: str) -> dict[str, Any]:
     if lang == "pl":
         return {
@@ -1262,4 +1466,5 @@ _FEATURES: dict[str, Any] = {
     "connections": _feature_connections,
     "reports": _feature_reports,
     "settlements": _feature_settlements,
+    "work_plan": _feature_work_plan,
 }

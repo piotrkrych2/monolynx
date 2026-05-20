@@ -1,5 +1,8 @@
 # Code Reviewer Memory
 
+## Topic files
+- [plugin_packaging.md](plugin_packaging.md) — Claude Code plugin (MON-72): structure, `claude plugin validate`, em-dash scope gap, `${user_config.X}`-in-bash bug. MON-72: 88/100 APPROVED.
+
 ## Project Patterns Confirmed
 - Services use module-level `logger = logging.getLogger("monolynx.<module>")` pattern
 - `monitoring.py` is a pure utility service (no CRUD, no DB) — just URL checking logic

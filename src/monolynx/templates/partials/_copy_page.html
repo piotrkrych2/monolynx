@@ -1,0 +1,104 @@
+{# Copy page button + dropdown. Requires: md_url (relative .md path), lang. #}
+<div class="copy-page relative inline-flex" data-md-url="{{ md_url }}"
+     data-label-done="{% if lang == 'pl' %}Skopiowano{% else %}Copied{% endif %}"
+     data-claude-prefix="{% if lang == 'pl' %}Przeczytaj stronę {% else %}Read the page {% endif %}"
+     data-claude-suffix="{% if lang == 'pl' %} i pomóż mi odpowiedzieć na pytania na jej temat.{% else %} and help me answer questions about it.{% endif %}">
+    <div class="inline-flex items-stretch rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
+        <button type="button" data-copy-page
+                class="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m11.25 6.5h-3.375a1.125 1.125 0 0 1-1.125-1.125v-3.375"/>
+            </svg>
+            <span data-copy-label>{% if lang == "pl" %}Kopiuj stronę{% else %}Copy page{% endif %}</span>
+        </button>
+        <button type="button" data-copy-toggle
+                class="inline-flex items-center px-2 border-l border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                aria-label="{% if lang == 'pl' %}Więcej opcji{% else %}More options{% endif %}">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5"/>
+            </svg>
+        </button>
+    </div>
+
+    <div data-copy-menu class="hidden absolute right-0 top-full mt-2 w-72 z-50 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl py-2">
+        <button type="button" data-copy-page
+                class="w-full flex items-start gap-3 px-4 py-2.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+            <svg class="w-5 h-5 mt-0.5 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m11.25 6.5h-3.375a1.125 1.125 0 0 1-1.125-1.125v-3.375"/>
+            </svg>
+            <span>
+                <span class="block text-sm font-medium text-gray-900 dark:text-white">{% if lang == "pl" %}Kopiuj stronę{% else %}Copy page{% endif %}</span>
+                <span class="block text-xs text-gray-500 dark:text-gray-400">{% if lang == "pl" %}Kopiuj stronę jako Markdown dla LLM{% else %}Copy page as Markdown for LLMs{% endif %}</span>
+            </span>
+        </button>
+        <a href="{{ md_url }}" target="_blank" rel="noopener"
+           class="w-full flex items-start gap-3 px-4 py-2.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+            <svg class="w-5 h-5 mt-0.5 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/>
+            </svg>
+            <span>
+                <span class="block text-sm font-medium text-gray-900 dark:text-white">{% if lang == "pl" %}Zobacz jako Markdown{% else %}View as Markdown{% endif %} <span class="text-gray-400">&#8599;</span></span>
+                <span class="block text-xs text-gray-500 dark:text-gray-400">{% if lang == "pl" %}Wyświetl tę stronę jako zwykły tekst{% else %}View this page as plain text{% endif %}</span>
+            </span>
+        </a>
+        <a href="#" data-open-claude
+           class="w-full flex items-start gap-3 px-4 py-2.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+            <svg class="w-5 h-5 mt-0.5 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+            </svg>
+            <span>
+                <span class="block text-sm font-medium text-gray-900 dark:text-white">{% if lang == "pl" %}Otwórz w Claude{% else %}Open in Claude{% endif %} <span class="text-gray-400">&#8599;</span></span>
+                <span class="block text-xs text-gray-500 dark:text-gray-400">{% if lang == "pl" %}Zadaj pytania o tę stronę{% else %}Ask questions about this page{% endif %}</span>
+            </span>
+        </a>
+    </div>
+</div>
+
+<script>
+(function () {
+    document.querySelectorAll(".copy-page").forEach(function (root) {
+        var mdUrl = root.getAttribute("data-md-url");
+        var absUrl = new URL(mdUrl, window.location.origin).href;
+        var menu = root.querySelector("[data-copy-menu]");
+        var toggle = root.querySelector("[data-copy-toggle]");
+        var label = root.querySelector("[data-copy-label]");
+        var labelDefault = label ? label.textContent : "";
+        var labelDone = root.getAttribute("data-label-done");
+
+        var claudePrompt = root.getAttribute("data-claude-prefix") + absUrl + root.getAttribute("data-claude-suffix");
+        var claudeLink = root.querySelector("[data-open-claude]");
+        if (claudeLink) {
+            claudeLink.href = "https://claude.ai/new?q=" + encodeURIComponent(claudePrompt);
+            claudeLink.target = "_blank";
+            claudeLink.rel = "noopener";
+        }
+
+        function closeMenu() { if (menu) menu.classList.add("hidden"); }
+
+        if (toggle) {
+            toggle.addEventListener("click", function (e) {
+                e.stopPropagation();
+                if (menu) menu.classList.toggle("hidden");
+            });
+        }
+
+        root.querySelectorAll("[data-copy-page]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                fetch(absUrl).then(function (r) { return r.text(); }).then(function (text) {
+                    return navigator.clipboard.writeText(text);
+                }).then(function () {
+                    if (label) {
+                        label.textContent = labelDone;
+                        setTimeout(function () { label.textContent = labelDefault; }, 2000);
+                    }
+                    closeMenu();
+                }).catch(function () { closeMenu(); });
+            });
+        });
+
+        document.addEventListener("click", function (e) {
+            if (!root.contains(e.target)) closeMenu();
+        });
+    });
+})();
+</script>
