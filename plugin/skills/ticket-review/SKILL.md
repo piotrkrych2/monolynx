@@ -1,5 +1,4 @@
 ---
-name: ticket-review
 description: "Zrecenzuj ticket ze sprintu Monolynx. Sprawdza forme, zgodnosc z wiki i kodem. Generuje tabelke raportu i proponuje poprawki. Uzyj gdy chcesz zweryfikowac jakosc ticketu przed podjęciem pracy."
 user-invocable: true
 argument-hint: [ticket-id lub klucz np. MNX-12]
