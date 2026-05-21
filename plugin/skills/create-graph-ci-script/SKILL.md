@@ -1,5 +1,4 @@
 ---
-name: create-graph-ci-script
 description: "Wygeneruj skrypt CI do synchronizacji grafu zaleznosci kodu z platforma Monolynx. Analizuje projekt Python (Django, FastAPI, Flask itp.), tworzy cicd/sync_graph.py i stage w .gitlab-ci.yml. Uzyj w dowolnym projekcie Python."
 user-invocable: true
 argument-hint: [monolynx-url]

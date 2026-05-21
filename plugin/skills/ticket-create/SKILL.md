@@ -1,5 +1,4 @@
 ---
-name: ticket-create
 description: "Utworz nowy ticket w projekcie Monolynx. Zbiera kontekst z wiki, kodu i grafu zaleznosci, generuje opis w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci). Uzyj gdy chcesz dodac zadanie do sprintu."
 user-invocable: true
 argument-hint: [krotki opis zadania]

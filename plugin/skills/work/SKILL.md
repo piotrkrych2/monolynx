@@ -1,5 +1,4 @@
 ---
-name: work
 description: "Podejmij zadanie z obecnego sprintu projektu monolynx. Waliduje branch, uruchamia Researchera, dobiera zespol agentow i prowadzi rownolegle prace z obowiazkowym krytykiem. Uzyj gdy chcesz rozpoczac prace nad ticketem."
 user-invocable: true
 argument-hint: [ticket-id lub klucz np. MNX-12]
