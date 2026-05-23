@@ -183,9 +183,10 @@ class TestGetPageContent:
 class TestCreateWikiPage:
     """Testy tworzenia strony wiki."""
 
+    @patch("monolynx.services.wiki.sync_backlinks", new_callable=AsyncMock)
     @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
-    async def test_creates_page_with_correct_fields(self, mock_upload, mock_embeddings):
+    async def test_creates_page_with_correct_fields(self, mock_upload, mock_embeddings, mock_sync):
         """Tworzy strone z poprawnymi polami."""
         mock_upload.return_value = "test-project/some-id.md"
 

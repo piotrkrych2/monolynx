@@ -2,6 +2,8 @@
 
 ## Topic files
 - [plugin_packaging.md](plugin_packaging.md) — Claude Code plugin (MON-72): structure, `claude plugin validate`, em-dash scope gap, `${user_config.X}`-in-bash bug. MON-72: 88/100 APPROVED.
+- [migration_head_verify.md](migration_head_verify.md) — Alembic review: zawsze sam licz head + sprawdz unikalnosc revision ID, nie wierz ticketowi (MON-73 blocker).
+- [wiki_llm_method.md](wiki_llm_method.md) — Metoda LLM Wiki (MON-73): sygnatury wiki/wiki_lint/wiki_bootstrap, marker sprzecznosci regex, RESERVED_SLUGS, patch MinIO gotcha (wiki_lint ma wlasny import get_markdown).
 
 ## Project Patterns Confirmed
 - Services use module-level `logger = logging.getLogger("monolynx.<module>")` pattern

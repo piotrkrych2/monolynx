@@ -280,6 +280,13 @@ EXPECTED_TOOLS = [
     "list_work_plan",
     "get_today_tasks",
     "get_ticket_schedule",
+    "get_wiki_config",
+    "set_wiki_config",
+    "lint_wiki",
+    "get_wiki_backlinks",
+    "regenerate_wiki_index",
+    "append_wiki_log",
+    "bootstrap_wiki_llm",
 ]
 
 # Narzedzia ktore nie wymagaja project_slug (operuja po ticket_id, entry_id, lub cross-project).
@@ -4822,3 +4829,444 @@ class TestListLabels:
         assert result[0]["name"] == "TestLabel"
         assert result[0]["color"] == "#2ecc71"
         assert result[0]["tickets_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Wiki LLM MCP tools (MON-73 kryterium 4b56b246)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestWikiLlmMcpTools:
+    """Testy integracyjne narzedzi MCP metody LLM Wiki.
+
+    mcp_member ma role 'owner' -> DEFAULT_ROLE_PERMISSIONS['owner'] daje settings:write.
+    Nie trzeba patchowac check_permission.
+    MinIO patchowane przez @patch na monolynx.services.wiki.upload_markdown/get_markdown.
+    lint_wiki czyta MinIO przez get_markdown zaimportowany do modulu wiki_lint - patch monolynx.services.wiki_lint.get_markdown.
+    """
+
+    # ------------------------------------------------------------------
+    # get_wiki_config
+    # ------------------------------------------------------------------
+
+    async def test_get_wiki_config_clean_project(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Czysty projekt zwraca wiki_llm_enabled=False i None dla id stron."""
+        from monolynx.mcp_server import get_wiki_config
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_wiki_config(ctx, mcp_project.slug)
+
+        assert result["wiki_llm_enabled"] is False
+        assert result["index_page_id"] is None
+        assert result["log_page_id"] is None
+        assert result["schema_page_id"] is None
+
+    # ------------------------------------------------------------------
+    # set_wiki_config
+    # ------------------------------------------------------------------
+
+    async def test_set_wiki_config_enable(
+        self,
+        db_session,
+        mcp_user,
+        mcp_project,
+        mcp_member,
+        mock_factory,
+        mock_verify,
+    ):
+        """set_wiki_config(enabled=True) ustawia flage i zwraca wiki_llm_enabled=True."""
+        from monolynx.mcp_server import set_wiki_config
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await set_wiki_config(ctx, mcp_project.slug, enabled=True)
+
+        assert result["wiki_llm_enabled"] is True
+
+        # Sprawdz ze get_wiki_config tez zwraca True po wywolaniu set
+        await db_session.refresh(mcp_project)
+        assert mcp_project.wiki_llm_enabled is True
+
+    async def test_set_wiki_config_disable(
+        self,
+        db_session,
+        mcp_user,
+        mcp_project,
+        mcp_member,
+        mock_factory,
+        mock_verify,
+    ):
+        """set_wiki_config(enabled=False) wylacza flage."""
+        from monolynx.mcp_server import set_wiki_config
+
+        mcp_project.wiki_llm_enabled = True
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await set_wiki_config(ctx, mcp_project.slug, enabled=False)
+
+        assert result["wiki_llm_enabled"] is False
+
+    # ------------------------------------------------------------------
+    # GATING: narzedzia wymagajace wiki_llm_enabled=True
+    # ------------------------------------------------------------------
+
+    async def test_lint_wiki_gating_off_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """lint_wiki rzuca ValueError z 'wyłączona' gdy flaga OFF."""
+        from monolynx.mcp_server import lint_wiki
+
+        mcp_project.wiki_llm_enabled = False
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="wyłączona"),
+        ):
+            await lint_wiki(ctx, mcp_project.slug)
+
+    async def test_get_wiki_backlinks_gating_off_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """get_wiki_backlinks rzuca ValueError z 'wyłączona' gdy flaga OFF."""
+        from monolynx.mcp_server import get_wiki_backlinks
+
+        mcp_project.wiki_llm_enabled = False
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="wyłączona"),
+        ):
+            await get_wiki_backlinks(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+    async def test_regenerate_wiki_index_gating_off_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """regenerate_wiki_index rzuca ValueError z 'wyłączona' gdy flaga OFF."""
+        from monolynx.mcp_server import regenerate_wiki_index
+
+        mcp_project.wiki_llm_enabled = False
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="wyłączona"),
+        ):
+            await regenerate_wiki_index(ctx, mcp_project.slug)
+
+    async def test_append_wiki_log_gating_off_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """append_wiki_log rzuca ValueError z 'wyłączona' gdy flaga OFF."""
+        from monolynx.mcp_server import append_wiki_log
+
+        mcp_project.wiki_llm_enabled = False
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="wyłączona"),
+        ):
+            await append_wiki_log(ctx, mcp_project.slug, "test")
+
+    # ------------------------------------------------------------------
+    # bootstrap_wiki_llm
+    # ------------------------------------------------------------------
+
+    @patch("monolynx.services.wiki.upload_markdown", return_value="proj/x.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="")
+    async def test_bootstrap_wiki_llm_creates_system_pages(
+        self,
+        _mock_get,
+        _mock_upload,
+        db_session,
+        mcp_user,
+        mcp_project,
+        mcp_member,
+        mock_factory,
+        mock_verify,
+    ):
+        """bootstrap_wiki_llm tworzy 3 strony systemowe, wlacza flage, zwraca poprawne id."""
+        from sqlalchemy import select as sa_select
+
+        from monolynx.mcp_server import bootstrap_wiki_llm
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await bootstrap_wiki_llm(ctx, mcp_project.slug)
+
+        assert result["wiki_llm_enabled"] is True
+        assert result["schema_page_id"] is not None
+        assert result["log_page_id"] is not None
+        assert result["index_page_id"] is not None
+        assert isinstance(result["catalogued_pages"], int)
+
+        # Sprawdz ze strony systemowe istnieja w DB
+        res = await db_session.execute(
+            sa_select(WikiPage).where(
+                WikiPage.project_id == mcp_project.id,
+                WikiPage.slug.in_(["wiki-schema", "wiki-log", "wiki-index"]),
+            )
+        )
+        system_pages = res.scalars().all()
+        assert len(system_pages) == 3
+
+    @patch("monolynx.services.wiki.upload_markdown", return_value="proj/x.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="")
+    async def test_bootstrap_wiki_llm_idempotent(
+        self,
+        _mock_get,
+        _mock_upload,
+        db_session,
+        mcp_user,
+        mcp_project,
+        mcp_member,
+        mock_factory,
+        mock_verify,
+    ):
+        """Drugi bootstrap nie tworzy duplikatow stron systemowych - max 3 RESERVED_SLUGS."""
+        from sqlalchemy import select as sa_select
+
+        from monolynx.mcp_server import bootstrap_wiki_llm
+
+        ctx = _make_ctx()
+        patches = (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        )
+        with patches[0], patches[1]:
+            await bootstrap_wiki_llm(ctx, mcp_project.slug)
+
+        # Drugi bootstrap
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            await bootstrap_wiki_llm(ctx, mcp_project.slug)
+
+        res = await db_session.execute(
+            sa_select(WikiPage).where(
+                WikiPage.project_id == mcp_project.id,
+                WikiPage.slug.in_(["wiki-schema", "wiki-log", "wiki-index"]),
+            )
+        )
+        system_pages = res.scalars().all()
+        # Idempotencja: nadal dokladnie 3 strony systemowe
+        assert len(system_pages) == 3
+
+    # ------------------------------------------------------------------
+    # append_wiki_log
+    # ------------------------------------------------------------------
+
+    @patch("monolynx.services.wiki.upload_markdown", return_value="proj/x.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Dziennik Wiki\n\n")
+    async def test_append_wiki_log_returns_log_page_id(
+        self,
+        _mock_get,
+        _mock_upload,
+        db_session,
+        mcp_user,
+        mcp_project,
+        mcp_member,
+        mock_factory,
+        mock_verify,
+    ):
+        """append_wiki_log (flaga ON) zwraca log_page_id i komunikat."""
+        from monolynx.mcp_server import append_wiki_log
+
+        mcp_project.wiki_llm_enabled = True
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await append_wiki_log(ctx, mcp_project.slug, "Test wpis dziennika")
+
+        assert result["log_page_id"] is not None
+        assert result["log_page_slug"] == "wiki-log"
+        assert "dziennika" in result["message"]
+
+    # ------------------------------------------------------------------
+    # regenerate_wiki_index
+    # ------------------------------------------------------------------
+
+    @patch("monolynx.services.wiki.upload_markdown", return_value="proj/x.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="")
+    async def test_regenerate_wiki_index_returns_page_count(
+        self,
+        _mock_get,
+        _mock_upload,
+        db_session,
+        mcp_user,
+        mcp_project,
+        mcp_member,
+        mock_factory,
+        mock_verify,
+    ):
+        """regenerate_wiki_index zwraca catalogued_pages rowne liczbie stron nie-systemowych."""
+        from monolynx.mcp_server import regenerate_wiki_index
+
+        mcp_project.wiki_llm_enabled = True
+        await db_session.flush()
+
+        # Dodaj 2 strony nie-systemowe
+        for i in range(2):
+            page = WikiPage(
+                id=uuid.uuid4(),
+                project_id=mcp_project.id,
+                parent_id=None,
+                title=f"Strona {i}",
+                slug=f"strona-test-regen-{i}-{uuid.uuid4().hex[:6]}",
+                position=i,
+                minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+                is_ai_touched=False,
+                created_by_id=mcp_user.id,
+                last_edited_by_id=mcp_user.id,
+            )
+            db_session.add(page)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await regenerate_wiki_index(ctx, mcp_project.slug)
+
+        assert result["index_page_id"] is not None
+        assert result["index_page_slug"] == "wiki-index"
+        assert result["catalogued_pages"] == 2
+
+    # ------------------------------------------------------------------
+    # lint_wiki
+    # ------------------------------------------------------------------
+
+    @patch("monolynx.services.wiki_lint.get_markdown", return_value="")
+    async def test_lint_wiki_returns_report_keys(
+        self,
+        _mock_get,
+        db_session,
+        mcp_user,
+        mcp_project,
+        mcp_member,
+        mock_factory,
+        mock_verify,
+    ):
+        """lint_wiki (flaga ON) zwraca dict z kluczami orphans, dead_links, contradictions, gaps."""
+        from monolynx.mcp_server import lint_wiki
+
+        mcp_project.wiki_llm_enabled = True
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await lint_wiki(ctx, mcp_project.slug)
+
+        assert "orphans" in result
+        assert "dead_links" in result
+        assert "contradictions" in result
+        assert "gaps" in result
+        assert isinstance(result["orphans"], list)
+        assert isinstance(result["dead_links"], list)
+        assert isinstance(result["contradictions"], list)
+        assert isinstance(result["gaps"], list)
+
+    # ------------------------------------------------------------------
+    # get_wiki_backlinks
+    # ------------------------------------------------------------------
+
+    @patch("monolynx.services.wiki.upload_markdown", return_value="proj/x.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="")
+    async def test_get_wiki_backlinks_incoming_and_outgoing(
+        self,
+        _mock_get,
+        _mock_upload,
+        db_session,
+        mcp_user,
+        mcp_project,
+        mcp_member,
+        mock_factory,
+        mock_verify,
+    ):
+        """Strona A linkuje do B: get_wiki_backlinks(B) ma incoming z A; get_wiki_backlinks(A) ma outgoing do B."""
+        from monolynx.mcp_server import get_wiki_backlinks
+        from monolynx.services.wiki import sync_backlinks
+
+        mcp_project.wiki_llm_enabled = True
+        await db_session.flush()
+
+        page_b = WikiPage(
+            id=uuid.uuid4(),
+            project_id=mcp_project.id,
+            parent_id=None,
+            title="Strona B",
+            slug=f"strona-b-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            is_ai_touched=False,
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        page_a = WikiPage(
+            id=uuid.uuid4(),
+            project_id=mcp_project.id,
+            parent_id=None,
+            title="Strona A",
+            slug=f"strona-a-{uuid.uuid4().hex[:6]}",
+            position=1,
+            minio_path=f"{mcp_project.slug}/{uuid.uuid4()}.md",
+            is_ai_touched=False,
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page_b)
+        db_session.add(page_a)
+        await db_session.flush()
+
+        # Zsynchronizuj backlinki: A -> B
+        content_a = f"Sprawdz [[{page_b.slug}]]."
+        await sync_backlinks(page=page_a, content=content_a, db=db_session)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        # get_wiki_backlinks(page_b) -> incoming zawiera page_a
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result_b = await get_wiki_backlinks(ctx, mcp_project.slug, str(page_b.id))
+
+        assert any(bl["page_id"] == str(page_a.id) for bl in result_b["incoming"])
+        assert result_b["outgoing"] == []
+
+        # get_wiki_backlinks(page_a) -> outgoing zawiera page_b
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result_a = await get_wiki_backlinks(ctx, mcp_project.slug, str(page_a.id))
+
+        assert result_a["incoming"] == []
+        assert any(bl["page_id"] == str(page_b.id) for bl in result_a["outgoing"])
