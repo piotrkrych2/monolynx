@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from monolynx.schemas.wiki import WikiBacklinkResponse
-from monolynx.services.wiki import extract_wiki_links, is_wiki_llm_enabled
+from monolynx.services.wiki import RESERVED_SLUGS, extract_wiki_links, is_wiki_llm_enabled, strip_code_spans
 from monolynx.services.wiki_lint import _find_contradictions, _find_dead_links, _find_gaps
 from monolynx.services.wiki_templates import DEFAULT_WIKI_SCHEMA
 
@@ -409,3 +409,239 @@ class TestFindGaps:
         """Próg min_count jest konfigurowalny."""
         result = _find_gaps({"x": 3}, min_count=4)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# strip_code_spans (MON-74)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestStripCodeSpans:
+    """Testy helpera strip_code_spans - usuwanie bloków/inline code przed analizą."""
+
+    def test_plain_text_unchanged(self):
+        """Zwykły tekst bez code spanów jest zwracany bez zmian."""
+        text = "Normalny tekst bez żadnego kodu."
+        assert strip_code_spans(text) == text
+
+    def test_inline_code_replaced_with_space(self):
+        """Inline code `...` jest zastępowany spacją."""
+        result = strip_code_spans("przed `[[slug]]` po")
+        assert "[[slug]]" not in result
+
+    def test_fenced_block_replaced(self):
+        """Fenced block ```...``` jest zastępowany (zawartość usunięta)."""
+        content = "przed\n```\n[[slug]]\n```\npo"
+        result = strip_code_spans(content)
+        assert "[[slug]]" not in result
+
+    def test_text_outside_code_preserved(self):
+        """Tekst poza blokami kodu jest zachowany."""
+        content = "tekst przed `code` tekst po"
+        result = strip_code_spans(content)
+        assert "tekst przed" in result
+        assert "tekst po" in result
+
+    def test_empty_string(self):
+        """Pusty ciąg zwraca pusty ciąg."""
+        assert strip_code_spans("") == ""
+
+    def test_tilde_fenced_block_replaced(self):
+        """Fenced block ~~~...~~~ jest również usuwany."""
+        content = "tekst\n~~~\n[[slug]]\n~~~\ntekst"
+        result = strip_code_spans(content)
+        assert "[[slug]]" not in result
+
+    def test_wikilink_outside_code_preserved(self):
+        """Wikilink poza blokiem kodu jest zachowany w wyniku."""
+        content = "[[realny]] a w kodzie `[[przykład]]`"
+        result = strip_code_spans(content)
+        assert "[[realny]]" in result
+        assert "[[przykład]]" not in result
+
+
+# ---------------------------------------------------------------------------
+# extract_wiki_links - alias Obsidian i filtrowanie code span (MON-74)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestExtractWikiLinksAlias:
+    """Testy obsługi aliasów Obsidian w extract_wiki_links."""
+
+    def test_obsidian_alias_basic(self):
+        """[[slug|Label]] - ref = slug, anchor = Label."""
+        result = extract_wiki_links("[[modul-scrum|Moduł Scrum]]")
+        assert "modul-scrum" in result
+        assert result["modul-scrum"] == "Moduł Scrum"
+
+    def test_obsidian_alias_with_surrounding_whitespace(self):
+        """[[ slug | Label ]] - białe znaki wokół segmentów są przycinane."""
+        result = extract_wiki_links("[[ modul-scrum | Moduł Scrum ]]")
+        assert "modul-scrum" in result
+        assert result["modul-scrum"] == "Moduł Scrum"
+
+    def test_obsidian_alias_empty_label_falls_back_to_ref(self):
+        """[[slug|]] - pusty label daje anchor = ref (slug)."""
+        result = extract_wiki_links("[[modul-scrum|]]")
+        assert "modul-scrum" in result
+        # pusty label po strip -> fallback na ref
+        assert result["modul-scrum"] == "modul-scrum"
+
+    def test_obsidian_alias_ref_dedup_wins(self):
+        """Pierwszy napotkany [[slug|Label1]] wygrywa nad drugim [[slug|Label2]]."""
+        content = "[[alpha|Pierwsza]] ... [[alpha|Druga]]"
+        result = extract_wiki_links(content)
+        assert result["alpha"] == "Pierwsza"
+
+    def test_obsidian_alias_ref_is_slug(self):
+        """Część przed | (ref) spełnia format sluga."""
+        result = extract_wiki_links("[[api-v2|Dokumentacja API v2]]")
+        assert "api-v2" in result
+
+    def test_plain_wikilink_still_works_alongside_alias(self):
+        """Plain [[slug]] i [[slug|label]] obok siebie - oba poprawnie parsowane."""
+        content = "[[alpha]] i [[beta|Beta Label]]"
+        result = extract_wiki_links(content)
+        assert result["alpha"] == "alpha"
+        assert result["beta"] == "Beta Label"
+
+
+@pytest.mark.unit
+class TestExtractWikiLinksCodeFiltering:
+    """Testy pomijania wikilinków i markerów wewnątrz bloków kodu."""
+
+    def test_wikilink_in_inline_code_skipped(self):
+        """Wikilink w inline code `[[slug]]` jest pomijany."""
+        result = extract_wiki_links("`[[beta]]`")
+        assert result == {}
+
+    def test_wikilink_in_fenced_block_skipped(self):
+        """Wikilink w fenced block ```...``` jest pomijany."""
+        content = "```\n[[slug]]\n```"
+        result = extract_wiki_links(content)
+        assert result == {}
+
+    def test_wikilink_in_tilde_fenced_block_skipped(self):
+        """Wikilink w bloku ~~~...~~~ jest pomijany."""
+        content = "~~~\n[[slug]]\n~~~"
+        result = extract_wiki_links(content)
+        assert result == {}
+
+    def test_real_link_preserved_code_link_skipped(self):
+        """Realny [[alfa]] zachowany; [[beta]] w inline code pominięty."""
+        content = "Realny [[alfa]] a w kodzie `[[beta]]`"
+        result = extract_wiki_links(content)
+        assert "alfa" in result
+        assert "beta" not in result
+
+    def test_multiple_inline_codes_all_skipped(self):
+        """Wiele inline code span - wszystkie zawarte wikilinki pominięte."""
+        content = "`[[a]]` tekst `[[b]]` i [[realny]]"
+        result = extract_wiki_links(content)
+        assert "a" not in result
+        assert "b" not in result
+        assert "realny" in result
+
+    def test_alias_in_inline_code_skipped(self):
+        """Alias [[slug|label]] w inline code jest pomijany."""
+        content = "`[[modul-scrum|Moduł Scrum]]`"
+        result = extract_wiki_links(content)
+        assert result == {}
+
+    def test_markdown_link_in_inline_code_skipped(self):
+        """Markdown link w inline code jest pomijany."""
+        content = "`[Tekst](/dashboard/x/wiki/pages/slug)`"
+        result = extract_wiki_links(content)
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# _find_contradictions - code span i strony systemowe (MON-74)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestFindContradictionsCodeFiltering:
+    """Testy filtrowania markerów sprzeczności w blokach kodu i stronach systemowych."""
+
+    def test_marker_in_inline_code_not_detected(self):
+        """Marker tylko w inline code - strona NIE jest zgłaszana."""
+        page = _make_page("przyklad-format")
+        content_cache = {
+            page.id: "Dokumentacja: `> **Sprzeczność [data]:** przykład formatu`",
+        }
+        result = _find_contradictions([page], content_cache)
+        assert result == []
+
+    def test_marker_in_fenced_block_not_detected(self):
+        """Marker tylko w fenced block - strona NIE jest zgłaszana."""
+        page = _make_page("schemat-wiki")
+        content_cache = {
+            page.id: "Opis:\n```\n> **Sprzeczność [2026-01-01]:** przykład\n```\nReszta tekstu.",
+        }
+        result = _find_contradictions([page], content_cache)
+        assert result == []
+
+    def test_real_marker_outside_code_detected(self):
+        """Realny marker poza blokiem kodu - strona jest zgłaszana."""
+        page = _make_page("decyzja-db", "Decyzja DB")
+        content_cache = {
+            page.id: "> **Sprzeczność [2026-05-22]:** Źródło A mówi X, źródło B mówi Y.",
+        }
+        result = _find_contradictions([page], content_cache)
+        assert len(result) == 1
+        assert result[0]["slug"] == "decyzja-db"
+
+    def test_marker_in_code_and_real_marker_outside_detected(self):
+        """Gdy strona ma marker w code i TEŻ poza code - strona jest zgłaszana (realny wygrywa)."""
+        page = _make_page("mieszana")
+        content_cache = {
+            page.id: ("Przykład w code: `> **Sprzeczność:** format`\n\n> **Sprzeczność [2026-05-20]:** Realna niezgodność."),
+        }
+        result = _find_contradictions([page], content_cache)
+        assert len(result) == 1
+        assert result[0]["slug"] == "mieszana"
+
+    def test_system_page_wiki_schema_with_real_marker_not_detected(self):
+        """Strona systemowa wiki-schema z realnym markerem - NIE jest zgłaszana."""
+        assert "wiki-schema" in RESERVED_SLUGS  # weryfikacja założenia testu
+        page = _make_page("wiki-schema", "Wiki Schema")
+        content_cache = {
+            page.id: "> **Sprzeczność [2026-05-01]:** Dokumentuje format - to nie błąd.",
+        }
+        result = _find_contradictions([page], content_cache)
+        assert result == []
+
+    def test_system_page_wiki_index_with_real_marker_not_detected(self):
+        """Strona systemowa wiki-index z realnym markerem - NIE jest zgłaszana."""
+        assert "wiki-index" in RESERVED_SLUGS
+        page = _make_page("wiki-index", "Wiki Index")
+        content_cache = {
+            page.id: "> **Sprzeczność [2026-05-01]:** To marker systemowy.",
+        }
+        result = _find_contradictions([page], content_cache)
+        assert result == []
+
+    def test_system_page_wiki_log_with_real_marker_not_detected(self):
+        """Strona systemowa wiki-log z realnym markerem - NIE jest zgłaszana."""
+        assert "wiki-log" in RESERVED_SLUGS
+        page = _make_page("wiki-log", "Wiki Log")
+        content_cache = {
+            page.id: "> **Sprzeczność [2026-05-01]:** Wpis w logu.",
+        }
+        result = _find_contradictions([page], content_cache)
+        assert result == []
+
+    def test_mix_system_and_regular_pages(self):
+        """Strona systemowa z markerem + zwykła z markerem - tylko zwykła zgłoszona."""
+        system_page = _make_page("wiki-schema", "Wiki Schema")
+        regular_page = _make_page("architektura", "Architektura")
+        content_cache = {
+            system_page.id: "> **Sprzeczność [2026-05-01]:** Marker w schemie.",
+            regular_page.id: "> **Sprzeczność [2026-05-22]:** Realna niezgodność.",
+        }
+        result = _find_contradictions([system_page, regular_page], content_cache)
+        assert len(result) == 1
+        assert result[0]["slug"] == "architektura"

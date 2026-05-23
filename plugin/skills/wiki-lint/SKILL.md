@@ -84,6 +84,23 @@ Jesli ktoras lista jest pusta - napisz to wprost (np. "Sieroty: brak").
 
 ---
 
+## Warunek: naprawy tylko z brancha main/master
+
+Audyt (Kroki 1-2) jest tylko do odczytu i dziala na kazdym branchu. Natomiast **naprawy** (create / update / delete stron w Kroku 3) wykonuj wylacznie z brancha `main` lub `master` - wiki ma odzwierciedlac stan zmergowany, nie prace w toku. Przed jakakolwiek naprawa sprawdz branch:
+
+```bash
+git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
+```
+
+- **Branch `main` lub `master`** - mozesz wykonywac naprawy.
+- **Inny branch albo brak repozytorium git** - NIE naprawiaj automatycznie. Zapytaj uzytkownika (`AskUserQuestion`): _"Jestes na branchu `<branch>`, nie na main/master. Zmiany w wiki zalecane dopiero po merge do main. Kontynuowac naprawy mimo to?"_ z opcjami:
+  - **Nie, przerwij (zalecane)** - pokaz raport, ale nie zapisuj zmian.
+  - **Tak, kontynuuj mimo to** - wykonaj naprawy.
+
+  Rekomendujesz **Nie**. Czekaj na decyzje; bez wyraznej zgody nie modyfikuj stron.
+
+---
+
 ## Krok 3: Zaproponuj naprawy
 
 Dla kazdej niepustej kategorii zaproponuj konkretna akcje naprawcza:

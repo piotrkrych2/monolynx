@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.minio_client import get_markdown
-from monolynx.services.wiki import RESERVED_SLUGS, extract_wiki_links
+from monolynx.services.wiki import RESERVED_SLUGS, extract_wiki_links, strip_code_spans
 
 logger = logging.getLogger("monolynx.wiki_lint")
 
@@ -141,14 +141,18 @@ def _find_contradictions(
     pages: list[WikiPage],
     content_cache: dict[uuid.UUID, str],
 ) -> list[dict[str, Any]]:
-    """Strony zawierające marker "> **Sprzeczność" w treści.
+    """Strony zawierające realny marker "> **Sprzeczność" w treści.
 
-    Treść stron pochodzi z content_cache zbudowanego w lint_wiki() - brak dodatkowych odczytów MinIO.
+    Pomija strony systemowe (RESERVED_SLUGS) - one dokumentują sam format markera,
+    nie są realnymi sprzecznościami. Pomija też markery występujące tylko jako
+    przykład w bloku/inline code (treść po strip_code_spans). Treść z content_cache.
     """
     result: list[dict[str, Any]] = []
     for page in pages:
+        if page.slug in RESERVED_SLUGS:
+            continue
         content = content_cache.get(page.id, "")
-        if _CONTRADICTION_RE.search(content):
+        if _CONTRADICTION_RE.search(strip_code_spans(content)):
             result.append(
                 {
                     "page_id": str(page.id),
@@ -156,7 +160,6 @@ def _find_contradictions(
                     "slug": page.slug,
                 }
             )
-
     return result
 
 

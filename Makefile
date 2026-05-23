@@ -43,32 +43,10 @@ createsuperuser: ## Stworz superuzytkownika
 
 # --- Wiki RAG ---
 backfill-embeddings: ## Wygeneruj embeddingi dla istniejacych stron wiki
-	docker compose --profile dev exec app python -c "\
-import asyncio; \
-from monolynx.services.embeddings import update_page_embeddings; \
-from monolynx.services.wiki import get_page_content; \
-from monolynx.database import async_session_factory; \
-from monolynx.models.wiki_page import WikiPage; \
-from sqlalchemy import select, text; \
-async def backfill(): \
-    async with async_session_factory() as db: \
-        result = await db.execute(select(WikiPage)); \
-        pages = list(result.scalars().all()); \
-        [print(f'Generuje embeddingi: {p.title}') or await update_page_embeddings(p.id, get_page_content(p), db) for p in pages]; \
-        count = (await db.execute(text('SELECT count(*) FROM wiki_embeddings'))).scalar(); \
-        print(f'Gotowe! Laczna liczba embeddingow: {count}'); \
-asyncio.run(backfill())"
+	docker compose --profile dev exec app python -m monolynx.cli backfill-embeddings
 
 backfill-backlinks: ## Wygeneruj backlinki dla istniejacych stron wiki
-	docker compose --profile dev exec app python -c "\
-import asyncio; \
-from monolynx.services.wiki import backfill_backlinks; \
-from monolynx.database import async_session_factory; \
-async def backfill(): \
-    async with async_session_factory() as db: \
-        count = await backfill_backlinks(db); \
-        print(f'Gotowe! Przetworzono stron: {count}'); \
-asyncio.run(backfill())"
+	docker compose --profile dev exec app python -m monolynx.cli backfill-backlinks
 
 # --- Graf kodu ---
 sync-graph: ## Synchronizuj graf zaleznosci kodu z Monolynx
