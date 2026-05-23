@@ -53,8 +53,34 @@ async def createsuperuser() -> None:
     print(f"Utworzono superusera: {email}")
 
 
+async def backfill_backlinks_cmd() -> None:
+    from monolynx.services.wiki import backfill_backlinks
+
+    async with async_session_factory() as session:
+        count = await backfill_backlinks(session)
+    print(f"Gotowe! Przetworzono stron: {count}")
+
+
+async def backfill_embeddings_cmd() -> None:
+    from sqlalchemy import select, text
+
+    from monolynx.models.wiki_page import WikiPage
+    from monolynx.services.embeddings import update_page_embeddings
+    from monolynx.services.wiki import get_page_content
+
+    async with async_session_factory() as session:
+        pages = list((await session.execute(select(WikiPage))).scalars().all())
+        for page in pages:
+            print(f"Generuje embeddingi: {page.title}")
+            await update_page_embeddings(page.id, get_page_content(page), session)
+        count = (await session.execute(text("SELECT count(*) FROM wiki_embeddings"))).scalar()
+    print(f"Gotowe! Laczna liczba embeddingow: {count}")
+
+
 COMMANDS = {
     "createsuperuser": createsuperuser,
+    "backfill-backlinks": backfill_backlinks_cmd,
+    "backfill-embeddings": backfill_embeddings_cmd,
 }
 
 

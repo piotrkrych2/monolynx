@@ -73,26 +73,48 @@ _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 # Segment wyglądający jak slug lub UUID (bez http/https/mailto)
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+# Bloki kodu (fenced ``` lub ~~~) oraz inline code - wycinane przed analizą treści,
+# żeby przykłady [[slug]] / markery w dokumentacji nie były liczone jako realne linki/sprzeczności.
+_FENCED_CODE_RE = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"(`+)(?:(?!\1).)*?\1", re.DOTALL)
+
+
+def strip_code_spans(content: str) -> str:
+    """Zastąp bloki kodu i inline code spacją, zostawiając resztę markdown bez zmian."""
+    without_fenced = _FENCED_CODE_RE.sub(" ", content)
+    return _INLINE_CODE_RE.sub(" ", without_fenced)
 
 
 def extract_wiki_links(content: str) -> dict[str, str | None]:
     """Wyodrębnij referencje do innych stron wiki z treści markdown.
 
     Zwraca słownik ref -> anchor_text. Przy duplikacie referencji wygrywa
-    pierwszy napotkany wpis (wikilink przed linkiem markdown).
+    pierwszy napotkany wpis (wikilink przed linkiem markdown). Wikilinki i linki
+    wewnątrz bloków/inline code są pomijane (przykłady w dokumentacji nie tworzą backlinków).
 
-    Obsługuje dwa formaty:
-    - [[slug]] lub [[uuid]] - format wikilink (kanoniczny); anchor = slug/uuid
+    Obsługuje formaty:
+    - [[slug]] lub [[uuid]] - anchor = slug/uuid
+    - [[slug|label]] - alias Obsidian: ref = część przed |, anchor = część po |
     - [tekst](target) gdzie target wskazuje stronę wiki - anchor = tekst linku
     """
+    cleaned = strip_code_spans(content)
     ref_to_anchor: dict[str, str | None] = {}
 
-    for match in _WIKILINK_RE.finditer(content):
-        ref = match.group(1).strip()
+    for match in _WIKILINK_RE.finditer(cleaned):
+        inner = match.group(1).strip()
+        if not inner:
+            continue
+        if "|" in inner:
+            raw_ref, _, raw_label = inner.partition("|")
+            ref = raw_ref.strip()
+            anchor: str | None = raw_label.strip() or ref
+        else:
+            ref = inner
+            anchor = inner
         if ref and ref not in ref_to_anchor:
-            ref_to_anchor[ref] = ref  # anchor dla [[slug]] to sam slug
+            ref_to_anchor[ref] = anchor
 
-    for match in _MD_LINK_RE.finditer(content):
+    for match in _MD_LINK_RE.finditer(cleaned):
         target = match.group(2).strip()
         # Pomiń linki zewnętrzne i zakotwiczenia
         if target.startswith(("http://", "https://", "mailto:", "#")):
@@ -101,8 +123,8 @@ def extract_wiki_links(content: str) -> dict[str, str | None]:
         segment = target.rstrip("/").rsplit("/", 1)[-1]
         # Akceptuj tylko gdy wygląda jak slug albo UUID
         if segment and (_SLUG_RE.match(segment) or _UUID_RE.match(segment)) and segment not in ref_to_anchor:
-            anchor = match.group(1).strip() or None
-            ref_to_anchor[segment] = anchor
+            md_anchor = match.group(1).strip() or None
+            ref_to_anchor[segment] = md_anchor
 
     return ref_to_anchor
 

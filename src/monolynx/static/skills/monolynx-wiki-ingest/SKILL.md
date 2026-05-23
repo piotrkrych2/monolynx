@@ -12,6 +12,23 @@ Realizujesz operacje **INGEST** metody LLM Wiki: bierzesz jedno zrodlo (dokument
 
 ---
 
+## Warunek wstepny: tylko branch main/master
+
+Operacje zapisu do wiki (create / update / delete stron) wykonuj wylacznie z brancha `main` lub `master`. Wiki ma odzwierciedlac stan zmergowany do glownej galezi, a nie prace w toku na branchu feature. Sprawdz aktualny branch:
+
+```bash
+git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
+```
+
+- **Branch `main` lub `master`** - kontynuuj normalnie.
+- **Inny branch albo brak repozytorium git** - NIE zapisuj automatycznie. Zapytaj uzytkownika (`AskUserQuestion`): _"Jestes na branchu `<branch>`, nie na main/master. Zapis do wiki zalecany dopiero po merge do main. Kontynuowac mimo to?"_ z opcjami:
+  - **Nie, przerwij (zalecane)** - zakoncz bez zapisu do wiki.
+  - **Tak, kontynuuj mimo to** - przejdz dalej.
+
+  Rekomendujesz **Nie**. Czekaj na decyzje uzytkownika; bez wyraznej zgody nie zapisuj do wiki.
+
+---
+
 ## Krok 0: Warunek wstepny - metoda musi byc wlaczona
 
 Sprawdz stan:

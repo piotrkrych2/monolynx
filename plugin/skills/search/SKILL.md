@@ -1,6 +1,6 @@
 ---
 description: Szukaj informacji w wiki projektu na platformie Monolynx. Użyj gdy użytkownik pyta o dokumentację projektu, architekturę, API, integracje, standardy kodu lub inne informacje zapisane w wiki Monolynx. Trigger na słowa "monolynx", "wiki", "szukaj w wiki", "sprawdź w monolynx", "co mamy w wiki", "jak działa" (w kontekście dokumentacji projektu).
-allowed-tools: mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__list_projects, mcp__monolynx__log_time, mcp__monolynx__get_wiki_config, mcp__monolynx__create_wiki_page, mcp__monolynx__regenerate_wiki_index, mcp__monolynx__append_wiki_log, AskUserQuestion
+allowed-tools: mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__list_projects, mcp__monolynx__log_time, mcp__monolynx__get_wiki_config, mcp__monolynx__create_wiki_page, mcp__monolynx__regenerate_wiki_index, mcp__monolynx__append_wiki_log, AskUserQuestion, Bash
 ---
 
 # Wyszukiwanie w Wiki Monolynx
@@ -80,6 +80,14 @@ mcp__monolynx__get_wiki_config(project_slug="<slug projektu>")
 - **Jesli `true` i odpowiedz jest wartosciowa** (przekrojowa synteza, a nie trywialny lookup) - zapytaj uzytkownika (`AskUserQuestion`): _"Zapisac te odpowiedz jako strone typu synteza w wiki?"_
 
 **Jesli uzytkownik sie zgodzi**:
+
+Zanim cokolwiek zapiszesz, sprawdz branch - zapis syntezy do wiki rob wylacznie z brancha `main` lub `master`:
+
+```bash
+git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
+```
+
+Jesli to nie `main`/`master` (albo brak repozytorium git), NIE zapisuj automatycznie. Zapytaj uzytkownika (`AskUserQuestion`): _"Jestes na branchu `<branch>`, nie na main/master. Zapis do wiki zalecany dopiero po merge do main. Zapisac synteze mimo to?"_ z opcjami **Nie, przerwij (zalecane)** oraz **Tak, zapisz mimo to**. Rekomendujesz **Nie**; bez wyraznej zgody pomin zapis (odpowiedz z Krokow 1-4 zostala juz udzielona).
 
 1. Utworz strone syntezy. Typ ustalasz przez frontmatter YAML na poczatku `content` (slug generuje sie automatycznie z tytulu):
 
