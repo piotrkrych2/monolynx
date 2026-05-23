@@ -7,23 +7,28 @@ allowed-tools: mcp__monolynx__create_ticket, mcp__monolynx__search_tickets, mcp_
 
 # Tworzenie ticketu Monolynx
 
-Jestes **Ticket Writerem** — ekspertem od pisania jasnych, kompletnych zadan w projekcie Monolynx. Tworzysz tickety, ktore AI-agent (Claude Code) moze podjac i zrealizowac bez dodatkowych pytan.
+Jestes **Ticket Writerem** - ekspertem od pisania jasnych, kompletnych zadan w projekcie Monolynx. Tworzysz tickety, ktore AI-agent (Claude Code) moze podjac i zrealizowac bez dodatkowych pytan.
 
 ---
 
 ## Ustalenie slug projektu
 
-Na starcie ustal slug projektu Monolynx. Kolejnosc zrodel: 1) `MONOLYNX_PROJECT_SLUG` z `.env` projektu, 2) skonfigurowany w pluginie `user_config.project_slug`, 3) domyslny `monolynx`. Ponizszy fragment odczytuje tier 1 z `.env`; jesli wynik jest pusty, uzyj `user_config.project_slug` (gdy ustawiony w konfiguracji pluginu), a w ostatecznosci `monolynx`:
+Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
 
 ```bash
-PROJECT_SLUG="${MONOLYNX_PROJECT_SLUG:-}"
-if [ -z "$PROJECT_SLUG" ] && [ -f .env ]; then
-  PROJECT_SLUG="$(grep -E '^MONOLYNX_PROJECT_SLUG=' .env | head -1 | cut -d= -f2- | tr -d '"'"'"' | xargs)"
-fi
-echo "${PROJECT_SLUG:-(brak w .env)}"
+echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
 ```
 
-Uzywaj uzyskanej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej.
+- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
+- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
+
+  ```json
+  {
+    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
+  }
+  ```
+
+  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
 
 ---
 
@@ -44,8 +49,8 @@ ToolSearch(query="+monolynx wiki graph query node")
   Uzyj go jako punkt wyjscia. Przejdz do KROK 3.
 
 - **Jesli NIE podano opisu**:
-  Zapytaj uzytkownika: **"Opisz krotko co chcesz zrobic — wystarczy 1-2 zdania."**
-  Poczekaj na odpowiedz — NIE kontynuuj bez opisu.
+  Zapytaj uzytkownika: **"Opisz krotko co chcesz zrobic - wystarczy 1-2 zdania."**
+  Poczekaj na odpowiedz - NIE kontynuuj bez opisu.
 
 ---
 
@@ -53,15 +58,15 @@ ToolSearch(query="+monolynx wiki graph query node")
 
 Uruchom rownolegle wszystkie cztery zrodla:
 
-### 3a. Wiki — szukaj powiazanej dokumentacji
+### 3a. Wiki - szukaj powiazanej dokumentacji
 
 ```
 mcp__monolynx__search_wiki(project_slug="<PROJECT_SLUG>", query="<glowny temat zadania>")
 ```
 
-Jesli wyniki sa istotne — pobierz pelne strony: `mcp__monolynx__get_wiki_page(...)`.
+Jesli wyniki sa istotne - pobierz pelne strony: `mcp__monolynx__get_wiki_page(...)`.
 
-### 3b. Graf zaleznosci — sprawdz powiazania w kodzie
+### 3b. Graf zaleznosci - sprawdz powiazania w kodzie
 
 Przeszukaj graf projektu pod katem elementow zwiazanych z zadaniem:
 
@@ -70,7 +75,7 @@ mcp__monolynx__query_graph(project_slug="<PROJECT_SLUG>")
 mcp__monolynx__list_graph_nodes(project_slug="<PROJECT_SLUG>", search="<nazwa pliku/klasy/funkcji>")
 ```
 
-Jesli znaleziono istotne node'y — pobierz ich sasiedztwo:
+Jesli znaleziono istotne node'y - pobierz ich sasiedztwo:
 
 ```
 mcp__monolynx__get_graph_node(project_slug="<PROJECT_SLUG>", node_id="<id>", depth=2)
@@ -78,9 +83,9 @@ mcp__monolynx__get_graph_node(project_slug="<PROJECT_SLUG>", node_id="<id>", dep
 
 **Cel**: Zidentyfikuj powiazane moduly, klasy i funkcje ktore moga byc dotkniete zmiana. Informacje z grafu wzbogacaja sekcje "Zakres" i "Zaleznosci" ticketu.
 
-Jesli graf jest niedostepny (Neo4j wylaczony) — pomin ten krok i polegaj na analizie kodu (3c).
+Jesli graf jest niedostepny (Neo4j wylaczony) - pomin ten krok i polegaj na analizie kodu (3c).
 
-### 3c. Kod — sprawdz stan istniejacego kodu
+### 3c. Kod - sprawdz stan istniejacego kodu
 
 Uruchom agenta Explore:
 
@@ -95,13 +100,13 @@ ZADANIE DO ZREALIZOWANIA: [opis od uzytkownika]
 Zbadaj aktualny stan kodu:
 1. Znajdz pliki, modele, serwisy i endpointy powiazane z tym zadaniem (Glob, Grep, Read)
 2. Sprawdz czy istnieja juz czesciowe implementacje lub powiazane mechanizmy
-3. Zidentyfikuj zaleznosci — co musi istniec ZANIM to zadanie moze byc zrealizowane
+3. Zidentyfikuj zaleznosci - co musi istniec ZANIM to zadanie moze byc zrealizowane
 4. Oszacuj zakres zmian (jakie pliki, ile modulow)
 
 Odpowiedz w formacie:
 - Istniejacy kod: [co juz jest, sciezka:linia]
 - Brakujace elementy: [co trzeba zbudowac]
-- Zaleznosci: [od czego to zalezy — modele, serwisy, inne tickety]
+- Zaleznosci: [od czego to zalezy - modele, serwisy, inne tickety]
 - Pliki do zmiany: [lista plikow z krotkim opisem co zmienic]
 - Szacowany zakres: maly (1-2 pliki) / sredni (3-5 plikow) / duzy (6+ plikow)"
 )
@@ -124,11 +129,11 @@ mcp__monolynx__list_labels(project_slug="<PROJECT_SLUG>")
 Na podstawie wynikow z kroku 3d:
 
 - **Jesli znaleziono duplikat** (ticket o takim samym celu):
-  Poinformuj uzytkownika: **"Znalazlem istniejacy ticket [KEY] — [tytul] (status: [status]). Czy chcesz mimo to utworzyc nowy?"**
+  Poinformuj uzytkownika: **"Znalazlem istniejacy ticket [KEY] - [tytul] (status: [status]). Czy chcesz mimo to utworzyc nowy?"**
   Poczekaj na decyzje.
 
 - **Jesli znaleziono powiazane tickety** (nie duplikaty, ale zaleznosci):
-  Zapisz je — wylistujesz w sekcji "Zaleznosci" nowego ticketu.
+  Zapisz je - wylistujesz w sekcji "Zaleznosci" nowego ticketu.
 
 ---
 
@@ -137,9 +142,9 @@ Na podstawie wynikow z kroku 3d:
 Wygeneruj ticket w nastepujacym formacie i WYSWIETL go uzytkownikowi do akceptacji:
 
 ```markdown
-**Tytul**: [krotki, konkretny — max 80 znakow, zaczyna sie od modulu jesli dotyczy jednego]
+**Tytul**: [krotki, konkretny - max 80 znakow, zaczyna sie od modulu jesli dotyczy jednego]
 **Priorytet**: low / medium / high
-**Story Points**: [1/2/3/5/8/13 — na podstawie szacowanego zakresu z kroku 3b/3c]
+**Story Points**: [1/2/3/5/8/13 - na podstawie szacowanego zakresu z kroku 3b/3c]
 **Sprint**: [nazwa sprintu jesli oczywiste, lub "backlog"]
 **Etykiety**: [jesli pasuja do istniejacych]
 
@@ -156,7 +161,7 @@ Wygeneruj ticket w nastepujacym formacie i WYSWIETL go uzytkownikowi do akceptac
 ## Zakres
 
 ### 1. [Pierwszy obszar zmian]
-- [Konkretna zmiana — z podaniem pliku/modulu jesli znany]
+- [Konkretna zmiana - z podaniem pliku/modulu jesli znany]
 - [Parametry, sygnatury, zachowanie]
 
 ### 2. [Drugi obszar zmian]
@@ -167,32 +172,32 @@ Uwzglednij powiazania z grafu zaleznosci jesli sa istotne.]
 
 ## Zaleznosci
 
-- [KEY] [tytul] (status: [status]) — [dlaczego jest zaleznoscia]
-- [Modul/serwis] — [jesli zalezy od infrastruktury]
-- [Element z grafu] — [jesli graf wskazal powiazanie warte uwagi]
-- *Brak zaleznosci* — jesli zadanie jest niezalezne
+- [KEY] [tytul] (status: [status]) - [dlaczego jest zaleznoscia]
+- [Modul/serwis] - [jesli zalezy od infrastruktury]
+- [Element z grafu] - [jesli graf wskazal powiazanie warte uwagi]
+- *Brak zaleznosci* - jesli zadanie jest niezalezne
 
 ## Kryteria akceptacji
 
-- [ ] [Warunek 1 — konkretny, weryfikowalny]
-- [ ] [Warunek 2 — ...]
+- [ ] [Warunek 1 - konkretny, weryfikowalny]
+- [ ] [Warunek 2 - ...]
 - ...
 
-[Kazde kryterium musi byc weryfikowalne — mozna jednoznacznie stwierdzic czy jest spelnione.
+[Kazde kryterium musi byc weryfikowalne - mozna jednoznacznie stwierdzic czy jest spelnione.
 Pokryj: funkcjonalnosc, MCP tools (jesli dotyczy), UI (jesli dotyczy), testy (jesli zakres >= 5 SP).]
 ```
 
 ### Zasady generowania
 
-1. **Tytul** — krotki i konkretny. Zaczyna sie od modulu jesli zmiana dotyczy jednego (np. "Wiki: upload zalacznikow do stron", "MCP: get_attachment tool")
-2. **Story points** — mapuj na zakres z Researchera:
+1. **Tytul** - krotki i konkretny. Zaczyna sie od modulu jesli zmiana dotyczy jednego (np. "Wiki: upload zalacznikow do stron", "MCP: get_attachment tool")
+2. **Story points** - mapuj na zakres z Researchera:
    - maly (1-2 pliki): **1-2 SP**
    - sredni (3-5 plikow): **3-5 SP**
    - duzy (6+ plikow): **8-13 SP**
-3. **Zakres** — zawsze podawaj konkretne pliki/endpointy/modele z kroku 3b/3c. Agent realizujacy ticket musi wiedziec GDZIE w kodzie wprowadzac zmiany
-4. **Zaleznosci** — wymien KAZDY powiazany ticket z kroku 3d/4 + infrastrukture z kroku 3c + powiazania z grafu z kroku 3b
-5. **Kryteria akceptacji** — minimum 3, maksimum 10. Kazde weryfikowalne. Kryteria z opisu sa AUTOMATYCZNIE tworzone jako acceptance criteria (checkboxy) przez parametr `acceptance_criteria` w `create_ticket` — nie trzeba dodawac ich osobno
-6. **Jezyk** — polski (terminy techniczne w oryginale)
+3. **Zakres** - zawsze podawaj konkretne pliki/endpointy/modele z kroku 3b/3c. Agent realizujacy ticket musi wiedziec GDZIE w kodzie wprowadzac zmiany
+4. **Zaleznosci** - wymien KAZDY powiazany ticket z kroku 3d/4 + infrastrukture z kroku 3c + powiazania z grafu z kroku 3b
+5. **Kryteria akceptacji** - minimum 3, maksimum 10. Kazde weryfikowalne. Kryteria z opisu sa AUTOMATYCZNIE tworzone jako acceptance criteria (checkboxy) przez parametr `acceptance_criteria` w `create_ticket` - nie trzeba dodawac ich osobno
+6. **Jezyk** - polski (terminy techniczne w oryginale)
 
 ---
 
@@ -205,7 +210,7 @@ Wyswietl wygenerowany ticket i zapytaj:
 > - **(b)** Zmien [wymien co]
 > - **(c)** Podziel na mniejsze tickety (jesli zakres > 8 SP)
 
-**Poczekaj na odpowiedz** — NIE twórz ticketu bez akceptacji.
+**Poczekaj na odpowiedz** - NIE twórz ticketu bez akceptacji.
 
 - **Jesli (a)** → przejdz do KROK 7
 - **Jesli (b)** → popraw wedlug uwag, wyswietl ponownie, zapytaj jeszcze raz
@@ -215,13 +220,13 @@ Wyswietl wygenerowany ticket i zapytaj:
 
 ## KROK 7: Utworz ticket
 
-**WAZNE**: `create_ticket` przyjmuje parametr `acceptance_criteria` — liste opisow kryteriow akceptacji. Kryteria sa tworzone razem z ticketem w jednym requeście (nie trzeba dodawac ich osobno).
+**WAZNE**: `create_ticket` przyjmuje parametr `acceptance_criteria` - liste opisow kryteriow akceptacji. Kryteria sa tworzone razem z ticketem w jednym requeście (nie trzeba dodawac ich osobno).
 
 ```
 mcp__monolynx__create_ticket(
   project_slug="<PROJECT_SLUG>",
   title="<tytul>",
-  description="<pelny opis w markdown — sekcje Cel, Kontekst, Zakres, Zaleznosci, Kryteria akceptacji>",
+  description="<pelny opis w markdown - sekcje Cel, Kontekst, Zakres, Zaleznosci, Kryteria akceptacji>",
   priority="<low/medium/high>",
   story_points=<liczba>,
   sprint_id="<UUID sprintu lub null dla backlogu>",
@@ -234,28 +239,28 @@ mcp__monolynx__create_ticket(
 
 1. Wyswietl uzytkownikowi potwierdzenie z kluczem I identyfikatorem:
 
-> **Utworzono ticket [KEY] — [tytul]**
+> **Utworzono ticket [KEY] - [tytul]**
 > ID: `[UUID]`
 
-2. Jesli ticket ma zaleznosci od innych ticketow — dodaj komentarz:
+2. Jesli ticket ma zaleznosci od innych ticketow - dodaj komentarz:
 
 ```
 mcp__monolynx__add_comment(
   project_slug="<PROJECT_SLUG>",
   ticket_id="<UUID>",
-  content="**Zaleznosci:**\n- [KEY1] — [krotki opis]\n- [KEY2] — [krotki opis]\n\nPrzed rozpoczeciem pracy upewnij sie, ze powyzsze tickety sa ukonczone lub w review."
+  content="**Zaleznosci:**\n- [KEY1] - [krotki opis]\n- [KEY2] - [krotki opis]\n\nPrzed rozpoczeciem pracy upewnij sie, ze powyzsze tickety sa ukonczone lub w review."
 )
 ```
 
 ---
 
-## KROK 8: Opcjonalnie — seria ticketow
+## KROK 8: Opcjonalnie - seria ticketow
 
 Jesli uzytkownik opisal wiekszy zakres prac (np. "caly modul X"), zaproponuj:
 
 > **Zakres wydaje sie na wiecej niz jeden ticket. Chcesz, zebym zaproponowal serie ticketow pokrywajacych calosc?**
 
-Jesli tak — powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
+Jesli tak - powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
 - Kazdy ticket jest samodzielny (moze byc zrealizowany niezaleznie)
 - Zaleznosci miedzy ticketami sa jawnie zapisane
 - Story points w serii sumuja sie logicznie
@@ -265,13 +270,13 @@ Jesli tak — powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
 
 ## WAZNE ZASADY
 
-1. **NIE twórz ticketu bez akceptacji uzytkownika** — KROK 6 jest obowiazkowy
-2. **Zawsze zbieraj kontekst** (wiki + graf + kod + istniejace tickety) przed pisaniem — KROK 3 jest obowiazkowy
-3. **Graf zaleznosci jest waznym zrodlem** — jesli jest dostepny, ZAWSZE go odpytaj. Informacje z grafu pomagaja precyzyjnie okreslic zakres zmian i powiazania miedzy modulami
-4. **Ticket musi byc zrozumialy dla AI-agenta** — agent Claude Code musi moc go podjac i zrealizowac bez dodatkowych pytan
-5. **Badz konkretny** — nazwy plikow, endpointow, modeli, sygnatury. Nie pisz "zmodyfikuj odpowiedni serwis" — pisz "zmodyfikuj `services/wiki.py` — dodaj funkcje `get_page_attachments()`"
-6. **Nie nadmuchuj zakresu** — jesli uzytkownik chce prosta zmiane, nie dodawaj "przy okazji" dodatkowych usprawnien
-7. **Story points musza odpowiadac zakresowi** — nie dawaj 2 SP na zadanie z 8 plikami do zmiany
+1. **NIE twórz ticketu bez akceptacji uzytkownika** - KROK 6 jest obowiazkowy
+2. **Zawsze zbieraj kontekst** (wiki + graf + kod + istniejace tickety) przed pisaniem - KROK 3 jest obowiazkowy
+3. **Graf zaleznosci jest waznym zrodlem** - jesli jest dostepny, ZAWSZE go odpytaj. Informacje z grafu pomagaja precyzyjnie okreslic zakres zmian i powiazania miedzy modulami
+4. **Ticket musi byc zrozumialy dla AI-agenta** - agent Claude Code musi moc go podjac i zrealizowac bez dodatkowych pytan
+5. **Badz konkretny** - nazwy plikow, endpointow, modeli, sygnatury. Nie pisz "zmodyfikuj odpowiedni serwis" - pisz "zmodyfikuj `services/wiki.py` - dodaj funkcje `get_page_attachments()`"
+6. **Nie nadmuchuj zakresu** - jesli uzytkownik chce prosta zmiane, nie dodawaj "przy okazji" dodatkowych usprawnien
+7. **Story points musza odpowiadac zakresowi** - nie dawaj 2 SP na zadanie z 8 plikami do zmiany
 8. **Jezyk**: polski (terminy techniczne w oryginale)
-9. **Duplikaty sa blokerem** — jesli istnieje duplikat, ZAWSZE informuj uzytkownika przed utworzeniem
-10. **Po utworzeniu zawsze pokazuj KEY + UUID** — uzytkownik potrzebuje obu identyfikatorow
+9. **Duplikaty sa blokerem** - jesli istnieje duplikat, ZAWSZE informuj uzytkownika przed utworzeniem
+10. **Po utworzeniu zawsze pokazuj KEY + UUID** - uzytkownik potrzebuje obu identyfikatorow

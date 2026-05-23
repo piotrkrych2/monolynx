@@ -32,6 +32,7 @@ from monolynx.services.permissions import require_permission
 from monolynx.services.wiki import (
     create_wiki_page,
     delete_wiki_page,
+    get_backlinks,
     get_breadcrumbs,
     get_page_content,
     get_page_tree,
@@ -360,6 +361,9 @@ async def wiki_page_detail(
     children_result = await db.execute(select(WikiPage).where(WikiPage.parent_id == page.id).order_by(WikiPage.position, WikiPage.title))
     children = list(children_result.scalars().all())
 
+    # Pobierz backlinki tylko gdy Metoda LLM Wiki jest włączona
+    backlinks = await get_backlinks(page.id, db) if project.wiki_llm_enabled else []
+
     return await render_project_page(
         request,
         "dashboard/wiki/page_detail.html",
@@ -372,6 +376,7 @@ async def wiki_page_detail(
             "attachments": list(page.attachments),
             "can_edit": True,
             "active_module": "wiki",
+            "backlinks": backlinks,
         },
         db=db,
     )

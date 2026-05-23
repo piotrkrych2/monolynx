@@ -138,6 +138,36 @@
                 {% endif %}
             </div>
         </div>
+
+        {% if project.wiki_llm_enabled %}
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400">Linki przychodzące</h3>
+                <span class="text-xs bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-300 px-1.5 py-0.5 rounded" title="Metoda LLM Wiki">LLM</span>
+            </div>
+
+            {% if backlinks %}
+            <div class="space-y-1">
+                {% for backlink in backlinks %}
+                <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ backlink.source_page.id }}"
+                   class="flex flex-col px-3 py-2 rounded border border-transparent hover:border-indigo-500 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition">
+                    <span class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">
+                        <svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                        {{ backlink.source_page.title }}
+                    </span>
+                    {% if backlink.anchor_text %}
+                    <span class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 ml-5 truncate">"{{ backlink.anchor_text }}"</span>
+                    {% endif %}
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-500 dark:text-gray-500">Brak linków przychodzących.</p>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
 </div>
 

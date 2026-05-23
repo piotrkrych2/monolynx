@@ -36,6 +36,7 @@ class Project(Base):
     api_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    wiki_llm_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     heartbeats: Mapped[list[Heartbeat]] = relationship(back_populates="project", cascade="all, delete-orphan")
     issues: Mapped[list[Issue]] = relationship(back_populates="project")

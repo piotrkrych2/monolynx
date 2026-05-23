@@ -103,18 +103,33 @@ from monolynx.services.sprint import start_sprint as svc_start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
 from monolynx.services.time_tracking import add_time_entry
 from monolynx.services.wiki import (
+    append_log as svc_append_wiki_log,
+)
+from monolynx.services.wiki import (
     create_wiki_page as svc_create_wiki_page,
 )
 from monolynx.services.wiki import (
     delete_wiki_page as svc_delete_wiki_page,
 )
 from monolynx.services.wiki import (
+    get_backlinks as svc_get_wiki_backlinks,
+)
+from monolynx.services.wiki import (
+    get_outlinks as svc_get_wiki_outlinks,
+)
+from monolynx.services.wiki import (
     get_page_content,
     get_page_tree,
+    is_wiki_llm_enabled,
+)
+from monolynx.services.wiki import (
+    regenerate_index as svc_regenerate_wiki_index,
 )
 from monolynx.services.wiki import (
     update_wiki_page as svc_update_wiki_page,
 )
+from monolynx.services.wiki_bootstrap import bootstrap_wiki_llm as svc_bootstrap_wiki_llm
+from monolynx.services.wiki_lint import lint_wiki as svc_lint_wiki
 from monolynx.services.work_plan import _UNSET as _WORK_PLAN_UNSET
 
 logger = logging.getLogger("monolynx.mcp")
@@ -3505,6 +3520,216 @@ async def delete_wiki_page(
         await svc_delete_wiki_page(page, db)
 
     return {"message": f"Strona wiki '{title}' usunieta"}
+
+
+# --- Wiki LLM (gating: project.wiki_llm_enabled) ---
+
+
+@mcp.tool()
+async def get_wiki_config(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> dict[str, Any]:
+    """Pobierz konfigurację LLM Wiki dla projektu.
+
+    Nie wymaga wiki_llm_enabled=True - używaj do sprawdzenia stanu przed włączeniem.
+    Zwraca: wiki_llm_enabled, id stron systemowych (wiki-index, wiki-log, wiki-schema) lub null.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        system_slugs = ("wiki-index", "wiki-log", "wiki-schema")
+        result = await db.execute(
+            select(WikiPage.slug, WikiPage.id).where(
+                WikiPage.project_id == project.id,
+                WikiPage.slug.in_(system_slugs),
+            )
+        )
+        slug_to_id: dict[str, str] = {row.slug: str(row.id) for row in result.all()}
+
+    return {
+        "wiki_llm_enabled": project.wiki_llm_enabled,
+        "index_page_id": slug_to_id.get("wiki-index"),
+        "log_page_id": slug_to_id.get("wiki-log"),
+        "schema_page_id": slug_to_id.get("wiki-schema"),
+    }
+
+
+@mcp.tool()
+async def set_wiki_config(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    enabled: bool,
+) -> dict[str, Any]:
+    """Włącz lub wyłącz LLM Wiki dla projektu. Wymaga uprawnień settings:write."""
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "settings", "write"):
+            raise ValueError("Brak uprawnienia do zmiany konfiguracji projektu (settings:write)")
+
+        proj_result = await db.execute(select(Project).where(Project.id == project.id))
+        proj = proj_result.scalar_one()
+        proj.wiki_llm_enabled = enabled
+        await db.commit()
+
+    return {
+        "wiki_llm_enabled": enabled,
+        "message": f"Wiki LLM {'włączone' if enabled else 'wyłączone'} dla projektu '{project_slug}'",
+    }
+
+
+@mcp.tool()
+async def bootstrap_wiki_llm(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> dict[str, Any]:
+    """Bootstrap metody LLM Wiki - tworzy wiki-schema, wiki-log, wiki-index i włącza flagę.
+
+    Idempotentny: powtórny bootstrap nie tworzy duplikatów stron systemowych,
+    odświeża index i dopisuje kolejny wpis do dziennika.
+    Wymaga uprawnień settings:write.
+    Zwraca: wiki_llm_enabled, id stron systemowych (schema, log, index), catalogued_pages.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        if not await check_permission(db, user.id, project.id, "settings", "write"):
+            raise ValueError("Brak uprawnienia do konfiguracji projektu (settings:write)")
+
+        # Pobierz projekt z bieżącej sesji - serwis mutuje wiki_llm_enabled na tym obiekcie
+        proj_result = await db.execute(select(Project).where(Project.id == project.id))
+        proj = proj_result.scalar_one()
+
+        return await svc_bootstrap_wiki_llm(project=proj, user_id=user.id, db=db)
+
+
+@mcp.tool()
+async def lint_wiki(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> dict[str, Any]:
+    """Przeskanuj wiki projektu - sieroty, martwe linki, sprzeczności, luki.
+
+    Wymaga wiki_llm_enabled=True. Zwraca raport z kluczami:
+    - orphans: podstrony bez backlinku przychodzącego
+    - dead_links: referencje [[slug]] lub [[uuid]] nierozwiązane do stron projektu
+    - contradictions: strony z markerem "> **Sprzeczność"
+    - gaps: koncepty wzmiankowane >=2x bez własnej strony (heurystyka)
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not is_wiki_llm_enabled(project):
+        raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+
+    async with async_session_factory() as db:
+        return await svc_lint_wiki(project.id, db)
+
+
+@mcp.tool()
+async def get_wiki_backlinks(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Pobierz linki przychodzące i wychodzące dla strony wiki.
+
+    Wymaga wiki_llm_enabled=True.
+    Zwraca: incoming (strony wskazujące na tę stronę) i outgoing (strony na które wskazuje).
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not is_wiki_llm_enabled(project):
+        raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+
+    page_uuid = uuid.UUID(page_id)
+
+    async with async_session_factory() as db:
+        # Sprawdź że strona należy do projektu
+        result = await db.execute(select(WikiPage.id).where(WikiPage.id == page_uuid, WikiPage.project_id == project.id))
+        if result.scalar_one_or_none() is None:
+            raise ValueError("Strona wiki nie istnieje")
+
+        incoming = await svc_get_wiki_backlinks(page_uuid, db)
+        outgoing = await svc_get_wiki_outlinks(page_uuid, db)
+
+    return {
+        "incoming": [
+            {
+                "page_id": str(bl.source_page_id),
+                "title": bl.source_page.title,
+                "slug": bl.source_page.slug,
+                "anchor": bl.anchor_text,
+            }
+            for bl in incoming
+        ],
+        "outgoing": [
+            {
+                "page_id": str(bl.target_page_id),
+                "title": bl.target_page.title,
+                "slug": bl.target_page.slug,
+                "anchor": bl.anchor_text,
+            }
+            for bl in outgoing
+        ],
+    }
+
+
+@mcp.tool()
+async def regenerate_wiki_index(
+    ctx: Context[Any, Any],
+    project_slug: str,
+) -> dict[str, Any]:
+    """Przebuduj stronę wiki-index - katalog wszystkich stron projektu.
+
+    Wymaga wiki_llm_enabled=True.
+    Dla każdej strony: tytuł (link [[slug]]), 1-zdaniowe summary, liczba backlinków.
+    Tworzy stronę wiki-index jeśli nie istnieje.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not is_wiki_llm_enabled(project):
+        raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+
+    async with async_session_factory() as db:
+        index_page, page_count = await svc_regenerate_wiki_index(project=project, user_id=user.id, db=db)
+
+    return {
+        "index_page_id": str(index_page.id),
+        "index_page_slug": index_page.slug,
+        "catalogued_pages": page_count,
+        "message": f"Indeks wiki przebudowany - {page_count} stron skatalogowanych",
+    }
+
+
+@mcp.tool()
+async def append_wiki_log(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    entry: str,
+) -> dict[str, Any]:
+    """Dopisz wpis do dziennika wiki (wiki-log, append-only).
+
+    Wymaga wiki_llm_enabled=True.
+    Format wpisu: - [YYYY-MM-DD HH:MM] <entry>
+    Tworzy stronę wiki-log jeśli nie istnieje.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not is_wiki_llm_enabled(project):
+        raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+
+    if not entry.strip():
+        raise ValueError("Wpis dziennika nie może być pusty")
+
+    async with async_session_factory() as db:
+        log_page = await svc_append_wiki_log(project=project, entry=entry.strip(), user_id=user.id, db=db)
+
+    return {
+        "log_page_id": str(log_page.id),
+        "log_page_slug": log_page.slug,
+        "message": "Wpis dodany do dziennika wiki",
+    }
 
 
 # --- Graf (polaczenia) ---

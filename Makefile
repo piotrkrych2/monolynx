@@ -1,4 +1,4 @@
-.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings sync-graph
+.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings backfill-backlinks sync-graph
 
 help: ## Pokaz dostepne komendy
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -57,6 +57,17 @@ async def backfill(): \
         [print(f'Generuje embeddingi: {p.title}') or await update_page_embeddings(p.id, get_page_content(p), db) for p in pages]; \
         count = (await db.execute(text('SELECT count(*) FROM wiki_embeddings'))).scalar(); \
         print(f'Gotowe! Laczna liczba embeddingow: {count}'); \
+asyncio.run(backfill())"
+
+backfill-backlinks: ## Wygeneruj backlinki dla istniejacych stron wiki
+	docker compose --profile dev exec app python -c "\
+import asyncio; \
+from monolynx.services.wiki import backfill_backlinks; \
+from monolynx.database import async_session_factory; \
+async def backfill(): \
+    async with async_session_factory() as db: \
+        count = await backfill_backlinks(db); \
+        print(f'Gotowe! Przetworzono stron: {count}'); \
 asyncio.run(backfill())"
 
 # --- Graf kodu ---

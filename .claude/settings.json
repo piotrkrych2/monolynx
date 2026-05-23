@@ -1,5 +1,8 @@
 {
   "enabledPlugins": {
     "monolynx@monolynx": true
+  },
+  "env": {
+    "MONOLYNX_PROJECT_SLUG": "monolynx"
   }
 }

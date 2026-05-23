@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this project?
 
-Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), a Wiki module (markdown pages with semantic RAG search via pgvector), a Connections module (code dependency graph visualization using Neo4j), and a Work Plan / Gantt module (personal per-user cross-project scheduling with Gantt and calendar views). The architecture supports adding new modules via the sidebar navigation.
+Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), a Wiki module (markdown pages with semantic RAG search via pgvector, plus an opt-in "LLM Wiki" method with backlinks, system pages, and INGEST/QUERY/LINT operations), a Connections module (code dependency graph visualization using Neo4j), and a Work Plan / Gantt module (personal per-user cross-project scheduling with Gantt and calendar views). The architecture supports adding new modules via the sidebar navigation.
 
 ## Commands
 
@@ -38,6 +38,7 @@ make createsuperuser                  # Create admin user (interactive prompt)
 
 # Wiki RAG
 make backfill-embeddings              # Generate embeddings for existing wiki pages
+make backfill-backlinks               # Generate backlinks for existing wiki pages (LLM Wiki)
 
 # Build
 make build                            # Build production Docker image
@@ -65,13 +66,13 @@ Two separate packages in one repo:
 - `dashboard/sentry.py` — error tracking module "500ki": issues list, issue detail, SDK setup guide (`/dashboard/{slug}/500ki/*`)
 - `dashboard/scrum.py` — Scrum module: backlog (with pagination + filtering), Kanban board, ticket CRUD with comments, sprints with status filtering (`/dashboard/{slug}/scrum/*`)
 - `dashboard/monitoring.py` — URL monitoring module: monitor CRUD, check history with pagination, toggle on/off (`/dashboard/{slug}/monitoring/*`); includes SSRF protection (blocks localhost, private IPs), limit 20 monitors per project
-- `dashboard/wiki.py` — Wiki module: page CRUD, tree hierarchy, markdown rendering, image upload to MinIO, semantic search via pgvector (`/dashboard/{slug}/wiki/*`)
+- `dashboard/wiki.py` — Wiki module: page CRUD, tree hierarchy, markdown rendering, image upload to MinIO, semantic search via pgvector (`/dashboard/{slug}/wiki/*`); page detail shows an "incoming links" (backlinks) panel, gated on `wiki_llm_enabled`
 - `dashboard/connections.py` — Connections module: graph visualization with Cytoscape.js, node/edge CRUD forms, graph API endpoint (`/dashboard/{slug}/connections/*`); graceful degradation when Neo4j unavailable
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
 - `dashboard/reports.py` — global cross-project work reports with multi-select filtering (project, user, sprint), date range, and PDF export via weasyprint (`/dashboard/reports`)
 - `dashboard/work_plan.py`: Work Plan module (prefix `/dashboard/plan`): personal per-user cross-project scheduling via junction model (`User x Ticket x Date`), Gantt view (frappe-gantt) and monthly calendar, REST endpoints for entries CRUD plus JSON data and ticket autocomplete; independent of sprint assignment
 
-**Models** (`models/`) — 22 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, TicketAttachment, Monitor, MonitorCheck, TimeTrackingEntry, WorkPlanEntry, WikiPage, WikiEmbedding, WikiAttachment, WikiFile, ActivityLog, Heartbeat, Label, TicketLabel + OAuth models (OAuthClient, OAuthAuthorizationCode, OAuthAccessToken, OAuthRefreshToken) + Base
+**Models** (`models/`) — 23 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, TicketAttachment, Monitor, MonitorCheck, TimeTrackingEntry, WorkPlanEntry, WikiPage, WikiEmbedding, WikiAttachment, WikiFile, WikiBacklink, ActivityLog, Heartbeat, Label, TicketLabel + OAuth models (OAuthClient, OAuthAuthorizationCode, OAuthAccessToken, OAuthRefreshToken) + Base
 
 **Services**:
 - `services/fingerprint.py` — SHA256 of exception type + app-frame filenames:functions
@@ -85,7 +86,10 @@ Two separate packages in one repo:
 - `services/sidebar.py` — `SidebarBadges` dataclass providing issue counts, failing monitors, 24h uptime percentage for sidebar indicators
 - `services/time_tracking.py` — time tracking CRUD and aggregation for work reports
 - `services/ticket_numbering.py` — auto-incrementing ticket numbers per project
-- `services/wiki.py` — Wiki CRUD, markdown rendering (`render_markdown_html()`), page tree, breadcrumbs; content stored in MinIO, metadata in DB
+- `services/wiki.py` — Wiki CRUD, markdown rendering (`render_markdown_html()`), page tree, breadcrumbs; content stored in MinIO, metadata in DB. LLM Wiki additions: backlink parser (`extract_wiki_links`, `sync_backlinks`, `get_backlinks`, `get_outlinks`) and system-page helpers (`ensure_system_page`, `regenerate_index`, `append_log`); `RESERVED_SLUGS` constant guards the reserved system slugs (`wiki-index`, `wiki-log`, `wiki-schema`)
+- `services/wiki_lint.py` - LLM Wiki audit: detects orphans, dead_links, contradictions, gaps
+- `services/wiki_bootstrap.py` - `bootstrap_wiki_llm` idempotent setup: creates the system pages and seeds the default schema page
+- `services/wiki_templates.py` - `DEFAULT_WIKI_SCHEMA`: the editable LLM Wiki method "rulebook" used to seed `wiki-schema`
 - `services/embeddings.py` — RAG search: text chunking via tiktoken, OpenAI embeddings (`text-embedding-3-small`), pgvector cosine similarity search; ThreadPoolExecutor for async; graceful degradation when `OPENAI_API_KEY` not set
 - `services/minio_client.py` — MinIO object storage for wiki markdown files and attachments
 - `services/graph.py` — Neo4j graph database: async driver singleton, CRUD for nodes/edges, query operations (get_graph, find_path, get_neighbors, get_stats); graceful degradation pattern (like embeddings.py) — `is_enabled()`, try/except, None fallback when `ENABLE_GRAPH_DB=false`
@@ -98,7 +102,7 @@ Two separate packages in one repo:
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
-- 100 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Graph (node/edge CRUD, bulk operations, query, path finding, stats), Work Plan (`schedule_ticket`, `update_work_plan_entry`, `delete_work_plan_entry`, `list_work_plan`, `get_today_tasks`, `get_ticket_schedule`), project summary
+- 107 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Wiki LLM method (`get_wiki_config`, `set_wiki_config`, `bootstrap_wiki_llm`, `lint_wiki`, `get_wiki_backlinks`, `regenerate_wiki_index`, `append_wiki_log`), Graph (node/edge CRUD, bulk operations, query, path finding, stats), Work Plan (`schedule_ticket`, `update_work_plan_entry`, `delete_work_plan_entry`, `list_work_plan`, `get_today_tasks`, `get_ticket_schedule`), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 - `install_monolynx_skills` tool serves skill copies from `static/skills/` for manual install into a project's `.claude/skills/` (used by claude.ai web and environments without plugin support)
@@ -108,6 +112,7 @@ Two separate packages in one repo:
 - `userConfig`: `mcp_token` (sensitive, keychain), `mcp_endpoint` (default `https://monolynx.com/mcp`), `project_slug` (optional fallback)
 - Skill project slug resolution order: `MONOLYNX_PROJECT_SLUG` from project `.env` → `user_config.project_slug` → `"monolynx"`; works cross-project
 - Preferred path for Claude Code CLI users; `install_monolynx_skills` remains the manual/fallback path. Plugin only declares access to the existing MCP server; `mcp_server.py` is unchanged. See `plugin/README.md`
+- LLM Wiki skills added in plugin 1.1.1: `wiki-init` (runs `bootstrap_wiki_llm`), `wiki-ingest` (the INGEST workflow), `wiki-lint` (the audit workflow); the existing `search` skill is extended with QUERY (writes the answer back into the wiki)
 
 **Template layout system**:
 - `layouts/base.html` — base layout (login, project list)
@@ -122,7 +127,7 @@ Two separate packages in one repo:
 - `transport.py` sends events via `ThreadPoolExecutor(max_workers=2)` using `urllib.request`
 - Django settings: `MONOLYNX_DSN` or `MONOLYNX_URL` + `MONOLYNX_API_KEY`
 
-**Schemas** (`schemas/`) — Pydantic models for validation: `events.py`, `issues.py`, `scrum.py`, `time_tracking.py` (includes `WorkReportResult` for aggregated reports), `graph.py` (GraphNodeCreate/Update/Response, GraphEdgeCreate/Response, GraphSearchResult)
+**Schemas** (`schemas/`) — Pydantic models for validation: `events.py`, `issues.py`, `scrum.py`, `time_tracking.py` (includes `WorkReportResult` for aggregated reports), `graph.py` (GraphNodeCreate/Update/Response, GraphEdgeCreate/Response, GraphSearchResult), `wiki.py` (`WikiBacklinkResponse`)
 
 **Data flow**: Django error → SDK middleware `process_exception()` → background thread POST → FastAPI ingests → fingerprint → find/create Issue → store Event (JSONB)
 
@@ -216,6 +221,7 @@ Two separate packages in one repo:
 - PDF reports generated server-side with weasyprint
 - Wiki content stored in MinIO (markdown files), metadata in PostgreSQL; `minio_path` column links to object storage
 - Wiki RAG search uses pgvector extension (HNSW index, cosine similarity); chunked embeddings (~500 tokens per chunk with overlap) via OpenAI `text-embedding-3-small`; `OPENAI_API_KEY=""` disables embeddings gracefully
+- LLM Wiki method (Karpathy-style): opt-in per project via `Project.wiki_llm_enabled` (bool, default False); gated like `embeddings.is_enabled()` - when OFF the tools/skills return a clear no-op/ValueError. Treats the wiki as a growing artifact (vs RAG from scratch) curated through INGEST/QUERY/LINT operations. Reserved system-page slugs `wiki-index`, `wiki-log`, `wiki-schema` (prefix `wiki-`, since `SLUG_PATTERN` forbids underscores); the schema is itself an editable page seeded from `DEFAULT_WIKI_SCHEMA`. Backlinks are stored in PostgreSQL via the `WikiBacklink` model (NOT in Neo4j - Neo4j stays exclusively for the Connections/code module); backfill via `make backfill-backlinks`. Contradictions are flagged inline with the marker `> **Sprzeczność [date]:**`
 - Markdown rendering shared via `render_markdown_html()` from `services/wiki.py` — used in wiki pages, ticket descriptions, and comments; frontend uses Tailwind `prose prose-invert` classes
 - EasyMDE (WYSIWYG markdown editor) used in wiki page forms and ticket create/edit forms; dark theme via inline CSS overrides
 - Docker uses `pgvector/pgvector:pg16` image for PostgreSQL with vector extension support

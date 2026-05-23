@@ -1,0 +1,106 @@
+---
+name: monolynx-wiki-lint
+description: "Audyt zdrowia wiki projektu (metoda LLM Wiki). Wykrywa sieroty, martwe linki, sprzecznosci i luki, prezentuje raport i proponuje naprawy. Uzyj gdy chcesz sprawdzic spojnosc wiki i ja uporzadkowac."
+allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__lint_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_backlinks, mcp__monolynx__create_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__append_wiki_log, AskUserQuestion, Bash
+---
+
+# LINT - audyt zdrowia wiki
+
+Realizujesz operacje **LINT** metody LLM Wiki: okresowy audyt spojnosci wiki. Sprawdzasz, czy graf wiedzy jest spojny (brak sierot i martwych linkow), czy nie ma nierozstrzygnietych sprzecznosci i czy nie brakuje stron dla wielokrotnie wzmiankowanych konceptow. Po raporcie pomagasz uzytkownikowi naprawic znalezione problemy.
+
+**Projekt**: `<PROJECT-SLUG>`
+
+---
+
+## Krok 0: Warunek wstepny - metoda musi byc wlaczona
+
+Sprawdz stan:
+
+```
+mcp__monolynx__get_wiki_config(project_slug="<PROJECT-SLUG>")
+```
+
+- **Jesli `wiki_llm_enabled` jest `false`** - poinformuj uzytkownika: _"Metoda LLM Wiki nie jest wlaczona dla tego projektu. Uruchom najpierw `/monolynx:wiki-init`."_ i **przerwij** skill.
+- **Jesli `true`** - kontynuuj.
+
+---
+
+## Krok 1: Uruchom audyt
+
+```
+mcp__monolynx__lint_wiki(project_slug="<PROJECT-SLUG>")
+```
+
+Zwraca raport z czterema listami:
+
+- `orphans` - strony bez zadnego backlinku przychodzacego,
+- `dead_links` - wikilinki do nieistniejacych stron,
+- `contradictions` - strony z markerem sprzecznosci (`> **Sprzeczność ...`),
+- `gaps` - koncepty wzmiankowane wielokrotnie jako wikilink, ale bez wlasnej strony.
+
+---
+
+## Krok 2: Zaprezentuj raport
+
+Pokaz raport czytelnie, w czterech sekcjach. Dla kazdej kategorii podaj liste pozycji i krotkie wyjasnienie, co oznacza:
+
+### Sieroty (`orphans`)
+
+Strony, do ktorych nic nie prowadzi. Nie da sie do nich dotrzec przez nawigacje grafu - latwo o nich zapomniec.
+
+### Martwe linki (`dead_links`)
+
+Wikilinki wskazujace na strony, ktore nie istnieja. Albo brakuje strony docelowej, albo slug w linku jest bledny.
+
+### Sprzecznosci (`contradictions`)
+
+Strony z markerem sprzecznosci. Czekaja na rozstrzygniecie przez czlowieka - zawieraja dwie wersje, ktore sie wykluczaja.
+
+### Luki (`gaps`)
+
+Koncepty wzmiankowane wielokrotnie jako wikilink, ale bez wlasnej strony. Sygnal, ze warto utworzyc dla nich dedykowana strone.
+
+Jesli ktoras lista jest pusta - napisz to wprost (np. "Sieroty: brak").
+
+---
+
+## Krok 3: Zaproponuj naprawy
+
+Dla kazdej niepustej kategorii zaproponuj konkretna akcje naprawcza:
+
+- **Sieroty** - dolinkuj strone z `wiki-index` lub z powiazanej tematycznie strony (dodaj wikilink przez `update_wiki_page`). Uzyj `get_wiki_backlinks`, zeby znalezc dobre miejsce na link.
+- **Martwe linki** - albo utworz brakujaca strone docelowa (`create_wiki_page` z odpowiednim frontmatterem), albo popraw bledny slug w stronie zrodlowej (`update_wiki_page`).
+- **Sprzecznosci** - rozstrzygnij z uzytkownikiem ktora wersja jest aktualna, zaktualizuj tresc i **usun marker** sprzecznosci ze strony (`update_wiki_page`).
+- **Luki** - rozwaz utworzenie strony konceptu (`create_wiki_page`, `type: koncept`) i podlaczenie do niej istniejacych wzmianek.
+
+Zapytaj uzytkownika (`AskUserQuestion`), ktore problemy naprawic teraz - nie naprawiaj wszystkiego automatycznie. Sprzecznosci ZAWSZE wymagaja decyzji czlowieka. Po decyzji wykonaj zaakceptowane naprawy.
+
+---
+
+## Krok 4 (opcjonalnie): Dopisz wpis do dziennika
+
+Jesli cokolwiek naprawiono, odnotuj audyt w dzienniku:
+
+```
+mcp__monolynx__append_wiki_log(project_slug="<PROJECT-SLUG>", entry="LINT: audyt zdrowia - naprawiono <co> (sieroty: N, martwe linki: M, sprzecznosci: K, luki: L)")
+```
+
+---
+
+## Podsumowanie dla uzytkownika
+
+Na koniec pokaz:
+
+- liczbe znalezionych problemow w kazdej kategorii,
+- co naprawiono w tej sesji,
+- co pozostaje do rozstrzygniecia (zwlaszcza nierozstrzygniete sprzecznosci).
+
+---
+
+## Wazne zasady
+
+1. **Warunek wstepny** - Krok 0 jest obowiazkowy; bez wlaczonej metody `lint_wiki` zwroci blad.
+2. **Sprzecznosci rozstrzyga czlowiek** - nigdy nie usuwaj markera bez decyzji uzytkownika.
+3. **Pytaj przed naprawa** - nie modyfikuj stron automatycznie; zatwierdz zakres przez `AskUserQuestion`.
+4. **Odnotuj audyt** - jesli cos naprawiono, dopisz wpis do `wiki-log`.
+5. **Jezyk**: polski (terminy techniczne i nazwy narzedzi w oryginale).

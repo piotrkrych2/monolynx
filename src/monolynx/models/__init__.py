@@ -30,6 +30,7 @@ from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.models.user import User
 from monolynx.models.user_api_token import UserApiToken
 from monolynx.models.wiki_attachment import WikiAttachment
+from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_embedding import WikiEmbedding
 from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
@@ -65,6 +66,7 @@ __all__ = [
     "User",
     "UserApiToken",
     "WikiAttachment",
+    "WikiBacklink",
     "WikiEmbedding",
     "WikiFile",
     "WikiPage",

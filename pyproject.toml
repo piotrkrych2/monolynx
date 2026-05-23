@@ -53,6 +53,7 @@ ignore = ["B008"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/monolynx/features.py" = ["E501"]
+"src/monolynx/services/wiki_templates.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["monolynx"]
