@@ -52,6 +52,16 @@ Nastepnie pobierz ticket:
   3. Zapytaj: **"Ktory ticket chcesz zrecenzowac? Podaj ID."**
   4. Poczekaj na odpowiedz uzytkownika - NIE kontynuuj bez wyboru
 
+### 1b. Zaladuj spec-page (jesli ustawiona)
+
+Sprawdz czy ticket ma `spec_page_id`. Jesli tak:
+
+```
+mcp__monolynx__get_wiki_page(project_slug="<PROJECT_SLUG>", page_id="<spec_page_id>")
+```
+
+Uzywaj tej strony jako **PRIMARY CONTEXT** - jest to specyfikacja zadania. Weryfikuj zalozenia z ticketu przede wszystkim wzgledem spec-page.
+
 ---
 
 ## KROK 2: Analiza formy ticketu (Czy AI go zrozumie?)

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from monolynx.models.ticket_comment import TicketComment
     from monolynx.models.time_tracking_entry import TimeTrackingEntry
     from monolynx.models.user import User
+    from monolynx.models.wiki_page import WikiPage
 
 
 class Ticket(Base):
@@ -35,6 +36,7 @@ class Ticket(Base):
     sprint_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sprints.id"), nullable=True, index=True)
     assignee_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     issue_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("issues.id", ondelete="SET NULL"), nullable=True, index=True)
+    spec_page_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("wiki_pages.id", ondelete="SET NULL"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="backlog", index=True)
@@ -49,6 +51,7 @@ class Ticket(Base):
     project: Mapped[Project] = relationship(back_populates="tickets")
     sprint: Mapped[Sprint | None] = relationship(back_populates="tickets")
     issue: Mapped[Issue | None] = relationship(back_populates="tickets", lazy="selectin")
+    spec_page: Mapped[WikiPage | None] = relationship("WikiPage", foreign_keys=[spec_page_id], lazy="selectin")
     assignee: Mapped[User | None] = relationship()
     comments: Mapped[list[TicketComment]] = relationship(
         back_populates="ticket",

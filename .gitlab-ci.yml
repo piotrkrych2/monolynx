@@ -149,3 +149,16 @@ sync-graph:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       when: on_success
+
+wiki-post-merge:
+  stage: deploy
+  image: python:3.12-slim
+  script:
+    - python cicd/wiki_post_merge.py
+  variables:
+    MONOLYNX_URL: "${MONOLYNX_URL}"
+    MONOLYNX_MCP_TOKEN: "${MONOLYNX_MCP_TOKEN}"
+    MONOLYNX_PROJECT_SLUG: "${MONOLYNX_PROJECT_SLUG}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: on_success
