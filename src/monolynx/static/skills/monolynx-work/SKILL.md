@@ -91,9 +91,24 @@ KOMENTARZE: [jesli sa]
 Wykonaj nastepujace kroki:
 
 1. **Przeczytaj i zrozum ticket** — stresz zadanie wlasnymi slowami
-2. **Zbadaj kod** — znajdz pliki, klasy i funkcje powiazane z zadaniem. Uzyj Glob i Grep do przeszukania kodu.
-3. **Przeszukaj wiki** — uzyj mcp__monolynx__search_wiki(project_slug='monolynx', query='<zapytanie>') dla kazdego istotnego tematu z ticketu
-4. **Przeszukaj graf** — uzyj mcp__monolynx__query_graph(project_slug='monolynx', search='<nazwa pliku/funkcji>') dla kluczowych elementow kodu. Jesli graf niedostepny — pomin.
+2. **Kontekst deterministyczny** - zanim przeszukasz wiki, zaladuj kontekst deterministyczny:
+
+   **Spec-page ticketu:** Sprawdz czy w danych ticketu jest pole `spec_page_id`. Jesli jest ustawione (nie None):
+   ```
+   mcp__monolynx__get_wiki_page(project_slug='<PROJECT_SLUG>', page_id='<spec_page_id>')
+   ```
+   Zaladuj jej tresc jako PRIMARY CONTEXT. Nie szukaj zastepnika przez search_wiki.
+   Jesli `spec_page_id` jest None - pomin i przejdz dalej.
+
+   **Constitution projektu:** Sprawdz czy projekt ma strone `constitution`:
+   ```
+   mcp__monolynx__search_wiki(project_slug='<PROJECT_SLUG>', query='constitution', limit=1)
+   ```
+   Jesli wynik ma strone ze slug=`constitution` lub tytulem zawierajacym "constitution" - pobierz pelna tresc przez `get_wiki_page` i zaladuj jako project-level context.
+   Jesli nie istnieje - kontynuuj bez bledu.
+3. **Zbadaj kod** — znajdz pliki, klasy i funkcje powiazane z zadaniem. Uzyj Glob i Grep do przeszukania kodu.
+4. **Przeszukaj wiki** — uzyj mcp__monolynx__search_wiki(project_slug='monolynx', query='<zapytanie>') dla kazdego istotnego tematu z ticketu
+5. **Przeszukaj graf** — uzyj mcp__monolynx__query_graph(project_slug='monolynx', search='<nazwa pliku/funkcji>') dla kluczowych elementow kodu. Jesli graf niedostepny — pomin.
 
 Na koniec wygeneruj RAPORT w dokladnie tym formacie:
 

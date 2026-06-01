@@ -302,6 +302,10 @@ def _format_ticket_detail(
     lines.append(f"Created: {created_str} | Updated: {updated_str} | AI: {ai_str}")
     lines.append(f"ID: {ticket.id}")
 
+    if ticket.spec_page_id:
+        spec_title = ticket.spec_page.title if ticket.spec_page else str(ticket.spec_page_id)
+        lines.append(f"Spec: {spec_title} | Spec ID: {ticket.spec_page_id}")
+
     if ticket.description:
         lines.append("")
         lines.append("## Description")
@@ -2255,12 +2259,14 @@ async def create_ticket(
     due_date: str | None = None,
     label_ids: list[str] | None = None,
     acceptance_criteria: list[str] | None = None,
+    spec_page_id: str | None = None,
 ) -> dict[str, Any]:
     """Utworz nowy ticket w projekcie. Oznaczany jako created_via_ai=True.
 
     due_date: opcjonalna data graniczna w formacie YYYY-MM-DD
     label_ids: opcjonalna lista UUID etykiet do przypisania
     acceptance_criteria: opcjonalna lista opisów kryteriów akceptacji — tworzone razem z ticketem, created_via_ai=True
+    spec_page_id: opcjonalny UUID strony wiki jako specyfikacja techniczna ticketa
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -2303,6 +2309,8 @@ async def create_ticket(
             created_via_ai=True,
             due_date=parsed_due_date,
         )
+        if spec_page_id:
+            ticket.spec_page_id = uuid.UUID(spec_page_id)
         db.add(ticket)
         await db.flush()
 
@@ -2343,6 +2351,7 @@ async def create_ticket(
         "title": ticket.title,
         "status": ticket.status,
         "due_date": ticket.due_date.isoformat() if ticket.due_date else None,
+        "spec_page_id": str(ticket.spec_page_id) if ticket.spec_page_id else None,
         "created_via_ai": True,
         "acceptance_criteria_count": criteria_count,
         "message": f"Ticket '{ticket.title}' utworzony",

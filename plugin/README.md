@@ -2,7 +2,7 @@
 
 Plugin Monolynx pakuje w jeden, instalowalny zestaw to, czego potrzebujesz, żeby pracować z platformą Monolynx bezpośrednio z Claude Code:
 
-- **10 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (praca z ticketami w pełnym i uproszczonym flow, tworzenie i recenzja zadań, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł i audyt, pomoc, generowanie skryptu CI grafu zależności),
+- **11 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (praca z ticketami w pełnym i uproszczonym flow, tworzenie i recenzja zadań, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności),
 - **7 agentów** wyspecjalizowanych w rolach zespołu (backend, frontend, baza danych, DevOps, QA, code review, dokumentacja),
 - **zdalny serwer MCP** Monolynx (HTTP, autoryzacja Bearer), który udostępnia narzędzia do Scrum, 500ki, Monitoringu, Wiki, Połączeń i Planu pracy.
 
@@ -88,6 +88,7 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 | `/monolynx:wiki-init` | Włącz metodę LLM Wiki dla projektu: tworzy strony systemowe (regulamin `wiki-schema`, katalog `wiki-index`, dziennik `wiki-log`) i włącza flagę. Idempotentny bootstrap. |
 | `/monolynx:wiki-ingest` | Zintegruj nowe źródło (plik, URL, wklejona treść) z wiki: strona źródła, aktualizacja powiązanych stron encji/konceptów, wikilinki, odświeżenie katalogu i wpis do dziennika. |
 | `/monolynx:wiki-lint` | Audyt zdrowia wiki: wykrywa sieroty, martwe linki, sprzeczności i luki, prezentuje raport i proponuje naprawy. |
+| `/monolynx:wiki-sync-merge` | Post-merge INGEST do wiki metodą LLM Wiki. Odpala człowiek po merge ticketów/PR do main - pobiera dane ticketów, integruje wiedzę z zamkniętych zadań, aktualizuje powiązane strony i odświeża katalog. |
 | `/monolynx:help` | Wyświetl instrukcję użycia skilli Monolynx: flow pracy z ticketami oraz skille dodatkowe. |
 | `/monolynx:create-graph-ci-script` | Wygeneruj skrypt CI synchronizujący graf zależności kodu z Monolynx (analiza projektu Python: Django, FastAPI, Flask), tworzy `cicd/sync_graph.py` i stage w `.gitlab-ci.yml`. |
 

@@ -122,6 +122,14 @@ mcp__monolynx__list_sprints(project_slug="<PROJECT_SLUG>")
 mcp__monolynx__list_labels(project_slug="<PROJECT_SLUG>")
 ```
 
+### 3e. Spec-page (opcjonalnie)
+
+Jesli w wiki istnieje strona opisujaca specyfikacje/design zadania (wyniki z 3a moga na nia wskazywac), zapytaj uzytkownika:
+
+> **Znalazlem strone wiki "[tytul]" ktora moze byc specyfikacja tego zadania. Czy chcesz ją powiazac z ticketem jako spec-page?**
+
+Zapisz UUID strony jesli uzytkownik potwierdzi - uzyjesz go w `spec_page_id` przy tworzeniu ticketu.
+
 ---
 
 ## KROK 4: Sprawdz duplikaty i zaleznosci
@@ -231,7 +239,8 @@ mcp__monolynx__create_ticket(
   story_points=<liczba>,
   sprint_id="<UUID sprintu lub null dla backlogu>",
   label_ids=[<lista UUID etykiet lub null>],
-  acceptance_criteria=["<kryterium 1>", "<kryterium 2>", "<kryterium 3>", ...]
+  acceptance_criteria=["<kryterium 1>", "<kryterium 2>", "<kryterium 3>", ...],
+  spec_page_id="<UUID strony wiki lub null>"
 )
 ```
 

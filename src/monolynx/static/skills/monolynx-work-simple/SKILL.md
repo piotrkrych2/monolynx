@@ -1,4 +1,5 @@
 ---
+name: monolynx-work-simple
 description: "Podejmij prostszy ticket (<8 SP) z biezacego projektu Monolynx. Uproszczony flow: 1 dev + krytyk jako zwykle subagenty (bez Agent Teams). Research wiki/graf/kod opt-in na starcie. Pelna ceremonia self-reporting. Eskaluje do monolynx-work jesli scope sie rozrasta. Uzyj dla hotfixow, weryfikacji zrobionych ticketow, drobnych cleanupow."
 user-invocable: true
 argument-hint: [ticket-id]
