@@ -2,7 +2,7 @@
 description: "Utworz nowy ticket w projekcie Monolynx. Zbiera kontekst z wiki, kodu i grafu zaleznosci, generuje opis w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci). Uzyj gdy chcesz dodac zadanie do sprintu."
 user-invocable: true
 argument-hint: [krotki opis zadania]
-allowed-tools: mcp__monolynx__create_ticket, mcp__monolynx__search_tickets, mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__list_sprints, mcp__monolynx__get_sprint, mcp__monolynx__list_labels, mcp__monolynx__get_board, mcp__monolynx__query_graph, mcp__monolynx__list_graph_nodes, mcp__monolynx__get_graph_node, mcp__monolynx__add_comment, AskUserQuestion, Agent, Glob, Grep, Read, Bash
+allowed-tools: mcp__monolynx__create_ticket, mcp__monolynx__search_tickets, mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__list_sprints, mcp__monolynx__get_sprint, mcp__monolynx__list_labels, mcp__monolynx__get_board, mcp__monolynx__query_graph, mcp__monolynx__list_graph_nodes, mcp__monolynx__get_graph_node, mcp__monolynx__add_comment, mcp__monolynx__create_wiki_page, mcp__monolynx__update_ticket, AskUserQuestion, Agent, Glob, Grep, Read, Bash
 ---
 
 # Tworzenie ticketu Monolynx
@@ -220,9 +220,41 @@ Wyswietl wygenerowany ticket i zapytaj:
 
 **Poczekaj na odpowiedz** - NIE twórz ticketu bez akceptacji.
 
-- **Jesli (a)** → przejdz do KROK 7
+- **Jesli (a)** → przejdz do KROK 6a
 - **Jesli (b)** → popraw wedlug uwag, wyswietl ponownie, zapytaj jeszcze raz
 - **Jesli (c)** → zaproponuj podzial na 2-4 mniejsze tickety, kazdy z pelna forma. Zapytaj o akceptacje kazdego z osobna.
+
+---
+
+## KROK 6a: Opcjonalnie - Spec-page
+
+Po potwierdzeniu opcji **(a) Akceptuj i utworz** - zapytaj uzytkownika:
+
+AskUserQuestion z pytaniem: **"Czy chcesz teraz stworzyc spec-page dla tego ticketu w wiki?"**
+
+Opcje (pierwsza jest domyslna):
+- **"Nie, pomin"** (domyslna - nieinwazyjna)
+- **"Tak, stworz spec-page"**
+
+**Jesli "Tak, stworz spec-page":**
+
+1. Utworz strone wiki:
+
+```
+mcp__monolynx__create_wiki_page(
+  project_slug="<PROJECT_SLUG>",
+  title="Spec: <tytul ticketu>",
+  content="---\ntype: spec\nstatus: draft\n---\n\n## Cel\n[co ma robic]\n\n## Decyzje architektoniczne\n[dlaczego tak, nie inaczej]\n\n## Nie robimy\n[explicit out-of-scope]"
+)
+```
+
+2. Pobierz `id` z odpowiedzi (UUID nowej strony).
+3. W KROK 7 przy wywolaniu `create_ticket` dodaj parametr `spec_page_id=<id>`.
+4. Pokaz uzytkownikowi: **"Spec-page utworzona: Spec: [tytul ticketu] (bedzie powiazana z ticketem)"**
+
+**Jesli "Nie, pomin":**
+
+Przejdz do KROK 7 bez `spec_page_id`.
 
 ---
 

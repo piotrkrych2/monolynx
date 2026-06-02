@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
 from monolynx.mcp_server import (
     _auth,
@@ -935,6 +936,23 @@ class TestUpdateTicket:
         ):
             result = await update_ticket(ctx, mcp_project.slug, str(ticket.id), story_points=13)
         assert result["message"].endswith("zaktualizowany")
+
+    async def test_update_ticket_assignee_me(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """assignee_email="me" przypisuje ticket do aktualnego uzytkownika MCP."""
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Unassigned ticket")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_ticket(ctx, mcp_project.slug, str(ticket.id), assignee_email="me")
+
+        assert "id" in result
+        await db_session.refresh(ticket)
+        assert ticket.assignee_id == mcp_user.id
 
 
 # ---------------------------------------------------------------------------
@@ -5270,3 +5288,1944 @@ class TestWikiLlmMcpTools:
 
         assert result_a["incoming"] == []
         assert any(bl["page_id"] == str(page_b.id) for bl in result_a["outgoing"])
+
+
+# ---------------------------------------------------------------------------
+# _build_allowed_hosts (lines 145-148)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestBuildAllowedHosts:
+    """Test _build_allowed_hosts z MCP_ALLOWED_HOSTS."""
+
+    def test_default_hosts_without_extra(self):
+        """Bez MCP_ALLOWED_HOSTS zwraca tylko domyslne hosty."""
+        from monolynx.mcp_server import _build_allowed_hosts
+
+        with patch("monolynx.mcp_server.app_settings") as mock_settings:
+            mock_settings.MCP_ALLOWED_HOSTS = ""
+            hosts = _build_allowed_hosts()
+        assert "localhost" in hosts
+        assert "127.0.0.1" in hosts
+
+    def test_custom_hosts_parsed(self):
+        """MCP_ALLOWED_HOSTS przecinkowe -> dodane do domyslnych."""
+        from monolynx.mcp_server import _build_allowed_hosts
+
+        with patch("monolynx.mcp_server.app_settings") as mock_settings:
+            mock_settings.MCP_ALLOWED_HOSTS = "example.com,api.test.com"
+            hosts = _build_allowed_hosts()
+        assert "example.com" in hosts
+        assert "api.test.com" in hosts
+        assert "localhost" in hosts
+
+    def test_hosts_with_spaces_stripped(self):
+        """Biale znaki wokol hostow sa usuwane."""
+        from monolynx.mcp_server import _build_allowed_hosts
+
+        with patch("monolynx.mcp_server.app_settings") as mock_settings:
+            mock_settings.MCP_ALLOWED_HOSTS = " myhost.com , other.com "
+            hosts = _build_allowed_hosts()
+        assert "myhost.com" in hosts
+        assert "other.com" in hosts
+        assert " myhost.com " not in hosts
+
+    def test_empty_entries_skipped(self):
+        """Puste wpisy w MCP_ALLOWED_HOSTS sa pomijane."""
+        from monolynx.mcp_server import _build_allowed_hosts
+
+        with patch("monolynx.mcp_server.app_settings") as mock_settings:
+            mock_settings.MCP_ALLOWED_HOSTS = "valid.com,,  ,another.com"
+            hosts = _build_allowed_hosts()
+        assert "valid.com" in hosts
+        assert "another.com" in hosts
+        assert "" not in hosts
+
+
+# ---------------------------------------------------------------------------
+# OAuth exception fallback (lines 202-203)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAuthOAuthExceptionFallback:
+    """Test ze wyjatek w module OAuth powoduje fallback na legacy token."""
+
+    async def test_oauth_exception_falls_back_to_legacy(self, mcp_user, mock_factory, mock_verify):
+        """Kiedy OAuth rzuca wyjatek (np. brak tabeli), fallback na verify_mcp_token."""
+        ctx = _make_ctx("legacy-token")
+        mock_verify_oauth = AsyncMock(side_effect=RuntimeError("OAuth tables don't exist"))
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.services.oauth.verify_oauth_access_token", mock_verify_oauth),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            user = await _auth(ctx)
+        assert user.id == mcp_user.id
+
+
+# ---------------------------------------------------------------------------
+# Format helpers (lines 252, 283-285, 316-321, 467-476, 531-543)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestFormatHelpers:
+    """Testy pomocnikow formatowania - czyste funkcje."""
+
+    # --- _format_board labels ---
+
+    def test_format_board_with_labels_in_ticket(self):
+        """Labels sa dolaczane do wiersza ticketa jako [label1, label2]."""
+        from monolynx.mcp_server import _format_board
+
+        sprint = MagicMock()
+        sprint.name = "Sprint 1"
+        sprint.start_date = date(2026, 1, 1)
+        sprint.end_date = date(2026, 1, 14)
+        columns = {
+            "todo": [
+                {
+                    "key": "MNX-1",
+                    "title": "Test ticket",
+                    "priority": "high",
+                    "assignee": None,
+                    "story_points": None,
+                    "labels": ["backend", "urgent"],
+                }
+            ]
+        }
+        result = _format_board(sprint, "MNX", columns)
+        assert "[backend, urgent]" in result
+
+    def test_format_board_without_labels_no_brackets(self):
+        """Brak labels -> brak nawiasow klamrowych w wierszu."""
+        from monolynx.mcp_server import _format_board
+
+        sprint = MagicMock()
+        sprint.name = "Sprint 1"
+        sprint.start_date = date(2026, 1, 1)
+        sprint.end_date = None
+        columns = {
+            "todo": [
+                {
+                    "key": "MNX-1",
+                    "title": "Test",
+                    "priority": "medium",
+                    "assignee": "user@test.com",
+                    "story_points": 3,
+                    "labels": [],
+                }
+            ]
+        }
+        result = _format_board(sprint, "MNX", columns)
+        assert "MNX-1" in result
+        assert "[" not in result
+
+    # --- _human_size via _format_ticket_detail ---
+
+    def _make_ticket_mock(self) -> MagicMock:
+        """Pomocnik tworzacy minimalny mock ticketa."""
+        ticket = MagicMock()
+        ticket.number = 1
+        ticket.title = "T"
+        ticket.status = "todo"
+        ticket.priority = "medium"
+        ticket.sprint = None
+        ticket.assignee = None
+        ticket.due_date = None
+        ticket.labels = []
+        ticket.story_points = None
+        ticket.created_at = MagicMock()
+        ticket.created_at.date.return_value = date(2026, 1, 1)
+        ticket.updated_at = MagicMock()
+        ticket.updated_at.date.return_value = date(2026, 1, 2)
+        ticket.created_via_ai = False
+        ticket.id = uuid.uuid4()
+        ticket.spec_page_id = None
+        ticket.description = None
+        ticket.acceptance_criteria = []
+        ticket.comments = []
+        return ticket
+
+    def test_human_size_megabytes(self):
+        """Plik >= 1MB wyswietlany w MB."""
+        from monolynx.mcp_server import _format_ticket_detail
+
+        ticket = self._make_ticket_mock()
+        att = MagicMock()
+        att.filename = "big.zip"
+        att.mime_type = "application/zip"
+        att.size = 2 * 1024 * 1024  # 2 MB
+        ticket.attachments = [att]
+
+        result = _format_ticket_detail(ticket, "MNX")
+        assert "2.0 MB" in result
+
+    def test_human_size_kilobytes(self):
+        """Plik < 1MB wyswietlany w KB."""
+        from monolynx.mcp_server import _format_ticket_detail
+
+        ticket = self._make_ticket_mock()
+        att = MagicMock()
+        att.filename = "small.txt"
+        att.mime_type = "text/plain"
+        att.size = 4096  # 4 KB
+        ticket.attachments = [att]
+
+        result = _format_ticket_detail(ticket, "MNX")
+        assert "4 KB" in result
+
+    def test_attachment_section_rendered(self):
+        """Sekcja ## Attachments pojawia sie gdy sa zalaczniki."""
+        from monolynx.mcp_server import _format_ticket_detail
+
+        ticket = self._make_ticket_mock()
+        att = MagicMock()
+        att.filename = "report.pdf"
+        att.mime_type = "application/pdf"
+        att.size = 1024
+        ticket.attachments = [att]
+
+        result = _format_ticket_detail(ticket, "MNX")
+        assert "## Attachments (1)" in result
+        assert "report.pdf" in result
+        assert "application/pdf" in result
+
+    def test_mime_fallback_when_none(self):
+        """Brak mime_type -> fallback application/octet-stream."""
+        from monolynx.mcp_server import _format_ticket_detail
+
+        ticket = self._make_ticket_mock()
+        att = MagicMock()
+        att.filename = "data.bin"
+        att.mime_type = None
+        att.size = 512
+        ticket.attachments = [att]
+
+        result = _format_ticket_detail(ticket, "MNX")
+        assert "application/octet-stream" in result
+
+    # --- _interval_human (linie 467-476) ---
+
+    def test_interval_human_minutes(self):
+        """minutes/minute -> min."""
+        from monolynx.mcp_server import _interval_human
+
+        assert _interval_human(5, "minutes") == "5 min"
+        assert _interval_human(1, "minute") == "1 min"
+
+    def test_interval_human_hours(self):
+        """hours/hour -> hr."""
+        from monolynx.mcp_server import _interval_human
+
+        assert _interval_human(2, "hours") == "2 hr"
+        assert _interval_human(1, "hour") == "1 hr"
+
+    def test_interval_human_days(self):
+        """days/day -> day."""
+        from monolynx.mcp_server import _interval_human
+
+        assert _interval_human(1, "days") == "1 day"
+        assert _interval_human(3, "day") == "3 day"
+
+    def test_interval_human_unknown_passthrough(self):
+        """Nieznana jednostka - zwracana bez zmian."""
+        from monolynx.mcp_server import _interval_human
+
+        assert _interval_human(2, "weeks") == "2 weeks"
+
+    # --- _format_monitors_table internal _interval_human (linie 531-543) ---
+
+    def test_format_monitors_table_converts_hours(self):
+        """_format_monitors_table konwertuje '1 hours' na '1 hr'."""
+        from monolynx.mcp_server import _format_monitors_table
+
+        monitors = [
+            {
+                "id": str(uuid.uuid4()),
+                "name": "Hourly",
+                "url": "https://test.com",
+                "is_active": True,
+                "interval": "1 hours",
+                "uptime_24h": 99.5,
+                "last_check": None,
+            }
+        ]
+        result = _format_monitors_table(monitors)
+        assert "1 hr" in result
+
+    def test_format_monitors_table_converts_days(self):
+        """_format_monitors_table konwertuje '1 days' na '1 day'."""
+        from monolynx.mcp_server import _format_monitors_table
+
+        monitors = [
+            {
+                "id": str(uuid.uuid4()),
+                "name": "Daily",
+                "url": "https://daily.com",
+                "is_active": False,
+                "interval": "1 days",
+                "uptime_24h": None,
+                "last_check": None,
+            }
+        ]
+        result = _format_monitors_table(monitors)
+        assert "1 day" in result
+
+    def test_format_monitors_table_interval_fallback(self):
+        """_format_monitors_table - nieznana jednostka bez zmian."""
+        from monolynx.mcp_server import _format_monitors_table
+
+        monitors = [
+            {
+                "id": str(uuid.uuid4()),
+                "name": "Weekly",
+                "url": "https://weekly.com",
+                "is_active": True,
+                "interval": "1 weeks",
+                "uptime_24h": None,
+                "last_check": None,
+            }
+        ]
+        result = _format_monitors_table(monitors)
+        assert "1 weeks" in result
+
+    def test_format_monitors_table_interval_no_space(self):
+        """Interval bez spacji (nie parsuje sie) -> zwracany as-is."""
+        from monolynx.mcp_server import _format_monitors_table
+
+        monitors = [
+            {
+                "id": str(uuid.uuid4()),
+                "name": "Test",
+                "url": "https://test.com",
+                "is_active": True,
+                "interval": "5min",
+                "uptime_24h": None,
+                "last_check": None,
+            }
+        ]
+        result = _format_monitors_table(monitors)
+        assert "5min" in result
+
+
+# ---------------------------------------------------------------------------
+# add_attachment (linie 3178-3248)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAddAttachment:
+    """Testy narzedzia add_attachment."""
+
+    async def test_empty_filename_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa pliku rzuca ValueError."""
+        from monolynx.mcp_server import add_attachment
+
+        ctx = _make_ctx()
+        import base64
+
+        content_b64 = base64.b64encode(b"data").decode()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa pliku nie moze byc pusta"),
+        ):
+            await add_attachment(ctx, mcp_project.slug, str(uuid.uuid4()), content_b64, "")
+
+    async def test_empty_file_content_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta zawartosc pliku rzuca ValueError."""
+        from monolynx.mcp_server import add_attachment
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Zawartosc pliku"),
+        ):
+            await add_attachment(ctx, mcp_project.slug, str(uuid.uuid4()), "  ", "file.txt")
+
+    async def test_invalid_base64_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy base64 rzuca ValueError."""
+        from monolynx.mcp_server import add_attachment
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format base64"),
+        ):
+            await add_attachment(ctx, mcp_project.slug, str(uuid.uuid4()), "not-valid-base64!!!", "file.txt")
+
+    async def test_invalid_mime_type_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy mime_type rzuca ValueError."""
+        from monolynx.mcp_server import add_attachment
+
+        ctx = _make_ctx()
+        import base64
+
+        content_b64 = base64.b64encode(b"data").decode()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format mime_type"),
+        ):
+            await add_attachment(ctx, mcp_project.slug, str(uuid.uuid4()), content_b64, "file.txt", mime_type="INVALID TYPE")
+
+    async def test_happy_path_returns_attachment_info(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Poprawny upload zwraca attachment_id, filename, url, size, uploaded_at."""
+        import base64
+
+        from monolynx.mcp_server import add_attachment
+
+        # Tworzymy ticket w projekcie
+        ticket = Ticket(
+            project_id=mcp_project.id,
+            number=1,
+            title="Test ticket for attachment",
+            status="todo",
+        )
+        db_session.add(ticket)
+        await db_session.flush()
+
+        content = b"Hello World content"
+        content_b64 = base64.b64encode(content).decode()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_upload_attachment", return_value=f"{mcp_project.slug}/attachments/file.txt"),
+        ):
+            result = await add_attachment(ctx, mcp_project.slug, str(ticket.id), content_b64, "file.txt", mime_type="text/plain")
+
+        assert "attachment_id" in result
+        assert result["filename"] == "file.txt"
+        assert result["size"] == len(content)
+        assert "url" in result
+        assert "uploaded_at" in result
+
+    async def test_ticket_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Ticket nie istnieje w projekcie -> ValueError."""
+        import base64
+
+        from monolynx.mcp_server import add_attachment
+
+        content_b64 = base64.b64encode(b"data").decode()
+        fake_ticket_id = str(uuid.uuid4())
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_upload_attachment", return_value="path/to/file"),
+            pytest.raises(ValueError, match="Ticket nie istnieje"),
+        ):
+            await add_attachment(ctx, mcp_project.slug, fake_ticket_id, content_b64, "file.txt")
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat tools (linie 4068-4302)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListHeartbeats:
+    """Testy narzedzia list_heartbeats."""
+
+    async def test_empty_list_returns_empty(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Brak heartbeatow -> pusta lista."""
+
+        from monolynx.mcp_server import list_heartbeats
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_heartbeats(ctx, mcp_project.slug)
+        assert result == []
+
+    async def test_returns_heartbeats(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Heartbeaty sa zwracane z poprawnymi polami."""
+        from monolynx.mcp_server import list_heartbeats
+        from monolynx.models.heartbeat import Heartbeat
+
+        hb = Heartbeat(project_id=mcp_project.id, name="Daily Cron", period=3600, grace=60)
+        db_session.add(hb)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_heartbeats(ctx, mcp_project.slug)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Daily Cron"
+        assert result[0]["period_minutes"] == 60
+        assert result[0]["grace_minutes"] == 1
+        assert "token" not in result[0]  # token NIE jest zwracany w liscie
+
+
+@pytest.mark.unit
+class TestGetHeartbeat:
+    """Testy narzedzia get_heartbeat."""
+
+    async def test_get_existing_returns_token(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """get_heartbeat zwraca token (include_token=True)."""
+        from monolynx.mcp_server import get_heartbeat
+        from monolynx.models.heartbeat import Heartbeat
+
+        hb = Heartbeat(project_id=mcp_project.id, name="My HB", period=300, grace=30)
+        db_session.add(hb)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_heartbeat(ctx, mcp_project.slug, str(hb.id))
+
+        assert result["name"] == "My HB"
+        assert result["period_minutes"] == 5
+        assert result["grace_minutes"] == 0
+        assert "token" in result
+        assert "ping_url" in result
+
+    async def test_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy heartbeat rzuca ValueError."""
+        from monolynx.mcp_server import get_heartbeat
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Heartbeat nie istnieje"),
+        ):
+            await get_heartbeat(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+@pytest.mark.unit
+class TestCreateHeartbeat:
+    """Testy narzedzia create_heartbeat."""
+
+    async def test_creates_and_returns_heartbeat(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Poprawne tworzenie heartbeatu zwraca pelny dict z tokenem."""
+        from monolynx.mcp_server import create_heartbeat
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_heartbeat(ctx, mcp_project.slug, "My Check", period=60, grace=5)
+
+        assert result["name"] == "My Check"
+        assert result["period_minutes"] == 60
+        assert result["grace_minutes"] == 5
+        assert "token" in result
+        assert "ping_url" in result
+        assert "message" in result
+
+    async def test_empty_name_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa rzuca ValueError."""
+        from monolynx.mcp_server import create_heartbeat
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa heartbeatu jest wymagana"),
+        ):
+            await create_heartbeat(ctx, mcp_project.slug, "  ", period=60)
+
+    async def test_zero_period_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Period = 0 rzuca ValueError."""
+        from monolynx.mcp_server import create_heartbeat
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Period musi byc wiekszy niz 0"),
+        ):
+            await create_heartbeat(ctx, mcp_project.slug, "Check", period=0)
+
+    async def test_negative_grace_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Ujemne grace rzuca ValueError."""
+        from monolynx.mcp_server import create_heartbeat
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Grace nie moze byc ujemne"),
+        ):
+            await create_heartbeat(ctx, mcp_project.slug, "Check", period=60, grace=-1)
+
+
+@pytest.mark.unit
+class TestUpdateHeartbeat:
+    """Testy narzedzia update_heartbeat."""
+
+    async def test_updates_name_and_period(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Poprawna aktualizacja nazwy i period."""
+        from monolynx.mcp_server import update_heartbeat
+        from monolynx.models.heartbeat import Heartbeat
+
+        hb = Heartbeat(project_id=mcp_project.id, name="OldName", period=3600, grace=60)
+        db_session.add(hb)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_heartbeat(ctx, mcp_project.slug, str(hb.id), name="NewName", period=30)
+
+        assert result["name"] == "NewName"
+        assert result["period_minutes"] == 30
+        assert "message" in result
+
+    async def test_empty_name_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa przy update rzuca ValueError."""
+        from monolynx.mcp_server import update_heartbeat
+        from monolynx.models.heartbeat import Heartbeat
+
+        hb = Heartbeat(project_id=mcp_project.id, name="Check", period=3600, grace=60)
+        db_session.add(hb)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa heartbeatu nie moze byc pusta"),
+        ):
+            await update_heartbeat(ctx, mcp_project.slug, str(hb.id), name="  ")
+
+    async def test_invalid_period_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Period <= 0 przy update rzuca ValueError."""
+        from monolynx.mcp_server import update_heartbeat
+        from monolynx.models.heartbeat import Heartbeat
+
+        hb = Heartbeat(project_id=mcp_project.id, name="Check", period=3600, grace=60)
+        db_session.add(hb)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Period musi byc wiekszy niz 0"),
+        ):
+            await update_heartbeat(ctx, mcp_project.slug, str(hb.id), period=-5)
+
+    async def test_negative_grace_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Grace < 0 przy update rzuca ValueError."""
+        from monolynx.mcp_server import update_heartbeat
+        from monolynx.models.heartbeat import Heartbeat
+
+        hb = Heartbeat(project_id=mcp_project.id, name="Check", period=3600, grace=60)
+        db_session.add(hb)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Grace nie moze byc ujemne"),
+        ):
+            await update_heartbeat(ctx, mcp_project.slug, str(hb.id), grace=-1)
+
+
+@pytest.mark.unit
+class TestDeleteHeartbeat:
+    """Testy narzedzia delete_heartbeat."""
+
+    async def test_deletes_and_returns_message(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Usuniecie heartbeatu zwraca komunikat z nazwa."""
+        from monolynx.mcp_server import delete_heartbeat
+        from monolynx.models.heartbeat import Heartbeat
+
+        hb = Heartbeat(project_id=mcp_project.id, name="To Delete", period=3600, grace=60)
+        db_session.add(hb)
+        await db_session.flush()
+        hb_id = str(hb.id)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await delete_heartbeat(ctx, mcp_project.slug, hb_id)
+
+        assert "To Delete" in result["message"]
+        assert result["heartbeat_id"] == hb_id
+
+    async def test_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy heartbeat -> ValueError."""
+        from monolynx.mcp_server import delete_heartbeat
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Heartbeat nie istnieje"),
+        ):
+            await delete_heartbeat(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+# ---------------------------------------------------------------------------
+# Role tools (linie 4884-5191)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListRoles:
+    """Testy narzedzia list_roles."""
+
+    async def test_no_roles_returns_no_roles_message(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Brak rol -> komunikat o braku."""
+        from monolynx.mcp_server import list_roles
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_roles(ctx, mcp_project.slug)
+
+        assert "Brak" in result
+
+    async def test_returns_table_with_roles(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Istniejace role sa wyswietlane w tabeli."""
+        from monolynx.mcp_server import list_roles
+        from monolynx.models.role import Role
+
+        role = Role(
+            name="Developer",
+            project_id=mcp_project.id,
+            permissions={"scrum": ["read", "write"]},
+            is_system=False,
+        )
+        db_session.add(role)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_roles(ctx, mcp_project.slug)
+
+        assert "Developer" in result
+        assert "scrum" in result
+
+    async def test_no_permission_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """check_permission zwraca False -> ValueError z settings:read."""
+        from monolynx.mcp_server import list_roles
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.check_permission", AsyncMock(return_value=False)),
+            pytest.raises(ValueError, match="settings:read"),
+        ):
+            await list_roles(ctx, mcp_project.slug)
+
+
+@pytest.mark.unit
+class TestCreateRole:
+    """Testy narzedzia create_role."""
+
+    async def test_creates_role_with_permissions(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Poprawne tworzenie roli zwraca id, name, permissions."""
+        from monolynx.mcp_server import create_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await create_role(ctx, mcp_project.slug, "Reviewer", {"scrum": ["read"], "wiki": ["read"]})
+
+        assert result["name"] == "Reviewer"
+        assert result["permissions"]["scrum"] == ["read"]
+        assert "id" in result
+        assert "message" in result
+
+    async def test_empty_name_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa roli -> ValueError."""
+        from monolynx.mcp_server import create_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa roli nie moze byc pusta"),
+        ):
+            await create_role(ctx, mcp_project.slug, "  ", {"scrum": ["read"]})
+
+    async def test_invalid_module_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieznany modul w permissions -> ValueError przed DB."""
+        from monolynx.mcp_server import create_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowe moduly"),
+        ):
+            await create_role(ctx, mcp_project.slug, "Bad", {"nonexistent_module": ["read"]})
+
+    async def test_invalid_action_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieznana akcja w permissions -> ValueError przed DB."""
+        from monolynx.mcp_server import create_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowe akcje"),
+        ):
+            await create_role(ctx, mcp_project.slug, "Bad", {"scrum": ["superread"]})
+
+    async def test_no_permission_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Brak settings:write -> ValueError."""
+        from monolynx.mcp_server import create_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.check_permission", AsyncMock(return_value=False)),
+            pytest.raises(ValueError, match="settings:write"),
+        ):
+            await create_role(ctx, mcp_project.slug, "NoWrite", {"scrum": ["read"]})
+
+
+@pytest.mark.unit
+class TestUpdateRole:
+    """Testy narzedzia update_role."""
+
+    async def test_updates_role_name(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana nazwy roli nie-systemowej."""
+        from monolynx.mcp_server import update_role
+        from monolynx.models.role import Role
+
+        role = Role(name="OldRole", project_id=mcp_project.id, permissions={"scrum": ["read"]}, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_role(ctx, mcp_project.slug, str(role.id), name="NewRole")
+
+        assert result["name"] == "NewRole"
+        assert "message" in result
+
+    async def test_updates_permissions(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana uprawnien roli."""
+        from monolynx.mcp_server import update_role
+        from monolynx.models.role import Role
+
+        role = Role(name="RoleToUpdate", project_id=mcp_project.id, permissions={"scrum": ["read"]}, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_role(ctx, mcp_project.slug, str(role.id), permissions={"scrum": ["read", "write"]})
+
+        assert result["permissions"]["scrum"] == ["read", "write"]
+
+    async def test_rename_system_role_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana nazwy roli systemowej -> ValueError."""
+        from monolynx.mcp_server import update_role
+        from monolynx.models.role import Role
+
+        system_role = Role(name="SystemRole", project_id=mcp_project.id, permissions={}, is_system=True)
+        db_session.add(system_role)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nie mozna zmienic nazwy roli systemowej"),
+        ):
+            await update_role(ctx, mcp_project.slug, str(system_role.id), name="NewSystemName")
+
+    async def test_invalid_role_id_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy UUID role_id -> ValueError."""
+        from monolynx.mcp_server import update_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format role_id"),
+        ):
+            await update_role(ctx, mcp_project.slug, "not-a-uuid", name="X")
+
+    async def test_role_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejaca rola -> ValueError."""
+        from monolynx.mcp_server import update_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie istnieje"),
+        ):
+            await update_role(ctx, mcp_project.slug, str(uuid.uuid4()), name="X")
+
+
+@pytest.mark.unit
+class TestDeleteRole:
+    """Testy narzedzia delete_role."""
+
+    async def test_deletes_custom_role(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Usuniecie wlasnej roli zwraca komunikat."""
+        from monolynx.mcp_server import delete_role
+        from monolynx.models.role import Role
+
+        role = Role(name="Disposable", project_id=mcp_project.id, permissions={}, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await delete_role(ctx, mcp_project.slug, str(role.id))
+
+        assert "Disposable" in result["message"]
+
+    async def test_delete_system_role_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Proba usuniecia roli systemowej -> ValueError."""
+        from monolynx.mcp_server import delete_role
+        from monolynx.models.role import Role
+
+        sys_role = Role(name="SystemProtected", project_id=mcp_project.id, permissions={}, is_system=True)
+        db_session.add(sys_role)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nie mozna usunac roli systemowej"),
+        ):
+            await delete_role(ctx, mcp_project.slug, str(sys_role.id))
+
+    async def test_delete_role_with_member_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Proba usuniecia roli przypisanej do czlonka -> ValueError z 'przypisana do'."""
+        from monolynx.mcp_server import delete_role
+        from monolynx.models.role import Role
+
+        role = Role(name="InUse", project_id=mcp_project.id, permissions={}, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+
+        # Przypisz role do mcp_member (bezposrednio przez role_id)
+        mcp_member.role_id = role.id
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        # Patchujemy check_permission na True zeby permission check przeszedl,
+        # mimo ze mcp_member ma role z pustymi permissions przez ustawienie role_id
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.check_permission", AsyncMock(return_value=True)),
+            pytest.raises(ValueError, match="przypisana do"),
+        ):
+            await delete_role(ctx, mcp_project.slug, str(role.id))
+
+    async def test_invalid_role_id_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy UUID -> ValueError."""
+        from monolynx.mcp_server import delete_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format role_id"),
+        ):
+            await delete_role(ctx, mcp_project.slug, "not-a-uuid")
+
+
+@pytest.mark.unit
+class TestAssignRole:
+    """Testy narzedzia assign_role."""
+
+    async def test_assigns_role_to_member(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Przypisanie roli do czlonka projektu."""
+        from monolynx.mcp_server import assign_role
+        from monolynx.models.role import Role
+
+        role = Role(name="Tester", project_id=mcp_project.id, permissions={"scrum": ["read"]}, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await assign_role(ctx, mcp_project.slug, mcp_user.email, str(role.id))
+
+        assert result["user_email"] == mcp_user.email
+        assert result["role_name"] == "Tester"
+        assert "message" in result
+
+    async def test_empty_email_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusty email -> ValueError."""
+        from monolynx.mcp_server import assign_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Email nie moze byc pusty"),
+        ):
+            await assign_role(ctx, mcp_project.slug, "  ", str(uuid.uuid4()))
+
+    async def test_invalid_email_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Email bez @ -> ValueError."""
+        from monolynx.mcp_server import assign_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format"),
+        ):
+            await assign_role(ctx, mcp_project.slug, "noemail", str(uuid.uuid4()))
+
+    async def test_invalid_role_id_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy UUID role_id -> ValueError."""
+        from monolynx.mcp_server import assign_role
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format role_id"),
+        ):
+            await assign_role(ctx, mcp_project.slug, mcp_user.email, "not-a-uuid")
+
+    async def test_user_not_member_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Uzytkownik nie jest czlonkiem projektu -> ValueError."""
+        from monolynx.mcp_server import assign_role
+        from monolynx.models.role import Role
+
+        # Tworzymy uzytkownika poza projektem
+        outside_user = User(
+            email=f"outside-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash="hash",
+        )
+        db_session.add(outside_user)
+        role = Role(name="SomeRole", project_id=mcp_project.id, permissions={}, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie jest czlonkiem"),
+        ):
+            await assign_role(ctx, mcp_project.slug, outside_user.email, str(role.id))
+
+
+@pytest.mark.unit
+class TestGetMemberPermissions:
+    """Testy narzedzia get_member_permissions."""
+
+    async def test_returns_permissions_for_member(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zwraca uprawnienia czlonka projektu."""
+        from monolynx.mcp_server import get_member_permissions
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_member_permissions(ctx, mcp_project.slug, mcp_user.email)
+
+        assert result["user_email"] == mcp_user.email
+        assert result["project_slug"] == mcp_project.slug
+        assert "permissions" in result
+        # owner ma scrum:read co najmniej
+        assert "scrum" in result["permissions"]
+
+    async def test_empty_email_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusty email -> ValueError."""
+        from monolynx.mcp_server import get_member_permissions
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Email nie moze byc pusty"),
+        ):
+            await get_member_permissions(ctx, mcp_project.slug, "  ")
+
+    async def test_user_not_member_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Uzytkownik nie jest czlonkiem -> ValueError."""
+        from monolynx.mcp_server import get_member_permissions
+
+        outside_user = User(
+            email=f"outside2-{uuid.uuid4().hex[:8]}@test.com",
+            password_hash="hash",
+        )
+        db_session.add(outside_user)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie jest czlonkiem"),
+        ):
+            await get_member_permissions(ctx, mcp_project.slug, outside_user.email)
+
+
+# ---------------------------------------------------------------------------
+# update_settlement (linie 5425-5469)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestUpdateSettlementMcp:
+    """Testy MCP tool update_settlement."""
+
+    async def _create_draft_settlement(self, db_session, mcp_user, mcp_project):  # type: ignore[return]
+        """Pomocnik: tworzy draft settlement powiazany z projektem."""
+        from sqlalchemy import func
+
+        from monolynx.models.settlement import Settlement
+        from monolynx.models.settlement_project import SettlementProject
+
+        result = await db_session.execute(select(func.coalesce(func.max(Settlement.number), 0)))
+        next_number = int(result.scalar_one()) + 1
+
+        settlement = Settlement(
+            number=next_number,
+            name="Test Settlement",
+            period_from=date(2026, 1, 1),
+            period_to=date(2026, 1, 31),
+            status="draft",
+            created_by_id=mcp_user.id,
+        )
+        db_session.add(settlement)
+        await db_session.flush()
+
+        sp = SettlementProject(settlement_id=settlement.id, project_id=mcp_project.id)
+        db_session.add(sp)
+        await db_session.flush()
+        return settlement
+
+    async def test_updates_name(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana nazwy draft settlement."""
+        from monolynx.mcp_server import update_settlement
+
+        settlement = await self._create_draft_settlement(db_session, mcp_user, mcp_project)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_settlement(ctx, mcp_project.slug, str(settlement.id), name="Updated Name")
+
+        assert result["name"] == "Updated Name"
+        assert result["status"] == "draft"
+
+    async def test_no_permission_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Brak rozliczenia:write -> ValueError."""
+        from monolynx.mcp_server import update_settlement
+
+        settlement = await self._create_draft_settlement(db_session, mcp_user, mcp_project)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.check_permission", AsyncMock(return_value=False)),
+            pytest.raises(ValueError, match="rozliczenia:write"),
+        ):
+            await update_settlement(ctx, mcp_project.slug, str(settlement.id), name="X")
+
+    async def test_non_existing_slug_in_project_slugs_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy slug w project_slugs -> ValueError."""
+        from monolynx.mcp_server import update_settlement
+
+        settlement = await self._create_draft_settlement(db_session, mcp_user, mcp_project)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie istnieje"),
+        ):
+            await update_settlement(
+                ctx,
+                mcp_project.slug,
+                str(settlement.id),
+                project_slugs=["nonexistent-project-xyz"],
+            )
+
+    async def test_settlement_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejace settlement -> ValueError z get_settlement_for_mcp."""
+        from monolynx.mcp_server import update_settlement
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Rozliczenie nie istnieje"),
+        ):
+            await update_settlement(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+# ---------------------------------------------------------------------------
+# _resolve_ticket_globally (linie 5923-5953)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestResolveTicketGlobally:
+    """Testy helpera _resolve_ticket_globally."""
+
+    async def test_uuid_input_returned_directly(self):
+        """Poprawny UUID string jest zwracany bez zapytania do DB."""
+        from monolynx.mcp_server import _resolve_ticket_globally
+
+        ticket_uuid = uuid.uuid4()
+        result = await _resolve_ticket_globally(str(ticket_uuid))
+        assert result == ticket_uuid
+
+    async def test_invalid_key_format_raises(self):
+        """Nieprawidlowy identyfikator (nie UUID i nie klucz) -> ValueError."""
+        from monolynx.mcp_server import _resolve_ticket_globally
+
+        with pytest.raises(ValueError, match="Nieprawidlowy identyfikator"):
+            await _resolve_ticket_globally("INVALID_FORMAT_123")
+
+    async def test_key_format_resolves_from_db(self, db_session, mcp_project, mock_factory):
+        """Klucz XXX-N szuka w bazie danych przez kod projektu i numer."""
+        from monolynx.mcp_server import _resolve_ticket_globally
+
+        # Tworzymy ticket w projekcie
+        ticket = Ticket(
+            project_id=mcp_project.id,
+            number=42,
+            title="Test ticket for global resolve",
+            status="todo",
+        )
+        db_session.add(ticket)
+        await db_session.flush()
+
+        # mcp_project.code to pierwsze 5 znakow sluga bez myslnikow, uppercase
+        project_key = f"{mcp_project.code}-42"
+
+        with patch("monolynx.mcp_server.async_session_factory", mock_factory):
+            result = await _resolve_ticket_globally(project_key)
+
+        assert result == ticket.id
+
+    async def test_key_not_found_raises(self, db_session, mcp_project, mock_factory):
+        """Klucz z nieistniejacym numerem ticketa -> ValueError."""
+        from monolynx.mcp_server import _resolve_ticket_globally
+
+        project_key = f"{mcp_project.code}-99999"
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            pytest.raises(ValueError, match="nie istnieje"),
+        ):
+            await _resolve_ticket_globally(project_key)
+
+
+# ---------------------------------------------------------------------------
+# get_burndown (linia 4315-4322)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetBurndown:
+    """Testy narzedzia get_burndown."""
+
+    async def test_returns_burndown_data(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """get_burndown deleguje do svc_get_burndown_data i zwraca wynik."""
+        from monolynx.mcp_server import get_burndown
+
+        mock_burndown = {"ideal": [], "actual": [], "velocity": 0}
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.svc_get_burndown_data", AsyncMock(return_value=mock_burndown)),
+        ):
+            result = await get_burndown(ctx, mcp_project.slug)
+
+        assert result == mock_burndown
+
+    async def test_with_sprint_id_parses_uuid(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """sprint_id jako string UUID jest poprawnie parsowany."""
+        from monolynx.mcp_server import get_burndown
+
+        sprint_uuid = uuid.uuid4()
+        captured_sprint_id = []
+
+        async def capture(*args, **kwargs):
+            captured_sprint_id.append(args[2])  # project_id, sprint_uuid
+            return {}
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.svc_get_burndown_data", capture),
+        ):
+            await get_burndown(ctx, mcp_project.slug, sprint_id=str(sprint_uuid))
+
+        assert captured_sprint_id[0] == sprint_uuid
+
+    async def test_without_sprint_id_passes_none(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Brak sprint_id -> None przekazywane do svc_get_burndown_data."""
+        from monolynx.mcp_server import get_burndown
+
+        captured = []
+
+        async def capture(*args, **kwargs):
+            captured.append(args[2])
+            return {}
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.svc_get_burndown_data", capture),
+        ):
+            await get_burndown(ctx, mcp_project.slug)
+
+        assert captured[0] is None
+
+
+# ---------------------------------------------------------------------------
+# get_attachment (linie 4328-4370)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetAttachment:
+    """Testy narzedzia get_attachment."""
+
+    async def test_returns_file_content_base64(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zwraca zawartosc zalacznika zakodowana w base64."""
+        import base64
+
+        from monolynx.mcp_server import get_attachment
+        from monolynx.models.ticket_attachment import TicketAttachment
+
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="T", status="todo")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        att = TicketAttachment(
+            ticket_id=ticket.id,
+            filename="test.txt",
+            storage_path=f"{mcp_project.slug}/attachments/test.txt",
+            mime_type="text/plain",
+            size=11,
+        )
+        db_session.add(att)
+        await db_session.flush()
+
+        file_content = b"hello world"
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_get_attachment", return_value=(file_content, "text/plain")),
+        ):
+            result = await get_attachment(ctx, mcp_project.slug, str(ticket.id), str(att.id))
+
+        assert result["attachment_id"] == str(att.id)
+        assert result["filename"] == "test.txt"
+        assert result["mime_type"] == "text/plain"
+        assert result["content_base64"] == base64.b64encode(file_content).decode()
+
+    async def test_image_returned_as_data_uri(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Obrazek zwracany jako data URI (data:image/png;base64,...)."""
+
+        from monolynx.mcp_server import get_attachment
+        from monolynx.models.ticket_attachment import TicketAttachment
+
+        ticket = Ticket(project_id=mcp_project.id, number=2, title="T", status="todo")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        att = TicketAttachment(
+            ticket_id=ticket.id,
+            filename="photo.png",
+            storage_path=f"{mcp_project.slug}/attachments/photo.png",
+            mime_type="image/png",
+            size=8,
+        )
+        db_session.add(att)
+        await db_session.flush()
+
+        png_bytes = b"\x89PNG\r\n\x1a\n"
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_get_attachment", return_value=(png_bytes, "image/png")),
+        ):
+            result = await get_attachment(ctx, mcp_project.slug, str(ticket.id), str(att.id))
+
+        assert result["content_base64"].startswith("data:image/png;base64,")
+
+    async def test_attachment_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy zalacznik -> ValueError."""
+        from monolynx.mcp_server import get_attachment
+
+        ticket = Ticket(project_id=mcp_project.id, number=3, title="T", status="todo")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Zalacznik nie istnieje"),
+        ):
+            await get_attachment(ctx, mcp_project.slug, str(ticket.id), str(uuid.uuid4()))
+
+
+# ---------------------------------------------------------------------------
+# get_wiki_attachment (linie 4376-4418)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetWikiAttachment:
+    """Testy narzedzia get_wiki_attachment."""
+
+    async def test_returns_attachment_content(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zwraca zawartosc zalacznika Wiki zakodowana w base64."""
+        import base64
+
+        from monolynx.mcp_server import get_wiki_attachment
+        from monolynx.models.wiki_attachment import WikiAttachment
+
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Test Page",
+            slug=f"test-page-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/pages/test.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        att = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="doc.pdf",
+            storage_path=f"{mcp_project.slug}/wiki-attachments/doc.pdf",
+            mime_type="application/pdf",
+            size=1024,
+        )
+        db_session.add(att)
+        await db_session.flush()
+
+        pdf_bytes = b"%PDF content"
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_get_attachment", return_value=(pdf_bytes, "application/pdf")),
+        ):
+            result = await get_wiki_attachment(ctx, mcp_project.slug, str(page.id), "doc.pdf")
+
+        assert result["filename"] == "doc.pdf"
+        assert result["mime_type"] == "application/pdf"
+        assert result["content_base64"] == base64.b64encode(pdf_bytes).decode()
+
+    async def test_image_attachment_returns_data_uri(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Obraz Wiki zwracany jako data URI."""
+        from monolynx.mcp_server import get_wiki_attachment
+        from monolynx.models.wiki_attachment import WikiAttachment
+
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Img Page",
+            slug=f"img-page-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/pages/img.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        att = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="logo.png",
+            storage_path=f"{mcp_project.slug}/wiki-attachments/logo.png",
+            mime_type="image/png",
+            size=200,
+        )
+        db_session.add(att)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_get_attachment", return_value=(b"\x89PNG", "image/png")),
+        ):
+            result = await get_wiki_attachment(ctx, mcp_project.slug, str(page.id), "logo.png")
+
+        assert result["content_base64"].startswith("data:image/png;base64,")
+
+    async def test_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy zalacznik Wiki -> ValueError."""
+        from monolynx.mcp_server import get_wiki_attachment
+
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Empty Page",
+            slug=f"empty-page-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/pages/empty.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Zalacznik nie istnieje"),
+        ):
+            await get_wiki_attachment(ctx, mcp_project.slug, str(page.id), "nonexistent.pdf")
+
+
+# ---------------------------------------------------------------------------
+# add_wiki_page_attachment (linie 4421-4500)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAddWikiPageAttachment:
+    """Testy narzedzia add_wiki_page_attachment."""
+
+    async def test_happy_path_returns_attachment_info(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Poprawny upload zwraca attachment_id, filename, size, uploaded_at."""
+        import base64
+
+        from monolynx.mcp_server import add_wiki_page_attachment
+
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Wiki Page",
+            slug=f"wiki-page-att-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/pages/wiki.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        content = b"wiki attachment content"
+        content_b64 = base64.b64encode(content).decode()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_upload_object", return_value=None),
+        ):
+            result = await add_wiki_page_attachment(ctx, mcp_project.slug, str(page.id), content_b64, "wiki_doc.txt")
+
+        assert "attachment_id" in result
+        assert result["filename"] == "wiki_doc.txt"
+        assert result["size"] == len(content)
+        assert "uploaded_at" in result
+
+    async def test_empty_filename_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa pliku -> ValueError."""
+        import base64
+
+        from monolynx.mcp_server import add_wiki_page_attachment
+
+        content_b64 = base64.b64encode(b"data").decode()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa pliku nie moze byc pusta"),
+        ):
+            await add_wiki_page_attachment(ctx, mcp_project.slug, str(uuid.uuid4()), content_b64, "")
+
+    async def test_invalid_base64_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy base64 -> ValueError."""
+        from monolynx.mcp_server import add_wiki_page_attachment
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format base64"),
+        ):
+            await add_wiki_page_attachment(ctx, mcp_project.slug, str(uuid.uuid4()), "not-b64!!!", "file.txt")
+
+    async def test_page_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejaca strona Wiki -> ValueError."""
+        import base64
+
+        from monolynx.mcp_server import add_wiki_page_attachment
+
+        content_b64 = base64.b64encode(b"data").decode()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_upload_object", return_value=None),
+            pytest.raises(ValueError, match="Strona wiki nie istnieje"),
+        ):
+            await add_wiki_page_attachment(ctx, mcp_project.slug, str(uuid.uuid4()), content_b64, "file.txt")
+
+
+# ---------------------------------------------------------------------------
+# add_wiki_file (linie 4506-4578)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAddWikiFile:
+    """Testy narzedzia add_wiki_file."""
+
+    async def test_happy_path_returns_file_info(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Poprawny upload pliku Wiki zwraca file_id, filename, size, description, uploaded_at."""
+        import base64
+
+        from monolynx.mcp_server import add_wiki_file
+
+        content = b"wiki global file content"
+        content_b64 = base64.b64encode(content).decode()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_upload_object", return_value=None),
+        ):
+            result = await add_wiki_file(ctx, mcp_project.slug, content_b64, "global.md", description="Test file")
+
+        assert "file_id" in result
+        assert result["filename"] == "global.md"
+        assert result["size"] == len(content)
+        assert result["description"] == "Test file"
+        assert "uploaded_at" in result
+
+    async def test_empty_filename_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pusta nazwa pliku -> ValueError."""
+        import base64
+
+        from monolynx.mcp_server import add_wiki_file
+
+        content_b64 = base64.b64encode(b"data").decode()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nazwa pliku nie moze byc pusta"),
+        ):
+            await add_wiki_file(ctx, mcp_project.slug, content_b64, "")
+
+    async def test_invalid_base64_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy base64 -> ValueError."""
+        from monolynx.mcp_server import add_wiki_file
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format base64"),
+        ):
+            await add_wiki_file(ctx, mcp_project.slug, "not-valid-b64!!!", "file.txt")
+
+    async def test_invalid_mime_type_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieprawidlowy mime_type -> ValueError."""
+        import base64
+
+        from monolynx.mcp_server import add_wiki_file
+
+        content_b64 = base64.b64encode(b"data").decode()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy format mime_type"),
+        ):
+            await add_wiki_file(ctx, mcp_project.slug, content_b64, "file.txt", mime_type="WRONG TYPE")
+
+    async def test_no_description_defaults_to_none(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Brak description -> None w wyniku."""
+        import base64
+
+        from monolynx.mcp_server import add_wiki_file
+
+        content_b64 = base64.b64encode(b"data").decode()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_upload_object", return_value=None),
+        ):
+            result = await add_wiki_file(ctx, mcp_project.slug, content_b64, "nodesc.txt")
+
+        assert result["description"] is None
+
+
+# ---------------------------------------------------------------------------
+# get_wiki_file (linie 4581-4619)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetWikiFile:
+    """Testy narzedzia get_wiki_file."""
+
+    async def test_returns_file_content(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zwraca zawartosc pliku Wiki w base64."""
+        import base64
+
+        from monolynx.mcp_server import get_wiki_file
+        from monolynx.models.wiki_file import WikiFile
+
+        wiki_file = WikiFile(
+            project_id=mcp_project.id,
+            filename="readme.md",
+            storage_path=f"{mcp_project.slug}/wiki-files/readme.md",
+            mime_type="text/markdown",
+            size=42,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        file_bytes = b"# Readme content"
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_get_attachment", return_value=(file_bytes, "text/markdown")),
+        ):
+            result = await get_wiki_file(ctx, mcp_project.slug, str(wiki_file.id))
+
+        assert result["file_id"] == str(wiki_file.id)
+        assert result["filename"] == "readme.md"
+        assert result["content_base64"] == base64.b64encode(file_bytes).decode()
+
+    async def test_image_file_returns_data_uri(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Plik obrazkowy zwracany jako data URI."""
+        from monolynx.mcp_server import get_wiki_file
+        from monolynx.models.wiki_file import WikiFile
+
+        wiki_file = WikiFile(
+            project_id=mcp_project.id,
+            filename="banner.jpg",
+            storage_path=f"{mcp_project.slug}/wiki-files/banner.jpg",
+            mime_type="image/jpeg",
+            size=512,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_get_attachment", return_value=(b"\xff\xd8\xff", "image/jpeg")),
+        ):
+            result = await get_wiki_file(ctx, mcp_project.slug, str(wiki_file.id))
+
+        assert result["content_base64"].startswith("data:image/jpeg;base64,")
+
+    async def test_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy plik -> ValueError."""
+        from monolynx.mcp_server import get_wiki_file
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Plik nie istnieje"),
+        ):
+            await get_wiki_file(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+
+# ---------------------------------------------------------------------------
+# update_wiki_file (linie 4622-4659)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestUpdateWikiFile:
+    """Testy narzedzia update_wiki_file."""
+
+    async def test_updates_description(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana opisu pliku Wiki."""
+        from monolynx.mcp_server import update_wiki_file
+        from monolynx.models.wiki_file import WikiFile
+
+        wiki_file = WikiFile(
+            project_id=mcp_project.id,
+            filename="doc.txt",
+            storage_path=f"{mcp_project.slug}/wiki-files/doc.txt",
+            mime_type="text/plain",
+            size=10,
+            description="Old description",
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_wiki_file(ctx, mcp_project.slug, str(wiki_file.id), description="New description")
+
+        assert result["description"] == "New description"
+        assert result["message"] == "Plik zaktualizowany"
+
+    async def test_updates_filename(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zmiana nazwy pliku Wiki."""
+        from monolynx.mcp_server import update_wiki_file
+        from monolynx.models.wiki_file import WikiFile
+
+        wiki_file = WikiFile(
+            project_id=mcp_project.id,
+            filename="oldname.txt",
+            storage_path=f"{mcp_project.slug}/wiki-files/oldname.txt",
+            mime_type="text/plain",
+            size=10,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await update_wiki_file(ctx, mcp_project.slug, str(wiki_file.id), filename="newname.txt")
+
+        assert result["filename"] == "newname.txt"
+
+    async def test_not_found_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy plik -> ValueError."""
+        from monolynx.mcp_server import update_wiki_file
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Plik nie istnieje"),
+        ):
+            await update_wiki_file(ctx, mcp_project.slug, str(uuid.uuid4()), description="X")
+
+
+# ---------------------------------------------------------------------------
+# list_wiki_files (linie 4662-4684)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListWikiFiles:
+    """Testy narzedzia list_wiki_files."""
+
+    async def test_empty_returns_empty_list(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Brak plikow -> pusta lista."""
+        from monolynx.mcp_server import list_wiki_files
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_wiki_files(ctx, mcp_project.slug)
+
+        assert result == []
+
+    async def test_returns_files_with_metadata(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Pliki zwracane z poprawnymi polami."""
+        from monolynx.mcp_server import list_wiki_files
+        from monolynx.models.wiki_file import WikiFile
+
+        f1 = WikiFile(
+            project_id=mcp_project.id,
+            filename="alpha.md",
+            storage_path=f"{mcp_project.slug}/wiki-files/alpha.md",
+            mime_type="text/markdown",
+            size=100,
+            description="Alpha file",
+        )
+        f2 = WikiFile(
+            project_id=mcp_project.id,
+            filename="beta.pdf",
+            storage_path=f"{mcp_project.slug}/wiki-files/beta.pdf",
+            mime_type="application/pdf",
+            size=200,
+        )
+        db_session.add(f1)
+        db_session.add(f2)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_wiki_files(ctx, mcp_project.slug)
+
+        assert len(result) == 2
+        filenames = {f["filename"] for f in result}
+        assert "alpha.md" in filenames
+        assert "beta.pdf" in filenames
+        # Kazdy wpis ma wymagane pola
+        for f in result:
+            assert "file_id" in f
+            assert "filename" in f
+            assert "mime_type" in f
+            assert "size" in f
+            assert "created_at" in f
