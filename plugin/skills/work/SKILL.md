@@ -180,7 +180,7 @@ date +%s
 4. Zmien status ticketa na `in_progress`:
 
 ```
-mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ID>", status="in_progress")
+mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ID>", status="in_progress", assignee_email="me")
 ```
 
 ## KROK 5: Team Agent - dobierz agentow na podstawie raportu

@@ -2376,6 +2376,7 @@ async def update_ticket(
     """Aktualizuj istniejacy ticket. Podaj tylko pola do zmiany.
 
     ticket_id: UUID ticketa lub klucz (np. MNX-12).
+    assignee_email: email uzytkownika, pusty string aby wyczysc, lub "me" dla aktualnego uzytkownika
     due_date: data graniczna w formacie YYYY-MM-DD, lub pusty string aby wyczysc
     label_ids: lista UUID etykiet — zastepuje wszystkie poprzednie etykiety; [] = usun etykiety
     """
@@ -2430,6 +2431,8 @@ async def update_ticket(
                 ticket.sprint_id = uuid.UUID(sprint_id)
 
         if assignee_email is not None:
+            if assignee_email == "me":
+                assignee_email = _user.email
             if assignee_email == "":
                 ticket.assignee_id = None
             else:
