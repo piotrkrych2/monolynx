@@ -80,8 +80,8 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 
 | Komenda | Opis |
 |---------|------|
-| `/monolynx:work` | Podejmij zadanie z aktualnego sprintu: walidacja brancha, research, dobór zespołu agentów i praca równoległa z obowiązkowym krytykiem. |
-| `/monolynx:work-simple` | Uproszczony flow dla mniejszych ticketów (<8 SP): jeden dobrany dev + krytyk jako zwykłe subagenty (bez Agent Teams), research opt-in, pełna ceremonia self-reporting, eskalacja do `/monolynx:work` gdy scope się rozrasta. |
+| `/monolynx:work` | Podejmij zadanie z aktualnego sprintu: walidacja brancha, research, dobór zespołu agentów i praca równoległa z obowiązkowym krytykiem. Raportuje przebieg pracy do modułu Pipelines (obserwowalność): pipeline `ticket_work` ze stepami research → coding → wrap-up, job per agent, log każdego agenta jako strona wiki. Raportowanie best-effort - nie blokuje pracy. |
+| `/monolynx:work-simple` | Uproszczony flow dla mniejszych ticketów (<8 SP): jeden dobrany dev + krytyk jako zwykłe subagenty (bez Agent Teams), research opt-in, pełna ceremonia self-reporting, eskalacja do `/monolynx:work` gdy scope się rozrasta. Raportuje do modułu Pipelines (uproszczona instrumentacja: dev + krytyk), best-effort. |
 | `/monolynx:ticket-create` | Utwórz nowy ticket: zbiera kontekst z wiki, kodu i grafu zależności, generuje opis w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zależności). |
 | `/monolynx:ticket-review` | Zrecenzuj ticket ze sprintu: sprawdza formę, zgodność z wiki i kodem, generuje tabelkę raportu i proponuje poprawki. |
 | `/monolynx:search` | Szukaj informacji w wiki projektu (architektura, API, integracje, standardy kodu) przez wyszukiwanie semantyczne; przy włączonej metodzie LLM Wiki proponuje zapis odpowiedzi jako stronę syntezy. |
@@ -129,3 +129,15 @@ Innymi słowy:
 ### Serwer MCP bez zmian funkcjonalnych
 
 `src/monolynx/mcp_server.py` **pozostaje bez zmian funkcjonalnych**. Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. W pliku `.mcp.json` pluginu deklaruje wyłącznie dostęp (HTTP + Bearer) do **istniejącego** serwera MCP pod adresem `${user_config.mcp_endpoint}`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
+
+## Changelog
+
+### 1.2.0
+
+- **Instrumentacja pipeline w skillach `work` i `work-simple`**: każdy krok pracy raportuje przebieg do nowego modułu Pipelines (obserwowalność pracy agentów, wzorowana na GitLab CI/CD). Tworzy się pipeline `ticket_work` ze stepami research → coding → wrap-up, każdy agent dostaje swój job, a jego raport (co zrobił, decyzje, pliki) zapisywany jest jako strona wiki podpięta pod job. Status, czas trwania i logi widać na żywo w zakładce "Pipelines" projektu.
+- Raportowanie jest **best-effort**: błąd toola pipeline nigdy nie przerywa pracy nad ticketem; gdy serwer MCP nie ma modułu Pipelines (starsza wersja), skille działają jak dotychczas.
+- **Wymaga nowych narzędzi MCP na serwerze** (Monolynx >= moduł Pipelines): `create_pipeline`, `create_pipeline_job`, `update_pipeline_job`, `append_job_log`, `finish_pipeline`, `list_pipelines`, `get_pipeline`, `get_pipeline_job_log`.
+
+### 1.1.x
+
+- Skille LLM Wiki (`wiki-init`, `wiki-ingest`, `wiki-lint`, `wiki-sync-merge`), Spec-Driven Development (`spec_page_id`), pakiet skilli i agentów oraz zdalny dostęp MCP.

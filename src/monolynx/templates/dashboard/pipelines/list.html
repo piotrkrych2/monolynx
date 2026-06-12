@@ -1,0 +1,89 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Pipelines - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+
+{# Naglowek #}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Pipelines</h1>
+        <p class="text-sm text-gray-500 mt-1">Historia i postep uruchomien agentow dla projektu.</p>
+    </div>
+</div>
+
+{# Filtry #}
+<div class="flex flex-wrap gap-2 mb-4">
+    {# Filtr statusu #}
+    <div class="flex gap-1 bg-gray-800 rounded-lg p-1">
+        <a href="?pipeline_type={{ filter_type }}&page=1"
+           class="px-3 py-1.5 text-sm rounded transition
+                  {% if not filter_status %}bg-gray-600 text-white{% else %}text-gray-400 hover:text-gray-200{% endif %}">
+            Wszystkie
+        </a>
+        {% for status_key, status_label in pipeline_status_labels.items() %}
+        <a href="?status={{ status_key }}&pipeline_type={{ filter_type }}&page=1"
+           class="px-3 py-1.5 text-sm rounded transition
+                  {% if filter_status == status_key %}bg-gray-600 text-white{% else %}text-gray-400 hover:text-gray-200{% endif %}">
+            {{ status_label }}
+        </a>
+        {% endfor %}
+    </div>
+
+    {# Filtr typu #}
+    <div class="flex gap-1 bg-gray-800 rounded-lg p-1">
+        <a href="?status={{ filter_status }}&page=1"
+           class="px-3 py-1.5 text-sm rounded transition
+                  {% if not filter_type %}bg-gray-600 text-white{% else %}text-gray-400 hover:text-gray-200{% endif %}">
+            Wszystkie typy
+        </a>
+        {% for type_key, type_label in pipeline_type_labels.items() %}
+        <a href="?status={{ filter_status }}&pipeline_type={{ type_key }}&page=1"
+           class="px-3 py-1.5 text-sm rounded transition
+                  {% if filter_type == type_key %}bg-gray-600 text-white{% else %}text-gray-400 hover:text-gray-200{% endif %}">
+            {{ type_label }}
+        </a>
+        {% endfor %}
+    </div>
+</div>
+
+{# Kontener listy z pollingiem HTMX co 15s #}
+<div
+    hx-get="/dashboard/{{ project.slug }}/pipelines/partial/list?status={{ filter_status }}&pipeline_type={{ filter_type }}&page={{ page }}"
+    hx-trigger="every 15s"
+    hx-swap="innerHTML">
+
+    {% include "dashboard/pipelines/_list_rows.html" %}
+
+</div>
+
+{# Timer JS dla statusu 'running' - idempotentny (jeden setInterval globalny) #}
+<script>
+(function () {
+    if (window._pipelineDurationTimer) {
+        return; // juz zainicjalizowany - nie duplikuj
+    }
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function formatDuration(seconds) {
+        var h = Math.floor(seconds / 3600);
+        var m = Math.floor((seconds % 3600) / 60);
+        var s = seconds % 60;
+        if (h > 0) { return h + 'h ' + pad(m) + 'm'; }
+        return m + 'm ' + pad(s) + 's';
+    }
+    window._pipelineDurationTimer = setInterval(function () {
+        var now = Date.now();
+        document.querySelectorAll('.js-duration[data-started-at]').forEach(function (el) {
+            var iso = el.getAttribute('data-started-at');
+            if (!iso) { return; }
+            var started = new Date(iso).getTime();
+            if (isNaN(started)) { return; }
+            var elapsed = Math.floor((now - started) / 1000);
+            if (elapsed < 0) { elapsed = 0; }
+            el.textContent = formatDuration(elapsed);
+        });
+    }, 1000);
+})();
+</script>
+
+{% endblock %}

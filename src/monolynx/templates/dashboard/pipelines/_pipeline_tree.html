@@ -1,0 +1,129 @@
+{# Partial: nagłówek + drzewo stepów/jobów pipeline'u (bez extends) #}
+{# Całość odświeżana pollingiem HTMX co 15s z pipeline_detail_partial #}
+
+{# Nagłówek pipeline - tu, żeby status badge też był odświeżany #}
+<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5 mb-6">
+    <div class="flex flex-wrap items-start gap-4">
+        <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-2 mb-2">
+                <span class="inline-flex items-center gap-1.5 text-sm font-semibold px-2.5 py-1 rounded {{ status_class }}">
+                    {% if is_running %}
+                    <span class="w-1.5 h-1.5 rounded-full bg-blue-300 animate-pulse flex-shrink-0"></span>
+                    {% endif %}
+                    {{ status_label }}
+                </span>
+                <span class="text-sm text-gray-500">{{ type_label }}</span>
+                {% if ticket_key and ticket_id %}
+                <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket_id }}"
+                   class="text-xs text-indigo-400 hover:text-indigo-300 font-mono bg-gray-700 px-1.5 py-0.5 rounded">
+                    {{ ticket_key }}
+                </a>
+                {% endif %}
+                {% if ticket_title %}
+                <span class="text-sm text-gray-600 dark:text-gray-400 truncate">{{ ticket_title }}</span>
+                {% endif %}
+                {% if is_stale %}
+                <span class="text-xs font-medium bg-yellow-700 text-yellow-200 px-1.5 py-0.5 rounded">zawieszony</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
+                {% if branch %}
+                <span class="font-mono">{{ branch }}</span>
+                {% endif %}
+                {% if triggered_by_name %}
+                <span>{% if branch %}&middot; {% endif %}uruchomił: {{ triggered_by_name }}</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="text-right flex-shrink-0 text-sm text-gray-400 space-y-0.5">
+            {% if started_at %}
+            <p>Start: <span class="text-gray-300">{{ started_at|localtime('%d.%m %H:%M') }}</span></p>
+            {% endif %}
+            <p>Czas:
+                {% if is_running and started_iso %}
+                <span class="font-mono tabular-nums text-blue-300 js-duration" data-started-at="{{ started_iso }}">--:--</span>
+                {% elif duration %}
+                <span class="font-mono tabular-nums text-gray-300">{{ duration }}</span>
+                {% else %}
+                <span class="text-gray-600">-</span>
+                {% endif %}
+            </p>
+        </div>
+    </div>
+</div>
+
+{# Drzewo stepów - 3 kolumny #}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    {% set step_names = ["research", "coding", "wrap-up"] %}
+    {% set step_map = {} %}
+    {% for s in steps %}
+        {% if step_map.update({s.name: s}) %}{% endif %}
+    {% endfor %}
+
+    {% for step_name in step_names %}
+        {% set step = step_map.get(step_name) %}
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+            {# Nagłówek kolumny #}
+            <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    {% if step %}
+                    <span class="w-2.5 h-2.5 rounded-full {{ step.dot_class }} flex-shrink-0"></span>
+                    <span class="text-sm font-semibold text-gray-200">{{ step.name_label }}</span>
+                    {% else %}
+                    <span class="w-2.5 h-2.5 rounded-full bg-gray-600 flex-shrink-0"></span>
+                    <span class="text-sm font-semibold text-gray-500">
+                        {% if step_name == "research" %}Research
+                        {% elif step_name == "coding" %}Coding
+                        {% else %}Wrap-up{% endif %}
+                    </span>
+                    {% endif %}
+                </div>
+                {% if step and step.duration %}
+                <span class="text-xs text-gray-500 font-mono tabular-nums">{{ step.duration }}</span>
+                {% endif %}
+            </div>
+
+            {# Joby w kolumnie #}
+            <div class="p-3 space-y-2">
+                {% if step and step.jobs %}
+                    {% for job in step.jobs %}
+                    <a href="{{ job.url }}"
+                       class="block bg-gray-750 dark:bg-gray-750 border border-gray-700 hover:border-indigo-500 rounded-md p-3 transition group">
+                        <div class="flex items-start gap-2">
+                            <span class="w-2 h-2 rounded-full {{ job.dot_class }} flex-shrink-0 mt-1.5
+                                         {% if job.is_running %}animate-pulse{% endif %}"></span>
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span class="text-sm font-medium text-gray-200 group-hover:text-white truncate">{{ job.name }}</span>
+                                    {% if job.attempt and job.attempt > 1 %}
+                                    <span class="text-xs bg-yellow-800 text-yellow-300 px-1 rounded">#{{ job.attempt }}</span>
+                                    {% endif %}
+                                </div>
+                                <p class="text-xs text-gray-500 mt-0.5">{{ job.agent_type }}</p>
+                                {% if job.summary %}
+                                <p class="text-xs text-gray-400 mt-1 line-clamp-2">{{ job.summary }}</p>
+                                {% endif %}
+                                <div class="flex items-center gap-3 mt-1.5 flex-wrap">
+                                    {% if job.is_running and job.started_iso %}
+                                    <span class="text-xs text-blue-400 font-mono tabular-nums js-duration" data-started-at="{{ job.started_iso }}">--:--</span>
+                                    {% elif job.duration %}
+                                    <span class="text-xs text-gray-500 font-mono tabular-nums">{{ job.duration }}</span>
+                                    {% endif %}
+                                    {% if job.score is not none %}
+                                    <span class="text-xs text-gray-400">
+                                        <span class="{% if job.score >= 80 %}text-green-400{% elif job.score >= 50 %}text-yellow-400{% else %}text-red-400{% endif %}">{{ job.score }}</span>/100
+                                    </span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </a>
+                    {% endfor %}
+                {% else %}
+                <p class="text-xs text-gray-600 text-center py-4">brak jobów</p>
+                {% endif %}
+            </div>
+        </div>
+    {% endfor %}
+</div>

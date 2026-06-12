@@ -210,12 +210,14 @@ class TestUpdatePageEmbeddings:
     async def test_empty_content_no_chunks(self, mock_enabled, mock_chunk, mock_gen):
         """Pusta tresc -- brak chunkow, commit i powrot."""
         mock_db = AsyncMock()
-        mock_db.execute = AsyncMock()
+        flag_result = MagicMock()
+        flag_result.scalar_one_or_none.return_value = False  # strona NIE wykluczona z embeddingow
+        mock_db.execute = AsyncMock(return_value=flag_result)
         mock_db.commit = AsyncMock()
 
         await update_page_embeddings(uuid.uuid4(), "", mock_db)
 
-        mock_db.execute.assert_awaited_once()  # delete stare embeddingi
+        assert mock_db.execute.await_count == 2  # SELECT flagi exclude + DELETE starych embeddingow
         mock_db.commit.assert_awaited_once()
         mock_gen.assert_not_awaited()
 
@@ -225,7 +227,9 @@ class TestUpdatePageEmbeddings:
     async def test_vectors_none_commits_without_adding(self, mock_enabled, mock_chunk, mock_gen):
         """Gdy generate_embeddings zwraca None, commit bez dodawania embeddingow."""
         mock_db = AsyncMock()
-        mock_db.execute = AsyncMock()
+        flag_result = MagicMock()
+        flag_result.scalar_one_or_none.return_value = False
+        mock_db.execute = AsyncMock(return_value=flag_result)
         mock_db.commit = AsyncMock()
         mock_db.add = MagicMock()
 
@@ -244,7 +248,9 @@ class TestUpdatePageEmbeddings:
 
         page_id = uuid.uuid4()
         mock_db = AsyncMock()
-        mock_db.execute = AsyncMock()
+        flag_result = MagicMock()
+        flag_result.scalar_one_or_none.return_value = False
+        mock_db.execute = AsyncMock(return_value=flag_result)
         mock_db.commit = AsyncMock()
         mock_db.add = MagicMock()
 

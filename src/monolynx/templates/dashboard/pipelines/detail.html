@@ -1,0 +1,55 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Pipeline {{ pipeline_id_short }} - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+
+{# Breadcrumb #}
+<nav class="flex items-center gap-1.5 text-sm text-gray-500 mb-5">
+    <a href="/dashboard/{{ project.slug }}/pipelines/" class="hover:text-gray-300 transition">Pipelines</a>
+    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+    <span class="text-gray-300 font-mono">{{ pipeline_id_short }}</span>
+</nav>
+
+{# Kontener z pollingiem - zawiera nagłówek + drzewo #}
+<div
+    hx-get="/dashboard/{{ project.slug }}/pipelines/{{ pipeline_id }}/partial/tree"
+    hx-trigger="every 15s"
+    hx-swap="innerHTML">
+
+    {% include "dashboard/pipelines/_pipeline_tree.html" %}
+
+</div>
+
+{# Timer JS - idempotentny, skanuje cały DOM co sekundę #}
+<script>
+(function () {
+    if (window._pipelineDurationTimer) {
+        return;
+    }
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function formatDuration(seconds) {
+        var h = Math.floor(seconds / 3600);
+        var m = Math.floor((seconds % 3600) / 60);
+        var s = seconds % 60;
+        if (h > 0) { return h + 'h ' + pad(m) + 'm'; }
+        return m + 'm ' + pad(s) + 's';
+    }
+    window._pipelineDurationTimer = setInterval(function () {
+        var now = Date.now();
+        document.querySelectorAll('.js-duration[data-started-at]').forEach(function (el) {
+            var iso = el.getAttribute('data-started-at');
+            if (!iso) { return; }
+            var started = new Date(iso).getTime();
+            if (isNaN(started)) { return; }
+            var elapsed = Math.floor((now - started) / 1000);
+            if (elapsed < 0) { elapsed = 0; }
+            el.textContent = formatDuration(elapsed);
+        });
+    }, 1000);
+})();
+</script>
+
+{% endblock %}

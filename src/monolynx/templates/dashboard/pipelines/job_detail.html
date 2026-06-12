@@ -1,0 +1,155 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}{{ job.name }} - Pipeline {{ pipeline_id_short }} - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+
+{# Breadcrumb #}
+<nav class="flex items-center gap-1.5 text-sm text-gray-500 mb-5 flex-wrap">
+    <a href="/dashboard/{{ project.slug }}/pipelines/" class="hover:text-gray-300 transition">Pipelines</a>
+    <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+    <a href="/dashboard/{{ project.slug }}/pipelines/{{ pipeline_id }}" class="hover:text-gray-300 transition font-mono">
+        {{ pipeline_id_short }}
+        {% if ticket_key %}
+        <span class="text-indigo-400">({{ ticket_key }})</span>
+        {% endif %}
+    </a>
+    <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+    {% if step_name_label %}
+    <span class="text-gray-400">{{ step_name_label }}</span>
+    <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+    {% endif %}
+    <span class="text-gray-300">{{ job.name }}</span>
+</nav>
+
+{# Panel metadanych joba #}
+<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-5 mb-6">
+    <div class="flex flex-wrap items-start gap-4 mb-4">
+        <div class="flex-1 min-w-0">
+            <h1 class="text-xl font-bold text-gray-900 dark:text-white mb-1">{{ job.name }}</h1>
+            <p class="text-sm text-gray-500">{{ job.agent_type }}</p>
+        </div>
+        <div class="flex-shrink-0 flex items-center gap-2 flex-wrap">
+            <span class="inline-flex items-center gap-1.5 text-sm font-semibold px-2.5 py-1 rounded {{ job.status_class }}">
+                {% if job.is_running %}
+                <span class="w-1.5 h-1.5 rounded-full bg-blue-300 animate-pulse flex-shrink-0"></span>
+                {% endif %}
+                {{ job.status_label }}
+            </span>
+            {% if job.attempt and job.attempt > 1 %}
+            <span class="text-sm bg-yellow-800 text-yellow-300 px-2 py-1 rounded font-medium">Próba #{{ job.attempt }}</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+        <div>
+            <dt class="text-gray-500 mb-1">Start</dt>
+            <dd class="text-gray-200">
+                {% if job.started_at %}{{ job.started_at|localtime('%d.%m %H:%M:%S') }}{% else %}-{% endif %}
+            </dd>
+        </div>
+        <div>
+            <dt class="text-gray-500 mb-1">Koniec</dt>
+            <dd class="text-gray-200">
+                {% if job.finished_at %}{{ job.finished_at|localtime('%d.%m %H:%M:%S') }}{% else %}-{% endif %}
+            </dd>
+        </div>
+        <div>
+            <dt class="text-gray-500 mb-1">Czas trwania</dt>
+            <dd class="font-mono tabular-nums">
+                {% if job.is_running and started_iso %}
+                <span class="text-blue-300 js-duration" data-started-at="{{ started_iso }}">--:--</span>
+                {% elif job.duration %}
+                <span class="text-gray-200">{{ job.duration }}</span>
+                {% else %}
+                <span class="text-gray-600">-</span>
+                {% endif %}
+            </dd>
+        </div>
+        <div>
+            <dt class="text-gray-500 mb-1">Wynik</dt>
+            <dd>
+                {% if job.score is not none %}
+                <span class="font-bold {% if job.score >= 80 %}text-green-400{% elif job.score >= 50 %}text-yellow-400{% else %}text-red-400{% endif %}">
+                    {{ job.score }}<span class="text-gray-500 font-normal">/100</span>
+                </span>
+                {% else %}
+                <span class="text-gray-600">-</span>
+                {% endif %}
+            </dd>
+        </div>
+    </dl>
+
+    {% if job.summary %}
+    <div class="mt-4 pt-4 border-t border-gray-700">
+        <p class="text-xs text-gray-500 mb-1">Podsumowanie</p>
+        <p class="text-sm text-gray-300">{{ job.summary }}</p>
+    </div>
+    {% endif %}
+
+    {% if wiki_page_id %}
+    <div class="mt-4 pt-4 border-t border-gray-700">
+        <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ wiki_page_id }}"
+           class="inline-flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            Otwórz w wiki
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+{# Log agenta #}
+<div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+    <div class="px-5 py-3 border-b border-gray-700 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-gray-300">Log agenta</h2>
+    </div>
+    <div class="p-5">
+        {% if log_html %}
+        <div class="prose prose-invert max-w-none">{{ log_html|safe }}</div>
+        {% else %}
+        <p class="text-sm text-gray-500 text-center py-6">
+            Agent jeszcze nie zalogował raportu.
+        </p>
+        {% endif %}
+    </div>
+</div>
+
+{# Timer JS dla statusu running - idempotentny #}
+{% if job.is_running and started_iso %}
+<script>
+(function () {
+    if (window._pipelineDurationTimer) { return; }
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function formatDuration(seconds) {
+        var h = Math.floor(seconds / 3600);
+        var m = Math.floor((seconds % 3600) / 60);
+        var s = seconds % 60;
+        if (h > 0) { return h + 'h ' + pad(m) + 'm'; }
+        return m + 'm ' + pad(s) + 's';
+    }
+    window._pipelineDurationTimer = setInterval(function () {
+        var now = Date.now();
+        document.querySelectorAll('.js-duration[data-started-at]').forEach(function (el) {
+            var iso = el.getAttribute('data-started-at');
+            if (!iso) { return; }
+            var started = new Date(iso).getTime();
+            if (isNaN(started)) { return; }
+            var elapsed = Math.floor((now - started) / 1000);
+            if (elapsed < 0) { elapsed = 0; }
+            el.textContent = formatDuration(elapsed);
+        });
+    }, 1000);
+})();
+</script>
+{% endif %}
+
+{% endblock %}

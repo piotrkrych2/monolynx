@@ -13,6 +13,7 @@ from monolynx.models.heartbeat import Heartbeat
 from monolynx.models.issue import Issue
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
+from monolynx.models.pipeline import Pipeline
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,7 @@ class SidebarBadges:
     monitors_failing_pulse: bool = False
     monitoring_uptime_24h: float | None = None
     heartbeats_down: int = 0
+    pipelines_running: int = 0
 
 
 async def get_sidebar_badges(project_id: uuid.UUID, db: AsyncSession) -> SidebarBadges:
@@ -105,6 +107,15 @@ async def get_sidebar_badges(project_id: uuid.UUID, db: AsyncSession) -> Sidebar
     )
     heartbeats_down: int = heartbeats_down_result.scalar_one()
 
+    # Pipelines: uruchomione (status running)
+    pipelines_running_result = await db.execute(
+        select(func.count(Pipeline.id)).where(
+            Pipeline.project_id == project_id,
+            Pipeline.status == "running",
+        )
+    )
+    pipelines_running: int = pipelines_running_result.scalar_one()
+
     return SidebarBadges(
         issues_count=issues_count,
         issues_pulse=issues_recent > 0,
@@ -112,4 +123,5 @@ async def get_sidebar_badges(project_id: uuid.UUID, db: AsyncSession) -> Sidebar
         monitors_failing_pulse=monitors_failing_recent > 0,
         monitoring_uptime_24h=monitoring_uptime_24h,
         heartbeats_down=heartbeats_down,
+        pipelines_running=pipelines_running,
     )

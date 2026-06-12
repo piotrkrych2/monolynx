@@ -1,6 +1,6 @@
 {
   "name": "monolynx",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "description": "Monolynx: platforma multi-modułowa (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy). Skille, agenci i zdalny serwer MCP dla Claude Code.",
   "homepage": "https://monolynx.com",
   "author": { "name": "Monolynx" },

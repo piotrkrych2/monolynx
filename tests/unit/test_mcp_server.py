@@ -288,6 +288,14 @@ EXPECTED_TOOLS = [
     "regenerate_wiki_index",
     "append_wiki_log",
     "bootstrap_wiki_llm",
+    "create_pipeline",
+    "create_pipeline_job",
+    "update_pipeline_job",
+    "finish_pipeline",
+    "list_pipelines",
+    "get_pipeline",
+    "get_pipeline_job_log",
+    "append_job_log",
 ]
 
 # Narzedzia ktore nie wymagaja project_slug (operuja po ticket_id, entry_id, lub cross-project).

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is this project?
 
-Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), a Wiki module (markdown pages with semantic RAG search via pgvector, plus an opt-in "LLM Wiki" method with backlinks, system pages, and INGEST/QUERY/LINT operations), a Connections module (code dependency graph visualization using Neo4j), and a Work Plan / Gantt module (personal per-user cross-project scheduling with Gantt and calendar views). The architecture supports adding new modules via the sidebar navigation.
+Monolynx is a multi-module project platform. It started as a minimalist error-tracking system (500ki module — named after HTTP 500 errors) and now includes a Scrum module (backlog, Kanban board, sprints, story points), a Monitoring module (URL health checks with uptime tracking), a Wiki module (markdown pages with semantic RAG search via pgvector, plus an opt-in "LLM Wiki" method with backlinks, system pages, and INGEST/QUERY/LINT operations), a Connections module (code dependency graph visualization using Neo4j), a Work Plan / Gantt module (personal per-user cross-project scheduling with Gantt and calendar views), and a Pipelines module (observability over AI agent work, modeled on GitLab CI/CD; pipeline -> step -> job hierarchy where job logs are stored as wiki pages). The architecture supports adding new modules via the sidebar navigation.
 
 ## Commands
 
@@ -71,8 +71,9 @@ Two separate packages in one repo:
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
 - `dashboard/reports.py` — global cross-project work reports with multi-select filtering (project, user, sprint), date range, and PDF export via weasyprint (`/dashboard/reports`)
 - `dashboard/work_plan.py`: Work Plan module (prefix `/dashboard/plan`): personal per-user cross-project scheduling via junction model (`User x Ticket x Date`), Gantt view (frappe-gantt) and monthly calendar, REST endpoints for entries CRUD plus JSON data and ticket autocomplete; independent of sprint assignment
+- `dashboard/pipelines.py` - Pipelines module: pipeline list (with status/type filtering + pagination), pipeline detail (step columns research/coding/wrap-up with job cards), job detail (markdown log rendered from wiki), JSON API endpoints and HTMX partials for 15s live polling (`/dashboard/{slug}/pipelines/*`); session auth, read-only UI (pipelines are created by skills via MCP, not from the dashboard)
 
-**Models** (`models/`) — 23 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, TicketAttachment, Monitor, MonitorCheck, TimeTrackingEntry, WorkPlanEntry, WikiPage, WikiEmbedding, WikiAttachment, WikiFile, WikiBacklink, ActivityLog, Heartbeat, Label, TicketLabel + OAuth models (OAuthClient, OAuthAuthorizationCode, OAuthAccessToken, OAuthRefreshToken) + Base
+**Models** (`models/`) — 26 SQLAlchemy models: Project, Issue, Event, User, UserApiToken, ProjectMember, Sprint, Ticket, TicketComment, TicketAttachment, Monitor, MonitorCheck, TimeTrackingEntry, WorkPlanEntry, WikiPage, WikiEmbedding, WikiAttachment, WikiFile, WikiBacklink, ActivityLog, Heartbeat, Label, TicketLabel, Pipeline, PipelineStep, PipelineJob + OAuth models (OAuthClient, OAuthAuthorizationCode, OAuthAccessToken, OAuthRefreshToken) + Base
 
 **Services**:
 - `services/fingerprint.py` — SHA256 of exception type + app-frame filenames:functions
@@ -94,6 +95,7 @@ Two separate packages in one repo:
 - `services/minio_client.py` — MinIO object storage for wiki markdown files and attachments
 - `services/graph.py` — Neo4j graph database: async driver singleton, CRUD for nodes/edges, query operations (get_graph, find_path, get_neighbors, get_stats); graceful degradation pattern (like embeddings.py) — `is_enabled()`, try/except, None fallback when `ENABLE_GRAPH_DB=false`
 - `services/work_plan.py`: Work Plan scheduling: `schedule()`, `update()` (uses `_UNSET` sentinel for partial PATCH of `notes`), `unschedule()`, `list_for_user_range()` (max 90 days, eager loads ticket+project), `today_for_user()`, `schedule_for_ticket()`; validates project membership and entry ownership, handles `IntegrityError` from the unique constraint
+- `services/pipelines.py` - Pipelines lifecycle: `create_pipeline()` (seeds the 3 `ticket_work` steps), `create_job()`, `update_job_by_id()` (status transitions set timestamps and propagate up: job -> step via `_update_step_status` -> pipeline), `finish_pipeline()` (aggregates final status from steps when not given), `list_pipelines()`, `get_pipeline()` (full tree), `is_stale()` (running + no update >6h, computed at read time, no cron). Wiki log integration: `ensure_pipeline_logs_parent()` (idempotent `pipeline-logi` parent page, excluded from embeddings), `append_job_log()` (creates/appends the job's wiki log page, links `wiki_page_id`), `maybe_log_pipeline_to_wiki_log()` (best-effort `wiki-log` entry when LLM Wiki enabled). Commits in the service layer
 
 **Worker** (`worker.py`):
 - Standalone entry point (`python -m monolynx.worker`) — runs monitor checker loop without web server
@@ -102,7 +104,7 @@ Two separate packages in one repo:
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
-- 107 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Wiki LLM method (`get_wiki_config`, `set_wiki_config`, `bootstrap_wiki_llm`, `lint_wiki`, `get_wiki_backlinks`, `regenerate_wiki_index`, `append_wiki_log`), Graph (node/edge CRUD, bulk operations, query, path finding, stats), Work Plan (`schedule_ticket`, `update_work_plan_entry`, `delete_work_plan_entry`, `list_work_plan`, `get_today_tasks`, `get_ticket_schedule`), project summary
+- 115 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Wiki LLM method (`get_wiki_config`, `set_wiki_config`, `bootstrap_wiki_llm`, `lint_wiki`, `get_wiki_backlinks`, `regenerate_wiki_index`, `append_wiki_log`), Graph (node/edge CRUD, bulk operations, query, path finding, stats), Work Plan (`schedule_ticket`, `update_work_plan_entry`, `delete_work_plan_entry`, `list_work_plan`, `get_today_tasks`, `get_ticket_schedule`), Pipelines (`create_pipeline`, `create_pipeline_job`, `update_pipeline_job`, `append_job_log`, `finish_pipeline`, `list_pipelines`, `get_pipeline`, `get_pipeline_job_log`), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 - `install_monolynx_skills` tool serves skill copies from `static/skills/` for manual install into a project's `.claude/skills/` (used by claude.ai web and environments without plugin support)
@@ -127,7 +129,7 @@ Two separate packages in one repo:
 - `transport.py` sends events via `ThreadPoolExecutor(max_workers=2)` using `urllib.request`
 - Django settings: `MONOLYNX_DSN` or `MONOLYNX_URL` + `MONOLYNX_API_KEY`
 
-**Schemas** (`schemas/`) — Pydantic models for validation: `events.py`, `issues.py`, `scrum.py`, `time_tracking.py` (includes `WorkReportResult` for aggregated reports), `graph.py` (GraphNodeCreate/Update/Response, GraphEdgeCreate/Response, GraphSearchResult), `wiki.py` (`WikiBacklinkResponse`)
+**Schemas** (`schemas/`) — Pydantic models for validation: `events.py`, `issues.py`, `scrum.py`, `time_tracking.py` (includes `WorkReportResult` for aggregated reports), `graph.py` (GraphNodeCreate/Update/Response, GraphEdgeCreate/Response, GraphSearchResult), `wiki.py` (`WikiBacklinkResponse`), `pipelines.py` (list-item and full-tree response builders for the live JSON API: `build_list_item`, `build_pipeline_response`)
 
 **Data flow**: Django error → SDK middleware `process_exception()` → background thread POST → FastAPI ingests → fingerprint → find/create Issue → store Event (JSONB)
 
@@ -195,6 +197,13 @@ Two separate packages in one repo:
 /dashboard/plan/entries                         : create entry (POST)
 /dashboard/plan/entries/{entry_id}              : update entry (PATCH)
 /dashboard/plan/entries/{entry_id}              : delete entry (DELETE, owner only)
+/dashboard/{slug}/pipelines/                     - pipeline list (HTML, HTMX polling)
+/dashboard/{slug}/pipelines/api/list             - pipeline list JSON (status/type filter, page)
+/dashboard/{slug}/pipelines/api/{pipeline_id}    - full pipeline tree JSON (steps + jobs)
+/dashboard/{slug}/pipelines/partial/list         - HTML partial of list rows (15s polling)
+/dashboard/{slug}/pipelines/{pipeline_id}        - pipeline detail (step columns + job cards)
+/dashboard/{slug}/pipelines/{pipeline_id}/partial/tree  - HTML partial of step/job tree (15s polling)
+/dashboard/{slug}/pipelines/{pipeline_id}/jobs/{job_id} - job detail (metadata + markdown log from wiki)
 /mcp                                           — MCP server (Bearer token auth)
 ```
 
@@ -228,6 +237,8 @@ Two separate packages in one repo:
 - Neo4j graph database for Connections module; node types: File, Class, Method, Function, Const, Module; edge types: CONTAINS, CALLS, IMPORTS, INHERITS, USES, IMPLEMENTS; data isolated per project via `project_id` property; graceful degradation when `ENABLE_GRAPH_DB=false`
 - Cytoscape.js (CDN v3.30.4) for interactive graph visualization; force-directed layout (cose); node/edge coloring by type; filtering via checkboxes; side panel with node details on click
 - Work Plan uses a junction model `WorkPlanEntry` (`user_id`, `ticket_id`, `scheduled_date`) with `UniqueConstraint(user_id, ticket_id, scheduled_date)`; enables per-user cross-project scheduling independent of sprint assignment; the cross-project list returns only entries owned by the current user from projects where they have membership (no cross-project data leak); frappe-gantt renders the Gantt view, calendar mode is a custom monthly grid
+- Pipelines model AI agent work as observability (not execution): hierarchy `Pipeline -> PipelineStep -> PipelineJob` in PostgreSQL (not Neo4j). `pipeline_type` is `ticket_work` (the only type implemented; steps `research`, `coding`, `wrap-up`) or `sprint_close` (reserved in the model/enum, steps and skill deferred to a future sprint so no migration is needed later). Durations are not stored - computed on the fly (`finished_at - started_at`, or `now() - started_at` for running, with a JS timer ticking between 15s polls). Status propagates upward in the service: a failed job -> failed step -> failed pipeline. `is_stale()` flags pipelines stuck in `running` >6h, computed at read time (no cron)
+- Pipeline job logs are stored as wiki pages under the `pipeline-logi` parent (content in MinIO, metadata in PostgreSQL), linked via `PipelineJob.wiki_page_id`. These pages set `WikiPage.exclude_from_embeddings=True` so the high volume of agent logs (roughly 6-8 pages per ticket) does not pollute RAG `search_wiki` results. When LLM Wiki is enabled, finishing a pipeline appends a `wiki-log` entry. Skills report to pipelines best-effort: a pipeline MCP error never fails the ticket work (pipelines are observability, not a gate). Every pipeline write MCP tool must `await db.commit()` (MON-71 regression)
 
 ## Test patterns
 
