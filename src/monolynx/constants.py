@@ -213,6 +213,55 @@ ACTION_LABELS = {
 SETTLEMENT_ATTACHMENT_MAX_SIZE = 200 * 1024 * 1024  # 200 MB
 MAX_ATTACHMENTS_PER_SETTLEMENT = 50
 
+# Pipelines
+PIPELINE_TYPES = ["ticket_work", "sprint_close"]
+
+PIPELINE_TYPE_LABELS = {
+    "ticket_work": "Praca nad ticketem",
+    "sprint_close": "Zamknięcie sprintu",
+}
+
+PIPELINE_STATUSES = ["created", "running", "success", "failed", "canceled"]
+
+PIPELINE_STATUS_LABELS = {
+    "created": "Utworzony",
+    "running": "W toku",
+    "success": "Sukces",
+    "failed": "Błąd",
+    "canceled": "Anulowany",
+}
+
+PIPELINE_STEP_STATUSES = ["pending", "running", "success", "failed", "skipped", "canceled"]
+
+PIPELINE_STEP_STATUS_LABELS = {
+    "pending": "Oczekuje",
+    "running": "W toku",
+    "success": "Sukces",
+    "failed": "Błąd",
+    "skipped": "Pominięty",
+    "canceled": "Anulowany",
+}
+
+PIPELINE_JOB_STATUSES = ["created", "pending", "running", "success", "failed", "skipped", "canceled"]
+
+PIPELINE_JOB_STATUS_LABELS = {
+    "created": "Utworzony",
+    "pending": "Oczekuje",
+    "running": "W toku",
+    "success": "Sukces",
+    "failed": "Błąd",
+    "skipped": "Pominięty",
+    "canceled": "Anulowany",
+}
+
+PIPELINE_TICKET_WORK_STEPS = ["research", "coding", "wrap-up"]
+
+PIPELINE_STEP_NAME_LABELS = {
+    "research": "Research",
+    "coding": "Coding",
+    "wrap-up": "Wrap-up",
+}
+
 SETTLEMENT_CATEGORIES = frozenset({"invoice", "report", "acceptance_protocol", "other"})
 
 SETTLEMENT_STATES = frozenset({"draft", "sent", "paid"})

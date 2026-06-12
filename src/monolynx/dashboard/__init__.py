@@ -6,6 +6,7 @@ from .auth import router as auth_router
 from .connections import router as connections_router
 from .heartbeat import router as heartbeat_router
 from .monitoring import router as monitoring_router
+from .pipelines import router as pipelines_router
 from .profile import router as profile_router
 from .projects import router as projects_router
 from .reports import router as reports_router
@@ -35,4 +36,5 @@ router.include_router(monitoring_router)
 router.include_router(heartbeat_router)
 router.include_router(wiki_router)
 router.include_router(connections_router)
+router.include_router(pipelines_router)
 router.include_router(settlements_router)

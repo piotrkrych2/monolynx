@@ -34,6 +34,7 @@ class WikiPage(Base):
     position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     minio_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     is_ai_touched: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    exclude_from_embeddings: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     last_edited_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

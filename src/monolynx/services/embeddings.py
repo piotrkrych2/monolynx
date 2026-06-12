@@ -10,11 +10,12 @@ from typing import Any
 
 import tiktoken
 from openai import OpenAI
-from sqlalchemy import delete, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx.config import settings
 from monolynx.models.wiki_embedding import WikiEmbedding
+from monolynx.models.wiki_page import WikiPage
 
 logger = logging.getLogger("monolynx.embeddings")
 
@@ -97,8 +98,20 @@ async def update_page_embeddings(
     content: str,
     db: AsyncSession,
 ) -> None:
-    """Usun stare embeddingi strony i wygeneruj nowe."""
+    """Usun stare embeddingi strony i wygeneruj nowe.
+
+    Pomija generowanie gdy strona ma exclude_from_embeddings=True.
+    """
     if not is_enabled():
+        return
+
+    # Sprawdz flage exclude_from_embeddings
+    flag_result = await db.execute(select(WikiPage.exclude_from_embeddings).where(WikiPage.id == page_id))
+    exclude = flag_result.scalar_one_or_none()
+    if exclude:
+        # Usun ewentualne stare embeddingi i zakoncz
+        await db.execute(delete(WikiEmbedding).where(WikiEmbedding.wiki_page_id == page_id))
+        await db.commit()
         return
 
     # Usun stare
@@ -153,6 +166,7 @@ async def search_wiki_pages(
         FROM wiki_embeddings we
         JOIN wiki_pages wp ON wp.id = we.wiki_page_id
         WHERE wp.project_id = :project_id
+          AND wp.exclude_from_embeddings = false
         ORDER BY wp.id, we.embedding <=> CAST(:query_embedding AS vector)
     """)
 

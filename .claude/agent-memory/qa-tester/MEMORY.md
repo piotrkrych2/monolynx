@@ -6,7 +6,7 @@
 ## Quick reference
 - Test DB: `open_sentry_test`
 - All tests run inside Docker: `docker compose exec app python -m pytest ...`
-- `EXPECTED_TOOLS` list in `test_mcp_server.py` must be updated when new MCP tools are added (currently 77 tools including: list_roles, create_role, update_role, delete_role, assign_role, get_member_permissions)
+- `EXPECTED_TOOLS` list in `test_mcp_server.py` must be updated when new MCP tools are added (currently 115 tools after Pipelines module: +8 tools: create_pipeline, create_pipeline_job, update_pipeline_job, finish_pipeline, list_pipelines, get_pipeline, get_pipeline_job_log, append_job_log)
 - `mock_factory` fixture replaces `commit()` with `flush()` — critical for test isolation with outer transaction rollback
 - Always patch `monolynx.mcp_server._is_url_safe` (return_value=None) for happy-path monitor tests to bypass SSRF check
 - For tools using `_get_user_member_and_project`: patch both `async_session_factory` AND `verify_mcp_token` — the helper calls both internally
@@ -32,3 +32,5 @@
 - `delete_role` z member przypisanym: ustawienie `mcp_member.role_id = role.id` gdzie role.permissions={} sprawia że check_permission zwraca False (RBAC zamiast legacy). Obejście: patch `monolynx.mcp_server.check_permission` AsyncMock(return_value=True)
 - Format helpers importowalne bezpośrednio: `_build_allowed_hosts`, `_interval_human`, `_format_board`, `_format_ticket_detail`, `_format_monitors_table`, `_resolve_ticket_globally` - wszystkie z `monolynx.mcp_server`
 - `update_settlement` MCP: `check_permission` patchowalny przez `monolynx.mcp_server.check_permission`; `_get_settlement_for_mcp` wymaga zarówno Settlement jak i SettlementProject (M2M) w DB + selectinload(Settlement.created_by)
+- Pipelines dashboard tests (MON-96): twórz Pipeline/PipelineStep/PipelineJob bezpośrednio przez ORM + flush (nie przez svc.create_pipeline które commituje) — zachowuje outer transaction rollback; append_job_log wymaga patch upload_markdown + get_markdown + sync_backlinks + update_page_embeddings
+- `test_embeddings_service.py` 2 testy red (pre-existing): test_empty_content i test_success oczekują 1x execute, ale `exclude_from_embeddings` check (MON-90) dodaje dodatkowe execute — nie naprawiać bez potwierdzenia

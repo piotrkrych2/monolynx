@@ -380,6 +380,7 @@ async def create_wiki_page(
     parent_id: uuid.UUID | None = None,
     position: int = 0,
     is_ai: bool = False,
+    exclude_from_embeddings: bool = False,
     db: AsyncSession,
 ) -> WikiPage:
     """Utworz strone wiki -- zapis metadanych w DB, tresc w MinIO."""
@@ -403,6 +404,7 @@ async def create_wiki_page(
         position=position,
         minio_path=minio_path,
         is_ai_touched=is_ai,
+        exclude_from_embeddings=exclude_from_embeddings,
         created_by_id=user_id,
         last_edited_by_id=user_id,
     )

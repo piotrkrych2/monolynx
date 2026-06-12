@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import logging
+import math
 import os
 import re
 import secrets
@@ -32,6 +34,10 @@ from monolynx.constants import (
     LABEL_COLOR_PALETTE,
     PERMISSION_ACTIONS,
     PERMISSION_MODULES,
+    PIPELINE_JOB_STATUSES,
+    PIPELINE_STATUSES,
+    PIPELINE_TICKET_WORK_STEPS,
+    PIPELINE_TYPES,
     PRIORITIES,
     TICKET_STATUSES,
 )
@@ -45,6 +51,7 @@ from monolynx.models.issue import Issue
 from monolynx.models.label import Label, TicketLabel
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
+from monolynx.models.pipeline import Pipeline, PipelineJob, PipelineStep
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.role import Role
@@ -60,8 +67,10 @@ from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.models.work_plan import WorkPlanEntry
+from monolynx.schemas.pipelines import build_list_item, build_pipeline_response
 from monolynx.schemas.work_plan import WorkPlanEntryResponse
 from monolynx.services import graph as graph_service
+from monolynx.services import pipelines as pipelines_service
 from monolynx.services import work_plan as work_plan_service
 from monolynx.services.activity import get_activity_log as svc_get_activity_log
 from monolynx.services.burndown import get_burndown_data as svc_get_burndown_data
@@ -6187,3 +6196,393 @@ async def get_ticket_schedule(
         entries = await work_plan_service.schedule_for_ticket(db, user.id, ticket_uuid)
 
     return [WorkPlanEntryResponse.from_entry(e).model_dump(mode="json") for e in entries]
+
+
+# ---------------------------------------------------------------------------
+# Pipelines -- toole zapisu
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def create_pipeline(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    pipeline_type: str,
+    ticket_id: str | None = None,
+    branch: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Utwórz nowy pipeline w projekcie.
+
+    pipeline_type: ticket_work | sprint_close
+    ticket_id: UUID lub klucz ticketa (np. MON-12) — wymagany dla ticket_work
+    branch: nazwa brancha git (opcjonalna)
+    meta: dodatkowe metadane (JSONB, opcjonalne)
+
+    Zwraca pipeline_id i listę stepów.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    if pipeline_type not in PIPELINE_TYPES:
+        raise ValueError(f"Nieprawidlowy pipeline_type: {pipeline_type!r}. Dozwolone: {PIPELINE_TYPES}")
+
+    resolved_ticket_id: uuid.UUID | None = None
+    if ticket_id is not None:
+        resolved_ticket_id = await _resolve_ticket_uuid(ticket_id, project.id)
+
+    async with async_session_factory() as db:
+        # Weryfikacja przynaleznosci ticketa do projektu (galaz czystego UUID nie jest filtrowana w _resolve_ticket_uuid)
+        if resolved_ticket_id is not None:
+            ticket_check = await db.execute(select(Ticket.id).where(Ticket.id == resolved_ticket_id, Ticket.project_id == project.id))
+            if ticket_check.scalar_one_or_none() is None:
+                raise ValueError(f"Ticket '{ticket_id}' nie istnieje w projekcie")
+
+        pipeline = await pipelines_service.create_pipeline(
+            db,
+            project_id=project.id,
+            pipeline_type=pipeline_type,
+            ticket_id=resolved_ticket_id,
+            branch=branch,
+            triggered_by=user.id,
+            meta=meta,
+        )
+
+    return {
+        "pipeline_id": str(pipeline.id),
+        "status": pipeline.status,
+        "steps": [{"id": str(s.id), "name": s.name, "position": s.position, "status": s.status} for s in pipeline.steps],
+    }
+
+
+@mcp.tool()
+async def create_pipeline_job(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    pipeline_id: str,
+    step: str,
+    name: str,
+    agent_type: str,
+) -> dict[str, Any]:
+    """Utwórz job w podanym stepie pipeline'u.
+
+    pipeline_id: UUID pipeline'u
+    step: nazwa stepu (research | coding | wrap-up)
+    name: nazwa joba (np. backend-developer)
+    agent_type: typ agenta (np. backend-developer)
+
+    Zwraca job_id i status.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if step not in PIPELINE_TICKET_WORK_STEPS:
+        raise ValueError(f"Nieprawidlowy step: {step!r}. Dozwolone: {PIPELINE_TICKET_WORK_STEPS}")
+
+    try:
+        pipeline_uuid = uuid.UUID(pipeline_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy format pipeline_id: {pipeline_id!r}") from None
+
+    async with async_session_factory() as db:
+        # Weryfikacja przynaleznosci pipeline'u do projektu
+        result = await db.execute(
+            select(Pipeline.id).where(
+                Pipeline.id == pipeline_uuid,
+                Pipeline.project_id == project.id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError(f"Pipeline {pipeline_id!r} nie istnieje w projekcie '{project_slug}'")
+
+        job_or_err = await pipelines_service.create_job(db, pipeline_uuid, step, name, agent_type)
+
+    if isinstance(job_or_err, str):
+        raise ValueError(job_or_err)
+
+    return {
+        "job_id": str(job_or_err.id),
+        "status": job_or_err.status,
+        "step": step,
+    }
+
+
+@mcp.tool()
+async def update_pipeline_job(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    job_id: str,
+    status: str | None = None,
+    score: int | None = None,
+    attempt: int | None = None,
+    summary: str | None = None,
+) -> dict[str, Any]:
+    """Zaktualizuj status / score / summary joba pipeline'u.
+
+    job_id: UUID joba
+    status: created | pending | running | success | failed | skipped | canceled
+    score: ocena krytyka 0-100 (opcjonalna)
+    attempt: numer iteracji (opcjonalna)
+    summary: krotkie podsumowanie do listy (opcjonalne)
+
+    Przejscie na 'running' ustawia started_at. Status terminalny ustawia finished_at
+    i propaguje status do stepu i pipeline'u.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if status is not None and status not in PIPELINE_JOB_STATUSES:
+        raise ValueError(f"Nieprawidlowy status: {status!r}. Dozwolone: {PIPELINE_JOB_STATUSES}")
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy format job_id: {job_id!r}") from None
+
+    async with async_session_factory() as db:
+        # Weryfikacja przynaleznosci joba do projektu przez join job->step->pipeline
+        result = await db.execute(
+            select(PipelineJob.id)
+            .join(PipelineStep, PipelineJob.step_id == PipelineStep.id)
+            .join(Pipeline, PipelineStep.pipeline_id == Pipeline.id)
+            .where(
+                PipelineJob.id == job_uuid,
+                Pipeline.project_id == project.id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError(f"Job {job_id!r} nie istnieje w projekcie '{project_slug}'")
+
+        job_or_err = await pipelines_service.update_job_by_id(db, job_uuid, status=status, score=score, attempt=attempt, summary=summary)
+
+    if isinstance(job_or_err, str):
+        raise ValueError(job_or_err)
+
+    return {
+        "job_id": str(job_or_err.id),
+        "status": job_or_err.status,
+        "attempt": job_or_err.attempt,
+        "score": job_or_err.score,
+        "started_at": job_or_err.started_at.isoformat() if job_or_err.started_at else None,
+        "finished_at": job_or_err.finished_at.isoformat() if job_or_err.finished_at else None,
+    }
+
+
+@mcp.tool()
+async def append_job_log(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    job_id: str,
+    content: str,
+) -> dict[str, Any]:
+    """Dopisz treść markdown do logu joba (strona wiki).
+
+    job_id: UUID joba
+    content: treść markdown do zapisania / dopisania
+
+    Pierwsze wywołanie tworzy stronę wiki i ustawia job.wiki_page_id.
+    Kolejne dopisują do istniejącej strony separator + znacznik czasu + content.
+    Strona jest wykluczona z embeddingów RAG (exclude_from_embeddings=True).
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy format job_id: {job_id!r}") from None
+
+    async with async_session_factory() as db:
+        # Weryfikacja przynaleznosci joba do projektu przez join job->step->pipeline
+        result = await db.execute(
+            select(PipelineJob.id)
+            .join(PipelineStep, PipelineJob.step_id == PipelineStep.id)
+            .join(Pipeline, PipelineStep.pipeline_id == Pipeline.id)
+            .where(
+                PipelineJob.id == job_uuid,
+                Pipeline.project_id == project.id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError(f"Job {job_id!r} nie istnieje w projekcie '{project_slug}'")
+
+        page_or_err = await pipelines_service.append_job_log(db, job_uuid, content, user.id)
+
+    if isinstance(page_or_err, str):
+        raise ValueError(page_or_err)
+
+    return {
+        "wiki_page_id": str(page_or_err.id),
+        "message": "Log zapisany",
+    }
+
+
+@mcp.tool()
+async def finish_pipeline(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    pipeline_id: str,
+    status: str | None = None,
+) -> dict[str, Any]:
+    """Zamknij pipeline — ustaw status końcowy i finished_at.
+
+    pipeline_id: UUID pipeline'u
+    status: success | failed | canceled (opcjonalny — gdy brak, wyliczany ze stepów)
+
+    Po zamknięciu opcjonalnie dopisuje wpis do dziennika wiki-log
+    (tylko gdy LLM Wiki włączone dla projektu).
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    if status is not None and status not in PIPELINE_STATUSES:
+        raise ValueError(f"Nieprawidlowy status: {status!r}. Dozwolone: {PIPELINE_STATUSES}")
+
+    try:
+        pipeline_uuid = uuid.UUID(pipeline_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy format pipeline_id: {pipeline_id!r}") from None
+
+    async with async_session_factory() as db:
+        pipeline_or_err = await pipelines_service.finish_pipeline(db, pipeline_uuid, project.id, status=status)
+
+        if isinstance(pipeline_or_err, str):
+            raise ValueError(pipeline_or_err)
+
+        # Best-effort: wpis do wiki-log jesli LLM Wiki wlaczone
+        pipeline_with_project = await db.execute(select(Pipeline).options(selectinload(Pipeline.project)).where(Pipeline.id == pipeline_uuid))
+        full_pipeline = pipeline_with_project.scalar_one()
+        with contextlib.suppress(Exception):
+            await pipelines_service.maybe_log_pipeline_to_wiki_log(db, full_pipeline, user.id)
+
+    return {
+        "pipeline_id": str(pipeline_or_err.id),
+        "status": pipeline_or_err.status,
+        "finished_at": pipeline_or_err.finished_at.isoformat() if pipeline_or_err.finished_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Pipelines -- toole odczytu
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def list_pipelines(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    status: str | None = None,
+    pipeline_type: str | None = None,
+    page: int = 1,
+) -> dict[str, Any]:
+    """Pobierz liste pipeline'ow projektu z paginacja.
+
+    status: created | running | success | failed | canceled (opcjonalny filtr)
+    pipeline_type: ticket_work | sprint_close (opcjonalny filtr)
+    page: numer strony (domyslnie 1, 20 per_page)
+
+    Zwraca liste z informacjami o stepach (bez jobow) oraz ticket_key gdy dostepny.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    per_page = 20
+    async with async_session_factory() as db:
+        items, total = await pipelines_service.list_pipelines(
+            db, project.id, status=status, pipeline_type=pipeline_type, page=page, per_page=per_page
+        )
+
+        # Zbuduj mape ticket_key: zbierz unikalne ticket_id z wynikow
+        ticket_ids = [p.ticket_id for p in items if p.ticket_id is not None]
+        ticket_key_map: dict[Any, str] = {}
+        if ticket_ids:
+            tickets_result = await db.execute(select(Ticket).options(selectinload(Ticket.project)).where(Ticket.id.in_(ticket_ids)))
+            for t in tickets_result.scalars().all():
+                ticket_key_map[t.id] = t.key
+
+    total_pages = math.ceil(total / per_page) if total > 0 else 1
+    return {
+        "pipelines": [build_list_item(p, ticket_key_map.get(p.ticket_id)).model_dump(mode="json") for p in items],
+        "total": total,
+        "page": page,
+        "total_pages": total_pages,
+    }
+
+
+@mcp.tool()
+async def get_pipeline(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    pipeline_id: str,
+) -> dict[str, Any]:
+    """Pobierz szczegoly pipeline'u z pelnym drzewem stepow i jobow.
+
+    pipeline_id: UUID pipeline'u
+
+    Zwraca pelne dane pipeline'u lacznie z jobami, czasami i ticket_key.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    try:
+        pipeline_uuid = uuid.UUID(pipeline_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy format pipeline_id: {pipeline_id!r}") from None
+
+    async with async_session_factory() as db:
+        p = await pipelines_service.get_pipeline(db, pipeline_uuid, project.id)
+        if p is None:
+            raise ValueError(f"Pipeline {pipeline_id!r} nie istnieje w projekcie '{project_slug}'")
+
+        ticket_key: str | None = None
+        if p.ticket_id is not None:
+            ticket_result = await db.execute(select(Ticket).options(selectinload(Ticket.project)).where(Ticket.id == p.ticket_id))
+            ticket = ticket_result.scalar_one_or_none()
+            if ticket is not None:
+                ticket_key = ticket.key
+
+    return build_pipeline_response(p, ticket_key).model_dump(mode="json")
+
+
+@mcp.tool()
+async def get_pipeline_job_log(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    job_id: str,
+) -> dict[str, Any]:
+    """Pobierz log joba pipeline'u jako markdown.
+
+    job_id: UUID joba
+
+    Zwraca zawartosc strony wiki loga lub pusty content gdy log nie istnieje.
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy format job_id: {job_id!r}") from None
+
+    async with async_session_factory() as db:
+        # Weryfikacja przynaleznosci joba do projektu przez join job->step->pipeline
+        result = await db.execute(
+            select(PipelineJob)
+            .join(PipelineStep, PipelineJob.step_id == PipelineStep.id)
+            .join(Pipeline, PipelineStep.pipeline_id == Pipeline.id)
+            .where(
+                PipelineJob.id == job_uuid,
+                Pipeline.project_id == project.id,
+            )
+        )
+        job = result.scalar_one_or_none()
+        if job is None:
+            raise ValueError(f"Job {job_id!r} nie istnieje w projekcie '{project_slug}'")
+
+        if job.wiki_page_id is None:
+            return {"job_id": job_id, "wiki_page_id": None, "content": "", "message": "Brak loga"}
+
+        page_result = await db.execute(select(WikiPage).where(WikiPage.id == job.wiki_page_id))
+        page = page_result.scalar_one_or_none()
+        if page is None:
+            return {"job_id": job_id, "wiki_page_id": None, "content": "", "message": "Strona wiki nie istnieje"}
+
+        content = get_page_content(page)
+
+    return {
+        "job_id": job_id,
+        "wiki_page_id": str(job.wiki_page_id),
+        "content": content,
+    }

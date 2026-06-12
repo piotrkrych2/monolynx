@@ -33,12 +33,15 @@ echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
 
 ## KROK 1: Zaladuj narzedzia i pobierz zadanie
 
-Zaladuj narzedzia Monolynx przez ToolSearch (dwa wywolania rownolegle):
+Zaladuj narzedzia Monolynx przez ToolSearch (trzy wywolania rownolegle):
 
 ```
 ToolSearch(query="+monolynx ticket board comment")
 ToolSearch(query="+monolynx graph wiki search")
+ToolSearch(query="+monolynx pipeline create job finish")
 ```
+
+Trzecie zapytanie laduje toole pipeline (`create_pipeline`, `create_pipeline_job`, `update_pipeline_job`, `append_job_log`, `finish_pipeline`). Sluza do raportowania przebiegu pracy do modulu Pipelines (obserwowalnosc). **Jesli toole pipeline NIE sa dostepne** (starszy serwer MCP bez modulu Pipelines) - pomin CALA instrumentacje pipeline w tym skillu i pracuj jak dotychczas. Pipeline to warstwa obserwowalnosci, nie gate - jego brak nie blokuje pracy nad ticketem.
 
 Nastepnie pobierz zadanie:
 
@@ -88,13 +91,39 @@ Gdzie `<slug>` to skrocony, kebab-case tytul ticketu (max 4-5 slow, bez polskich
 
 **Poczekaj na odpowiedz uzytkownika** - NIE kontynuuj bez decyzji.
 
+### 2d. Utworz pipeline (instrumentacja - best-effort)
+
+Po zwalidowaniu brancha utworz pipeline typu `ticket_work` dla tego ticketu:
+
+```
+mcp__monolynx__create_pipeline(project_slug="<PROJECT_SLUG>", pipeline_type="ticket_work", ticket_id="<ID lub klucz MON-XX>", branch="<aktualny_branch>")
+```
+
+Zwraca `pipeline_id` oraz 3 stepy (`research`, `coding`, `wrap-up`). **Zapamietaj `pipeline_id`** - bedzie uzywany do konca skilla.
+
+Nastepnie odnotuj walidacje brancha jako job w stepie `research`:
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="research", name="branch-validation", agent_type="system")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<job_id>", status="success", summary="Branch zwalidowany: <branch>")
+```
+
+**Best-effort**: jesli ktorekolwiek wywolanie pipeline zwroci blad - odnotuj i kontynuuj prace nad ticketem. Blad pipeline NIGDY nie przerywa pracy.
+
 ## KROK 3: Researcher - analiza zadania
 
 **CEL**: Pelna analiza zadania ZANIM zespol zacznie prace. Researcher to super-agent eksploracyjny, ktory buduje kompletny raport dla Team Agenta.
 
 ### 3a. Uruchom Researchera
 
-Uruchom agenta `Explore` z nastepujacym zadaniem:
+Najpierw utworz job `researcher` w stepie `research` i ustaw go na `running` (instrumentacja, best-effort):
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="research", name="researcher", agent_type="Explore")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<researcher_job_id>", status="running")
+```
+
+Nastepnie uruchom agenta `Explore` z nastepujacym zadaniem:
 
 ```
 Agent(
@@ -167,6 +196,15 @@ Jesli z jakiegokolwiek powodu agent `Explore` nie jest dostepny:
 
 Zapisz raport Researchera - bedzie uzyty w KROK 4 i KROK 5.
 
+Zaloguj raport do joba `researcher` i zamknij go (instrumentacja, best-effort):
+
+```
+mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<researcher_job_id>", content="<pelny raport Researchera w markdown>")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<researcher_job_id>", status="success", summary="<1-zdaniowe streszczenie raportu>")
+```
+
+Jesli Researcher zostal pominiety (KROK 3b) - ustaw job `researcher` na `skipped` zamiast `success`, albo pomin job. Best-effort: blad pipeline nie przerywa pracy.
+
 ## KROK 4: Przeczytaj zadanie, zmien status, zapisz czas
 
 1. Pobierz pelne szczegoly ticketa: `mcp__monolynx__get_ticket(...)` (jesli jeszcze nie pobrane)
@@ -215,6 +253,28 @@ mcp__monolynx__add_comment(
 )
 ```
 
+### Zarejestruj joby w pipeline (instrumentacja - best-effort)
+
+Po doborze zespolu, ZANIM uruchomisz agentow:
+
+1. Odnotuj plan jako job `team-plan` w stepie `coding` (od razu `success` z planem w logu):
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="coding", name="team-plan", agent_type="system")
+mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<team_plan_job_id>", content="<plan pracy + dobrani agenci w markdown>")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<team_plan_job_id>", status="success", summary="Dobrano zespol: <lista agentow>")
+```
+
+2. Dla KAZDEGO dobranego agenta (wlacznie z `code-reviewer`) utworz job `pending` w stepie `coding`:
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="coding", name="<nazwa agenta np. backend-developer>", agent_type="<subagent_type>")
+```
+
+**Zapamietaj `job_id` kazdego agenta** - przekazesz go w prompcie agenta w KROK 6 (sekcja RAPORT DO PIPELINE), zeby agent sam raportowal swoj postep i log.
+
+Best-effort: blad pipeline nie przerywa pracy.
+
 ## KROK 6: Agents Team - praca rownlegla
 
 **ZASADA KLUCZOWA**: Wszyscy wybrani developerzy + krytyk startuja **JEDNOCZESNIE** (rownolegle). Krytyk pracuje rownolegle z developerami i robi review na biezaco.
@@ -261,25 +321,37 @@ mcp__monolynx__update_acceptance_criterion(project_slug="<PROJECT_SLUG>", ticket
 
 Jesli kryterium dotyczy wiecej niz jednego agenta - przypisz je do tego, ktory odpowiada za WIEKSZOSZ pracy zwiazanej z kryterium.
 
+**WAZNE - RAPORT DO PIPELINE** (instrumentacja, jesli toole pipeline dostepne): w prompcie KAZDEGO agenta dodaj sekcje z przekazanym `job_id` (z KROK 5) i obowiazkiem raportowania. Dzialanie analogiczne do acceptance criteria - agent sam wola toole MCP po skonczeniu pracy:
+
+```
+RAPORT DO PIPELINE (job_id: <twoj_job_id>):
+Na poczatku pracy ustaw job na running:
+  mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<twoj_job_id>", status="running")
+Po zakonczeniu pracy MUSISZ:
+  1. mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<twoj_job_id>", content="<markdown: co zrobiles, proces myslowy, kluczowe decyzje, zmienione pliki>")
+  2. mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<twoj_job_id>", status="success", summary="<1-2 zdania do listy>")
+Jesli toole pipeline niedostepne lub zwroca blad - pomin raportowanie, NIE przerywaj pracy.
+```
+
 Przyklad (3 agentow + krytyk w jednej wiadomosci):
 
 ```
 Agent(
   subagent_type="backend-developer",
   description="Backend - [krotki opis]",
-  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla backendu]\n\nUWAGA: Jesli zmieniasz sygnatury funkcji, sprawdz wszystkich callerow wymienionych w raporcie."
+  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla backendu]\n\nUWAGA: Jesli zmieniasz sygnatury funkcji, sprawdz wszystkich callerow wymienionych w raporcie.\n\nRAPORT DO PIPELINE (job_id: <backend_job_id>): [wklej blok RAPORT DO PIPELINE z przekazanym job_id]"
 )
 
 Agent(
   subagent_type="frontend-developer",
   description="Frontend - [krotki opis]",
-  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla frontendu]"
+  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla frontendu]\n\nRAPORT DO PIPELINE (job_id: <frontend_job_id>): [wklej blok RAPORT DO PIPELINE z przekazanym job_id]"
 )
 
 Agent(
   subagent_type="code-reviewer",
   description="Krytyk - review kodu",
-  prompt="Jestes Krytykiem (code-reviewer). Sprawdzasz prace WSZYSTKICH agentow na tickecie [tytul].\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nZakres pracy zespolu:\n- backend-developer: [co robi]\n- frontend-developer: [co robi]\n\nTwoje zadanie:\n1. Poczekaj az agenci skoncza prace (sprawdz git diff lub zmodyfikowane pliki)\n2. Sprawdz WSZYSTKIE zmienione pliki\n3. Ocen kazde agenta osobno (0-100%)\n4. Podaj feedback co poprawic jesli < 80%\n\nFormat odpowiedzi:\n**Code Review**\n- [agent 1]: [score]/100 - [feedback]\n- [agent 2]: [score]/100 - [feedback]\n- Ogolna ocena: [score]/100\n- Status: APPROVED / NEEDS WORK"
+  prompt="Jestes Krytykiem (code-reviewer). Sprawdzasz prace WSZYSTKICH agentow na tickecie [tytul].\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nZakres pracy zespolu:\n- backend-developer: [co robi] (pipeline job_id: <backend_job_id>)\n- frontend-developer: [co robi] (pipeline job_id: <frontend_job_id>)\n\nTwoje zadanie:\n1. Poczekaj az agenci skoncza prace (sprawdz git diff lub zmodyfikowane pliki)\n2. Sprawdz WSZYSTKIE zmienione pliki\n3. Ocen kazde agenta osobno (0-100%)\n4. Podaj feedback co poprawic jesli < 80%\n5. RAPORT DO PIPELINE: dla KAZDEGO ocenianego agenta zapisz ocene do jego joba (best-effort):\n   mcp__monolynx__update_pipeline_job(project_slug=\"<PROJECT_SLUG>\", job_id=\"<job_id ocenianego agenta>\", score=<0-100>)\n   Swoj wlasny job (code-reviewer) zamknij na koniec: append_job_log z trescia review + update_pipeline_job status=success.\n\nFormat odpowiedzi:\n**Code Review**\n- [agent 1]: [score]/100 - [feedback]\n- [agent 2]: [score]/100 - [feedback]\n- Ogolna ocena: [score]/100\n- Status: APPROVED / NEEDS WORK"
 )
 ```
 
@@ -291,7 +363,8 @@ Po zakonczeniu pracy WSZYSTKICH agentow:
 2. **Jesli krytyk dal >= 80% kazdemu agentowi** → przejdz do KROK 6d
 3. **Jesli krytyk dal < 80% jakiemus agentowi**:
    - Uruchom TYLKO tego agenta ponownie z feedbackiem krytyka
-   - Uruchom krytyka ponownie dla poprawionego kodu
+   - W prompcie iteracji poprawkowej dodaj polecenie podbicia `attempt` joba (instrumentacja, best-effort): `mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<job_id agenta>", attempt=<numer_iteracji>)` + doklejenie poprawek do loga przez `append_job_log`
+   - Uruchom krytyka ponownie dla poprawionego kodu (zaktualizuje `score`)
    - **Maksymalnie 3 iteracje** na agenta
    - Po 3 nieudanych iteracjach → zapytaj uzytkownika o decyzje
 
@@ -381,13 +454,28 @@ mcp__monolynx__log_time(
 )
 ```
 
-### 7d. Zmien status ticketa
+### 7d. Zamknij pipeline (instrumentacja - best-effort)
+
+Odnotuj podsumowanie jako job `team-manager-summary` w stepie `wrap-up`, a nastepnie zamknij caly pipeline:
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="wrap-up", name="team-manager-summary", agent_type="system")
+mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<summary_job_id>", content="<podsumowanie zadania + oceny w markdown>")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<summary_job_id>", status="success", summary="Zadanie domkniete, status in_review")
+mcp__monolynx__finish_pipeline(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>")
+```
+
+`finish_pipeline` bez argumentu `status` wylicza status koncowy ze stepow (jakikolwiek failed step → pipeline failed, inaczej success). Jesli praca zakonczyla sie niepowodzeniem - podaj jawnie `status="failed"`.
+
+Best-effort: blad pipeline nie przerywa zamkniecia ticketu.
+
+### 7e. Zmien status ticketa
 
 ```
 mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ID>", status="in_review")
 ```
 
-### 7e. Podsumowanie dla uzytkownika
+### 7f. Podsumowanie dla uzytkownika
 
 Wyswietl uzytkownikowi krotkie podsumowanie:
 - Co zostalo zrobione
@@ -412,3 +500,4 @@ Wyswietl uzytkownikowi krotkie podsumowanie:
 10. **Researcher jest pierwszym krokiem** - KROK 3 jest obowiazkowy. Bez raportu Researchera nie uruchamiaj zespolu agentow (chyba ze uzytkownik swiadomie zrezygnuje z Researchera)
 11. **Praca rownlegla jest obowiazkowa** - w KROK 6 WSZYSCY agenci (developerzy + krytyk) startuja JEDNOCZESNIE w jednej wiadomosci
 12. **Acceptance criteria sa obowiazkowe** - jesli ticket ma kryteria akceptacji, KAZDY agent MUSI odhaczac swoje kryteria po zakonczeniu pracy (krok 6b). Team Manager weryfikuje kompletnosc w kroku 6f PRZED podsumowaniem
+13. **Pipeline jest best-effort, nie gate** - instrumentacja pipeline (create_pipeline, joby, append_job_log, finish_pipeline) to warstwa obserwowalnosci. Blad ktoregokolwiek toola pipeline NIGDY nie przerywa pracy nad ticketem - odnotuj i kontynuuj. Jesli toole pipeline sa niedostepne (starszy serwer MCP), pomin CALA instrumentacje i pracuj jak dotychczas. Pipeline raportuje prace, nie wykonuje jej.

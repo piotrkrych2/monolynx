@@ -40,9 +40,12 @@ echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
 ```
 ToolSearch(query="+monolynx ticket comment log_time")
 ToolSearch(query="+monolynx wiki search")
+ToolSearch(query="+monolynx pipeline create job finish")
 ```
 
 (Nie ladujemy TaskCreate/TeamCreate/SendMessage - nie uzywane.)
+
+Trzecie zapytanie laduje toole pipeline (obserwowalnosc pracy). **Best-effort**: jesli toole pipeline niedostepne (starszy serwer MCP) - pomin CALA instrumentacje pipeline i pracuj jak dotychczas. Blad pipeline NIGDY nie przerywa pracy nad ticketem.
 
 ### 0.2. Pobierz ticket
 
@@ -92,6 +95,16 @@ mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ID>", st
 date +%s
 ```
 
+### 0.6. Utworz pipeline (instrumentacja - best-effort)
+
+Pobierz aktualny branch (`git branch --show-current`) i utworz pipeline `ticket_work`:
+
+```
+mcp__monolynx__create_pipeline(project_slug="<PROJECT_SLUG>", pipeline_type="ticket_work", ticket_id="<ID lub klucz MON-XX>", branch="<aktualny_branch>")
+```
+
+**Zapamietaj `pipeline_id`** (oraz nazwy stepow: `research`, `coding`, `wrap-up`) - uzywany do konca skilla. Best-effort: blad pipeline nie przerywa pracy.
+
 ---
 
 ## FAZA 1: Research (warunkowo)
@@ -123,6 +136,18 @@ mcp__monolynx__add_comment(
 
 ---
 
+### 1.x. Job research (instrumentacja - best-effort)
+
+Jesli przeprowadzono jakikolwiek research (przypadek B lub C), odnotuj go jako job w stepie `research` (od razu `success` z logiem). Jesli pominieto research (przypadek A) - pomin ten job:
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="research", name="researcher", agent_type="Explore")
+mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<researcher_job_id>", content="<wynik mini-researchu w markdown>")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<researcher_job_id>", status="success", summary="<1 zdanie>")
+```
+
+---
+
 ## FAZA 2: Plan + spawn dev agenta
 
 ### 2.1. Dobierz dev agenta i krytyka
@@ -142,6 +167,12 @@ mcp__monolynx__add_comment(
 ```
 
 ### 2.3. Spawnuj dev (foreground Agent)
+
+Najpierw utworz job `dev` w stepie `coding` (instrumentacja, best-effort) i zapamietaj `dev_job_id` - przekazesz go w prompcie:
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="coding", name="<wybrany-agent>", agent_type="<wybrany-agent>")
+```
 
 ```
 Agent(
@@ -176,13 +207,17 @@ mcp__monolynx__add_comment(
   content='**SCOPE GREW** - [opis dlaczego scope sie rozrosl]\n\nRekomendacja: eskalacja do /monolynx-work (Agent Teams).'
 )
 
-Zwroc do Team Managera sygnal: `SCOPE GREW: <powod>`. Nie konczydaleszych zmian.
+Zwroc do Team Managera sygnal: `SCOPE GREW: <powod>`. Nie wykonuj dalszych zmian.
 
 ---
 
 ## PO WYKONANIU ZADANIA - SELF-REPORTING (OBOWIAZKOWY)
 
 Zmierz czas: `date +%s` na poczatku + `date +%s` na koncu.
+
+RAPORT DO PIPELINE (job_id: [dev_job_id], best-effort - jesli toole pipeline niedostepne lub zwroca blad, pomin i kontynuuj):
+- na poczatku pracy: mcp__monolynx__update_pipeline_job(project_slug='<PROJECT_SLUG>', job_id='[dev_job_id]', status='running')
+- po zakonczeniu: mcp__monolynx__append_job_log(project_slug='<PROJECT_SLUG>', job_id='[dev_job_id]', content='[markdown: co zrobiles, decyzje, zmienione pliki]') oraz mcp__monolynx__update_pipeline_job(project_slug='<PROJECT_SLUG>', job_id='[dev_job_id]', status='success', summary='[1-2 zdania]')
 
 Komentarz do ticketa:
 
@@ -217,7 +252,11 @@ mcp__monolynx__log_time(
 
 ### 2.4. Spawnuj critica (foreground Agent)
 
-Po zakonczeniu dev:
+Po zakonczeniu dev utworz job `code-reviewer` w stepie `coding` (instrumentacja, best-effort, zapamietaj `critic_job_id`):
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="coding", name="code-reviewer", agent_type="<wybrany-krytyk>")
+```
 
 ```
 Agent(
@@ -238,6 +277,11 @@ ZAKRES PRACY DEV: [krotki opis z ticketa + ewentualne uwagi z komentarza dev]
 1. Przeczytaj `git diff` lub Read zmienionych plikow (wymienione w komentarzu dev agenta).
 2. Ocen 0-100. Werdykt: APPROVED (>=83) lub NEEDS WORK (<83).
 3. Komentarz do ticketa + log_time (ponizej).
+4. RAPORT DO PIPELINE (best-effort): zapisz ocene do joba dev oraz zamknij swoj job:
+   mcp__monolynx__update_pipeline_job(project_slug='<PROJECT_SLUG>', job_id='[dev_job_id]', score=[0-100])
+   mcp__monolynx__append_job_log(project_slug='<PROJECT_SLUG>', job_id='[critic_job_id]', content='[tresc review]')
+   mcp__monolynx__update_pipeline_job(project_slug='<PROJECT_SLUG>', job_id='[critic_job_id]', status='success', summary='[werdykt + ocena]')
+   Jesli toole pipeline niedostepne - pomin.
 
 ## SELF-REPORTING (OBOWIAZKOWY)
 
@@ -288,7 +332,8 @@ Przejdz do Fazy 4.
    Napraw kod zgodnie z uwagami. Reszta flow jak wczesniej (self-reporting)."
    ```
 3. Po poprawce - spawnuj nowego critica (ten sam prompt co 2.4).
-4. Max 3 iteracje. Po 3. NEEDS WORK - zatrzymaj, zapytaj usera "Krytyk 3x NEEDS WORK. Co robimy? (a) eskaluj do /monolynx-work, (b) akceptuj mimo to, (c) stop".
+4. Instrumentacja (best-effort): w prompcie iteracji poprawkowej dev dodaj podbicie `attempt` joba dev: `mcp__monolynx__update_pipeline_job(project_slug='<PROJECT_SLUG>', job_id='[dev_job_id]', attempt=[numer_iteracji])` + doklejenie poprawek przez `append_job_log`.
+5. Max 3 iteracje. Po 3. NEEDS WORK - zatrzymaj, zapytaj usera "Krytyk 3x NEEDS WORK. Co robimy? (a) eskaluj do /monolynx-work, (b) akceptuj mimo to, (c) stop".
 
 ---
 
@@ -326,13 +371,26 @@ mcp__monolynx__log_time(
 )
 ```
 
-### 4.5. Status → in_review
+### 4.5. Zamknij pipeline (instrumentacja - best-effort)
+
+Odnotuj podsumowanie jako job `team-manager-summary` w stepie `wrap-up` i zamknij pipeline:
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="wrap-up", name="team-manager-summary", agent_type="system")
+mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<summary_job_id>", content="<podsumowanie simple flow w markdown>")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<summary_job_id>", status="success", summary="Simple flow zakonczony")
+mcp__monolynx__finish_pipeline(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>")
+```
+
+`finish_pipeline` bez `status` wylicza status koncowy ze stepow. Best-effort: blad pipeline nie przerywa zamkniecia.
+
+### 4.6. Status → in_review
 
 ```
 mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ID>", status="in_review")
 ```
 
-### 4.6. Podsumowanie dla usera
+### 4.7. Podsumowanie dla usera
 
 Wyswietl zwiezle:
 - Co zostalo zrobione
@@ -356,7 +414,7 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
      content="**Team Manager Lite - Eskalacja**\n\nDev agent wykryl ze scope ticketa jest wiekszy niz zakladalismy.\nPowod: [powod z dev agenta]\n\nRekomendacja: zmien flow na `/monolynx-work [ticket-id]` (Agent Teams - pelen research + wiele subagentow + tasks)."
    )
    ```
-3. Cofnij status: `mcp__monolynx__update_ticket(..., status="todo")`.
+3. Cofnij status: `mcp__monolynx__update_ticket(..., status="todo")`. Instrumentacja (best-effort): anuluj pipeline `mcp__monolynx__finish_pipeline(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", status="canceled")`.
 4. Zapytaj usera:
    ```
    Dev odkryl ze scope > simple. Wykonane dotad zmiany zostawic czy revertowac?
@@ -381,3 +439,4 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 9. **Gdy dev sygnalizuje SCOPE GREW** - NIE ignoruj, eskaluj. Celem simple jest szybkie dowozenie malych zmian, nie rozkladanie sie dla duzych.
 10. **Maksymalnie 3 iteracje NEEDS WORK** - dalej user decyduje.
 11. **Agentow zawsze dobieramy dynamicznie** - skill nie narzuca konkretnych typow agentow; wybor zalezy od tego, co dostepne w projekcie i czego wymaga ticket.
+12. **Pipeline jest best-effort, nie gate** - instrumentacja pipeline (create_pipeline, joby, append_job_log, finish_pipeline) to warstwa obserwowalnosci. Blad ktoregokolwiek toola pipeline NIGDY nie przerywa pracy nad ticketem - odnotuj i kontynuuj. Jesli toole niedostepne (starszy serwer MCP) - pomin instrumentacje.

@@ -14,6 +14,7 @@ from monolynx.models.oauth import (
     OAuthClient,
     OAuthRefreshToken,
 )
+from monolynx.models.pipeline import Pipeline, PipelineJob, PipelineStep
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.role import Role
@@ -49,6 +50,9 @@ __all__ = [
     "OAuthAuthorizationCode",
     "OAuthClient",
     "OAuthRefreshToken",
+    "Pipeline",
+    "PipelineJob",
+    "PipelineStep",
     "Project",
     "ProjectMember",
     "Role",
