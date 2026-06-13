@@ -40,3 +40,8 @@ Thumbs.db
 # our dev data
 .data/
 .mcp.json
+
+# lokalne skrypty/dokumenty dev (nie commitowac)
+seed_pipelines.py
+raport-pipelines-per-projekt.md
+spec-driven-debate.md

@@ -1,6 +1,6 @@
 # Monolynx
 
-> Monolynx is an open-source, AI-first project platform that speaks the Model Context Protocol (MCP) natively. It bundles nine integrated modules (error tracking, Scrum, monitoring, heartbeats, wiki with RAG search, code dependency graph, work reports, cross-project billing, and a personal Gantt planner) into one self-hostable application that an AI agent can operate as if it were a member of the team.
+> Monolynx is an open-source, AI-first project platform that speaks the Model Context Protocol (MCP) natively. It bundles ten integrated modules (error tracking, Scrum, monitoring, heartbeats, wiki with RAG search, code dependency graph, work reports, cross-project billing, a personal Gantt planner, and pipeline observability for AI agent work) into one self-hostable application that an AI agent can operate as if it were a member of the team.
 
 Monolynx is built for teams that work alongside AI agents. Every module is reachable both through a web dashboard (HTML, server-rendered) and through 100 MCP tools, so an assistant like Claude can read issues, manage tickets and sprints, search documentation semantically, query the dependency graph, and plan work across projects using natural language. The platform is open source and self-hosted, so teams keep full ownership of their data.
 
@@ -17,10 +17,11 @@ The UI and documentation are bilingual (Polish-first, with English available via
 - [Reports](https://monolynx.com/features/reports?lang=en): Cross-project work reports with multi-select filters, date ranges, PDF export, and separate tracking of AI vs. manual time entries.
 - [Settlements](https://monolynx.com/features/settlements?lang=en): Cross-project billing with a status workflow (draft, sent, paid), ticket freezing, and attachment management.
 - [Work Plan / Gantt](https://monolynx.com/features/work_plan?lang=en): Personal per-user scheduling of tickets from any project on a Gantt chart and monthly calendar, independent of sprint assignment.
+- [Pipelines](https://monolynx.com/features/pipelines?lang=en): Observability for AI agent work modeled on CI/CD, with a pipeline, step, and job hierarchy, job logs stored as wiki pages, and status that propagates upward.
 
 ## AI and MCP
 
-- [Homepage](https://monolynx.com/?lang=en): Product overview, the nine modules, and how Monolynx works as an AI-native platform.
+- [Homepage](https://monolynx.com/?lang=en): Product overview, the ten modules, and how Monolynx works as an AI-native platform.
 - MCP endpoint: `https://monolynx.com/mcp` exposes 100 MCP tools across all modules, authenticated with an `Authorization: Bearer` token. Configure it in any MCP client (for example Claude Code via `.mcp.json`).
 - Claude Code plugin (recommended): install Monolynx as a native plugin with `/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git` then `/plugin install monolynx@monolynx`. It bundles the skills and agents as `/monolynx:*` commands (for example `/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:search`) plus the remote MCP server; set your Bearer token in the plugin config (`mcp_token`).
 - Claude Code skills (manual alternative): the `install_monolynx_skills` MCP tool installs a ready-made ticket workflow into a connected project (`/monolynx-ticket-create`, `/monolynx-ticket-review`, `/monolynx-work`, `/monolynx-search`, and more), with project placeholders filled in automatically.

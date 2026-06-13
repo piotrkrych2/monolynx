@@ -14,6 +14,7 @@ _ICON_CONNECTIONS = '<svg class="w-6 h-6 text-purple-400" fill="none" stroke="cu
 _ICON_REPORTS = '<svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/></svg>'
 _ICON_SETTLEMENTS = '<svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V12Zm-12 0h.008v.008H6V12Z"/></svg>'
 _ICON_WORK_PLAN = '<svg class="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"/></svg>'
+_ICON_PIPELINES = '<svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg>'
 
 
 def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
@@ -57,6 +58,12 @@ def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
             "color": "sky",
             "name": "Work Plan / Gantt" if lang == "en" else "Plan pracy / Gantt",
             "short": "Personal cross-project scheduling" if lang == "en" else "Osobiste planowanie cross-project",
+        },
+        {
+            "slug": "pipelines",
+            "color": "indigo",
+            "name": "Pipelines",
+            "short": "AI agent work observability" if lang == "en" else "Obserwowalność pracy agentów AI",
         },
     ]
     return [m for m in all_modules if m["slug"] != exclude]
@@ -1457,6 +1464,228 @@ def _feature_settlements(lang: str) -> dict[str, Any]:
     }
 
 
+def _feature_pipelines(lang: str) -> dict[str, Any]:
+    if lang == "pl":
+        return {
+            "title": "Pipelines - Obserwowalność agentów AI",
+            "screenshot": None,
+            "screenshot_2": None,
+            "color": "indigo",
+            "icon": _ICON_PIPELINES,
+            "badge": "AI Observability",
+            "headline": "Obserwuj pracę agentów AI jako pipeline'y - w czasie rzeczywistym",
+            "description": (
+                "Moduł Pipelines modeluje pracę agentów AI jako obserwowalność (nie wykonanie). "
+                "Hierarchia Pipeline -> PipelineStep -> PipelineJob w PostgreSQL pozwala śledzić każdy etap pracy "
+                "agenta: od researchu, przez kodowanie, po podsumowanie. Logi jobów przechowywane są jako strony wiki, "
+                "status propaguje się w górę - nieudany job pociąga za sobą nieudany step i pipeline. "
+                "Dashboard odświeża się co 15 sekund, a is_stale() flaguje pipeline'y stuck > 6h."
+            ),
+            "screenshot_hint": "Lista pipeline'ów z filtrami statusu i typem",
+            "screenshot_hint_2": "Widok detalu pipeline'u z kolumnami stepów i kartami jobów",
+            "features": [
+                {
+                    "title": "Hierarchia Pipeline -> Step -> Job",
+                    "desc": "Każdy pipeline składa się ze stepów (research, coding, wrap-up), a każdy step z jobów. Status propaguje się w górę - nieudany job -> nieudany step -> nieudany pipeline.",
+                },
+                {
+                    "title": "Logi jobów jako strony wiki",
+                    "desc": "Każdy job ma własną stronę wiki z pełnym logiem (content w MinIO). Strony grupowane pod rodzicem 'pipeline-logi', wykluczone z RAG - nie zaśmiecają wyników wyszukiwania.",
+                },
+                {
+                    "title": "Live polling 15s",
+                    "desc": "Lista pipeline'ów i widok detalu odświeżają się co 15 sekund przez HTMX. Czasy trwania liczone w locie (finished_at - started_at lub now() - started_at dla aktywnych).",
+                },
+                {
+                    "title": "Detekcja stuck pipeline'ów",
+                    "desc": "is_stale() flaguje pipeline'y w statusie running bez aktualizacji przez ponad 6 godzin. Obliczane przy odczycie, bez crona.",
+                },
+                {
+                    "title": "Read-only UI - kontrola przez MCP",
+                    "desc": "Dashboard jest read-only - pipeline'y tworzone przez skille przez MCP, nie z interfejsu. Agenci AI mają pełną kontrolę przez 9 dedykowanych narzędzi MCP.",
+                },
+                {
+                    "title": "Integracja z wiki-log",
+                    "desc": "Przy włączonym LLM Wiki, zakończenie pipeline'u dodaje wpis do wiki-log. Najlepszy wysiłek - błąd MCP pipeline'u nie zatrzymuje pracy agenta.",
+                },
+            ],
+            "steps": [
+                {
+                    "title": "Agent tworzy pipeline",
+                    "desc": "Skill wywołuje create_pipeline przez MCP - pipeline ticket_work automatycznie dostaje 3 stepy: research, coding, wrap-up.",
+                },
+                {
+                    "title": "Agent raportuje start jobów",
+                    "desc": "create_pipeline_job rejestruje nowy job w stepie (np. 'Analiza kodu źródłowego' w stepie coding). Status: pending -> running.",
+                },
+                {
+                    "title": "Agent dopisuje logi",
+                    "desc": "append_job_log dołącza markdown do strony wiki jobu. Każde wywołanie dodaje kolejny akapit - pełna historia pracy agenta.",
+                },
+                {
+                    "title": "Agent raportuje wynik",
+                    "desc": "update_pipeline_job(status='success'/'failure') zamyka job, ustawia finished_at i propaguje status w górę do stepa i pipeline'u.",
+                },
+                {
+                    "title": "Dashboard pokazuje postęp",
+                    "desc": "Widok pipeline'u z kolumnami stepów i kartami jobów. Statusy, czasy trwania i linki do logów wiki - wszystko w czasie rzeczywistym.",
+                },
+                {
+                    "title": "finish_pipeline zamyka całość",
+                    "desc": "Agent wywołuje finish_pipeline po zakończeniu pracy. Status finalny agregowany ze stepów jeśli nie podany. Opcjonalnie wpis do wiki-log.",
+                },
+            ],
+            "ai_intro": "9 narzędzi MCP do pełnej obserwacji pracy agentów - tworzenie pipeline'ów, raportowanie jobów, dopisywanie logów i zamykanie. Wszystkie operacje best-effort - błąd pipeline'u nie blokuje pracy agenta.",
+            "mcp_tools": [
+                {"name": "create_pipeline", "desc": "Utwórz pipeline (ticket_work: automatyczne stepy research/coding/wrap-up)."},
+                {"name": "create_pipeline_job", "desc": "Dodaj job do stepa z nazwą, opisem i statusem startowym."},
+                {"name": "update_pipeline_job", "desc": "Aktualizuj status i summary jobu. Propagacja w górę: job -> step -> pipeline."},
+                {"name": "append_job_log", "desc": "Dołącz markdown do strony wiki jobu. Tworzy stronę przy pierwszym wywołaniu."},
+                {"name": "finish_pipeline", "desc": "Zamknij pipeline z finalnym statusem (agregowany ze stepów jeśli nie podany)."},
+                {"name": "list_pipelines", "desc": "Lista pipeline'ów projektu z filtrami statusu i typu oraz paginacją."},
+                {"name": "get_pipeline", "desc": "Pełne drzewo pipeline'u: stepy, joby, czasy, statusy i linki do logów."},
+                {"name": "get_pipeline_job_log", "desc": "Pobierz pełny log jobu jako markdown z powiązanej strony wiki."},
+                {"name": "clean_pipeline_logs", "desc": "Usuń strony wiki z logami jobów pipeline'ów danego sprintu (sprzątanie po zamknięciu)."},
+            ],
+            "tech_details": [
+                {
+                    "label": "Model danych",
+                    "value": "Pipeline -> PipelineStep -> PipelineJob w PostgreSQL. UUID klucze, timestamps (created_at, started_at, finished_at). pipeline_type: ticket_work | sprint_close.",
+                },
+                {
+                    "label": "Propagacja statusu",
+                    "value": "_update_step_status() i _update_pipeline_status() w services/pipelines.py. Job failed -> step failed -> pipeline failed. Agregacja przez min() statusów.",
+                },
+                {
+                    "label": "Logi wiki",
+                    "value": "PipelineJob.wiki_page_id linkuje do WikiPage. exclude_from_embeddings=True - logi nie trafiają do RAG. Rodzic 'pipeline-logi' tworzony idempotentnie.",
+                },
+                {
+                    "label": "Live polling",
+                    "value": "HTMX hx-trigger='load delay:15s' na listRow i treePartial. Czasy liczone w locie - brak kolumny duration w bazie.",
+                },
+                {
+                    "label": "is_stale()",
+                    "value": "Funkcja przy odczycie: pipeline running + last update > 6h temu. Obliczana w serwisie, bez crona. Flaguje stuck agentów.",
+                },
+                {
+                    "label": "Wzorzec GitLab CI/CD",
+                    "value": "Architektura pipeline/step/job wzorowana na GitLab CI/CD. Obserwowalność (nie wykonanie) - agenci sami raportują postęp przez MCP.",
+                },
+            ],
+            "other_modules": _other_modules("pipelines", lang),
+        }
+    return {
+        "title": "Pipelines - AI Agent Observability",
+        "screenshot": None,
+        "screenshot_2": None,
+        "color": "indigo",
+        "icon": _ICON_PIPELINES,
+        "badge": "AI Observability",
+        "headline": "Observe AI agent work as pipelines - in real time",
+        "description": (
+            "The Pipelines module models AI agent work as observability (not execution). "
+            "The Pipeline -> PipelineStep -> PipelineJob hierarchy in PostgreSQL lets you track every stage of agent work: "
+            "from research, through coding, to wrap-up. Job logs are stored as wiki pages, "
+            "status propagates upward - a failed job pulls its step and pipeline down. "
+            "The dashboard refreshes every 15 seconds, and is_stale() flags pipelines stuck for more than 6 hours."
+        ),
+        "screenshot_hint": "Pipeline list with status and type filters",
+        "screenshot_hint_2": "Pipeline detail view with step columns and job cards",
+        "features": [
+            {
+                "title": "Pipeline -> Step -> Job hierarchy",
+                "desc": "Each pipeline has steps (research, coding, wrap-up), each step has jobs. Status propagates upward - failed job -> failed step -> failed pipeline.",
+            },
+            {
+                "title": "Job logs as wiki pages",
+                "desc": "Every job has its own wiki page with a full log (content in MinIO). Pages grouped under the 'pipeline-logi' parent, excluded from RAG - they don't pollute search results.",
+            },
+            {
+                "title": "15s live polling",
+                "desc": "The pipeline list and detail view refresh every 15 seconds via HTMX. Durations are computed on the fly (finished_at - started_at or now() - started_at for active jobs).",
+            },
+            {
+                "title": "Stuck pipeline detection",
+                "desc": "is_stale() flags pipelines in running status with no updates for more than 6 hours. Computed at read time, no cron job needed.",
+            },
+            {
+                "title": "Read-only UI - control via MCP",
+                "desc": "The dashboard is read-only - pipelines are created by skills via MCP, not from the UI. AI agents have full control through 9 dedicated MCP tools.",
+            },
+            {
+                "title": "wiki-log integration",
+                "desc": "When LLM Wiki is enabled, finishing a pipeline appends an entry to wiki-log. Best-effort - a pipeline MCP error never blocks the agent's work.",
+            },
+        ],
+        "steps": [
+            {
+                "title": "Agent creates the pipeline",
+                "desc": "The skill calls create_pipeline via MCP - a ticket_work pipeline automatically gets 3 steps: research, coding, wrap-up.",
+            },
+            {
+                "title": "Agent reports job starts",
+                "desc": "create_pipeline_job registers a new job in a step (e.g. 'Source code analysis' in the coding step). Status: pending -> running.",
+            },
+            {
+                "title": "Agent appends logs",
+                "desc": "append_job_log appends markdown to the job's wiki page. Each call adds another section - the complete history of agent work.",
+            },
+            {
+                "title": "Agent reports the result",
+                "desc": "update_pipeline_job(status='success'/'failure') closes the job, sets finished_at, and propagates status up to the step and pipeline.",
+            },
+            {
+                "title": "Dashboard shows progress",
+                "desc": "Pipeline view with step columns and job cards. Statuses, durations, and links to wiki logs - everything in real time.",
+            },
+            {
+                "title": "finish_pipeline closes everything",
+                "desc": "Agent calls finish_pipeline when done. Final status aggregated from steps if not provided. Optional wiki-log entry when LLM Wiki is enabled.",
+            },
+        ],
+        "ai_intro": "9 MCP tools for full observability of agent work - creating pipelines, reporting jobs, appending logs, and closing out. All operations are best-effort - a pipeline error never blocks the agent's work.",
+        "mcp_tools": [
+            {"name": "create_pipeline", "desc": "Create a pipeline (ticket_work: automatic research/coding/wrap-up steps)."},
+            {"name": "create_pipeline_job", "desc": "Add a job to a step with name, description, and starting status."},
+            {"name": "update_pipeline_job", "desc": "Update job status and summary. Propagates upward: job -> step -> pipeline."},
+            {"name": "append_job_log", "desc": "Append markdown to the job's wiki page. Creates the page on first call."},
+            {"name": "finish_pipeline", "desc": "Close the pipeline with final status (aggregated from steps if not provided)."},
+            {"name": "list_pipelines", "desc": "List project pipelines with status and type filters plus pagination."},
+            {"name": "get_pipeline", "desc": "Full pipeline tree: steps, jobs, timestamps, statuses, and log links."},
+            {"name": "get_pipeline_job_log", "desc": "Fetch the full job log as markdown from the linked wiki page."},
+            {"name": "clean_pipeline_logs", "desc": "Delete the wiki pages holding pipeline job logs for a sprint (cleanup after close)."},
+        ],
+        "tech_details": [
+            {
+                "label": "Data model",
+                "value": "Pipeline -> PipelineStep -> PipelineJob in PostgreSQL. UUID keys, timestamps (created_at, started_at, finished_at). pipeline_type: ticket_work | sprint_close.",
+            },
+            {
+                "label": "Status propagation",
+                "value": "_update_step_status() and _update_pipeline_status() in services/pipelines.py. Job failed -> step failed -> pipeline failed. Aggregated via min() of statuses.",
+            },
+            {
+                "label": "Wiki logs",
+                "value": "PipelineJob.wiki_page_id links to WikiPage. exclude_from_embeddings=True - logs are excluded from RAG. The 'pipeline-logi' parent is created idempotently.",
+            },
+            {
+                "label": "Live polling",
+                "value": "HTMX hx-trigger='load delay:15s' on listRow and treePartial. Durations computed on the fly - no duration column in the database.",
+            },
+            {
+                "label": "is_stale()",
+                "value": "Computed at read time: pipeline running + last update > 6h ago. Evaluated in the service layer, no cron. Flags stuck agents.",
+            },
+            {
+                "label": "GitLab CI/CD pattern",
+                "value": "Pipeline/step/job architecture modeled on GitLab CI/CD. Observability (not execution) - agents self-report progress via MCP.",
+            },
+        ],
+        "other_modules": _other_modules("pipelines", lang),
+    }
+
+
 _FEATURES: dict[str, Any] = {
     "500ki": _feature_500ki,
     "scrum": _feature_scrum,
@@ -1467,4 +1696,5 @@ _FEATURES: dict[str, Any] = {
     "reports": _feature_reports,
     "settlements": _feature_settlements,
     "work_plan": _feature_work_plan,
+    "pipelines": _feature_pipelines,
 }
