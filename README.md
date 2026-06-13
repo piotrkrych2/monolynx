@@ -12,6 +12,10 @@ Self-hosted project platform — error tracking, Scrum, uptime monitoring, wiki 
 | **Wiki** | Markdown pages with hierarchy, image uploads, and RAG semantic search (pgvector + OpenAI) |
 | **Connections** | Interactive code dependency graph powered by Neo4j and Cytoscape.js |
 | **Heartbeat** | Reverse monitoring for cron jobs and workers — alerts when expected ping doesn't arrive on time |
+| **Settlements** | Cross-project billing with status workflow (draft -> sent -> paid), ticket freezing, and attachment management |
+| **Reports** | Cross-project work reports with multi-select filters, date ranges, and PDF export |
+| **Work Plan / Gantt** | Personal cross-project scheduling on a Gantt chart and monthly calendar, independent of sprint assignment |
+| **Pipelines** | Observability for AI agent work - pipeline -> step -> job hierarchy, job logs stored as wiki pages, status propagation |
 
 ## Tech stack
 

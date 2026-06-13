@@ -13,13 +13,18 @@
                     {{ status_label }}
                 </span>
                 <span class="text-sm text-gray-500">{{ type_label }}</span>
-                {% if ticket_key and ticket_id %}
+                {% if pipeline_type == "sprint_close" and sprint_name %}
+                <a href="/dashboard/{{ project.slug }}/scrum/sprints"
+                   class="text-xs text-indigo-400 hover:text-indigo-300 font-mono bg-gray-700 px-1.5 py-0.5 rounded">
+                    {{ sprint_name }}
+                </a>
+                {% elif ticket_key and ticket_id %}
                 <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ ticket_id }}"
                    class="text-xs text-indigo-400 hover:text-indigo-300 font-mono bg-gray-700 px-1.5 py-0.5 rounded">
                     {{ ticket_key }}
                 </a>
                 {% endif %}
-                {% if ticket_title %}
+                {% if pipeline_type != "sprint_close" and ticket_title %}
                 <span class="text-sm text-gray-600 dark:text-gray-400 truncate">{{ ticket_title }}</span>
                 {% endif %}
                 {% if is_stale %}
@@ -53,40 +58,24 @@
     </div>
 </div>
 
-{# Drzewo stepów - 3 kolumny #}
-<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-    {% set step_names = ["research", "coding", "wrap-up"] %}
-    {% set step_map = {} %}
-    {% for s in steps %}
-        {% if step_map.update({s.name: s}) %}{% endif %}
-    {% endfor %}
-
-    {% for step_name in step_names %}
-        {% set step = step_map.get(step_name) %}
+{# Drzewo stepów - dynamiczna liczba kolumn #}
+<div class="grid grid-cols-1 {% if steps|length == 2 %}md:grid-cols-2{% elif steps|length == 3 %}md:grid-cols-3{% elif steps|length == 4 %}md:grid-cols-4{% else %}md:grid-cols-1{% endif %} gap-4">
+    {% for step in steps %}
         <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
             {# Nagłówek kolumny #}
             <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                    {% if step %}
                     <span class="w-2.5 h-2.5 rounded-full {{ step.dot_class }} flex-shrink-0"></span>
                     <span class="text-sm font-semibold text-gray-200">{{ step.name_label }}</span>
-                    {% else %}
-                    <span class="w-2.5 h-2.5 rounded-full bg-gray-600 flex-shrink-0"></span>
-                    <span class="text-sm font-semibold text-gray-500">
-                        {% if step_name == "research" %}Research
-                        {% elif step_name == "coding" %}Coding
-                        {% else %}Wrap-up{% endif %}
-                    </span>
-                    {% endif %}
                 </div>
-                {% if step and step.duration %}
+                {% if step.duration %}
                 <span class="text-xs text-gray-500 font-mono tabular-nums">{{ step.duration }}</span>
                 {% endif %}
             </div>
 
             {# Joby w kolumnie #}
             <div class="p-3 space-y-2">
-                {% if step and step.jobs %}
+                {% if step.jobs %}
                     {% for job in step.jobs %}
                     <a href="{{ job.url }}"
                        class="block bg-gray-750 dark:bg-gray-750 border border-gray-700 hover:border-indigo-500 rounded-md p-3 transition group">

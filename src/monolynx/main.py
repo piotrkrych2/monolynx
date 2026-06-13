@@ -114,7 +114,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
         "modules_title": "Everything you need",
-        "modules_sub": "Nine integrated modules that cover the full project lifecycle.",
+        "modules_sub": "Ten integrated modules that cover the full project lifecycle.",
         "m_500ki": "Error tracking with smart fingerprinting. Catch exceptions from your apps with a lightweight SDK.",
         "m_scrum": "Backlog, Kanban board, sprints, and story points. Everything for agile project management.",
         "m_monitoring": "URL health checks with uptime tracking, response time history, and instant alerts.",
@@ -124,6 +124,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_settlements": "Cross-project billing with status workflow (draft → sent → paid), ticket freezing, and attachment management.",
         "m_reports": "Cross-project work reports with multi-select filters, date ranges, and PDF export for stakeholders.",
         "m_work_plan": "Personal cross-project scheduling on a Gantt chart and monthly calendar, independent of sprint assignment.",
+        "m_pipelines": "Observability for AI agent work - pipeline, step and job hierarchy with logs, durations and upward status propagation.",
         "mcp_title": "Connect to Claude",
         "mcp_desc": (
             "Add Monolynx to Claude.ai as a custom connector over HTTPS, or wire it into"
@@ -161,7 +162,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
         "modules_title": "Wszystko, czego potrzebujesz",
-        "modules_sub": "Dziewięć zintegrowanych modułów obejmujących cały cykl życia projektu.",
+        "modules_sub": "Dziesięć zintegrowanych modułów obejmujących cały cykl życia projektu.",
         "m_500ki": "Śledzenie błędów z inteligentnym fingerprintingiem. Przechwytuj wyjątki z aplikacji za pomocą lekkiego SDK.",
         "m_scrum": "Backlog, tablica Kanban, sprinty i story pointy. Wszystko do zwinnego zarządzania projektami.",
         "m_monitoring": "Monitorowanie URL z historią uptimeu, czasami odpowiedzi i natychmiastowymi alertami.",
@@ -173,6 +174,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "m_reports": "Raporty pracy cross-project z multi-select filtrami, zakresem dat i eksportem PDF dla stakeholderów.",
         "m_work_plan": "Osobiste planowanie cross-project na wykresie Gantta i kalendarzu, niezależne od przypisania do sprintu.",
+        "m_pipelines": "Obserwowalność pracy agentów AI - hierarchia pipeline, step i job z logami, czasami i propagacją statusu w górę.",
         "mcp_title": "Połącz z Claude",
         "mcp_desc": (
             "Dodaj Monolynx do Claude.ai jako własny konektor po HTTPS albo podłącz go do"
@@ -233,6 +235,7 @@ def _landing_markdown(lang: str) -> str:
         ("reports", "Reports" if lang == "en" else "Raporty", t["m_reports"]),
         ("settlements", "Settlements" if lang == "en" else "Rozliczenia", t["m_settlements"]),
         ("work_plan", "Work Plan / Gantt" if lang == "en" else "Plan pracy / Gantt", t["m_work_plan"]),
+        ("pipelines", "Pipelines", t["m_pipelines"]),
     ]
     mcp_desc = t["mcp_desc"].replace("<mcp_link>", "").replace("</mcp_link>", "")
     is_pl = lang == "pl"

@@ -256,10 +256,13 @@ PIPELINE_JOB_STATUS_LABELS = {
 
 PIPELINE_TICKET_WORK_STEPS = ["research", "coding", "wrap-up"]
 
+PIPELINE_SPRINT_CLOSE_STEPS = ["wiki-update", "wrap-up"]
+
 PIPELINE_STEP_NAME_LABELS = {
     "research": "Research",
     "coding": "Coding",
     "wrap-up": "Wrap-up",
+    "wiki-update": "Aktualizacja Wiki",
 }
 
 SETTLEMENT_CATEGORIES = frozenset({"invoice", "report", "acceptance_protocol", "other"})

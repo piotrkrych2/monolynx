@@ -25,6 +25,7 @@ from monolynx.database import get_db
 from monolynx.models.pipeline import Pipeline, PipelineJob, PipelineStep
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
@@ -90,17 +91,16 @@ def _build_row(
     ticket_key: str | None,
     ticket_title: str | None = None,
     triggered_by_name: str | None = None,
+    sprint_name: str | None = None,
 ) -> dict[str, object]:
     """Buduje slownik danych wiersza dla szablonu listy pipeline'ow."""
     steps_data = []
-    # Mapuj stepy po nazwie (research, coding, wrap-up) - pozycja = indeks
-    step_by_name: dict[str, PipelineStep] = {s.name: s for s in (pipeline.steps or [])}
-    for step_name in ("research", "coding", "wrap-up"):
-        step = step_by_name.get(step_name)
-        s_status = step.status if step else "pending"
+    # Iteruj po realnych stepach posortowanych po position
+    for step in sorted(pipeline.steps or [], key=lambda s: s.position):
+        s_status = step.status
         steps_data.append(
             {
-                "name": PIPELINE_STEP_NAME_LABELS.get(step_name, step_name),
+                "name": PIPELINE_STEP_NAME_LABELS.get(step.name, step.name),
                 "status": s_status,
                 "status_label": PIPELINE_STEP_STATUS_LABELS.get(s_status, s_status),
                 "dot_class": _STEP_DOT_CLASSES.get(s_status, "bg-gray-500"),
@@ -131,6 +131,7 @@ def _build_row(
         "is_running": pipeline.status == "running",
         "is_stale": pipelines_service.is_stale(pipeline),
         "steps": steps_data,
+        "sprint_name": sprint_name,
     }
 
 
@@ -254,6 +255,17 @@ async def _build_user_name_map(
     return out
 
 
+async def _build_sprint_info_map(
+    db: AsyncSession,
+    sprint_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, str]:
+    """Zwraca slownik {sprint_id: sprint_name} dla podanej listy ID."""
+    if not sprint_ids:
+        return {}
+    result = await db.execute(select(Sprint).where(Sprint.id.in_(sprint_ids)))
+    return {s.id: s.name for s in result.scalars().all()}
+
+
 @router.get("/{slug}/pipelines/api/list")
 async def api_list_pipelines(
     slug: str,
@@ -360,6 +372,8 @@ async def _list_context(
     ticket_info_map = await _build_ticket_info_map(db, ticket_ids)
     user_ids = [p.triggered_by for p in items if p.triggered_by is not None]
     user_name_map = await _build_user_name_map(db, user_ids)
+    sprint_ids = [p.sprint_id for p in items if p.sprint_id is not None]
+    sprint_info_map = await _build_sprint_info_map(db, sprint_ids)
 
     rows = []
     for p in items:
@@ -367,7 +381,8 @@ async def _list_context(
         key = info[0] if info else None
         title = info[1] if info else None
         author = user_name_map.get(p.triggered_by) if p.triggered_by is not None else None
-        rows.append(_build_row(p, key, ticket_title=title, triggered_by_name=author))
+        s_name = sprint_info_map.get(p.sprint_id) if p.sprint_id is not None else None
+        rows.append(_build_row(p, key, ticket_title=title, triggered_by_name=author, sprint_name=s_name))
 
     total_pages = math.ceil(total / _PER_PAGE) if total > 0 else 1
     page = max(1, min(page, total_pages))
@@ -474,6 +489,14 @@ async def _pipeline_detail_context(
             ticket_key = ticket.key
             ticket_title = ticket.title
 
+    sprint_name: str | None = None
+    if p.sprint_id is not None:
+        # get_pipeline nie eager-loaduje relacji sprint - query bezposrednio (async, brak lazy load)
+        s_result = await db.execute(select(Sprint).where(Sprint.id == p.sprint_id))
+        sprint_obj = s_result.scalar_one_or_none()
+        if sprint_obj is not None:
+            sprint_name = sprint_obj.name
+
     triggered_by_name: str | None = None
     if p.triggered_by is not None:
         name_map = await _build_user_name_map(db, [p.triggered_by])
@@ -498,6 +521,8 @@ async def _pipeline_detail_context(
         "ticket_key": ticket_key,
         "ticket_title": ticket_title,
         "ticket_id": str(p.ticket_id) if p.ticket_id else None,
+        "sprint_name": sprint_name,
+        "sprint_id": str(p.sprint_id) if p.sprint_id else None,
         "triggered_by_name": triggered_by_name,
         "branch": p.branch,
         "created_at": p.created_at,

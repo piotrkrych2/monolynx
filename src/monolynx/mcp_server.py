@@ -36,7 +36,6 @@ from monolynx.constants import (
     PERMISSION_MODULES,
     PIPELINE_JOB_STATUSES,
     PIPELINE_STATUSES,
-    PIPELINE_TICKET_WORK_STEPS,
     PIPELINE_TYPES,
     PRIORITIES,
     TICKET_STATUSES,
@@ -6209,13 +6208,15 @@ async def create_pipeline(
     project_slug: str,
     pipeline_type: str,
     ticket_id: str | None = None,
+    sprint_id: str | None = None,
     branch: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Utwórz nowy pipeline w projekcie.
 
     pipeline_type: ticket_work | sprint_close
-    ticket_id: UUID lub klucz ticketa (np. MON-12) — wymagany dla ticket_work
+    ticket_id: UUID lub klucz ticketa (np. MON-12) — wymagany dla ticket_work, zabroniony dla sprint_close
+    sprint_id: UUID sprintu — wymagany dla sprint_close, zabroniony dla ticket_work
     branch: nazwa brancha git (opcjonalna)
     meta: dodatkowe metadane (JSONB, opcjonalne)
 
@@ -6226,9 +6227,19 @@ async def create_pipeline(
     if pipeline_type not in PIPELINE_TYPES:
         raise ValueError(f"Nieprawidlowy pipeline_type: {pipeline_type!r}. Dozwolone: {PIPELINE_TYPES}")
 
+    if ticket_id is not None and sprint_id is not None:
+        raise ValueError("Nie można podać jednocześnie ticket_id i sprint_id")
+
     resolved_ticket_id: uuid.UUID | None = None
     if ticket_id is not None:
         resolved_ticket_id = await _resolve_ticket_uuid(ticket_id, project.id)
+
+    resolved_sprint_id: uuid.UUID | None = None
+    if sprint_id is not None:
+        try:
+            resolved_sprint_id = uuid.UUID(sprint_id)
+        except ValueError:
+            raise ValueError(f"Nieprawidlowy format sprint_id: {sprint_id!r}") from None
 
     async with async_session_factory() as db:
         # Weryfikacja przynaleznosci ticketa do projektu (galaz czystego UUID nie jest filtrowana w _resolve_ticket_uuid)
@@ -6237,11 +6248,17 @@ async def create_pipeline(
             if ticket_check.scalar_one_or_none() is None:
                 raise ValueError(f"Ticket '{ticket_id}' nie istnieje w projekcie")
 
+        if resolved_sprint_id is not None:
+            sprint_check = await db.execute(select(Sprint.id).where(Sprint.id == resolved_sprint_id, Sprint.project_id == project.id))
+            if sprint_check.scalar_one_or_none() is None:
+                raise ValueError(f"Sprint '{sprint_id}' nie istnieje w projekcie")
+
         pipeline = await pipelines_service.create_pipeline(
             db,
             project_id=project.id,
             pipeline_type=pipeline_type,
             ticket_id=resolved_ticket_id,
+            sprint_id=resolved_sprint_id,
             branch=branch,
             triggered_by=user.id,
             meta=meta,
@@ -6266,7 +6283,7 @@ async def create_pipeline_job(
     """Utwórz job w podanym stepie pipeline'u.
 
     pipeline_id: UUID pipeline'u
-    step: nazwa stepu (research | coding | wrap-up)
+    step: nazwa stepu (ticket_work: research | coding | wrap-up; sprint_close: wiki-update | wrap-up)
     name: nazwa joba (np. backend-developer)
     agent_type: typ agenta (np. backend-developer)
 
@@ -6274,8 +6291,9 @@ async def create_pipeline_job(
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
-    if step not in PIPELINE_TICKET_WORK_STEPS:
-        raise ValueError(f"Nieprawidlowy step: {step!r}. Dozwolone: {PIPELINE_TICKET_WORK_STEPS}")
+    # Walidacja stepu odbywa sie w create_job (wyszukanie po pipeline_id + step_name),
+    # co pokrywa oba typy pipeline (ticket_work: research/coding/wrap-up,
+    # sprint_close: wiki-update/wrap-up) bez sztywnej listy dozwolonych nazw.
 
     try:
         pipeline_uuid = uuid.UUID(pipeline_id)
@@ -6586,3 +6604,33 @@ async def get_pipeline_job_log(
         "wiki_page_id": str(job.wiki_page_id),
         "content": content,
     }
+
+
+@mcp.tool()
+async def clean_pipeline_logs(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    sprint_id: str,
+) -> dict[str, int]:
+    """Usuń strony wiki logów jobów pipeline'ów ticket_work powiązanych ze sprintem.
+
+    project_slug: slug projektu
+    sprint_id: UUID sprintu
+
+    Zwraca liczbę usuniętych stron wiki ({"deleted": N}).
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    try:
+        sprint_uuid = uuid.UUID(sprint_id)
+    except ValueError:
+        raise ValueError(f"Nieprawidlowy format sprint_id: {sprint_id!r}") from None
+
+    async with async_session_factory() as db:
+        sprint_check = await db.execute(select(Sprint.id).where(Sprint.id == sprint_uuid, Sprint.project_id == project.id))
+        if sprint_check.scalar_one_or_none() is None:
+            raise ValueError(f"Sprint '{sprint_id}' nie istnieje w projekcie '{project_slug}'")
+
+        deleted = await pipelines_service.clean_pipeline_logs_for_sprint(db, project.id, sprint_uuid)
+
+    return {"deleted": deleted}

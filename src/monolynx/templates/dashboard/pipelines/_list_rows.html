@@ -27,13 +27,18 @@
             <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm text-gray-900 dark:text-white font-medium">{{ row.type_label }}</span>
-                    {% if row.ticket_key and row.ticket_id %}
+                    {% if row.pipeline_type == "sprint_close" and row.sprint_name %}
+                    <a href="/dashboard/{{ project.slug }}/scrum/sprints"
+                       class="text-xs text-indigo-400 hover:text-indigo-300 font-mono bg-gray-700 px-1.5 py-0.5 rounded flex-shrink-0 pointer-events-auto relative z-10">
+                        {{ row.sprint_name }}
+                    </a>
+                    {% elif row.ticket_key and row.ticket_id %}
                     <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ row.ticket_id }}"
                        class="text-xs text-indigo-400 hover:text-indigo-300 font-mono bg-gray-700 px-1.5 py-0.5 rounded flex-shrink-0 pointer-events-auto relative z-10">
                         {{ row.ticket_key }}
                     </a>
                     {% endif %}
-                    {% if row.ticket_title %}
+                    {% if row.pipeline_type != "sprint_close" and row.ticket_title %}
                     <span class="text-sm text-gray-600 dark:text-gray-400 truncate">{{ row.ticket_title }}</span>
                     {% endif %}
                     {% if row.is_stale %}
@@ -52,7 +57,7 @@
 
             {# Mini-kropki stepow (research, coding, wrap-up) #}
             {% if row.steps %}
-            <div class="flex items-center gap-1.5 flex-shrink-0" title="Stepy: research, coding, wrap-up">
+            <div class="flex items-center gap-1.5 flex-shrink-0">
                 {% for step in row.steps %}
                 <span class="w-2.5 h-2.5 rounded-full {{ step.dot_class }} flex-shrink-0"
                       title="{{ step.name }}: {{ step.status_label }}"></span>

@@ -296,6 +296,7 @@ EXPECTED_TOOLS = [
     "get_pipeline",
     "get_pipeline_job_log",
     "append_job_log",
+    "clean_pipeline_logs",
 ]
 
 # Narzedzia ktore nie wymagaja project_slug (operuja po ticket_id, entry_id, lub cross-project).

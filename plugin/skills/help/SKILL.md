@@ -31,6 +31,10 @@ Podejmujesz ticket do realizacji. Skill waliduje branch, uruchamia Researchera, 
 
 Przebieg pracy jest raportowany do **modulu Pipelines** (obserwowalnosc, wzorowana na GitLab CI/CD): tworzy sie pipeline `ticket_work` ze stepami research → coding → wrap-up, a kazdy agent dostaje swoj job. Raport kazdego agenta (co zrobil, decyzje, pliki) zapisywany jest jako strona wiki podpieta pod job. Status, czas trwania i logi widac na zywo w zakladce "Pipelines" projektu. Raportowanie jest best-effort - jesli serwer MCP nie ma modulu Pipelines, skill dziala jak dotychczas. `/monolynx:work-simple` raportuje analogicznie, w uproszczonej formie (dev + krytyk).
 
+### 4. `/monolynx:sprint-end [nazwa sprintu (opcjonalnie)]`
+
+Zamykasz sprint. Skill orkiestruje zamkniecie jako pipeline `sprint_close` ze stepami wiki-update → wrap-up: integruje logi pracy ze sprintu z wiki (INGEST), audytuje wiki (LINT), czysci strony logow pipeline sprintu i na koniec realnie zamyka sprint (`complete_sprint` - niedokonczone tickety wracaja do backlogu, dlatego skill prosi o potwierdzenie). Bez argumentu bierze aktywny sprint. Raportowanie do Pipelines jest best-effort.
+
 ---
 
 ## Skille dodatkowe

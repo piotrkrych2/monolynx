@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from monolynx.constants import (
     PIPELINE_JOB_STATUSES,
+    PIPELINE_SPRINT_CLOSE_STEPS,
     PIPELINE_STATUSES,
     PIPELINE_TICKET_WORK_STEPS,
     PIPELINE_TYPES,
@@ -20,6 +22,8 @@ from monolynx.models.pipeline import Pipeline, PipelineJob, PipelineStep
 
 if TYPE_CHECKING:
     from monolynx.models.wiki_page import WikiPage
+
+logger = logging.getLogger(__name__)
 
 # Statusy terminalne (koniec pracy joba/stepu)
 _JOB_TERMINAL = {"success", "failed", "skipped", "canceled"}
@@ -43,6 +47,17 @@ async def create_pipeline(
     if pipeline_type not in PIPELINE_TYPES:
         raise ValueError(f"Nieprawidlowy pipeline_type: {pipeline_type!r}. Dozwolone: {PIPELINE_TYPES}")
 
+    if pipeline_type == "ticket_work":
+        if ticket_id is None:
+            raise ValueError("pipeline_type 'ticket_work' requires ticket_id")
+        if sprint_id is not None:
+            raise ValueError("pipeline_type 'ticket_work' requires ticket_id and forbids sprint_id")
+    elif pipeline_type == "sprint_close":
+        if sprint_id is None:
+            raise ValueError("pipeline_type 'sprint_close' requires sprint_id")
+        if ticket_id is not None:
+            raise ValueError("pipeline_type 'sprint_close' requires sprint_id and forbids ticket_id")
+
     pipeline = Pipeline(
         project_id=project_id,
         pipeline_type=pipeline_type,
@@ -56,15 +71,16 @@ async def create_pipeline(
     db.add(pipeline)
     await db.flush()  # potrzebujemy pipeline.id dla stepow
 
-    if pipeline_type == "ticket_work":
-        for position, step_name in enumerate(PIPELINE_TICKET_WORK_STEPS):
-            step = PipelineStep(
-                pipeline_id=pipeline.id,
-                name=step_name,
-                position=position,
-                status="pending",
-            )
-            db.add(step)
+    step_names = PIPELINE_TICKET_WORK_STEPS if pipeline_type == "ticket_work" else PIPELINE_SPRINT_CLOSE_STEPS
+
+    for position, step_name in enumerate(step_names):
+        step = PipelineStep(
+            pipeline_id=pipeline.id,
+            name=step_name,
+            position=position,
+            status="pending",
+        )
+        db.add(step)
 
     await db.commit()
 
@@ -467,3 +483,59 @@ async def maybe_log_pipeline_to_wiki_log(
     short_id = str(pipeline.id)[:8]
     entry = f"Pipeline {pipeline.pipeline_type} {short_id} - status {pipeline.status}"
     await wiki_svc.append_log(project=project, entry=entry, user_id=user_id, db=db)
+
+
+async def clean_pipeline_logs_for_sprint(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    sprint_id: uuid.UUID,
+) -> int:
+    """Usuwa strony wiki logów jobów pipeline'ów ticket_work powiązanych ze sprintem.
+
+    Zwraca liczbę faktycznie usuniętych stron wiki. Operacja jest odporna na błąd
+    pojedynczej strony (np. błąd MinIO) - pomija ją i kontynuuje, bo `delete_wiki_page`
+    commituje per stronę, więc przerwanie w połowie zostawiłoby stan częściowy.
+    Cleanup jest idempotentny - ponowne wywołanie dokończy resztę.
+    """
+    from monolynx.models.ticket import Ticket
+    from monolynx.models.wiki_page import WikiPage
+    from monolynx.services import wiki as wiki_svc
+
+    wiki_page_id_result = await db.execute(
+        select(PipelineJob.wiki_page_id)
+        .distinct()
+        .join(PipelineStep, PipelineJob.step_id == PipelineStep.id)
+        .join(Pipeline, PipelineStep.pipeline_id == Pipeline.id)
+        .join(Ticket, Pipeline.ticket_id == Ticket.id)
+        .where(
+            Pipeline.project_id == project_id,
+            Pipeline.pipeline_type == "ticket_work",
+            Ticket.sprint_id == sprint_id,
+            PipelineJob.wiki_page_id.is_not(None),
+        )
+    )
+    wiki_page_ids = [row[0] for row in wiki_page_id_result.all()]
+
+    if not wiki_page_ids:
+        return 0
+
+    # Defensywne ograniczenie do stron tego projektu - chroni przed skasowaniem
+    # strony innego projektu, gdyby wiki_page_id joba wskazywal poza projekt.
+    pages_result = await db.execute(
+        select(WikiPage).where(
+            WikiPage.id.in_(wiki_page_ids),
+            WikiPage.project_id == project_id,
+        )
+    )
+    pages = list(pages_result.scalars().all())
+
+    deleted = 0
+    for page in pages:
+        try:
+            await wiki_svc.delete_wiki_page(page, db)
+            deleted += 1
+        except Exception:
+            logger.warning("clean_pipeline_logs: nie udalo sie usunac strony wiki %s", page.id)
+            await db.rollback()
+
+    return deleted
