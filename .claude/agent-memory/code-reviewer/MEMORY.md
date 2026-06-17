@@ -86,6 +86,16 @@
 - `search_tickets` returns `dict` with `results`, `total`, `page`, `total_pages` — newer, cleaner pattern
 - Future tools should use the dict pattern; consider migrating list_tickets
 
+## MCP Transport Auth (MON-103)
+- `_MCPBearerAuthMiddleware` (plain ASGI, owija `mcp.streamable_http_app()`) + `build_mcp_http_app()` w mcp_server.py. main.py mountuje TEN SAM owiniety obiekt pod `/mcp` ORAZ `/` (root mount dla Claude Desktop na APP_URL). Oba chronione, bo to ta sama instancja.
+- Bramka reuzywa `_verify_token` (OAuth-first via verify_oauth_access_token, fallback verify_mcp_token dla osk_*). Per-tool `_auth(ctx)` zostaje jako defense-in-depth.
+- OAuth router (api/oauth.py, APIRouter bez prefiksu, include_router) ma priorytet nad mount `/` -> .well-known/register/authorize/token publiczne. Backend swiadomie NIE uzyl FastMCP(auth=) by uniknac podwojnego .well-known pod /mcp.
+- KRYTYCZNA PULAPKA TESTOWA: pod ASGITransport BEZ lifespan (conftest `client` fixture) MCP session manager nie jest zainicjalizowany -> request `/mcp` moze dac 404 ZANIM dotrze do middleware. Testy 401 staja sie FLAKY/order-dependent: wczesniejszy test (np. discovery albo patch _verify_token) inicjalizuje stan i zmienia 404->401. ZAWSZE weryfikuj bramke MCP pod TestClient (lifespan ON) trace'ujac `_MCPBearerAuthMiddleware.__call__` (MW_HITS) + sprawdzajac `/mcp` ORAZ `/mcp/` (trailing slash). Pod poprawnym kodem+lifespan: 401 z WWW-Authenticate:Bearer dla obu.
+- Weryfikacja regresji: usun middleware (build->streamable_http_app) i potwierdz ze test failuje (404) -> dowodzi ze gate ON/OFF jest rozrozniany, test nie jest falszywie zielony.
+
+## PULAPKA: git checkout kasuje prace agentow z working tree
+- Agenci w pipeline czesto zostawiaja zmiany NIEZACOMMITOWANE (tylko working tree). `git checkout <plik>` (np. przy cofaniu wlasnego sanity-sed) PRZYWRACA plik do HEAD i KASUJE prace agenta. Objaw: `isinstance` mountowanej app nie zgadza sie z definicja w diffie. Zawsze: przed `git checkout` zrob kopie, albo uzyj `git stash`/odtworz zmiane recznie. Po jakiejkolwiek manipulacji plikami docelowymi - `git diff --stat` musi zgadzac sie z oryginalnym diffem pracy agentow.
+
 ## MCP Server Patterns
 - MCP tools use `_get_user_and_project(ctx, slug)` for auth + project access
 - Session via `async_session_factory()` — ORM objects accessed outside session block is established pattern (works for scalar columns, no lazy loads)

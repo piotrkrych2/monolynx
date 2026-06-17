@@ -81,9 +81,10 @@ app = FastAPI(
 )
 
 # MCP Server mount
+from monolynx.mcp_server import build_mcp_http_app  # noqa: E402
 from monolynx.mcp_server import mcp as mcp_server  # noqa: E402
 
-_mcp_http_app = mcp_server.streamable_http_app()
+_mcp_http_app = build_mcp_http_app()
 app.mount("/mcp", _mcp_http_app)
 
 _STATIC_DIR = Path(__file__).parent / "static"
