@@ -82,6 +82,58 @@ class TestClientRegistration:
         data = response.json()
         assert data["error"] == "invalid_client_metadata"
 
+    async def test_client_registration_chatgpt(self, client):
+        """POST /register z redirect_uri ChatGPT (per-connector) -- powinno dzialac."""
+        response = await client.post(
+            "/register",
+            json={
+                "client_name": "ChatGPT Connector",
+                "redirect_uris": ["https://chatgpt.com/connector/oauth/abc123def"],
+                "grant_types": ["authorization_code", "refresh_token"],
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert "client_id" in data
+
+    async def test_client_registration_chatgpt_legacy(self, client):
+        """POST /register z legacy redirect_uri ChatGPT -- powinno dzialac."""
+        response = await client.post(
+            "/register",
+            json={
+                "client_name": "ChatGPT Legacy",
+                "redirect_uris": ["https://chatgpt.com/connector_platform_oauth_redirect"],
+                "grant_types": ["authorization_code", "refresh_token"],
+            },
+        )
+        assert response.status_code == 201
+
+    async def test_client_registration_codex_localhost(self, client):
+        """POST /register z localhost -- pokrywa domyslny flow Codex (codex mcp login)."""
+        response = await client.post(
+            "/register",
+            json={
+                "client_name": "Codex CLI",
+                "redirect_uris": ["http://localhost:5555/callback"],
+                "grant_types": ["authorization_code"],
+            },
+        )
+        assert response.status_code == 201
+
+    async def test_client_registration_chatgpt_subdomain_rejected(self, client):
+        """Regresja open-redirect: subdomena chatgpt.com.evil.com musi byc odrzucona."""
+        response = await client.post(
+            "/register",
+            json={
+                "client_name": "Evil App",
+                "redirect_uris": ["https://chatgpt.com.evil.com/connector/oauth/x"],
+                "grant_types": ["authorization_code"],
+            },
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert data["error"] == "invalid_client_metadata"
+
     async def test_client_registration_missing_redirect_uris(self, client):
         """POST /register bez redirect_uris zwraca 400."""
         response = await client.post(

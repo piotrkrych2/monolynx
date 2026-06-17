@@ -24,10 +24,13 @@ from monolynx.models.user import User
 
 logger = logging.getLogger(__name__)
 
-# Dozwolone redirect URIs -- Claude Desktop / claude.ai + localhost (dev)
+# Dozwolone redirect URIs -- Claude Desktop / claude.ai, OpenAI ChatGPT + localhost (dev)
 ALLOWED_REDIRECT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^https://claude\.ai/api/mcp/auth_callback$"),
     re.compile(r"^https://claude\.com/api/mcp/auth_callback$"),
+    # OpenAI ChatGPT connectors (per-connector callback + legacy fixed)
+    re.compile(r"^https://chatgpt\.com/connector/oauth/[\w-]+$"),
+    re.compile(r"^https://chatgpt\.com/connector_platform_oauth_redirect$"),
     re.compile(r"^http://localhost(:\d+)?(/.*)?$"),
     re.compile(r"^http://127\.0\.0\.1(:\d+)?(/.*)?$"),
 ]
