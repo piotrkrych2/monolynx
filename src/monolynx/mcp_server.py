@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import logging
 import math
 import os
@@ -22,6 +23,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from monolynx.config import settings as app_settings
 from monolynx.constants import (
@@ -216,6 +218,86 @@ async def _verify_token(raw_token: str) -> User:
     if user is None:
         raise ValueError("Nieprawidlowy lub nieaktywny token API")
     return user
+
+
+class _MCPBearerAuthMiddleware:
+    """Lekki ASGI middleware wymuszajacy Bearer auth na calym mountcie /mcp.
+
+    Dlaczego nie FastMCP(auth=AuthSettings(...))?
+    AuthSettings wymaga issuer_url i resource_server_url (pola OAuth AS/RS),
+    co dodaloby .well-known/oauth-protected-resource bezposrednio pod /mcp
+    i wymagaloby pelnej konfiguracji OAuth serwera autoryzacji. Nasz OAuth
+    router jest juz zamontowany na glownej aplikacji FastAPI (api/oauth.py),
+    wiec duplikowanie go pod /mcp byloby nieprawidlowe.
+
+    Middleware reuzywac _verify_token (OAuth + legacy osk_*) bez zmian w
+    116 toolach. Per-tool _auth(ctx) pozostaje jako defense-in-depth.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            # Przepuszczamy websockets i lifespan bez weryfikacji
+            await self.app(scope, receive, send)
+            return
+
+        # Wyciagnij naglowek Authorization
+        headers: dict[bytes, bytes] = {k.lower(): v for k, v in scope.get("headers", [])}
+        auth_bytes = headers.get(b"authorization", b"")
+        auth_header = auth_bytes.decode("latin-1")
+
+        raw_token: str | None = None
+        if auth_header.lower().startswith("bearer "):
+            raw_token = auth_header[7:]
+
+        if not raw_token:
+            await _send_401(send)
+            return
+
+        try:
+            await _verify_token(raw_token)
+        except Exception:
+            await _send_401(send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+async def _send_401(send: Send) -> None:
+    """Wyslij odpowiedz HTTP 401 z naglowkiem WWW-Authenticate.
+
+    Naglowek niesie resource_metadata (RFC 9728) wskazujace na
+    .well-known/oauth-protected-resource. To sygnal ktorego klienci MCP
+    (m.in. claude.ai) uzywaja zeby odpalic OAuth flow i pokazac "Connect"
+    zamiast traktowac serwer jako publiczny.
+    """
+    resource_metadata = f"{app_settings.APP_URL}/.well-known/oauth-protected-resource"
+    www_authenticate = f'Bearer resource_metadata="{resource_metadata}"'
+    body = json.dumps({"error": "unauthorized", "error_description": "Bearer token required"}).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+                (b"www-authenticate", www_authenticate.encode("latin-1")),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+def build_mcp_http_app() -> ASGIApp:
+    """Zbuduj aplikacje MCP z middleware Bearer auth.
+
+    Wywolaj zamiast mcp.streamable_http_app() zeby zapewnic
+    ze kazdy JSON-RPC request (initialize, tools/list, tools/call)
+    wymaga waznego tokenu Bearer.
+    """
+    return _MCPBearerAuthMiddleware(mcp.streamable_http_app())
 
 
 def _format_board(sprint: Sprint, project_code: str, columns: dict[str, list[dict[str, Any]]]) -> str:
