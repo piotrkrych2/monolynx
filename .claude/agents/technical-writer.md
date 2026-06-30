@@ -77,6 +77,12 @@ Skills użyte w tej sesji:
 - Show expected output where helpful
 - Cover common errors and their solutions
 
+### Landing page (`src/monolynx/features.py`)
+- Treść landing page to dane w `features.py` (builder `_feature_<modul>` per moduł), nie statyczny HTML.
+- Każdy nowy tool MCP / moduł / widoczny feature MUSI być dopisany do właściwego buildera **w obu językach** (gałąź `pl` ORAZ `return` EN): `mcp_tools[]`, `features[]`, ewentualnie `steps[]`.
+- Jeśli `ai_intro` zawiera licznik narzędzi ("N narzędzi MCP" / "N MCP tools") — utrzymuj go zgodnym z liczbą wpisów `mcp_tools[]`.
+- Pełna zasada: `.claude/rules/landing-page-features.md`.
+
 ## Writing Process
 
 1. **Read existing documentation first** — Understand current structure, tone, and conventions before making changes

@@ -75,6 +75,7 @@ Check for these vulnerabilities with highest priority:
 - **Slug validation**: `^[a-z0-9]+(?:-[a-z0-9]+)*$`
 - **UUID PKs**: No auto-increment integers for primary keys
 - **SDK rule**: SDK must NEVER crash the host application
+- **Landing page**: New MCP tool / module / user-visible feature must be reflected in `src/monolynx/features.py` (PL + EN, `mcp_tools[]` + `ai_intro` counter); flag if missing (`.claude/rules/landing-page-features.md`)
 
 ### 4. Test Coverage
 - Check if new/changed code has corresponding tests

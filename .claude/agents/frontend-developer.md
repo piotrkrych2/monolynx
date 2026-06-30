@@ -88,6 +88,7 @@ Before completing any template work:
 - Check for proper escaping of user-generated content (`{{ variable | e }}`)
 - Verify pagination controls render correctly for edge cases (page 1, last page)
 - After `db.rollback()` in views, always re-query objects before passing to templates
+- New user-visible feature/module/tool → reflected on landing page in `src/monolynx/features.py` (PL + EN), per `.claude/rules/landing-page-features.md`
 
 ## Anti-patterns to Avoid
 

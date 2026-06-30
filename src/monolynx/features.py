@@ -747,7 +747,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "desc": "Agent AI może przeczytać dowolną stronę i wyszukać informacje semantycznie — tak jakby był członkiem zespołu.",
                 },
             ],
-            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami i plikami projektu — 12 narzędzi MCP.",
+            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami i plikami projektu — 13 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_wiki_pages", "desc": "Pełne drzewo hierarchii z parent_id i głębokością"},
                 {"name": "get_wiki_page", "desc": "Treść strony + breadcrumby do nawigacji"},
@@ -756,6 +756,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 {"name": "delete_wiki_page", "desc": "Usuwanie kaskadowe (strona + podstrony)"},
                 {"name": "search_wiki", "desc": "Wyszukiwanie semantyczne RAG (jeśli embeddingi aktywne)"},
                 {"name": "add_wiki_page_attachment", "desc": "Dodaj załącznik do strony wiki (base64)"},
+                {"name": "list_wiki_page_attachments", "desc": "Lista metadanych załączników strony (bez zawartości)"},
                 {"name": "get_wiki_attachment", "desc": "Pobierz zawartość załącznika strony wiki (base64)"},
                 {"name": "add_wiki_file", "desc": "Dodaj globalny plik do repozytorium wiki"},
                 {"name": "get_wiki_file", "desc": "Pobierz zawartość globalnego pliku (base64)"},
@@ -828,7 +829,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             },
             {"title": "AI searches wiki via MCP", "desc": "Your AI agent can read any page and search semantically — as if it were a team member."},
         ],
-        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments and project files — 12 MCP tools.",
+        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments and project files — 13 MCP tools.",
         "mcp_tools": [
             {"name": "list_wiki_pages", "desc": "Full hierarchy tree with parent_id and depth"},
             {"name": "get_wiki_page", "desc": "Page content + breadcrumbs for navigation"},
@@ -837,6 +838,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             {"name": "delete_wiki_page", "desc": "Cascading delete (page + children)"},
             {"name": "search_wiki", "desc": "Semantic RAG search (if embeddings are active)"},
             {"name": "add_wiki_page_attachment", "desc": "Add attachment to wiki page (base64)"},
+            {"name": "list_wiki_page_attachments", "desc": "List wiki page attachment metadata (no content)"},
             {"name": "get_wiki_attachment", "desc": "Get wiki page attachment content (base64)"},
             {"name": "add_wiki_file", "desc": "Add global file to wiki repository"},
             {"name": "get_wiki_file", "desc": "Get global file content (base64)"},

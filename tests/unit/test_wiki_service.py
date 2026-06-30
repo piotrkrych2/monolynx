@@ -6,13 +6,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from monolynx.services.wiki import (
+    RESERVED_SLUGS,
     create_wiki_page,
     delete_wiki_page,
+    extract_wiki_links,
     generate_slug,
+    get_backlinks,
     get_breadcrumbs,
+    get_outlinks,
     get_page_content,
     get_page_tree,
     render_markdown_html,
+    strip_code_spans,
+    sync_backlinks,
     update_wiki_page,
 )
 
@@ -663,3 +669,552 @@ class TestGetPageTree:
         assert result[0]["page"] == parent
         assert len(result[0]["children"]) == 1
         assert result[0]["children"][0]["page"] == child
+
+    async def test_multiple_roots(self):
+        """Wiele stron bez rodzica - kazda jako osobny root."""
+        root1 = MagicMock()
+        root1.id = uuid.uuid4()
+        root1.parent_id = None
+
+        root2 = MagicMock()
+        root2.id = uuid.uuid4()
+        root2.parent_id = None
+
+        root3 = MagicMock()
+        root3.id = uuid.uuid4()
+        root3.parent_id = None
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [root1, root2, root3]
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await get_page_tree(uuid.uuid4(), mock_db)
+
+        assert len(result) == 3
+        assert all(node["children"] == [] for node in result)
+
+    async def test_deeply_nested_tree(self):
+        """Trojpoziomowe zagniezdzone drzewo (root -> child -> grandchild)."""
+        root = MagicMock()
+        root.id = uuid.uuid4()
+        root.parent_id = None
+
+        child = MagicMock()
+        child.id = uuid.uuid4()
+        child.parent_id = root.id
+
+        grandchild = MagicMock()
+        grandchild.id = uuid.uuid4()
+        grandchild.parent_id = child.id
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [root, child, grandchild]
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await get_page_tree(uuid.uuid4(), mock_db)
+
+        assert len(result) == 1
+        assert result[0]["page"] == root
+        assert len(result[0]["children"]) == 1
+        child_node = result[0]["children"][0]
+        assert child_node["page"] == child
+        assert len(child_node["children"]) == 1
+        assert child_node["children"][0]["page"] == grandchild
+
+
+# ---------------------------------------------------------------------------
+# NOWE TESTY - extract_wiki_links
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestExtractWikiLinks:
+    """Testy wyodrebniania referencji wikilink z tresci markdown."""
+
+    def test_simple_wikilink(self):
+        """Podstawowy [[slug]] - zwraca ref i anchor = slug."""
+        result = extract_wiki_links("Tekst z [[moja-strona]].")
+        assert result == {"moja-strona": "moja-strona"}
+
+    def test_wikilink_with_alias(self):
+        """[[slug|label]] - Obsidian alias: ref = slug, anchor = label."""
+        result = extract_wiki_links("Patrz [[api-reference|Dokumentacja API]].")
+        assert result == {"api-reference": "Dokumentacja API"}
+
+    def test_wikilink_uuid(self):
+        """[[uuid]] - referencja UUID."""
+        uid = str(uuid.uuid4())
+        result = extract_wiki_links(f"Link do [[{uid}]].")
+        assert uid in result
+        assert result[uid] == uid
+
+    def test_multiple_wikilinks(self):
+        """Wiele wikilink w tresci."""
+        result = extract_wiki_links("[[strona-a]] i [[strona-b]] to dwie strony.")
+        assert "strona-a" in result
+        assert "strona-b" in result
+
+    def test_duplicate_wikilink_first_wins(self):
+        """Duplikat referencji - wygrywa pierwsza."""
+        result = extract_wiki_links("[[strona]] i znow [[strona|inny anchor]].")
+        assert result["strona"] == "strona"
+
+    def test_markdown_link_internal_slug(self):
+        """[tekst](slug) gdzie slug jest wzorcem slug - wyciaga jako ref."""
+        result = extract_wiki_links("[Moja strona](moja-strona)")
+        assert "moja-strona" in result
+        assert result["moja-strona"] == "Moja strona"
+
+    def test_markdown_link_http_ignored(self):
+        """[tekst](https://...) - linki HTTP sa ignorowane."""
+        result = extract_wiki_links("[Google](https://google.com)")
+        assert result == {}
+
+    def test_markdown_link_mailto_ignored(self):
+        """[tekst](mailto:...) - linki mailto sa ignorowane."""
+        result = extract_wiki_links("[Email](mailto:test@example.com)")
+        assert result == {}
+
+    def test_markdown_link_anchor_ignored(self):
+        """[tekst](#section) - zakotwiczenia sa ignorowane."""
+        result = extract_wiki_links("[Sekcja](#rozdzial-1)")
+        assert result == {}
+
+    def test_wikilink_inside_fenced_code_ignored(self):
+        """[[slug]] wewnatrz bloku kodu fenced jest ignorowany."""
+        content = "```\nPrzyklad [[slug-w-kodzie]]\n```\nTekst po kodzie."
+        result = extract_wiki_links(content)
+        assert "slug-w-kodzie" not in result
+
+    def test_wikilink_inside_inline_code_ignored(self):
+        """[[slug]] wewnatrz backtick code span jest ignorowany."""
+        content = "Uzyj `[[inline-kod]]` w tresci."
+        result = extract_wiki_links(content)
+        assert "inline-kod" not in result
+
+    def test_markdown_link_inside_code_ignored(self):
+        """[tekst](slug) w bloku kodu nie jest wyciagany."""
+        content = "```\n[link w kodzie](link-w-kodzie)\n```"
+        result = extract_wiki_links(content)
+        assert "link-w-kodzie" not in result
+
+    def test_wikilink_priority_over_markdown_link(self):
+        """Jesli ref wystepuje jako wikilink i markdown link, wikilink wygrywa (kolejnosc)."""
+        content = "[[shared-ref]] oraz [tekst](shared-ref)"
+        result = extract_wiki_links(content)
+        # Wikilink przetwarzany pierwszy - anchor = ref
+        assert result["shared-ref"] == "shared-ref"
+
+    def test_empty_content(self):
+        """Pusta tresc zwraca pusty slownik."""
+        assert extract_wiki_links("") == {}
+
+    def test_no_links(self):
+        """Tresc bez linkow zwraca pusty slownik."""
+        assert extract_wiki_links("Zwykly tekst bez zadnych linkow.") == {}
+
+    def test_empty_wikilink_brackets_ignored(self):
+        """[[]] (pusty wikilink) jest ignorowany."""
+        result = extract_wiki_links("Tekst [[]] dalej.")
+        assert result == {}
+
+    def test_markdown_link_with_path_segment(self):
+        """[tekst](/wiki/pages/slug) - ostatni segment jest kluczem."""
+        result = extract_wiki_links("[Strona](/wiki/pages/moj-slug)")
+        assert "moj-slug" in result
+
+    def test_wikilink_alias_empty_label_uses_ref(self):
+        """[[slug|]] - pusty label po | traktuje ref jako anchor."""
+        result = extract_wiki_links("[[strona-z-pustym|]]")
+        assert "strona-z-pustym" in result
+        # pusty label -> anchor = ref
+        assert result["strona-z-pustym"] == "strona-z-pustym"
+
+
+# ---------------------------------------------------------------------------
+# NOWE TESTY - strip_code_spans
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestStripCodeSpans:
+    """Testy usuwania blokow kodu z tresci markdown."""
+
+    def test_strips_fenced_code(self):
+        """Bloki ``` sa zastepowane spacjami."""
+        content = "Przed\n```\nkod\n```\nPo"
+        result = strip_code_spans(content)
+        assert "```" not in result
+        assert "kod" not in result
+
+    def test_strips_inline_code(self):
+        """Inline `kod` jest zastepowany spacjami."""
+        result = strip_code_spans("Tekst `inline code` dalej.")
+        assert "inline code" not in result
+        assert "Tekst" in result
+
+    def test_plain_text_unchanged(self):
+        """Tekst bez blokow kodu jest niezmieniony."""
+        text = "Normalny tekst bez kodu."
+        result = strip_code_spans(text)
+        assert "Normalny tekst" in result
+
+
+# ---------------------------------------------------------------------------
+# NOWE TESTY - sync_backlinks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSyncBacklinks:
+    """Testy synchronizacji backlinkow."""
+
+    async def test_empty_content_deletes_old_backlinks(self):
+        """Pusta tresc usuwa stare backlinki strony."""
+        page = MagicMock()
+        page.id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
+
+        mock_db = AsyncMock()
+        mock_result_execute = MagicMock()
+        mock_db.execute = AsyncMock(return_value=mock_result_execute)
+        mock_db.commit = AsyncMock()
+
+        await sync_backlinks(page=page, content="", db=mock_db)
+
+        # Powinno wywolac delete (przez execute) i commit
+        mock_db.execute.assert_awaited()
+        mock_db.commit.assert_awaited_once()
+
+    async def test_resolves_slug_reference(self):
+        """Referencja po slug jest rozwiazywana do strony."""
+        page = MagicMock()
+        page.id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
+
+        target_id = uuid.uuid4()
+        target_slug = "cel-strony"
+
+        # W galezi non-empty sync_backlinks SELECT (resolve) jest PIERWSZY,
+        # DELETE drugi; DELETE nie wola .all(), wiec zwracamy wiersz zawsze.
+        async def mock_execute(stmt):
+            mock_r = MagicMock()
+            row = MagicMock()
+            row.id = target_id
+            row.slug = target_slug
+            mock_r.all = MagicMock(return_value=[row])
+            return mock_r
+
+        mock_db = AsyncMock()
+        mock_db.execute = mock_execute
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        content = f"Tekst z [[{target_slug}]] referencja."
+        await sync_backlinks(page=page, content=content, db=mock_db)
+
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_awaited()
+
+    async def test_self_link_is_skipped(self):
+        """Backlink do samej siebie nie jest tworzony."""
+        page_id = uuid.uuid4()
+        page = MagicMock()
+        page.id = page_id
+        page.project_id = uuid.uuid4()
+
+        async def mock_execute(stmt):
+            # SELECT (pierwszy) zwraca strone o tym samym ID - self-link do pominiecia
+            mock_r = MagicMock()
+            row = MagicMock()
+            row.id = page_id  # <- sama strona!
+            row.slug = "strona-self"
+            mock_r.all = MagicMock(return_value=[row])
+            return mock_r
+
+        mock_db = AsyncMock()
+        mock_db.execute = mock_execute
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        content = "Tekst z [[strona-self]] do samej siebie."
+        await sync_backlinks(page=page, content=content, db=mock_db)
+
+        # Self-link powinien byc pominiety - add nie wywolane
+        mock_db.add.assert_not_called()
+
+    async def test_uuid_reference_resolved(self):
+        """Referencja po UUID jest rozpoznawana i rozwiazywana."""
+        page = MagicMock()
+        page.id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
+
+        target_id = uuid.uuid4()
+        uid_str = str(target_id)
+
+        async def mock_execute(stmt):
+            mock_r = MagicMock()
+            row = MagicMock()
+            row.id = target_id
+            row.slug = "some-slug"
+            mock_r.all = MagicMock(return_value=[row])
+            return mock_r
+
+        mock_db = AsyncMock()
+        mock_db.execute = mock_execute
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        content = f"Link do [[{uid_str}]]."
+        await sync_backlinks(page=page, content=content, db=mock_db)
+
+        mock_db.add.assert_called_once()
+
+    async def test_anchor_text_stored(self):
+        """anchor_text jest poprawnie przekazywany do WikiBacklink."""
+        page = MagicMock()
+        page.id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
+
+        target_id = uuid.uuid4()
+        target_slug = "docs"
+
+        async def mock_execute(stmt):
+            mock_r = MagicMock()
+            row = MagicMock()
+            row.id = target_id
+            row.slug = target_slug
+            mock_r.all = MagicMock(return_value=[row])
+            return mock_r
+
+        mock_db = AsyncMock()
+        mock_db.execute = mock_execute
+        added_objects: list[MagicMock] = []
+        mock_db.add = lambda obj: added_objects.append(obj)
+        mock_db.commit = AsyncMock()
+
+        content = "Patrz [[docs|Dokumentacja]]."
+        await sync_backlinks(page=page, content=content, db=mock_db)
+
+        assert len(added_objects) == 1
+        bl = added_objects[0]
+        assert bl.anchor_text == "Dokumentacja"
+        assert bl.target_page_id == target_id
+        assert bl.source_page_id == page.id
+
+    async def test_no_references_no_new_backlinks(self):
+        """Gdy brak referencji, delete jest wywolany ale add nie."""
+        page = MagicMock()
+        page.id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
+
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all = MagicMock(return_value=[])
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        await sync_backlinks(page=page, content="Zwykly tekst.", db=mock_db)
+
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_awaited_once()
+
+    async def test_unresolved_reference_ignored(self):
+        """Referencja do nieistniejcej strony nie tworzy backlinku."""
+        page = MagicMock()
+        page.id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
+
+        execute_calls: list[str] = []
+
+        async def mock_execute(stmt):
+            mock_r = MagicMock()
+            if not execute_calls:
+                execute_calls.append("delete")
+                mock_r.all = MagicMock(return_value=[])
+            else:
+                execute_calls.append("select")
+                # Pusta lista - strona nie istnieje
+                mock_r.all = MagicMock(return_value=[])
+            return mock_r
+
+        mock_db = AsyncMock()
+        mock_db.execute = mock_execute
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        content = "Link do [[nieistniejaca-strona]]."
+        await sync_backlinks(page=page, content=content, db=mock_db)
+
+        mock_db.add.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# NOWE TESTY - get_backlinks / get_outlinks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGetBacklinksOutlinks:
+    """Testy pobierania backlinki wychodzacych i przychodzacych."""
+
+    async def test_get_backlinks_empty(self):
+        """Brak backlinkow zwraca pusta liste."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await get_backlinks(uuid.uuid4(), mock_db)
+
+        assert result == []
+
+    async def test_get_backlinks_returns_incoming(self):
+        """get_backlinks zwraca backlinki przychodzace (target_page_id == page_id)."""
+        mock_bl = MagicMock()
+        mock_bl.target_page_id = uuid.uuid4()
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_bl]
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await get_backlinks(mock_bl.target_page_id, mock_db)
+
+        assert len(result) == 1
+        assert result[0] == mock_bl
+
+    async def test_get_outlinks_empty(self):
+        """Brak outlinki zwraca pusta liste."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await get_outlinks(uuid.uuid4(), mock_db)
+
+        assert result == []
+
+    async def test_get_outlinks_returns_outgoing(self):
+        """get_outlinks zwraca linki wychodzace (source_page_id == page_id)."""
+        mock_bl = MagicMock()
+        mock_bl.source_page_id = uuid.uuid4()
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_bl]
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await get_outlinks(mock_bl.source_page_id, mock_db)
+
+        assert len(result) == 1
+        assert result[0] == mock_bl
+
+    async def test_get_backlinks_multiple(self):
+        """Wiele backlinkow przychodzacych."""
+        mock_bls = [MagicMock() for _ in range(3)]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_bls
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await get_backlinks(uuid.uuid4(), mock_db)
+
+        assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# NOWE TESTY - RESERVED_SLUGS + create_wiki_page ValueError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestReservedSlugs:
+    """Testy walidacji zarezerwowanych slugow."""
+
+    def test_reserved_slugs_contains_wiki_index(self):
+        """RESERVED_SLUGS zawiera 'wiki-index'."""
+        assert "wiki-index" in RESERVED_SLUGS
+
+    def test_reserved_slugs_contains_wiki_log(self):
+        """RESERVED_SLUGS zawiera 'wiki-log'."""
+        assert "wiki-log" in RESERVED_SLUGS
+
+    def test_reserved_slugs_contains_wiki_schema(self):
+        """RESERVED_SLUGS zawiera 'wiki-schema'."""
+        assert "wiki-schema" in RESERVED_SLUGS
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_page_raises_on_wiki_index_title(self, mock_upload):
+        """Tworzenie strony o tytule 'Wiki Index' (slug: wiki-index) rzuca ValueError."""
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        with pytest.raises(ValueError, match="zarezerwowany"):
+            await create_wiki_page(
+                project_id=uuid.uuid4(),
+                project_slug="proj",
+                title="Wiki Index",
+                content="content",
+                user_id=uuid.uuid4(),
+                db=mock_db,
+            )
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_page_raises_on_wiki_log_title(self, mock_upload):
+        """Tworzenie strony o tytule 'Wiki Log' (slug: wiki-log) rzuca ValueError."""
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        with pytest.raises(ValueError, match="zarezerwowany"):
+            await create_wiki_page(
+                project_id=uuid.uuid4(),
+                project_slug="proj",
+                title="Wiki Log",
+                content="content",
+                user_id=uuid.uuid4(),
+                db=mock_db,
+            )
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_page_raises_on_wiki_schema_title(self, mock_upload):
+        """Tworzenie strony o tytule 'Wiki Schema' (slug: wiki-schema) rzuca ValueError."""
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        with pytest.raises(ValueError, match="zarezerwowany"):
+            await create_wiki_page(
+                project_id=uuid.uuid4(),
+                project_slug="proj",
+                title="Wiki Schema",
+                content="content",
+                user_id=uuid.uuid4(),
+                db=mock_db,
+            )
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.sync_backlinks", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_page_non_reserved_title_succeeds(self, mock_upload, mock_sync, mock_emb):
+        """Tworzenie strony o niezarezerwowanym tytule dziala normalnie."""
+        mock_upload.return_value = "proj/id.md"
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        # Normalny tytul - nie powinien rzucac
+        result = await create_wiki_page(
+            project_id=uuid.uuid4(),
+            project_slug="proj",
+            title="Normalna Strona",
+            content="content",
+            user_id=uuid.uuid4(),
+            db=mock_db,
+        )
+
+        assert result.title == "Normalna Strona"

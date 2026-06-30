@@ -239,6 +239,7 @@ Two separate packages in one repo:
 - Work Plan uses a junction model `WorkPlanEntry` (`user_id`, `ticket_id`, `scheduled_date`) with `UniqueConstraint(user_id, ticket_id, scheduled_date)`; enables per-user cross-project scheduling independent of sprint assignment; the cross-project list returns only entries owned by the current user from projects where they have membership (no cross-project data leak); frappe-gantt renders the Gantt view, calendar mode is a custom monthly grid
 - Pipelines model AI agent work as observability (not execution): hierarchy `Pipeline -> PipelineStep -> PipelineJob` in PostgreSQL (not Neo4j). `pipeline_type` is `ticket_work` (the only type implemented; steps `research`, `coding`, `wrap-up`) or `sprint_close` (reserved in the model/enum, steps and skill deferred to a future sprint so no migration is needed later). Durations are not stored - computed on the fly (`finished_at - started_at`, or `now() - started_at` for running, with a JS timer ticking between 15s polls). Status propagates upward in the service: a failed job -> failed step -> failed pipeline. `is_stale()` flags pipelines stuck in `running` >6h, computed at read time (no cron)
 - Pipeline job logs are stored as wiki pages under the `pipeline-logi` parent (content in MinIO, metadata in PostgreSQL), linked via `PipelineJob.wiki_page_id`. These pages set `WikiPage.exclude_from_embeddings=True` so the high volume of agent logs (roughly 6-8 pages per ticket) does not pollute RAG `search_wiki` results. When LLM Wiki is enabled, finishing a pipeline appends a `wiki-log` entry. Skills report to pipelines best-effort: a pipeline MCP error never fails the ticket work (pipelines are observability, not a gate). Every pipeline write MCP tool must `await db.commit()` (MON-71 regression)
+- Landing page content lives in `src/monolynx/features.py` (Python builders `_feature_<module>(lang)` returning `features[]`, `steps[]`, `mcp_tools[]`, `tech_details[]` per module, PL + EN), rendered to `/features/<slug>` by `main.py`; the template only renders. Any new MCP tool / module / user-visible feature must be added to `features.py` in BOTH languages (and the `ai_intro` "N MCP tools" counter kept in sync) as part of the same change — see `.claude/rules/landing-page-features.md`
 
 ## Test patterns
 
@@ -255,6 +256,7 @@ Two separate packages in one repo:
 3. Create templates in `templates/dashboard/<module>/`, extending `layouts/project.html` with `{% block module_content %}`
 4. Pass `active_module: "<module>"` in template context for sidebar highlighting
 5. Add module link to sidebar in `layouts/project.html`
+6. Add a `_feature_<module>(lang)` builder to `src/monolynx/features.py` (PL + EN), register it in `_FEATURES` and `_other_modules()`, and add a tile to `templates/landing.html` — see `.claude/rules/landing-page-features.md`
 
 ## Infrastructure
 
