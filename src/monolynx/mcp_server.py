@@ -4593,6 +4593,43 @@ async def add_wiki_page_attachment(
     }
 
 
+@mcp.tool()
+async def list_wiki_page_attachments(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> list[dict[str, Any]]:
+    """Zwroc liste zalacznikow strony Wiki. Nie zwraca zawartosci plikow - tylko metadane."""
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        page_result = await db.execute(
+            select(WikiPage).where(
+                WikiPage.id == uuid.UUID(page_id),
+                WikiPage.project_id == project.id,
+            )
+        )
+        if page_result.scalar_one_or_none() is None:
+            raise ValueError("Strona wiki nie istnieje")
+
+        attachments_result = await db.execute(
+            select(WikiAttachment).where(WikiAttachment.wiki_page_id == uuid.UUID(page_id)).order_by(WikiAttachment.created_at)
+        )
+        attachments = attachments_result.scalars().all()
+
+    return [
+        {
+            "attachment_id": str(a.id),
+            "filename": a.filename,
+            "mime_type": a.mime_type,
+            "size": a.size,
+            "created_at": a.created_at.isoformat(),
+            "created_via_ai": a.created_via_ai,
+        }
+        for a in attachments
+    ]
+
+
 # --- Globalne pliki Wiki ---
 
 

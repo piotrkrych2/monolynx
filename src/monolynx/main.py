@@ -219,6 +219,15 @@ async def llms_txt() -> Response:
     return Response(content=llms_path.read_text(encoding="utf-8"), media_type="text/plain; charset=utf-8")
 
 
+@app.get("/how-to-use-monolynx.md", include_in_schema=False)
+async def how_to_use_monolynx() -> Response:
+    """Serve the AI-assistant usage guide as markdown for LLM consumption."""
+    guide_path = _STATIC_DIR / "how-to-use-monolynx.md"
+    if not guide_path.is_file():
+        return Response(status_code=404, content="Not Found")
+    return _markdown_response(guide_path.read_text(encoding="utf-8"))
+
+
 def _markdown_response(content: str) -> Response:
     return Response(content=content, media_type="text/markdown; charset=utf-8")
 

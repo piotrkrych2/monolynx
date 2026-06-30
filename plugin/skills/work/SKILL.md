@@ -225,21 +225,21 @@ mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ID>", st
 
 ### Dostepni agenci
 
-| Agent | subagent_type | Specjalizacja |
-|-------|---------------|---------------|
-| Backend Developer | `backend-developer` | FastAPI, SQLAlchemy, Alembic, Pydantic, security, services |
-| Frontend Developer | `frontend-developer` | Jinja2, Tailwind CSS, HTMX, Cytoscape.js, EasyMDE |
-| Database Specialist | `database-specialist` | Alembic migrations, query optimization, pgvector, Neo4j |
-| QA Tester | `qa-tester` | pytest, fixtures, mocking, coverage, regression tests |
-| DevOps Infra | `devops-infra` | Docker, Docker Compose, GitLab CI, Traefik, MinIO |
-| Krytyk | `code-reviewer` | Code review, quality gate (0-100%) - **ZAWSZE OBOWIAZKOWY** |
+Przeskanuj dostepnych agentow w projekcie, w katalogu zaleznym od Twojego runtime'u:
+
+- **Claude Code**: definicje agentow w `.claude/agents/*.md` (plus agenci pluginowi jako fallback).
+- **Codex**: brak katalogu subagentow - role i konwencje projektu wyczytaj z `AGENTS.md` w korzeniu repo.
+
+Traktuj agentow/role zdefiniowane w projekcie jako preferowane zrodlo prawdy dla stacku i konwencji. Agenci pluginowi sa fallbackiem, gdy projekt nie ma wlasnego dopasowanego agenta.
+
+Zbuduj liste kandydatow z nazwami `subagent_type`, opisami i specjalizacjami wynikajacymi z frontmatter/opisu agenta. Nie zakladaj z gory konkretnych typow agentow ani stacku technologicznego.
 
 ### Zasady doboru
 
 1. **Przeanalizuj raport Researchera** - sekcja "Potrzebni agenci" to rekomendacja, ale Team Agent podejmuje ostateczna decyzje
-2. **Jesli ticket wskazuje agentow w tresci** - uzyj wskazanych
-3. **Jesli NIE wskazuje** - dobierz na podstawie raportu i tresci zadania. Wybierz MINIMALNY zestaw potrzebny do wykonania zadania
-4. **Krytyk (`code-reviewer`) jest ZAWSZE w zespole** - jest automatycznie dodawany, nie trzeba go wybierac
+2. **Jesli ticket wskazuje agentow w tresci** - uzyj wskazanych, o ile sa dostepni
+3. **Jesli NIE wskazuje** - dobierz agentow na podstawie raportu, tresci zadania i dostepnych definicji agentow. Wybierz MINIMALNY zestaw potrzebny do wykonania zadania
+4. **Krytyk jest ZAWSZE w zespole** - wybierz dostepnego agenta pelniacego role recenzenta kodu / quality gate. Nie zakladaj, ze musi nazywac sie `code-reviewer`
 
 ### Dodaj komentarz z planem
 
@@ -249,7 +249,7 @@ Po wyborze agentow, ZANIM zaczniesz prace, dodaj komentarz do ticketa:
 mcp__monolynx__add_comment(
   project_slug="<PROJECT_SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager - Plan pracy**\n\n**Raport Researchera (streszczenie):**\n- [krotkie podsumowanie raportu - zakres zmian, ryzyka, podejscie]\n\n**Dobrani agenci:**\n- [agent 1] - [uzasadnienie]\n- [agent 2] - [uzasadnienie]\n- code-reviewer - obowiazkowy quality gate\n\n**Plan realizacji:**\n1. [krok 1 - ktory agent, co robi]\n2. [krok 2 - ktory agent, co robi]\n..."
+  content="**Team Manager - Plan pracy**\n\n**Raport Researchera (streszczenie):**\n- [krotkie podsumowanie raportu - zakres zmian, ryzyka, podejscie]\n\n**Dobrani agenci:**\n- [agent 1] - [uzasadnienie]\n- [agent 2] - [uzasadnienie]\n- [wybrany-krytyk] - obowiazkowy quality gate\n\n**Plan realizacji:**\n1. [krok 1 - ktory agent, co robi]\n2. [krok 2 - ktory agent, co robi]\n..."
 )
 ```
 
@@ -265,10 +265,10 @@ mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<team_plan_
 mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<team_plan_job_id>", status="success", summary="Dobrano zespol: <lista agentow>")
 ```
 
-2. Dla KAZDEGO dobranego agenta (wlacznie z `code-reviewer`) utworz job `pending` w stepie `coding`:
+2. Dla KAZDEGO dobranego agenta (wlacznie z wybranym krytykiem) utworz job `pending` w stepie `coding`:
 
 ```
-mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="coding", name="<nazwa agenta np. backend-developer>", agent_type="<subagent_type>")
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="coding", name="<nazwa wybranego agenta>", agent_type="<subagent_type>")
 ```
 
 **Zapamietaj `job_id` kazdego agenta** - przekazesz go w prompcie agenta w KROK 6 (sekcja RAPORT DO PIPELINE), zeby agent sam raportowal swoj postep i log.
@@ -333,25 +333,25 @@ Po zakonczeniu pracy MUSISZ:
 Jesli toole pipeline niedostepne lub zwroca blad - pomin raportowanie, NIE przerywaj pracy.
 ```
 
-Przyklad (3 agentow + krytyk w jednej wiadomosci):
+Przyklad (2 wybranych agentow + krytyk w jednej wiadomosci). To tylko schemat - podstaw faktyczne `subagent_type` wybrane z `.claude/agents/*.md` lub agentow pluginowych:
 
 ```
 Agent(
-  subagent_type="backend-developer",
-  description="Backend - [krotki opis]",
-  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla backendu]\n\nUWAGA: Jesli zmieniasz sygnatury funkcji, sprawdz wszystkich callerow wymienionych w raporcie.\n\nRAPORT DO PIPELINE (job_id: <backend_job_id>): [wklej blok RAPORT DO PIPELINE z przekazanym job_id]"
+  subagent_type="<wybrany-agent-1>",
+  description="[obszar 1] - [krotki opis]",
+  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla tego agenta]\n\nUWAGA: Jesli zmieniasz sygnatury funkcji, sprawdz wszystkich callerow wymienionych w raporcie.\n\nRAPORT DO PIPELINE (job_id: <agent_1_job_id>): [wklej blok RAPORT DO PIPELINE z przekazanym job_id]"
 )
 
 Agent(
-  subagent_type="frontend-developer",
-  description="Frontend - [krotki opis]",
-  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla frontendu]\n\nRAPORT DO PIPELINE (job_id: <frontend_job_id>): [wklej blok RAPORT DO PIPELINE z przekazanym job_id]"
+  subagent_type="<wybrany-agent-2>",
+  description="[obszar 2] - [krotki opis]",
+  prompt="Ticket: [tytul]\nOpis: [tresc]\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nTwoje zadanie: [konkretny zakres dla tego agenta]\n\nRAPORT DO PIPELINE (job_id: <agent_2_job_id>): [wklej blok RAPORT DO PIPELINE z przekazanym job_id]"
 )
 
 Agent(
-  subagent_type="code-reviewer",
+  subagent_type="<wybrany-krytyk>",
   description="Krytyk - review kodu",
-  prompt="Jestes Krytykiem (code-reviewer). Sprawdzasz prace WSZYSTKICH agentow na tickecie [tytul].\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nZakres pracy zespolu:\n- backend-developer: [co robi] (pipeline job_id: <backend_job_id>)\n- frontend-developer: [co robi] (pipeline job_id: <frontend_job_id>)\n\nTwoje zadanie:\n1. Poczekaj az agenci skoncza prace (sprawdz git diff lub zmodyfikowane pliki)\n2. Sprawdz WSZYSTKIE zmienione pliki\n3. Ocen kazde agenta osobno (0-100%)\n4. Podaj feedback co poprawic jesli < 80%\n5. RAPORT DO PIPELINE: dla KAZDEGO ocenianego agenta zapisz ocene do jego joba (best-effort):\n   mcp__monolynx__update_pipeline_job(project_slug=\"<PROJECT_SLUG>\", job_id=\"<job_id ocenianego agenta>\", score=<0-100>)\n   Swoj wlasny job (code-reviewer) zamknij na koniec: append_job_log z trescia review + update_pipeline_job status=success.\n\nFormat odpowiedzi:\n**Code Review**\n- [agent 1]: [score]/100 - [feedback]\n- [agent 2]: [score]/100 - [feedback]\n- Ogolna ocena: [score]/100\n- Status: APPROVED / NEEDS WORK"
+  prompt="Jestes Krytykiem. Sprawdzasz prace WSZYSTKICH agentow na tickecie [tytul].\n\nRAPORT RESEARCHERA:\n[pelny raport]\n\nZakres pracy zespolu:\n- <wybrany-agent-1>: [co robi] (pipeline job_id: <agent_1_job_id>)\n- <wybrany-agent-2>: [co robi] (pipeline job_id: <agent_2_job_id>)\n\nTwoje zadanie:\n1. Poczekaj az agenci skoncza prace (sprawdz git diff lub zmodyfikowane pliki)\n2. Sprawdz WSZYSTKIE zmienione pliki\n3. Ocen kazde agenta osobno (0-100%)\n4. Podaj feedback co poprawic jesli < 80%\n5. RAPORT DO PIPELINE: dla KAZDEGO ocenianego agenta zapisz ocene do jego joba (best-effort):\n   mcp__monolynx__update_pipeline_job(project_slug=\"<PROJECT_SLUG>\", job_id=\"<job_id ocenianego agenta>\", score=<0-100>)\n   Swoj wlasny job zamknij na koniec: append_job_log z trescia review + update_pipeline_job status=success.\n\nFormat odpowiedzi:\n**Code Review**\n- [agent 1]: [score]/100 - [feedback]\n- [agent 2]: [score]/100 - [feedback]\n- Ogolna ocena: [score]/100\n- Status: APPROVED / NEEDS WORK"
 )
 ```
 
@@ -501,3 +501,4 @@ Wyswietl uzytkownikowi krotkie podsumowanie:
 11. **Praca rownlegla jest obowiazkowa** - w KROK 6 WSZYSCY agenci (developerzy + krytyk) startuja JEDNOCZESNIE w jednej wiadomosci
 12. **Acceptance criteria sa obowiazkowe** - jesli ticket ma kryteria akceptacji, KAZDY agent MUSI odhaczac swoje kryteria po zakonczeniu pracy (krok 6b). Team Manager weryfikuje kompletnosc w kroku 6f PRZED podsumowaniem
 13. **Pipeline jest best-effort, nie gate** - instrumentacja pipeline (create_pipeline, joby, append_job_log, finish_pipeline) to warstwa obserwowalnosci. Blad ktoregokolwiek toola pipeline NIGDY nie przerywa pracy nad ticketem - odnotuj i kontynuuj. Jesli toole pipeline sa niedostepne (starszy serwer MCP), pomin CALA instrumentacje i pracuj jak dotychczas. Pipeline raportuje prace, nie wykonuje jej.
+14. **Agentow zawsze dobieramy dynamicznie, zaleznie od runtime'u** - Claude Code: skanuj `.claude/agents/*.md` (plus agenci pluginowi jako fallback); Codex: wyczytaj role z `AGENTS.md` w korzeniu repo. Role/agenci zdefiniowani w projekcie maja pierwszenstwo przed agentami pluginowymi.

@@ -152,7 +152,7 @@ mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<resea
 
 ### 2.1. Dobierz dev agenta i krytyka
 
-Przeskanuj dostepnych agentow w projekcie (`.claude/agents/*.md` oraz agenci pluginowi). Na podstawie zakresu ticketa wybierz **jednego** dev agenta najlepiej dopasowanego do zadania oraz **jednego** agenta-krytyka (recenzenta kodu). Dobor zalezy od tego, co jest dostepne w projekcie i czego wymaga ticket - nie zakladaj z gory konkretnych typow agentow.
+Przeskanuj dostepnych agentow w projekcie, w katalogu zaleznym od runtime'u: **Claude Code** - `.claude/agents/*.md` (plus agenci pluginowi jako fallback); **Codex** - role z `AGENTS.md` w korzeniu repo. Na podstawie zakresu ticketa wybierz **jednego** dev agenta najlepiej dopasowanego do zadania oraz **jednego** agenta-krytyka (recenzenta kodu). Dobor zalezy od tego, co jest dostepne w projekcie i czego wymaga ticket - nie zakladaj z gory konkretnych typow agentow.
 
 **Krytyk jest zawsze obowiazkowy** (spawnowany w kroku 2.3 po dev) - wybierz agenta pelniacego role recenzenta kodu.
 

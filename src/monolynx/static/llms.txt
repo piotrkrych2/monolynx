@@ -21,6 +21,7 @@ The UI and documentation are bilingual (Polish-first, with English available via
 
 ## AI and MCP
 
+- [How to use Monolynx (guide for AI assistants)](https://monolynx.com/how-to-use-monolynx.md): Start here. Step-by-step instructions for an AI agent (Claude, ChatGPT, Gemini) to drive software development with Monolynx: how to connect over MCP, why the wiki is the source of truth, how to create tickets and do the work through the `monolynx:ticket-create` and `monolynx:work` skills, and where per-project agents live.
 - [Homepage](https://monolynx.com/?lang=en): Product overview, the ten modules, and how Monolynx works as an AI-native platform.
 - MCP endpoint: `https://monolynx.com/mcp` exposes 100 MCP tools across all modules, authenticated with an `Authorization: Bearer` token. Configure it in any MCP client (for example Claude Code via `.mcp.json`).
 - Claude Code plugin (recommended): install Monolynx as a native plugin with `/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git` then `/plugin install monolynx@monolynx`. It bundles the skills and agents as `/monolynx:*` commands (for example `/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:search`) plus the remote MCP server; set your Bearer token in the plugin config (`mcp_token`).

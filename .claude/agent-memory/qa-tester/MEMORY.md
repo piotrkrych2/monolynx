@@ -34,3 +34,7 @@
 - `update_settlement` MCP: `check_permission` patchowalny przez `monolynx.mcp_server.check_permission`; `_get_settlement_for_mcp` wymaga zarówno Settlement jak i SettlementProject (M2M) w DB + selectinload(Settlement.created_by)
 - Pipelines dashboard tests (MON-96): twórz Pipeline/PipelineStep/PipelineJob bezpośrednio przez ORM + flush (nie przez svc.create_pipeline które commituje) — zachowuje outer transaction rollback; append_job_log wymaga patch upload_markdown + get_markdown + sync_backlinks + update_page_embeddings
 - `test_embeddings_service.py` 2 testy red (pre-existing): test_empty_content i test_success oczekują 1x execute, ale `exclude_from_embeddings` check (MON-90) dodaje dodatkowe execute — nie naprawiać bez potwierdzenia
+- Settlements RBAC: `admin` ma `rozliczenia: ["read", "write"]` ale NIE `delete` — endpointy `settlement_delete` i `delete_attachment` wymagaja `delete` (tylko owner) — testuj obie role w testach delete
+- Settlements MinIO patch: `monolynx.services.settlements.minio_client.upload_object` (upload), `.delete_object` (delete), `.get_attachment` zwraca `(bytes, content_type)` (download)
+- Download attachment: nagłowek `filename*=UTF-8''` zawsze obecny (quote() z urllib.parse); test przez `assert "filename*=UTF-8''" in cd`
+- `check_permission` (nie `require_permission`) w `settlement_search_tickets` -> zwraca 403 HTMLResponse, nie HTTPException 403

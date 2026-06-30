@@ -10,6 +10,8 @@ from sqlalchemy import select
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.user import User
+from monolynx.models.wiki_attachment import WikiAttachment
+from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.auth import hash_password
 from tests.conftest import login_session
@@ -1030,3 +1032,852 @@ class TestWikiServiceIntegration:
         resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}")
         assert resp.status_code == 200
         assert "Edytowane przez AI" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Backlinks test")
+    async def test_page_detail_backlinks_shown_when_llm_wiki_enabled(self, mock_get_md, client, db_session):
+        """Gdy wiki_llm_enabled=True na projekcie, get_backlinks jest wywolywane."""
+        project = await _create_project(db_session, "wsi-bl-on")
+        project.wiki_llm_enabled = True
+        await db_session.flush()
+
+        user = await _login_and_add_member(client, db_session, project, "wsi-bl-on@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Backlinks Page On")
+
+        # Tworzymy strone-zrodlo z backlinkiem do page
+        source = await _create_wiki_page(db_session, project, user, title="Source Page On")
+        from monolynx.models.wiki_backlink import WikiBacklink
+
+        backlink = WikiBacklink(
+            source_page_id=source.id,
+            target_page_id=page.id,
+            anchor_text="link do strony",
+        )
+        db_session.add(backlink)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}")
+        assert resp.status_code == 200
+        assert "Source Page On" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# No backlinks")
+    async def test_page_detail_backlinks_not_fetched_when_llm_wiki_disabled(self, mock_get_md, client, db_session):
+        """Gdy wiki_llm_enabled=False (domyslnie), backlinki nie sa pobierane."""
+        project = await _create_project(db_session, "wsi-bl-off")
+        # wiki_llm_enabled jest False domyslnie
+        user = await _login_and_add_member(client, db_session, project, "wsi-bl-off@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Backlinks Page Off")
+
+        source = await _create_wiki_page(db_session, project, user, title="Source Page Off")
+        from monolynx.models.wiki_backlink import WikiBacklink
+
+        backlink = WikiBacklink(
+            source_page_id=source.id,
+            target_page_id=page.id,
+            anchor_text="link",
+        )
+        db_session.add(backlink)
+        await db_session.flush()
+
+        # Mockujemy get_backlinks zeby sprawdzic czy jest wywolywane
+        with patch("monolynx.dashboard.wiki.get_backlinks") as mock_gb:
+            resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}")
+            assert resp.status_code == 200
+            mock_gb.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 13. Page attachment upload (POST)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiPageAttachmentUpload:
+    async def test_upload_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wpau-auth")
+        user = User(email="wpau-auth-setup@test.com", password_hash=hash_password("testpass123"))
+        db_session.add(user)
+        await db_session.flush()
+        page = await _create_wiki_page(db_session, project, user, title="Att Upload Auth")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/upload",
+            files={"filepond": ("test.txt", b"content", "text/plain")},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 401
+        assert "Unauthorized" in resp.json()["error"]
+
+    async def test_upload_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wpau-noproj@test.com")
+        fake_page_id = uuid.uuid4()
+        resp = await client.post(
+            f"/dashboard/nonexistent-proj/wiki/pages/{fake_page_id}/attachments/upload",
+            files={"filepond": ("test.txt", b"content", "text/plain")},
+        )
+        assert resp.status_code == 404
+        assert "Project not found" in resp.json()["error"]
+
+    async def test_upload_page_not_found(self, client, db_session):
+        project = await _create_project(db_session, "wpau-nopage")
+        await _login_and_add_member(client, db_session, project, "wpau-nopage@test.com")
+        fake_page_id = uuid.uuid4()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{fake_page_id}/attachments/upload",
+            files={"filepond": ("test.txt", b"content", "text/plain")},
+        )
+        assert resp.status_code == 404
+        assert "Strona nie istnieje" in resp.json()["error"]
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_success_returns_attachment_id(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "wpau-ok")
+        user = await _login_and_add_member(client, db_session, project, "wpau-ok@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Upload OK")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/upload",
+            files={"filepond": ("document.pdf", b"PDF content here", "application/pdf")},
+        )
+        assert resp.status_code == 200
+        # FilePond expects plain text UUID back
+        attachment_id = resp.text.strip()
+        assert len(attachment_id) == 36  # UUID format
+        mock_upload.assert_called_once()
+
+        # Verify attachment created in DB
+        result = await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page.id))
+        att = result.scalar_one()
+        assert att.filename == "document.pdf"
+        assert att.mime_type == "application/pdf"
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_filename_sanitization(self, mock_upload, client, db_session):
+        """Znaki specjalne w nazwie pliku sa zastepowane podkreslnikami."""
+        project = await _create_project(db_session, "wpau-san")
+        user = await _login_and_add_member(client, db_session, project, "wpau-san@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Sanitize")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/upload",
+            files={"filepond": ("mój plik!@#.txt", b"data", "text/plain")},
+        )
+        assert resp.status_code == 200
+
+        result = await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page.id))
+        att = result.scalar_one()
+        # Nazwa nie powinna zawierac ! @ #
+        assert "!" not in att.filename
+        assert "@" not in att.filename
+        assert "#" not in att.filename
+
+    async def test_upload_too_large_returns_400(self, client, db_session):
+        project = await _create_project(db_session, "wpau-large")
+        user = await _login_and_add_member(client, db_session, project, "wpau-large@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Upload Large")
+
+        large_data = b"\x00" * (200 * 1024 * 1024 + 1)
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/upload",
+            files={"filepond": ("huge.bin", large_data, "application/octet-stream")},
+        )
+        assert resp.status_code == 400
+        assert "Plik za duzy" in resp.json()["error"]
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object", side_effect=Exception("MinIO error"))
+    async def test_upload_minio_error_returns_500(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "wpau-minio")
+        user = await _login_and_add_member(client, db_session, project, "wpau-minio@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Upload MinIO Error")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/upload",
+            files={"filepond": ("file.txt", b"data", "text/plain")},
+        )
+        assert resp.status_code == 500
+        assert "Blad uploadu" in resp.json()["error"]
+
+    async def test_upload_empty_filename_returns_400(self, client, db_session):
+        project = await _create_project(db_session, "wpau-nofn")
+        user = await _login_and_add_member(client, db_session, project, "wpau-nofn@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Upload NoFilename")
+
+        # Surowy multipart z pustym filename - httpx z ("", ...) pomija naglowek filename
+        # i FastAPI zwraca 422; tu wymuszamy filename="" by trafic w galaz 400 handlera
+        boundary = "----monolynxtest"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="filepond"; filename=""\r\n'
+            "Content-Type: text/plain\r\n\r\n"
+            "data\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/upload",
+            content=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        assert resp.status_code == 400
+        assert "Brak nazwy pliku" in resp.json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# 14. Page attachment serve (GET)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiPageAttachmentServe:
+    async def test_serve_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wpas-auth")
+        user = User(email="wpas-auth-setup@test.com", password_hash=hash_password("testpass123"))
+        db_session.add(user)
+        await db_session.flush()
+        page = await _create_wiki_page(db_session, project, user, title="Att Serve Auth")
+        att_id = uuid.uuid4()
+
+        resp = await client.get(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/{att_id}/test.pdf",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_serve_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wpas-noproj@test.com")
+        fake_page_id = uuid.uuid4()
+        fake_att_id = uuid.uuid4()
+        resp = await client.get(f"/dashboard/nonexistent-slug/wiki/pages/{fake_page_id}/attachments/{fake_att_id}/file.pdf")
+        assert resp.status_code == 404
+
+    async def test_serve_attachment_not_found(self, client, db_session):
+        project = await _create_project(db_session, "wpas-noatt")
+        user = await _login_and_add_member(client, db_session, project, "wpas-noatt@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Serve NoAtt")
+        fake_att_id = uuid.uuid4()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/{fake_att_id}/file.pdf")
+        assert resp.status_code == 404
+        assert "Attachment not found" in resp.text
+
+    @patch("monolynx.dashboard.wiki.minio_get_attachment", return_value=(b"PDF bytes", "application/pdf"))
+    async def test_serve_success(self, mock_get, client, db_session):
+        project = await _create_project(db_session, "wpas-ok")
+        user = await _login_and_add_member(client, db_session, project, "wpas-ok@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Serve OK")
+
+        att = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="report.pdf",
+            storage_path=f"{project.slug}/wiki-attachments/{page.id}/report.pdf",
+            mime_type="application/pdf",
+            size=100,
+            created_via_ai=False,
+        )
+        db_session.add(att)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/{att.id}/report.pdf")
+        assert resp.status_code == 200
+        assert resp.content == b"PDF bytes"
+        assert "application/pdf" in resp.headers["content-type"]
+
+    @patch("monolynx.dashboard.wiki.minio_get_attachment", side_effect=Exception("MinIO error"))
+    async def test_serve_minio_error_returns_500(self, mock_get, client, db_session):
+        project = await _create_project(db_session, "wpas-minio")
+        user = await _login_and_add_member(client, db_session, project, "wpas-minio@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Serve MinIO Error")
+
+        att = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="file.txt",
+            storage_path=f"{project.slug}/wiki-attachments/{page.id}/file.txt",
+            mime_type="text/plain",
+            size=50,
+            created_via_ai=False,
+        )
+        db_session.add(att)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/{att.id}/file.txt")
+        assert resp.status_code == 500
+        assert "Blad pobierania pliku" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# 15. Page attachment delete (POST)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiPageAttachmentDelete:
+    async def test_delete_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wpad-auth")
+        user = User(email="wpad-auth-setup@test.com", password_hash=hash_password("testpass123"))
+        db_session.add(user)
+        await db_session.flush()
+        page = await _create_wiki_page(db_session, project, user, title="Att Delete Auth")
+        att_id = uuid.uuid4()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/{att_id}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_delete_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wpad-noproj@test.com")
+        fake_page_id = uuid.uuid4()
+        fake_att_id = uuid.uuid4()
+        resp = await client.post(f"/dashboard/nonexistent-slug/wiki/pages/{fake_page_id}/attachments/{fake_att_id}/delete")
+        assert resp.status_code == 404
+
+    async def test_delete_attachment_not_found(self, client, db_session):
+        project = await _create_project(db_session, "wpad-noatt")
+        user = await _login_and_add_member(client, db_session, project, "wpad-noatt@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Delete NoAtt")
+        fake_att_id = uuid.uuid4()
+
+        resp = await client.post(f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/{fake_att_id}/delete")
+        assert resp.status_code == 404
+        assert "Attachment not found" in resp.text
+
+    @patch("monolynx.dashboard.wiki.minio_delete_object")
+    async def test_delete_success(self, mock_delete, client, db_session):
+        project = await _create_project(db_session, "wpad-ok")
+        user = await _login_and_add_member(client, db_session, project, "wpad-ok@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Delete OK")
+
+        att = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="todelete.txt",
+            storage_path=f"{project.slug}/wiki-attachments/{page.id}/todelete.txt",
+            mime_type="text/plain",
+            size=10,
+            created_via_ai=False,
+        )
+        db_session.add(att)
+        await db_session.flush()
+        att_id = att.id
+
+        resp = await client.post(f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/{att_id}/delete")
+        assert resp.status_code == 200
+
+        # Attachment should be deleted from DB
+        result = await db_session.execute(select(WikiAttachment).where(WikiAttachment.id == att_id))
+        assert result.scalar_one_or_none() is None
+        mock_delete.assert_called_once()
+
+    @patch("monolynx.dashboard.wiki.minio_delete_object", side_effect=Exception("MinIO error"))
+    async def test_delete_minio_error_still_removes_from_db(self, mock_delete, client, db_session):
+        """Blad MinIO przy usuwaniu nie przerywa usuniecia z DB."""
+        project = await _create_project(db_session, "wpad-minio")
+        user = await _login_and_add_member(client, db_session, project, "wpad-minio@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Att Delete MinIO Error")
+
+        att = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="file.txt",
+            storage_path=f"{project.slug}/wiki-attachments/{page.id}/file.txt",
+            mime_type="text/plain",
+            size=10,
+            created_via_ai=False,
+        )
+        db_session.add(att)
+        await db_session.flush()
+        att_id = att.id
+
+        resp = await client.post(f"/dashboard/{project.slug}/wiki/pages/{page.id}/attachments/{att_id}/delete")
+        # Endpoint catches MinIO exception (pass) and still deletes from DB -> 200
+        assert resp.status_code == 200
+
+        result = await db_session.execute(select(WikiAttachment).where(WikiAttachment.id == att_id))
+        assert result.scalar_one_or_none() is None
+
+
+# ---------------------------------------------------------------------------
+# 16. Wiki files list (GET)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiFilesList:
+    async def test_files_list_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wfl-auth")
+        resp = await client.get(
+            f"/dashboard/{project.slug}/wiki/files/",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_files_list_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wfl-noproj@test.com")
+        resp = await client.get("/dashboard/nonexistent-slug/wiki/files/")
+        assert resp.status_code == 404
+
+    async def test_files_list_empty(self, client, db_session):
+        project = await _create_project(db_session, "wfl-empty")
+        await _login_and_add_member(client, db_session, project, "wfl-empty@test.com")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/files/")
+        assert resp.status_code == 200
+
+    async def test_files_list_shows_files(self, client, db_session):
+        project = await _create_project(db_session, "wfl-show")
+        await _login_and_add_member(client, db_session, project, "wfl-show@test.com")
+
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename="my-document.pdf",
+            storage_path=f"{project.slug}/wiki-files/my-document.pdf",
+            mime_type="application/pdf",
+            size=1024,
+            created_via_ai=False,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/files/")
+        assert resp.status_code == 200
+        assert "my-document.pdf" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# 17. Wiki file upload (POST)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiFileUpload:
+    async def test_upload_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wfu-auth")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/upload",
+            files={"filepond": ("test.txt", b"content", "text/plain")},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 401
+        assert "Unauthorized" in resp.json()["error"]
+
+    async def test_upload_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wfu-noproj@test.com")
+        resp = await client.post(
+            "/dashboard/nonexistent-proj/wiki/files/upload",
+            files={"filepond": ("test.txt", b"content", "text/plain")},
+        )
+        assert resp.status_code == 404
+        assert "Project not found" in resp.json()["error"]
+
+    async def test_upload_empty_filename_returns_400(self, client, db_session):
+        project = await _create_project(db_session, "wfu-nofn")
+        await _login_and_add_member(client, db_session, project, "wfu-nofn@test.com")
+
+        # Surowy multipart z pustym filename (patrz komentarz w TestWikiPageAttachmentUpload)
+        boundary = "----monolynxtest"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="filepond"; filename=""\r\n'
+            "Content-Type: text/plain\r\n\r\n"
+            "data\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/upload",
+            content=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        assert resp.status_code == 400
+        assert "Brak nazwy pliku" in resp.json()["error"]
+
+    async def test_upload_too_large_returns_400(self, client, db_session):
+        project = await _create_project(db_session, "wfu-large")
+        await _login_and_add_member(client, db_session, project, "wfu-large@test.com")
+
+        large_data = b"\x00" * (200 * 1024 * 1024 + 1)
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/upload",
+            files={"filepond": ("huge.bin", large_data, "application/octet-stream")},
+        )
+        assert resp.status_code == 400
+        assert "Plik za duzy" in resp.json()["error"]
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_success(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "wfu-ok")
+        await _login_and_add_member(client, db_session, project, "wfu-ok@test.com")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/upload",
+            files={"filepond": ("schema.json", b'{"key": "value"}', "application/json")},
+        )
+        assert resp.status_code == 200
+        file_id = resp.text.strip()
+        assert len(file_id) == 36  # UUID
+        mock_upload.assert_called_once()
+
+        # Verify file created in DB
+        result = await db_session.execute(select(WikiFile).where(WikiFile.project_id == project.id))
+        wf = result.scalar_one()
+        assert wf.filename == "schema.json"
+        assert wf.mime_type == "application/json"
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object", side_effect=Exception("MinIO error"))
+    async def test_upload_minio_error_returns_500(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "wfu-minio")
+        await _login_and_add_member(client, db_session, project, "wfu-minio@test.com")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/upload",
+            files={"filepond": ("file.txt", b"data", "text/plain")},
+        )
+        assert resp.status_code == 500
+        assert "Blad uploadu" in resp.json()["error"]
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_filename_sanitization(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "wfu-san")
+        await _login_and_add_member(client, db_session, project, "wfu-san@test.com")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/upload",
+            files={"filepond": ("my file!@#.txt", b"data", "text/plain")},
+        )
+        assert resp.status_code == 200
+
+        result = await db_session.execute(select(WikiFile).where(WikiFile.project_id == project.id))
+        wf = result.scalar_one()
+        assert "!" not in wf.filename
+        assert "@" not in wf.filename
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_empty_safe_filename_defaults_to_file(self, mock_upload, client, db_session):
+        """Jesli safe_filename po sanityzacji jest pusty, uzywa 'file'."""
+        project = await _create_project(db_session, "wfu-empty-safe")
+        await _login_and_add_member(client, db_session, project, "wfu-empty-safe@test.com")
+
+        # Nazwa zawiera TYLKO znaki specjalne (po sanityzacji bedzie pusta)
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/upload",
+            files={"filepond": ("!!!.txt", b"data", "text/plain")},
+        )
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# 18. Wiki file serve (GET)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiFileServe:
+    async def test_serve_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wfs-auth")
+        fake_file_id = uuid.uuid4()
+        resp = await client.get(
+            f"/dashboard/{project.slug}/wiki/files/{fake_file_id}/test.txt",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_serve_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wfs-noproj@test.com")
+        fake_file_id = uuid.uuid4()
+        resp = await client.get(f"/dashboard/nonexistent-slug/wiki/files/{fake_file_id}/test.txt")
+        assert resp.status_code == 404
+
+    async def test_serve_file_not_found(self, client, db_session):
+        project = await _create_project(db_session, "wfs-nof")
+        await _login_and_add_member(client, db_session, project, "wfs-nof@test.com")
+        fake_file_id = uuid.uuid4()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/files/{fake_file_id}/test.txt")
+        assert resp.status_code == 404
+        assert "File not found" in resp.text
+
+    @patch("monolynx.dashboard.wiki.minio_get_attachment", return_value=(b"file content", "text/plain"))
+    async def test_serve_success(self, mock_get, client, db_session):
+        project = await _create_project(db_session, "wfs-ok")
+        await _login_and_add_member(client, db_session, project, "wfs-ok@test.com")
+
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename="readme.txt",
+            storage_path=f"{project.slug}/wiki-files/readme.txt",
+            mime_type="text/plain",
+            size=100,
+            created_via_ai=False,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/files/{wiki_file.id}/readme.txt")
+        assert resp.status_code == 200
+        assert resp.content == b"file content"
+        mock_get.assert_called_once()
+
+    @patch("monolynx.dashboard.wiki.minio_get_attachment", side_effect=Exception("MinIO error"))
+    async def test_serve_minio_error_returns_500(self, mock_get, client, db_session):
+        project = await _create_project(db_session, "wfs-minio")
+        await _login_and_add_member(client, db_session, project, "wfs-minio@test.com")
+
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename="file.txt",
+            storage_path=f"{project.slug}/wiki-files/file.txt",
+            mime_type="text/plain",
+            size=50,
+            created_via_ai=False,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/files/{wiki_file.id}/file.txt")
+        assert resp.status_code == 500
+        assert "Blad pobierania pliku" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# 19. Wiki file update description (POST)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiFileUpdateDescription:
+    async def test_update_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wfud-auth")
+        fake_file_id = uuid.uuid4()
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/{fake_file_id}/description",
+            data={"description": "Test"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_update_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wfud-noproj@test.com")
+        fake_file_id = uuid.uuid4()
+        resp = await client.post(
+            f"/dashboard/nonexistent-slug/wiki/files/{fake_file_id}/description",
+            data={"description": "Test"},
+        )
+        assert resp.status_code == 404
+
+    async def test_update_file_not_found(self, client, db_session):
+        project = await _create_project(db_session, "wfud-nof")
+        await _login_and_add_member(client, db_session, project, "wfud-nof@test.com")
+        fake_file_id = uuid.uuid4()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/{fake_file_id}/description",
+            data={"description": "Test"},
+        )
+        assert resp.status_code == 404
+        assert "File not found" in resp.text
+
+    async def test_update_description_success(self, client, db_session):
+        project = await _create_project(db_session, "wfud-ok")
+        await _login_and_add_member(client, db_session, project, "wfud-ok@test.com")
+
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename="doc.pdf",
+            storage_path=f"{project.slug}/wiki-files/doc.pdf",
+            mime_type="application/pdf",
+            size=200,
+            created_via_ai=False,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/{wiki_file.id}/description",
+            data={"description": "Dokumentacja projektu"},
+        )
+        assert resp.status_code == 200
+        assert "Dokumentacja projektu" in resp.text
+
+        # Verify DB updated
+        await db_session.refresh(wiki_file)
+        assert wiki_file.description == "Dokumentacja projektu"
+
+    async def test_update_empty_description_sets_none(self, client, db_session):
+        """Pusty opis ustawia description=None w bazie."""
+        project = await _create_project(db_session, "wfud-empty")
+        await _login_and_add_member(client, db_session, project, "wfud-empty@test.com")
+
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename="nodesc.txt",
+            storage_path=f"{project.slug}/wiki-files/nodesc.txt",
+            mime_type="text/plain",
+            size=10,
+            created_via_ai=False,
+            description="Stary opis",
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/{wiki_file.id}/description",
+            data={"description": ""},
+        )
+        assert resp.status_code == 200
+        # Pusta wartosc wyswietla mdash
+        assert "—" in resp.text or "—" in resp.text
+
+        await db_session.refresh(wiki_file)
+        assert wiki_file.description is None
+
+
+# ---------------------------------------------------------------------------
+# 20. Wiki file description edit form (GET)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiFileDescriptionEditForm:
+    async def test_edit_form_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wfdef-auth")
+        fake_file_id = uuid.uuid4()
+        resp = await client.get(
+            f"/dashboard/{project.slug}/wiki/files/{fake_file_id}/description/edit",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_edit_form_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wfdef-noproj@test.com")
+        fake_file_id = uuid.uuid4()
+        resp = await client.get(f"/dashboard/nonexistent-slug/wiki/files/{fake_file_id}/description/edit")
+        assert resp.status_code == 404
+
+    async def test_edit_form_file_not_found(self, client, db_session):
+        project = await _create_project(db_session, "wfdef-nof")
+        await _login_and_add_member(client, db_session, project, "wfdef-nof@test.com")
+        fake_file_id = uuid.uuid4()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/files/{fake_file_id}/description/edit")
+        assert resp.status_code == 404
+        assert "File not found" in resp.text
+
+    async def test_edit_form_returns_form_html(self, client, db_session):
+        project = await _create_project(db_session, "wfdef-ok")
+        await _login_and_add_member(client, db_session, project, "wfdef-ok@test.com")
+
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename="info.txt",
+            storage_path=f"{project.slug}/wiki-files/info.txt",
+            mime_type="text/plain",
+            size=10,
+            created_via_ai=False,
+            description="Istniejacy opis",
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/files/{wiki_file.id}/description/edit")
+        assert resp.status_code == 200
+        # Formularz HTMX powinien byc zwrocony
+        assert "<form" in resp.text
+        assert "Istniejacy opis" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# 21. Wiki file delete (POST)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiFileDelete:
+    async def test_delete_requires_auth(self, client, db_session):
+        project = await _create_project(db_session, "wfd-auth")
+        fake_file_id = uuid.uuid4()
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/{fake_file_id}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_delete_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wfd-noproj@test.com")
+        fake_file_id = uuid.uuid4()
+        resp = await client.post(
+            f"/dashboard/nonexistent-slug/wiki/files/{fake_file_id}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 404
+
+    async def test_delete_file_not_found(self, client, db_session):
+        project = await _create_project(db_session, "wfd-nof")
+        await _login_and_add_member(client, db_session, project, "wfd-nof@test.com")
+        fake_file_id = uuid.uuid4()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/{fake_file_id}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 404
+        assert "File not found" in resp.text
+
+    @patch("monolynx.dashboard.wiki.minio_delete_object")
+    async def test_delete_success(self, mock_delete, client, db_session):
+        project = await _create_project(db_session, "wfd-ok")
+        await _login_and_add_member(client, db_session, project, "wfd-ok@test.com")
+
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename="todelete.pdf",
+            storage_path=f"{project.slug}/wiki-files/todelete.pdf",
+            mime_type="application/pdf",
+            size=100,
+            created_via_ai=False,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+        file_id = wiki_file.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/{file_id}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert f"/dashboard/{project.slug}/wiki/files/" in resp.headers["location"]
+        mock_delete.assert_called_once()
+
+        result = await db_session.execute(select(WikiFile).where(WikiFile.id == file_id))
+        assert result.scalar_one_or_none() is None
+
+    @patch("monolynx.dashboard.wiki.minio_delete_object", side_effect=Exception("MinIO error"))
+    async def test_delete_minio_error_still_removes_from_db(self, mock_delete, client, db_session):
+        """Blad MinIO przy usuwaniu nie przerywa usuniecia z DB (endpoint lapie wyjatek)."""
+        project = await _create_project(db_session, "wfd-minio")
+        await _login_and_add_member(client, db_session, project, "wfd-minio@test.com")
+
+        wiki_file = WikiFile(
+            project_id=project.id,
+            filename="del-minio.txt",
+            storage_path=f"{project.slug}/wiki-files/del-minio.txt",
+            mime_type="text/plain",
+            size=10,
+            created_via_ai=False,
+        )
+        db_session.add(wiki_file)
+        await db_session.flush()
+        file_id = wiki_file.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/files/{file_id}/delete",
+            follow_redirects=False,
+        )
+        # MinIO error jest lapany (pass), wiec redirect powinien nastapic
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(WikiFile).where(WikiFile.id == file_id))
+        assert result.scalar_one_or_none() is None

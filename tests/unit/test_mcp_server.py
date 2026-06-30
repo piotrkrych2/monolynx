@@ -297,6 +297,7 @@ EXPECTED_TOOLS = [
     "get_pipeline_job_log",
     "append_job_log",
     "clean_pipeline_logs",
+    "list_wiki_page_attachments",
 ]
 
 # Narzedzia ktore nie wymagaja project_slug (operuja po ticket_id, entry_id, lub cross-project).
@@ -7238,3 +7239,251 @@ class TestListWikiFiles:
             assert "mime_type" in f
             assert "size" in f
             assert "created_at" in f
+
+
+# ---------------------------------------------------------------------------
+# list_wiki_page_attachments (linie 4596-4632)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestListWikiPageAttachments:
+    """Testy narzedzia list_wiki_page_attachments."""
+
+    async def test_returns_attachments_with_correct_fields(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Zwraca liste dict z polami attachment_id, filename, mime_type, size, created_at, created_via_ai."""
+        from monolynx.mcp_server import list_wiki_page_attachments
+        from monolynx.models.wiki_attachment import WikiAttachment
+
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Page With Attachments",
+            slug=f"page-with-att-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/pages/att-test.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        att1 = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="report.pdf",
+            storage_path=f"{mcp_project.slug}/wiki-attachments/report.pdf",
+            mime_type="application/pdf",
+            size=2048,
+            created_via_ai=False,
+        )
+        att2 = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="ai-generated.txt",
+            storage_path=f"{mcp_project.slug}/wiki-attachments/ai-generated.txt",
+            mime_type="text/plain",
+            size=512,
+            created_via_ai=True,
+        )
+        db_session.add(att1)
+        db_session.add(att2)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_wiki_page_attachments(ctx, mcp_project.slug, str(page.id))
+
+        assert len(result) == 2
+        filenames = {r["filename"] for r in result}
+        assert "report.pdf" in filenames
+        assert "ai-generated.txt" in filenames
+
+        pdf_entry = next(r for r in result if r["filename"] == "report.pdf")
+        assert "attachment_id" in pdf_entry
+        assert pdf_entry["mime_type"] == "application/pdf"
+        assert pdf_entry["size"] == 2048
+        assert "created_at" in pdf_entry
+        assert pdf_entry["created_via_ai"] is False
+
+        ai_entry = next(r for r in result if r["filename"] == "ai-generated.txt")
+        assert ai_entry["created_via_ai"] is True
+
+    async def test_nonexistent_page_id_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieistniejacy page_id -> ValueError('Strona wiki nie istnieje')."""
+        from monolynx.mcp_server import list_wiki_page_attachments
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Strona wiki nie istnieje"),
+        ):
+            await list_wiki_page_attachments(ctx, mcp_project.slug, str(uuid.uuid4()))
+
+    async def test_page_from_other_project_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Strona nalezaca do innego projektu -> ValueError (izolacja po project_id)."""
+        from monolynx.mcp_server import list_wiki_page_attachments
+
+        other_project = Project(
+            name="Other Project",
+            slug=f"other-{uuid.uuid4().hex[:6]}",
+            code=f"OTH{uuid.uuid4().hex[:2].upper()}",
+            api_key=secrets.token_urlsafe(32),
+            is_active=True,
+        )
+        db_session.add(other_project)
+        await db_session.flush()
+
+        page_other = WikiPage(
+            project_id=other_project.id,
+            title="Other Page",
+            slug=f"other-page-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{other_project.slug}/pages/other.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page_other)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Strona wiki nie istnieje"),
+        ):
+            # pytamy o strone przez slug mcp_project, ale page nalezy do other_project
+            await list_wiki_page_attachments(ctx, mcp_project.slug, str(page_other.id))
+
+    async def test_returns_only_attachments_of_queried_page(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Izolacja per-page: dwie strony z osobnymi zalacznikami - zwraca tylko zalaczniki pytanej strony."""
+        from monolynx.mcp_server import list_wiki_page_attachments
+        from monolynx.models.wiki_attachment import WikiAttachment
+
+        page_a = WikiPage(
+            project_id=mcp_project.id,
+            title="Page A",
+            slug=f"page-a-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/pages/page-a.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        page_b = WikiPage(
+            project_id=mcp_project.id,
+            title="Page B",
+            slug=f"page-b-{uuid.uuid4().hex[:6]}",
+            position=1,
+            minio_path=f"{mcp_project.slug}/pages/page-b.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page_a)
+        db_session.add(page_b)
+        await db_session.flush()
+
+        att_a = WikiAttachment(
+            wiki_page_id=page_a.id,
+            filename="only-a.pdf",
+            storage_path=f"{mcp_project.slug}/wiki-attachments/only-a.pdf",
+            mime_type="application/pdf",
+            size=100,
+        )
+        att_b = WikiAttachment(
+            wiki_page_id=page_b.id,
+            filename="only-b.png",
+            storage_path=f"{mcp_project.slug}/wiki-attachments/only-b.png",
+            mime_type="image/png",
+            size=200,
+        )
+        db_session.add(att_a)
+        db_session.add(att_b)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_wiki_page_attachments(ctx, mcp_project.slug, str(page_a.id))
+
+        assert len(result) == 1
+        assert result[0]["filename"] == "only-a.pdf"
+
+    async def test_empty_list_when_no_attachments(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Strona bez zalacznikow zwraca pusta liste, nie blad."""
+        from monolynx.mcp_server import list_wiki_page_attachments
+
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Empty Page",
+            slug=f"empty-page-list-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/pages/empty-list.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_wiki_page_attachments(ctx, mcp_project.slug, str(page.id))
+
+        assert result == []
+
+    async def test_filename_from_result_works_with_get_wiki_attachment(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        """filename z list_wiki_page_attachments dziala jako attachment_filename w get_wiki_attachment."""
+        import base64
+
+        from monolynx.mcp_server import get_wiki_attachment, list_wiki_page_attachments
+        from monolynx.models.wiki_attachment import WikiAttachment
+
+        page = WikiPage(
+            project_id=mcp_project.id,
+            title="Roundtrip Page",
+            slug=f"roundtrip-{uuid.uuid4().hex[:6]}",
+            position=0,
+            minio_path=f"{mcp_project.slug}/pages/roundtrip.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(page)
+        await db_session.flush()
+
+        att = WikiAttachment(
+            wiki_page_id=page.id,
+            filename="spec.pdf",
+            storage_path=f"{mcp_project.slug}/wiki-attachments/spec.pdf",
+            mime_type="application/pdf",
+            size=4096,
+        )
+        db_session.add(att)
+        await db_session.flush()
+
+        pdf_bytes = b"%PDF-1.4 content"
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            list_result = await list_wiki_page_attachments(ctx, mcp_project.slug, str(page.id))
+
+        assert len(list_result) == 1
+        filename_from_list = list_result[0]["filename"]
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.mcp_server.minio_get_attachment", return_value=(pdf_bytes, "application/pdf")),
+        ):
+            get_result = await get_wiki_attachment(ctx, mcp_project.slug, str(page.id), filename_from_list)
+
+        assert get_result["filename"] == filename_from_list
+        assert get_result["content_base64"] == base64.b64encode(pdf_bytes).decode()

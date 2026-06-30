@@ -133,6 +133,11 @@ Innymi słowy:
 
 ## Changelog
 
+### 1.2.2
+
+- `/monolynx:work` i `/monolynx:work-simple` dobieraja agentow dynamicznie i zaleznie od runtime'u: **Claude Code** czyta `.claude/agents/*.md` (plus agenci pluginowi jako fallback), **Codex** czyta role z `AGENTS.md` w korzeniu repo. Agenci/role zdefiniowane w projekcie sa preferowanym zrodlem prawdy dla stacku i konwencji.
+- Przyklady uruchamiania agentow w `/monolynx:work` sa teraz schematem z placeholderami zamiast sugerowania stalego zestawu `backend-developer` / `frontend-developer` / `code-reviewer`.
+
 ### 1.2.1
 
 - **Nowy skill `/monolynx:sprint-end`**: orkiestruje zamknięcie sprintu jako pipeline `sprint_close` (stepy `wiki-update` → `wrap-up`). Step `wiki-update` ma joby `wiki-ingest` (INGEST logów pracy ze sprintu do wiki), `wiki-lint` (audyt wiki) i `wiki-clean` (czyszczenie stron logów pipeline sprintu przez `clean_pipeline_logs`). Step `wrap-up` ma joby `close-sprint` (realne `complete_sprint` - niedokończone tickety wracają do backlogu, z potwierdzeniem użytkownika) i `summary`. Bez argumentu bierze aktywny sprint.
