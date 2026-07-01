@@ -11,7 +11,7 @@ for each relevant source.
 
 Usage:
   python cicd/wiki_post_merge.py
-  MONOLYNX_URL=https://open.monolynx.com MONOLYNX_MCP_TOKEN=osk_xxx python cicd/wiki_post_merge.py
+  MONOLYNX_URL=https://monolynx.com MONOLYNX_MCP_TOKEN=osk_xxx python cicd/wiki_post_merge.py
 """
 
 from __future__ import annotations
@@ -231,7 +231,7 @@ def print_manifest(manifest: list[dict[str, Any]], project_slug: str, monolynx_u
 
 
 def main() -> None:
-    monolynx_url = os.environ.get("MONOLYNX_URL", "https://open.monolynx.com")
+    monolynx_url = os.environ.get("MONOLYNX_URL", "https://monolynx.com")
     token = os.environ.get("MONOLYNX_MCP_TOKEN", "")
     project_slug = os.environ.get("MONOLYNX_PROJECT_SLUG", "")
 

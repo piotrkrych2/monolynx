@@ -172,6 +172,18 @@
                 {{ t.mcp_desc | replace('<mcp_link>', '<a href="https://modelcontextprotocol.io" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2" target="_blank" rel="noopener">') | replace('</mcp_link>', '</a>') | safe }}
             </p>
 
+            <div class="mb-8">
+                <button type="button" data-explain-copy
+                        data-label-default="{{ t.explain_cta }}"
+                        data-label-done="{% if lang == 'pl' %}Skopiowano{% else %}Copied{% endif %}"
+                        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25"/>
+                    </svg>
+                    <span data-explain-copy-label>{{ t.explain_cta }}</span>
+                </button>
+            </div>
+
             <div class="connect-tabs max-w-lg mx-auto" data-connect data-copied-label="{% if lang == 'pl' %}Skopiowano{% else %}Copied{% endif %}">
                 <div class="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-1 mb-6">
                     <button type="button" data-tab="plugin"
@@ -184,7 +196,7 @@
                     </button>
                     <button type="button" data-tab="mcp"
                             class="px-4 py-1.5 text-sm font-medium rounded-md transition-colors text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">
-                        MCP
+                        {% if lang == "pl" %}Klienci AI{% else %}AI clients{% endif %}
                     </button>
                 </div>
 
@@ -303,6 +315,24 @@
                     });
                 });
             }
+        });
+    })();
+
+    (function () {
+        var btn = document.querySelector("[data-explain-copy]");
+        if (!btn) return;
+        var label = btn.querySelector("[data-explain-copy-label]");
+        var labelDefault = btn.getAttribute("data-label-default");
+        var labelDone = btn.getAttribute("data-label-done");
+        btn.addEventListener("click", function () {
+            fetch("/agent-explain.md").then(function (r) { return r.text(); }).then(function (text) {
+                return navigator.clipboard.writeText(text);
+            }).then(function () {
+                if (label) {
+                    label.textContent = labelDone;
+                    setTimeout(function () { label.textContent = labelDefault; }, 2000);
+                }
+            });
         });
     })();
     </script>

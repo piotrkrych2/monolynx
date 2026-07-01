@@ -110,8 +110,8 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Your projects.",
         "hero_line2": "AI-first platform.",
         "hero_sub": (
-            "100 MCP tools, semantic wiki search, and Claude Code skills"
-            " — Monolynx isn't just another dashboard."
+            "100 AI-ready tools, semantic wiki search, and Claude Code skills"
+            " - Monolynx isn't just another dashboard."
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
         "modules_title": "Everything you need",
@@ -128,22 +128,27 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_pipelines": "Observability for AI agent work - pipeline, step and job hierarchy with logs, durations and upward status propagation.",
         "mcp_title": "Connect to Claude",
         "mcp_desc": (
-            "Add Monolynx to Claude.ai as a custom connector over HTTPS, or wire it into"
-            " any client that speaks the <mcp_link>Model Context Protocol</mcp_link>."
+            "Give your AI assistant direct access to Monolynx: add it to Claude.ai as a custom"
+            " connector over HTTPS, or wire it into any client that speaks the"
+            " <mcp_link>Model Context Protocol</mcp_link>."
             " Manage tickets, search your wiki, and query your dependency graph in natural language."
         ),
-        "skills_title": "Claude Code skills — one prompt, zero setup",
+        "skills_title": "Claude Code skills - one prompt, zero setup",
         "skills_sub": (
-            "The flagship MCP tool install_monolynx_skills drops the full ticket"
-            " workflow into any project connected to Monolynx — no ZIPs,"
+            "The flagship AI tool install_monolynx_skills drops all 12 ticket and wiki"
+            " skills into any project connected to Monolynx - no ZIPs,"
             " no manual placeholder replacement."
         ),
         "skills_prompt_label": "Just say it in Claude",
         "skills_prompt": "Install the default Monolynx skills for project acme-inc.",
         "skills_what_label": "You get",
-        "skills_what_1": "/monolynx-ticket-create, /monolynx-ticket-review, /monolynx-work — the full workflow",
-        "skills_what_2": "/monolynx-search (RAG wiki), /monolynx-create-graph-ci-script, /monolynx-help",
-        "skills_what_3": "Placeholders replaced with your project slug automatically",
+        "skills_what_1": (
+            "/monolynx:ticket-create, /monolynx:ticket-review, /monolynx:work, /monolynx:work-simple, /monolynx:sprint-end - the ticket workflow"
+        ),
+        "skills_what_2": (
+            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG"
+        ),
+        "skills_what_3": "/monolynx:create-graph-ci-script, /monolynx:help; placeholders replaced with your project slug automatically",
         "oss_title": "Open Source",
         "oss_desc": (
             "Monolynx is free and open source. Self-host it on your own infrastructure,"
@@ -151,6 +156,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "oss_link": "View on GitLab",
         "footer": "Monolynx — open-source project platform",
+        "explain_cta": "Paste into AI - let it explain Monolynx",
     },
     "pl": {
         "title": "Monolynx — Platforma projektowa",
@@ -158,8 +164,8 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Twoje projekty.",
         "hero_line2": "AI-first platforma.",
         "hero_sub": (
-            "100 narzędzi MCP, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
-            " — Monolynx to nie kolejny dashboard."
+            "100 narzędzi AI, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
+            " - Monolynx to nie kolejny dashboard."
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
         "modules_title": "Wszystko, czego potrzebujesz",
@@ -178,22 +184,27 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_pipelines": "Obserwowalność pracy agentów AI - hierarchia pipeline, step i job z logami, czasami i propagacją statusu w górę.",
         "mcp_title": "Połącz z Claude",
         "mcp_desc": (
-            "Dodaj Monolynx do Claude.ai jako własny konektor po HTTPS albo podłącz go do"
-            " dowolnego klienta obsługującego <mcp_link>Model Context Protocol</mcp_link>."
+            "Daj swojemu asystentowi AI bezpośredni dostęp do Monolynx: dodaj go do Claude.ai"
+            " jako własny konektor po HTTPS albo podłącz go do dowolnego klienta obsługującego"
+            " <mcp_link>Model Context Protocol</mcp_link>."
             " Zarządzaj ticketami, przeszukuj wiki i odpytuj graf zależności w języku naturalnym."
         ),
-        "skills_title": "Skille Claude Code — jeden prompt, zero konfiguracji",
+        "skills_title": "Skille Claude Code - jeden prompt, zero konfiguracji",
         "skills_sub": (
-            "Flagowe narzędzie MCP install_monolynx_skills dorzuca pełny workflow ticketowy"
-            " do dowolnego projektu podłączonego do Monolynx — bez ZIP-ów"
+            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 12 skilli"
+            " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - bez ZIP-ów"
             " i ręcznego podmieniania placeholderów."
         ),
         "skills_prompt_label": "Po prostu powiedz Claude'owi",
         "skills_prompt": "Zainstaluj domyślne skille Monolynx dla projektu acme-inc.",
         "skills_what_label": "Co dostajesz",
-        "skills_what_1": "/monolynx-ticket-create, /monolynx-ticket-review, /monolynx-work — pełny workflow",
-        "skills_what_2": "/monolynx-search (RAG wiki), /monolynx-create-graph-ci-script, /monolynx-help",
-        "skills_what_3": "Placeholdery automatycznie podmieniane na slug Twojego projektu",
+        "skills_what_1": (
+            "/monolynx:ticket-create, /monolynx:ticket-review, /monolynx:work, /monolynx:work-simple, /monolynx:sprint-end - workflow ticketowy"
+        ),
+        "skills_what_2": (
+            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG"
+        ),
+        "skills_what_3": "/monolynx:create-graph-ci-script, /monolynx:help; placeholdery automatycznie podmieniane na slug Twojego projektu",
         "oss_title": "Open Source",
         "oss_desc": (
             "Monolynx jest darmowy i open source. Hostuj go na własnej infrastrukturze,"
@@ -201,6 +212,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "oss_link": "Zobacz na GitLab",
         "footer": "Monolynx — platforma projektowa open source",
+        "explain_cta": "Wklej do AI - wytłumaczy Ci Monolynx",
     },
 }
 
@@ -223,6 +235,24 @@ async def llms_txt() -> Response:
 async def how_to_use_monolynx() -> Response:
     """Serve the AI-assistant usage guide as markdown for LLM consumption."""
     guide_path = _STATIC_DIR / "how-to-use-monolynx.md"
+    if not guide_path.is_file():
+        return Response(status_code=404, content="Not Found")
+    return _markdown_response(guide_path.read_text(encoding="utf-8"))
+
+
+@app.get("/agent-explain.md", include_in_schema=False)
+async def agent_explain() -> Response:
+    """Serve the AI-agent explainer as markdown for LLM consumption."""
+    guide_path = _STATIC_DIR / "agent-explain.md"
+    if not guide_path.is_file():
+        return Response(status_code=404, content="Not Found")
+    return _markdown_response(guide_path.read_text(encoding="utf-8"))
+
+
+@app.get("/agent-bootstrap.md", include_in_schema=False)
+async def agent_bootstrap() -> Response:
+    """Serve the AI-agent bootstrap guide as markdown for LLM consumption."""
+    guide_path = _STATIC_DIR / "agent-bootstrap.md"
     if not guide_path.is_file():
         return Response(status_code=404, content="Not Found")
     return _markdown_response(guide_path.read_text(encoding="utf-8"))

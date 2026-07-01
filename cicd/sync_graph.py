@@ -14,7 +14,7 @@ Deleting a node cascades to its edges (DETACH DELETE in Neo4j).
 Usage:
   python cicd/sync_graph.py --dry-run --verbose
   python cicd/sync_graph.py --project-slug monolynx
-  MONOLYNX_URL=https://open.monolynx.com MONOLYNX_GRAPH_TOKEN=osk_xxx python cicd/sync_graph.py
+  MONOLYNX_URL=https://monolynx.com MONOLYNX_GRAPH_TOKEN=osk_xxx python cicd/sync_graph.py
 """
 
 from __future__ import annotations
@@ -895,7 +895,7 @@ def main() -> None:
     parser.add_argument(
         "--monolynx-url",
         default=None,
-        help="Monolynx instance URL (default: env MONOLYNX_URL or https://open.monolynx.com)",
+        help="Monolynx instance URL (default: env MONOLYNX_URL or https://monolynx.com)",
     )
     parser.add_argument(
         "--token",
@@ -927,7 +927,7 @@ def main() -> None:
     if args.verbose:
         log.setLevel(logging.DEBUG)
 
-    monolynx_url = args.monolynx_url or os.environ.get("MONOLYNX_URL", "https://open.monolynx.com")
+    monolynx_url = args.monolynx_url or os.environ.get("MONOLYNX_URL", "https://monolynx.com")
     token = args.token or os.environ.get("MONOLYNX_GRAPH_TOKEN", "")
     project_slug = args.project_slug or os.environ.get("MONOLYNX_PROJECT_SLUG", "")
 
