@@ -44,7 +44,7 @@ services:
       - "traefik.http.routers.${TRAEFIK_ROUTE_NAME}.rule=Host(`${TRAEFIK_APP_HOSTNAME}`) || Host(`monolynx.com`)"
       - "traefik.http.routers.${TRAEFIK_ROUTE_NAME}.entrypoints=${TRAEFIK_APP_ENTRYPOINT}"
       - "traefik.http.routers.${TRAEFIK_ROUTE_NAME}.tls.certresolver=${TRAEFIK_APP_CERTRESOLVER}"
-      - "traefik.http.routers.${TRAEFIK_ROUTE_NAME}.tls.domains[0].main=open.monolynx.com"
+      - "traefik.http.routers.${TRAEFIK_ROUTE_NAME}.tls.domains[0].main=monolynx.com"
       - "traefik.http.routers.${TRAEFIK_ROUTE_NAME}.tls.domains[1].main=monolynx.com"
       - "traefik.http.services.${TRAEFIK_ROUTE_NAME}.loadbalancer.server.port=8000"
       - "traefik.http.services.${TRAEFIK_ROUTE_NAME}.loadbalancer.healthcheck.path=/api/v1/health"

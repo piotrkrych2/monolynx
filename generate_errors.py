@@ -2,7 +2,7 @@
 """Generate 10 realistic error events for acme-app project in Monolynx.
 
 Usage:
-    python generate_errors.py <API_KEY> [--url https://open.monolynx.com]
+    python generate_errors.py <API_KEY> [--url https://monolynx.com]
 """
 
 import json
@@ -184,7 +184,7 @@ def main():
         sys.exit(1)
 
     api_key = sys.argv[1]
-    base_url = "https://open.monolynx.com"
+    base_url = "https://monolynx.com"
 
     if "--url" in sys.argv:
         idx = sys.argv.index("--url")

@@ -8,7 +8,7 @@ argument-hint: [monolynx-url]
 
 Twoim zadaniem jest wygenerowac skrypt `cicd/sync_graph.py` i stage w `.gitlab-ci.yml` dla **biezacego projektu Python**. Skrypt analizuje kod zrodlowy (AST) i synchronizuje graf zaleznosci z platforma Monolynx.
 
-**Monolynx URL**: `$ARGUMENTS` (domyslnie: `https://open.monolynx.com`)
+**Monolynx URL**: `$ARGUMENTS` (domyslnie: `https://monolynx.com`)
 
 ---
 
@@ -174,7 +174,7 @@ Identyczna logika jak analiza AST — dwa przebiegi:
 ```
 python cicd/sync_graph.py [opcje]
 
---monolynx-url    URL instancji Monolynx (default: env MONOLYNX_URL lub https://open.monolynx.com)
+--monolynx-url    URL instancji Monolynx (default: env MONOLYNX_URL lub https://monolynx.com)
 --token           Bearer token (default: env MONOLYNX_GRAPH_TOKEN)
 --project-slug    Slug projektu na Monolynx (default: env MONOLYNX_PROJECT_SLUG)
 --src-dir         Katalog zrodlowy (default: auto-detekcja)

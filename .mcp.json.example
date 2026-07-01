@@ -6,7 +6,7 @@
         "args": [
           "-y",
           "mcp-remote",
-          "https://open.monolynx.com/mcp/",
+          "https://monolynx.com/mcp/",
           "--header",
           "Authorization: Bearer osk_<...>"
         ]
@@ -31,7 +31,7 @@
         "args": [
           "-y",
           "mcp-remote",
-          "https://open.monolynx.com/mcp/",
+          "https://monolynx.com/mcp/",
           "--header",
           "Authorization: Bearer osk_<...>"
         ]

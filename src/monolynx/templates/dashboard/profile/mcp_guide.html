@@ -5,8 +5,19 @@
 {% block content %}
 <div class="max-w-4xl mx-auto">
     <div class="mb-8">
-        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">How to MCP</h1>
-        <p class="text-gray-600 dark:text-gray-400 text-sm mt-1">Podłącz Claude Code do Monolynx przez MCP i zarządzaj Scrumem z poziomu terminala</p>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Podłącz AI do Monolynx</h1>
+        <p class="text-gray-600 dark:text-gray-400 text-sm mt-1">Skonfiguruj asystenta AI (Claude Code, Claude Desktop i inne klienty MCP) i zarządzaj Scrumem z poziomu terminala</p>
+        <div class="mt-4">
+            <button type="button" data-bootstrap-copy
+                    data-label-default="Wklej do AI - skonfiguruje projekt"
+                    data-label-done="Skopiowano"
+                    class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25"/>
+                </svg>
+                <span data-bootstrap-copy-label>Wklej do AI - skonfiguruje projekt</span>
+            </button>
+        </div>
     </div>
 
     <!-- Krok 1 -->
@@ -327,11 +338,17 @@
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:search</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:help</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:create-graph-ci-script</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:work-simple</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:sprint-end</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-init</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-ingest</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-lint</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-sync-merge</code>
         </div>
 
         <div class="bg-gray-100/40 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 rounded-lg p-3">
             <p class="text-gray-600 dark:text-gray-400 text-xs">
-                <code class="text-indigo-300 font-mono text-xs">install_monolynx_skills</code> oraz paczka ZIP poniżej (Krok 5) pozostają jako alternatywa dla środowisk bez mechanizmu pluginów (np. claude.ai web).
+                <code class="text-indigo-300 font-mono text-xs">install_monolynx_skills</code> (Krok 5) pozostaje jako opcjonalna alternatywa dla środowisk bez mechanizmu pluginów (np. claude.ai web).
             </p>
         </div>
     </div>
@@ -340,12 +357,12 @@
     <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
         <div class="flex items-center gap-3 mb-4">
             <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">5</span>
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Zainstaluj skille Claude Code</h2>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Opcjonalnie: skille bez pluginu</h2>
         </div>
 
-        <!-- King skill: install_monolynx_skills -->
-        <div class="relative rounded-xl border-2 border-indigo-500/60 bg-gradient-to-br from-indigo-600/10 via-indigo-500/5 to-transparent p-5 mb-6">
-            <span class="absolute -top-3 left-4 bg-indigo-600 text-white text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide">Rekomendowane</span>
+        <!-- Fallback: install_monolynx_skills (środowiska bez pluginu) -->
+        <div class="relative rounded-xl border-2 border-gray-300 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-900/40 p-5 mb-6">
+            <span class="absolute -top-3 left-4 bg-gray-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide">Opcjonalne · bez pluginu</span>
             <div class="flex items-start gap-3">
                 <div class="w-10 h-10 bg-indigo-500/15 rounded-lg flex items-center justify-center flex-shrink-0">
                     <svg class="w-5 h-5 text-indigo-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -358,22 +375,22 @@
                         <span class="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded font-mono">MCP tool</span>
                     </div>
                     <p class="text-sm text-gray-700 dark:text-gray-300 mb-3">
-                        Flagowy sposób instalacji — działa w <strong>dowolnym projekcie</strong> podłączonym do Monolynx MCP. Claude pobiera skille przez MCP i zapisuje je do <code class="text-indigo-300 font-mono text-sm">.claude/skills/</code>. Placeholdery <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-SLUG&gt;</code> / <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-ID&gt;</code> są automatycznie podmieniane na slug Twojego projektu.
+                        <strong>Zalecany sposób to plugin (Krok 4).</strong> Tej ścieżki użyj tylko tam, gdzie plugin nie działa (np. claude.ai web). Działa w <strong>dowolnym projekcie</strong> podłączonym do Monolynx MCP: Claude pobiera skille przez MCP i zapisuje je do <code class="text-indigo-300 font-mono text-sm">.claude/skills/</code>. Placeholdery <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-SLUG&gt;</code> / <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-ID&gt;</code> są automatycznie podmieniane na slug Twojego projektu.
                     </p>
 
                     <p class="text-xs text-gray-600 dark:text-gray-400 mb-2">Użycie w Claude Code / Claude Desktop — jeden prompt:</p>
                     <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 mb-3">
-                        <code class="text-green-400 font-mono text-sm whitespace-pre-wrap">Zainstaluj domyślne skille Monolynx dla projektu <span class="text-indigo-300">moj-projekt</span>.</code>
+                        <code class="text-green-400 font-mono text-sm whitespace-pre-wrap">Zainstaluj wszystkie skille Monolynx dla projektu <span class="text-indigo-300">moj-projekt</span>.</code>
                     </div>
 
                     <p class="text-xs text-gray-600 dark:text-gray-400 mb-2">Pod spodem Claude wywołuje MCP w dwóch krokach:</p>
                     <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 mb-3">
                         <code class="text-green-400 font-mono text-xs whitespace-pre">install_monolynx_skills(project_slug="moj-projekt")
-// → catalog dostępnych skilli
+// → katalog WSZYSTKICH dostępnych skilli (nazwa + opis)
 
 install_monolynx_skills(
     project_slug="moj-projekt",
-    skill_names=["monolynx-work", "monolynx-help", ...]
+    skill_names=[...]  // wszystkie nazwy z katalogu
 )
 // → pełna treść skilli → Claude zapisuje je do .claude/skills/</code>
                     </div>
@@ -381,7 +398,7 @@ install_monolynx_skills(
                     <div class="flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-400">
                         <span class="inline-flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
                             <svg class="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-                            brak ręcznego ZIP-a
+                            działa też na claude.ai web
                         </span>
                         <span class="inline-flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
                             <svg class="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
@@ -396,64 +413,91 @@ install_monolynx_skills(
             </div>
         </div>
 
-        <details class="mb-6 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg">
-            <summary class="cursor-pointer px-4 py-3 text-sm text-gray-700 dark:text-gray-300 font-medium">Alternatywa: ręczne ZIP-y (gdy nie masz połączenia MCP)</summary>
-            <div class="px-4 pb-4">
-                <p class="text-gray-600 dark:text-gray-400 text-sm mb-3">
-                    Pobierz paczkę i rozpakuj w katalogu głównym projektu — pliki trafią do <code class="text-indigo-300 font-mono text-sm">.claude/skills/</code>. Po rozpakowaniu podmień <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-SLUG&gt;</code> na slug Twojego projektu ręcznie.
-                </p>
-                <div class="flex flex-wrap gap-2">
-                    <a href="/static/skills.zip"
-                       class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition">
-                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        monolynx-skills.zip
-                    </a>
-                    <a href="/static/starter-pack.zip"
-                       class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition">
-                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        starter-pack.zip
-                    </a>
-                </div>
-            </div>
-        </details>
-
         <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Dostępne skille</h3>
         <div class="space-y-3">
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-help</p>
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:help</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Wyświetla przewodnik po wszystkich skillach Monolynx — flow pracy z ticketami i skille dodatkowe. Zacznij tutaj.</p>
-                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-help</code></p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:help</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-work</p>
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:work</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Koordynator zespołu agentów — podejmuje ticket ze sprintu, rozdziela pracę, loguje czas.</p>
-                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-work [ticket-id]</code></p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:work [ticket-id]</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-search</p>
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:search</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Wyszukiwanie semantyczne w wiki projektu (RAG). Aktywuje się automatycznie na pytania o dokumentację.</p>
-                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-search jak działa autoryzacja w API?</code></p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:search jak działa autoryzacja w API?</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-create-graph-ci-script</p>
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:create-graph-ci-script</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Generuje skrypt CI synchronizujący graf zależności kodu z Twojego projektu.</p>
-                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-create-graph-ci-script</code></p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:create-graph-ci-script</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-ticket-create</p>
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:ticket-create</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Tworzy nowy ticket z pełnym kontekstem — zbiera informacje z wiki, kodu i grafu zależności, generuje opis w ustalonej formie.</p>
-                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-ticket-create dodaj eksport CSV w raportach</code></p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:ticket-create dodaj eksport CSV w raportach</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
-                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx-ticket-review</p>
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:ticket-review</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Recenzuje ticket przed podjęciem pracy — sprawdza formę, zgodność założeń z wiki i kodem, generuje raport z oceną.</p>
-                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx-ticket-review [ticket-id]</code></p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:ticket-review [ticket-id]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:work-simple</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Podejmij prostszy ticket (&lt;8 SP). Uproszczony flow: 1 developer + krytyk, bez Agent Teams. Dla hotfixów, weryfikacji, drobnych cleanupów.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:work-simple [ticket-id]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:sprint-end</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Zamknij sprint jako pipeline sprint_close: INGEST logów pracy do wiki, LINT wiki, czyszczenie logów pipeline'ów sprintu i domknięcie sprintu.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:sprint-end [nazwa-sprintu]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:wiki-init</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Włącz metodę LLM Wiki dla projektu. Tworzy strony systemowe (regulamin, katalog, dziennik) i włącza flagę. Idempotentny bootstrap.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:wiki-init</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:wiki-ingest</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Zintegruj nowe źródło (plik, URL lub wklejoną treść) z wiki metodą LLM Wiki. Tworzy stronę źródła, aktualizuje powiązane strony, linkuje, odświeża katalog i dziennik.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:wiki-ingest [ścieżka/URL/temat]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:wiki-lint</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Audyt zdrowia wiki (LLM Wiki). Wykrywa sieroty, martwe linki, sprzeczności i luki, prezentuje raport i propozycje napraw.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:wiki-lint</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:wiki-sync-merge</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Post-merge INGEST do wiki metodą LLM Wiki. Odpalane po merge ticketów/PR do main. Wymaga włączonego LLM Wiki.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:wiki-sync-merge [ticket-id]</code></p>
             </div>
         </div>
     </div>
 </div>
+
+<script>
+(function () {
+    var btn = document.querySelector("[data-bootstrap-copy]");
+    if (!btn) return;
+    var label = btn.querySelector("[data-bootstrap-copy-label]");
+    var labelDefault = btn.getAttribute("data-label-default");
+    var labelDone = btn.getAttribute("data-label-done");
+    var mcpEndpoint = "{{ app_url }}/mcp";
+    btn.addEventListener("click", function () {
+        fetch("/agent-bootstrap.md").then(function (r) { return r.text(); }).then(function (text) {
+            var replaced = text.replaceAll("MCP_ENDPOINT_PLACEHOLDER", mcpEndpoint);
+            return navigator.clipboard.writeText(replaced);
+        }).then(function () {
+            if (label) {
+                label.textContent = labelDone;
+                setTimeout(function () { label.textContent = labelDefault; }, 2000);
+            }
+        });
+    });
+})();
+</script>
 {% endblock %}

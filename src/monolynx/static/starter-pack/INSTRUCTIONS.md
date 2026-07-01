@@ -268,5 +268,5 @@ make down && make dev
 
 ## 7. Notki końcowe
 
-- Skopiuj `.mcp.json.example` do `.mcp.json`, zmień `https://open.monolynx.com/mcp/` na swój link, oraz wpisz swój token do `Authorization: Bearer osk_<...>`
+- Skopiuj `.mcp.json.example` do `.mcp.json`, zmień `https://monolynx.com/mcp/` na swój link, oraz wpisz swój token do `Authorization: Bearer osk_<...>`
 - Token wygenerujesz i znajdziesz w zakładce `Tokeny API`

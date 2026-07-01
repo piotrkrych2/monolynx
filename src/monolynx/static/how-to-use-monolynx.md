@@ -23,7 +23,21 @@ In the plugin config set:
 
 - `mcp_token` - your Monolynx API token (format `osk_...`), generated in the dashboard under "API Tokens". This is the MCP connection.
 - `mcp_endpoint` - your instance MCP URL (defaults to `https://monolynx.com/mcp`).
-- `project_slug` - optional default project.
+- `project_slug` - optional default project (fallback only, see below).
+
+**Tell the skills which project they operate on.** The skills resolve the target project slug in a fixed order (highest priority first):
+
+1. `MONOLYNX_PROJECT_SLUG` from the `.env` file of the repository you are working in (per-repo setting, highest priority). Set it there so the same plugin works across many projects. In Claude Code you can also expose it through the `env` field in `.claude/settings.json`.
+2. `user_config.project_slug` from the plugin config (a global fallback for your most-used project).
+3. `"monolynx"` as the final default.
+
+So the full first-time sequence a developer runs is:
+
+1. Add the marketplace: `/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git`
+2. Install the plugin: `/plugin install monolynx@monolynx`
+3. Set `mcp_token` and `mcp_endpoint` in the plugin config.
+4. Set `MONOLYNX_PROJECT_SLUG` in the repo's `.env` (or the plugin `project_slug`).
+5. Start using the `/monolynx:*` skills.
 
 After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all ~100 MCP tools. This is full power.
 
@@ -51,6 +65,10 @@ Before you do anything substantive:
 3. **Look for a `constitution` page and any spec pages.** If the project has a wiki page with slug `constitution`, it is project-level law - load it. If a ticket references a spec page, that spec is your primary context.
 
 A project where the wiki is rich and current lets any assistant pick up any task with no human hand-holding. That is the whole goal. Do not skip the wiki to "save time" - skipping it is how you produce work that contradicts existing decisions.
+
+### Bootstrap the LLM Wiki method once, at the start
+
+Before you lean on the wiki heavily, enable the **LLM Wiki method** for the project with **`monolynx:wiki-init`** (idempotent, safe to re-run). It flips the `wiki_llm_enabled` flag and creates the system pages: `wiki-schema` (the editable rulebook), `wiki-index` (the catalog) and `wiki-log` (the running journal). With the method on, the other wiki skills do real work: `monolynx:wiki-ingest` integrates a new source (file, URL or pasted text) into linked pages, `monolynx:wiki-sync-merge` runs the post-merge INGEST after tickets/PRs land on main, and `monolynx:wiki-lint` audits the wiki for orphans, dead links, contradictions and gaps. Run `wiki-init` first; without it those skills return a clear no-op.
 
 ---
 
@@ -117,8 +135,16 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Connect a chat client (Claude.ai / ChatGPT) | MCP connector only: `https://your-instance/mcp` + Bearer token. Tools but no skills - replicate the flow manually. |
 | Understand the project | `search_wiki`, `get_wiki_page` (read the `constitution` page if present) |
 | Add a task | `monolynx:ticket-create` (or replicate its steps with MCP tools) |
-| Do a task | `monolynx:work <ticket-id>` (small: `monolynx:work-simple`) |
+| Review a ticket before starting | `monolynx:ticket-review` |
+| Do a task | `monolynx:work <ticket-id>` (small, < 8 SP: `monolynx:work-simple`) |
+| Close a sprint | `monolynx:sprint-end` (INGEST work logs, LINT, close the sprint) |
 | Define your team | `.claude/agents/*.md` (Claude Code) or `AGENTS.md` (Codex) - per project, not shipped by Monolynx |
-| Keep the wiki healthy | `monolynx:wiki-ingest`, `monolynx:wiki-lint` |
+| Enable the LLM Wiki method | `monolynx:wiki-init` (run once per project) |
+| Grow the wiki | `monolynx:wiki-ingest`, `monolynx:wiki-sync-merge` (post-merge) |
+| Keep the wiki healthy | `monolynx:wiki-lint` |
+| Generate a code-graph CI script | `monolynx:create-graph-ci-script` |
+| See how the skills work | `monolynx:help` |
+
+Full set of 12 skills: `work`, `work-simple`, `ticket-create`, `ticket-review`, `sprint-end`, `search`, `wiki-init`, `wiki-ingest`, `wiki-lint`, `wiki-sync-merge`, `help`, `create-graph-ci-script`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
