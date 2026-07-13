@@ -168,8 +168,17 @@
                 </svg>
             </div>
             <h2 class="text-3xl font-bold mb-4">{{ t.mcp_title }}</h2>
-            <p class="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-8">
+            <p class="text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-4">
                 {{ t.mcp_desc | replace('<mcp_link>', '<a href="https://modelcontextprotocol.io" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2" target="_blank" rel="noopener">') | replace('</mcp_link>', '</a>') | safe }}
+            </p>
+            <p class="text-sm text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-8">
+                {% if lang == "pl" %}
+                Jesteś agentem AI? Zacznij od <a href="/how-to-use-monolynx.md" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">przewodnika dla asystentów AI</a>
+                albo <a href="/llms.txt" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">llms.txt</a>.
+                {% else %}
+                Are you an AI agent? Start with the <a href="/how-to-use-monolynx.md" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">guide for AI assistants</a>
+                or <a href="/llms.txt" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">llms.txt</a>.
+                {% endif %}
             </p>
 
             <div class="mb-8">

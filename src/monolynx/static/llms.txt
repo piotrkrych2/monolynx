@@ -2,7 +2,7 @@
 
 > Monolynx is an open-source, AI-first project platform that speaks the Model Context Protocol (MCP) natively. It bundles ten integrated modules (error tracking, Scrum, monitoring, heartbeats, wiki with RAG search, code dependency graph, work reports, cross-project billing, a personal Gantt planner, and pipeline observability for AI agent work) into one self-hostable application that an AI agent can operate as if it were a member of the team.
 
-Monolynx is built for teams that work alongside AI agents. Every module is reachable both through a web dashboard (HTML, server-rendered) and through 100 MCP tools, so an assistant like Claude can read issues, manage tickets and sprints, search documentation semantically, query the dependency graph, and plan work across projects using natural language. The platform is open source and self-hosted, so teams keep full ownership of their data.
+Monolynx is built for teams that work alongside AI agents. Every module is reachable both through a web dashboard (HTML, server-rendered) and through 117 MCP tools, so an assistant like Claude can read issues, manage tickets and sprints, search documentation semantically, query the dependency graph, and plan work across projects using natural language. The platform is open source and self-hosted, so teams keep full ownership of their data.
 
 The UI and documentation are bilingual (Polish-first, with English available via `?lang=en`). The backend is FastAPI (async Python); data lives in PostgreSQL with the pgvector extension for embeddings, Neo4j for the dependency graph, and MinIO for object storage. Notes for LLMs: the public marketing pages below are safe to read; the dashboard and MCP endpoint require authentication (a Bearer token managed per user).
 
@@ -22,13 +22,21 @@ The UI and documentation are bilingual (Polish-first, with English available via
 ## AI and MCP
 
 - [How to use Monolynx (guide for AI assistants)](https://monolynx.com/how-to-use-monolynx.md): Start here. Step-by-step instructions for an AI agent (Claude, ChatGPT, Gemini) to drive software development with Monolynx: how to connect over MCP, why the wiki is the source of truth, how to create tickets and do the work through the `monolynx:ticket-create` and `monolynx:work` skills, and where per-project agents live.
-- [Homepage](https://monolynx.com/?lang=en): Product overview, the ten modules, and how Monolynx works as an AI-native platform.
-- MCP endpoint: `https://monolynx.com/mcp` exposes 100 MCP tools across all modules, authenticated with an `Authorization: Bearer` token. Configure it in any MCP client (for example Claude Code via `.mcp.json`).
+- [Project bootstrap for AI agents](https://monolynx.com/agent-bootstrap.md): An imperative, three-phase checklist (SETUP, NOTIFY, COLLABORATE) for an agent configuring the Monolynx connection inside a user's repository: add the marketplace, install the plugin, set the token and project slug, verify with `list_projects`, then propose the first skills to run.
+- [What is Monolynx (explainer to paste into any AI)](https://monolynx.com/agent-explain.md): A self-contained explainer a human can paste into ChatGPT, Claude, or Gemini so the model understands the platform and can guide the user through setup.
+- [Homepage](https://monolynx.com/?lang=en): Product overview, the ten modules, and how Monolynx works as an AI-native platform. Also available as markdown: <https://monolynx.com/index.md?lang=en>.
+- MCP endpoint: `https://monolynx.com/mcp` exposes 117 MCP tools across all modules, authenticated with an `Authorization: Bearer` token. Configure it in any MCP client (for example Claude Code via `.mcp.json`).
 - Claude Code plugin (recommended): install Monolynx as a native plugin with `/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git` then `/plugin install monolynx@monolynx`. It bundles the skills and agents as `/monolynx:*` commands (for example `/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:search`) plus the remote MCP server; set your Bearer token in the plugin config (`mcp_token`).
 - Claude Code skills (manual alternative): the `install_monolynx_skills` MCP tool installs a ready-made ticket workflow into a connected project (`/monolynx-ticket-create`, `/monolynx-ticket-review`, `/monolynx-work`, `/monolynx-search`, and more), with project placeholders filled in automatically.
 - Capabilities for agents: browse and triage errors, create tickets from issues, manage sprints and the Kanban board, log work time, run semantic wiki search, build and query the dependency graph, and schedule cross-project work.
 
-## About
+## Self-hosting
 
 - [Source code (GitLab)](https://gitlab.com/piotrkrych/monolynx): Monolynx is free and open source. Self-host it on your own infrastructure and customize it to your needs.
+- Stack: FastAPI (async Python), PostgreSQL 16 with pgvector, Neo4j 5 (optional, for the dependency graph), MinIO (object storage for wiki content). Everything runs in Docker.
+- Quick start (development): clone the repository, copy `.env.example` to `.env`, then `make dev` (starts PostgreSQL, Neo4j, MinIO, and the app on port 8000), `make migrate` (database migrations), and `make createsuperuser` (first admin account). Production uses `docker-compose.prod.yml` with a separate monitor worker service. Details in the repository README.
+- Optional integrations degrade gracefully: `OPENAI_API_KEY=""` disables wiki embeddings (RAG search), `ENABLE_GRAPH_DB=false` disables the Neo4j graph, `SMTP_HOST=""` disables email.
+
+## About
+
 - [Contact](https://monolynx.com/contact?lang=en): Get in touch about Monolynx.

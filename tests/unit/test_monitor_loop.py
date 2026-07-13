@@ -174,6 +174,115 @@ class TestCheckSingleMonitor:
 
 
 @pytest.mark.unit
+class TestCheckSingleMonitorAlerting:
+    """Testy _check_single_monitor -- galaz wysylania alertu przy niepowodzeniu."""
+
+    @patch("monolynx.services.notifications.send_monitor_alert")
+    @patch("monolynx.models.monitor_check.MonitorCheck")
+    @patch("monolynx.services.monitoring.check_url")
+    async def test_failed_check_triggers_send_monitor_alert(self, mock_check_url, mock_check_cls, mock_send_alert):
+        """check.is_success=False -> monitor odnaleziony -> send_monitor_alert wywolany."""
+        mock_check_url.return_value = {
+            "status_code": 500,
+            "response_time_ms": 300,
+            "is_success": False,
+            "error_message": "Internal Server Error",
+        }
+        monitor_id = uuid.uuid4()
+
+        mock_check_instance = MagicMock()
+        mock_check_instance.is_success = False
+        mock_check_cls.return_value = mock_check_instance
+
+        mock_monitor = MagicMock()
+        mock_monitor.name = "Produkcja API"
+
+        mock_monitor_result = MagicMock()
+        mock_monitor_result.scalar_one_or_none.return_value = mock_monitor
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(return_value=mock_monitor_result)
+
+        mock_factory = MagicMock()
+        mock_factory.return_value = mock_session
+
+        await _check_single_monitor(monitor_id, "https://failing.com", mock_factory)
+
+        mock_send_alert.assert_awaited_once_with(mock_monitor, mock_check_instance, mock_session)
+
+    @patch("monolynx.services.notifications.send_monitor_alert")
+    @patch("monolynx.models.monitor_check.MonitorCheck")
+    @patch("monolynx.services.monitoring.check_url")
+    async def test_send_monitor_alert_exception_is_caught(self, mock_check_url, mock_check_cls, mock_send_alert):
+        """Blad w send_monitor_alert jest lapany -- _check_single_monitor nie crashuje."""
+        mock_check_url.return_value = {
+            "status_code": 500,
+            "response_time_ms": 300,
+            "is_success": False,
+            "error_message": "Internal Server Error",
+        }
+        monitor_id = uuid.uuid4()
+
+        mock_check_instance = MagicMock()
+        mock_check_instance.is_success = False
+        mock_check_cls.return_value = mock_check_instance
+
+        mock_monitor = MagicMock()
+        mock_monitor.name = "Produkcja API"
+
+        mock_monitor_result = MagicMock()
+        mock_monitor_result.scalar_one_or_none.return_value = mock_monitor
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(return_value=mock_monitor_result)
+
+        mock_factory = MagicMock()
+        mock_factory.return_value = mock_session
+
+        mock_send_alert.side_effect = RuntimeError("smtp down")
+
+        await _check_single_monitor(monitor_id, "https://failing.com", mock_factory)  # nie powinno rzucac
+
+        mock_send_alert.assert_awaited_once()
+
+    @patch("monolynx.services.notifications.send_monitor_alert")
+    @patch("monolynx.models.monitor_check.MonitorCheck")
+    @patch("monolynx.services.monitoring.check_url")
+    async def test_monitor_not_found_skips_alert(self, mock_check_url, mock_check_cls, mock_send_alert):
+        """Monitor nie odnaleziony w DB -> send_monitor_alert nie wywolany."""
+        mock_check_url.return_value = {
+            "status_code": 500,
+            "response_time_ms": 300,
+            "is_success": False,
+            "error_message": "Internal Server Error",
+        }
+        monitor_id = uuid.uuid4()
+
+        mock_check_instance = MagicMock()
+        mock_check_instance.is_success = False
+        mock_check_cls.return_value = mock_check_instance
+
+        mock_monitor_result = MagicMock()
+        mock_monitor_result.scalar_one_or_none.return_value = None
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(return_value=mock_monitor_result)
+
+        mock_factory = MagicMock()
+        mock_factory.return_value = mock_session
+
+        await _check_single_monitor(monitor_id, "https://failing.com", mock_factory)
+
+        mock_send_alert.assert_not_awaited()
+
+
+@pytest.mark.unit
 class TestRunMonitorChecks:
     """Testy run_monitor_checks -- logika iteracji sprawdzania monitorow."""
 
@@ -613,6 +722,58 @@ class TestMonitorCheckerLoop:
         # Cleanup: lock conn and engine should be closed
         mock_conn.close.assert_awaited_once()
         mock_engine.dispose.assert_awaited_once()
+
+    @patch("monolynx.services.monitor_loop.asyncio.sleep")
+    async def test_startup_delay_positive_sleeps_before_loop(self, mock_sleep):
+        """startup_delay>0 -> asyncio.sleep(startup_delay) wywolane przed petla."""
+        mock_sleep.side_effect = [None, asyncio.CancelledError()]
+
+        mock_factory = MagicMock()
+
+        await monitor_checker_loop(
+            mock_factory,
+            acquire_lock=False,
+            sleep_interval=7,
+            startup_delay=3,
+        )
+
+        assert mock_sleep.call_args_list[0].args == (3,)
+        assert mock_sleep.call_args_list[1].args == (7,)
+
+    @patch("monolynx.services.monitor_loop.run_monitor_checks")
+    @patch("monolynx.services.monitor_loop.HEALTHCHECK_FILE")
+    async def test_heartbeat_check_exception_does_not_crash_loop(self, mock_hf, mock_run_checks):
+        """Wyjatek check_heartbeat_statuses jest lapany -- petla kontynuuje i dotyka healthcheck."""
+        mock_run_checks.return_value = None
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_factory = MagicMock()
+        mock_factory.return_value = mock_session
+
+        with patch(
+            "monolynx.services.heartbeat.check_heartbeat_statuses",
+            side_effect=RuntimeError("heartbeat db error"),
+        ):
+            task = asyncio.create_task(
+                monitor_checker_loop(
+                    mock_factory,
+                    acquire_lock=False,
+                    sleep_interval=0,
+                    startup_delay=0,
+                )
+            )
+
+            await asyncio.sleep(0.05)
+            task.cancel()
+
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        assert mock_run_checks.await_count >= 1
+        assert mock_hf.touch.call_count >= 1
 
 
 @pytest.mark.unit

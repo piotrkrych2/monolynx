@@ -39,7 +39,9 @@ So the full first-time sequence a developer runs is:
 4. Set `MONOLYNX_PROJECT_SLUG` in the repo's `.env` (or the plugin `project_slug`).
 5. Start using the `/monolynx:*` skills.
 
-After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all ~100 MCP tools. This is full power.
+After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all 117 MCP tools. This is full power.
+
+If you are an agent asked to set this up inside a user's repository, follow the imperative checklist at <https://monolynx.com/agent-bootstrap.md> - it walks you through SETUP, NOTIFY, and COLLABORATE phases, including verifying the connection with `list_projects`.
 
 ### Fallback - chat clients (Claude.ai, ChatGPT): MCP connector only
 
@@ -50,7 +52,7 @@ Claude.ai and ChatGPT cannot install Claude Code plugins, so they cannot get the
 3. Connector URL: `https://your-instance/mcp` (replace `your-instance` with the actual host, e.g. `https://monolynx.com/mcp`).
 4. Authorize with your Monolynx Bearer token (`osk_...`).
 
-This gives you all ~100 MCP tools (read/write tickets, sprints, wiki, dependency graph, pipelines) but **no `/monolynx:*` skills**. In this mode you must replicate the skill workflow manually - call the MCP tools in the same order the skills would (see Steps 3 and 4). It works, but the orchestrated, repeatable flow lives in the plugin. For serious development use Claude Code with the plugin.
+This gives you all 117 MCP tools (read/write tickets, sprints, wiki, dependency graph, pipelines) but **no `/monolynx:*` skills**. In this mode you must replicate the skill workflow manually - call the MCP tools in the same order the skills would (see Steps 3 and 4). It works, but the orchestrated, repeatable flow lives in the plugin. For serious development use Claude Code with the plugin.
 
 ---
 
@@ -148,3 +150,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 Full set of 12 skills: `work`, `work-simple`, `ticket-create`, `ticket-review`, `sprint-end`, `search`, `wiki-init`, `wiki-ingest`, `wiki-lint`, `wiki-sync-merge`, `help`, `create-graph-ci-script`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
+
+## Self-hosting Monolynx itself
+
+Monolynx is open source: <https://gitlab.com/piotrkrych/monolynx>. To run your own instance: clone the repository, copy `.env.example` to `.env`, then `make dev` (Docker Compose with PostgreSQL + pgvector, Neo4j, MinIO, and the FastAPI app on port 8000), `make migrate`, and `make createsuperuser`. Production uses `docker-compose.prod.yml` with a separate monitor worker. Optional integrations degrade gracefully (`OPENAI_API_KEY` for RAG search, `ENABLE_GRAPH_DB` for the dependency graph, `SMTP_HOST` for email). See the repository README for details. Once your instance is up, point `mcp_endpoint` at `https://your-instance/mcp` and everything above applies unchanged.

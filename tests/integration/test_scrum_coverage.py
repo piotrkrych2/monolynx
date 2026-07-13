@@ -16,15 +16,26 @@ Skupia sie na success paths ktore nie sa pokryte przez istniejace testy:
 """
 
 import secrets
-from datetime import date
+import uuid
+from datetime import UTC, date, datetime
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from monolynx.models.event import Event
+from monolynx.models.issue import Issue
+from monolynx.models.label import Label, TicketLabel
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.settlement import Settlement
+from monolynx.models.settlement_project import SettlementProject
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
+from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
+from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
 from monolynx.services.auth import hash_password
@@ -1324,3 +1335,1282 @@ class TestTicketCommentVerifyDB:
         comment = result.scalar_one()
         assert comment.content == "Komentarz do weryfikacji w DB"
         assert comment.user_id is not None
+
+
+# ---------------------------------------------------------------------------
+# Ticket create -- etykiety i due_date (MON-84)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTicketCreateLabelsAndDueDate:
+    async def test_create_ticket_with_valid_labels(self, client, db_session):
+        project = _make_project("TCL Labels", "tcl-labels")
+        db_session.add(project)
+        await db_session.flush()
+
+        label = Label(project_id=project.id, name="bug", color="#ff0000")
+        db_session.add(label)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tcl-labels@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create",
+            data={"title": "Ticket z etykieta", "label_ids": [str(label.id)]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.project_id == project.id))
+        ticket = result.scalar_one()
+        tl_result = await db_session.execute(select(TicketLabel).where(TicketLabel.ticket_id == ticket.id))
+        ticket_labels = tl_result.scalars().all()
+        assert len(ticket_labels) == 1
+        assert ticket_labels[0].label_id == label.id
+
+    async def test_create_ticket_with_invalid_label_id_ignored(self, client, db_session):
+        project = _make_project("TCL Invalid", "tcl-invalid")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tcl-invalid@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create",
+            data={"title": "Ticket zla etykieta", "label_ids": ["not-a-uuid"]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.project_id == project.id))
+        ticket = result.scalar_one()
+        tl_result = await db_session.execute(select(TicketLabel).where(TicketLabel.ticket_id == ticket.id))
+        assert tl_result.scalars().all() == []
+
+    async def test_create_ticket_with_due_date(self, client, db_session):
+        project = _make_project("TCL DueDate", "tcl-duedate")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tcl-duedate@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create",
+            data={"title": "Ticket z terminem", "due_date": "2026-04-01"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.project_id == project.id))
+        ticket = result.scalar_one()
+        assert ticket.due_date == date(2026, 4, 1)
+
+    async def test_create_ticket_with_invalid_due_date_ignored(self, client, db_session):
+        project = _make_project("TCL BadDate", "tcl-baddate")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tcl-baddate@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create",
+            data={"title": "Ticket zla data", "due_date": "not-a-date"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.project_id == project.id))
+        ticket = result.scalar_one()
+        assert ticket.due_date is None
+
+
+# ---------------------------------------------------------------------------
+# ticket_create_from_issue -- edge cases (dlugi tytul, roznorodne ksztalty Event)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTicketCreateFromIssueEdgeCases:
+    async def test_title_truncated_when_too_long(self, client, db_session):
+        project = _make_project("TFI LongTitle", "tfi-longtitle")
+        db_session.add(project)
+        await db_session.flush()
+
+        issue = Issue(
+            project_id=project.id,
+            fingerprint=secrets.token_hex(32),
+            title="X" * 505,
+            event_count=1,
+            first_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            last_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tfi-longtitle@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create-from-issue/{issue.id}",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.issue_id == issue.id))
+        ticket = result.scalar_one()
+        assert len(ticket.title) == 512
+        assert ticket.title.endswith("...")
+
+    async def test_exception_with_traceback_key(self, client, db_session):
+        project = _make_project("TFI Traceback", "tfi-traceback")
+        db_session.add(project)
+        await db_session.flush()
+
+        issue = Issue(
+            project_id=project.id,
+            fingerprint=secrets.token_hex(32),
+            title="KeyError: missing",
+            event_count=1,
+            first_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            last_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        event = Event(
+            issue_id=issue.id,
+            timestamp=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            exception={"traceback": "Traceback (most recent call last):\n  raise KeyError"},
+        )
+        db_session.add(event)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tfi-traceback@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create-from-issue/{issue.id}",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.issue_id == issue.id))
+        ticket = result.scalar_one()
+        assert "raise KeyError" in ticket.description
+
+    async def test_exception_with_type_and_value_only(self, client, db_session):
+        project = _make_project("TFI TypeValue", "tfi-typevalue")
+        db_session.add(project)
+        await db_session.flush()
+
+        issue = Issue(
+            project_id=project.id,
+            fingerprint=secrets.token_hex(32),
+            title="TypeError: oops",
+            event_count=1,
+            first_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            last_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        event = Event(
+            issue_id=issue.id,
+            timestamp=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            exception={"type": "TypeError", "value": "oops"},
+        )
+        db_session.add(event)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tfi-typevalue@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create-from-issue/{issue.id}",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.issue_id == issue.id))
+        ticket = result.scalar_one()
+        assert "TypeError: oops" in ticket.description
+
+    async def test_exception_not_a_dict(self, client, db_session):
+        project = _make_project("TFI NotDict", "tfi-notdict")
+        db_session.add(project)
+        await db_session.flush()
+
+        issue = Issue(
+            project_id=project.id,
+            fingerprint=secrets.token_hex(32),
+            title="Error: something",
+            event_count=1,
+            first_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            last_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        event = Event(
+            issue_id=issue.id,
+            timestamp=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            exception="not-a-dict",
+            request_data="not-a-dict-either",
+            environment="also-not-a-dict",
+        )
+        db_session.add(event)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tfi-notdict@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create-from-issue/{issue.id}",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.issue_id == issue.id))
+        ticket = result.scalar_one()
+        assert "## Traceback" in ticket.description
+
+    async def test_frame_not_dict_and_frame_without_context_line(self, client, db_session):
+        project = _make_project("TFI FrameEdge", "tfi-frameedge")
+        db_session.add(project)
+        await db_session.flush()
+
+        issue = Issue(
+            project_id=project.id,
+            fingerprint=secrets.token_hex(32),
+            title="ValueError: frame edge",
+            event_count=1,
+            first_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            last_seen=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+        )
+        db_session.add(issue)
+        await db_session.flush()
+
+        event = Event(
+            issue_id=issue.id,
+            timestamp=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            exception={
+                "type": "ValueError",
+                "value": "frame edge",
+                "stacktrace": {
+                    "frames": [
+                        "not-a-dict-frame",
+                        {"filename": "app/views.py", "function": "handler", "lineno": None},
+                    ]
+                },
+            },
+        )
+        db_session.add(event)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tfi-frameedge@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/create-from-issue/{issue.id}",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).where(Ticket.issue_id == issue.id))
+        ticket = result.scalar_one()
+        assert 'File "app/views.py", in handler' in ticket.description
+
+
+# ---------------------------------------------------------------------------
+# Board -- aktywny sprint bez ticketow (partial branch coverage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestBoardActiveSprintNoTickets:
+    async def test_board_active_sprint_without_tickets(self, client, db_session):
+        project = _make_project("Board Empty", "board-empty-sprint")
+        db_session.add(project)
+        await db_session.flush()
+
+        sprint = Sprint(
+            project_id=project.id,
+            name="Sprint Pusty",
+            start_date=date(2026, 3, 1),
+            status="active",
+        )
+        db_session.add(sprint)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="board-empty@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/scrum/board")
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# ticket_work_plan_section -- fragment HTMX (brak jakiegokolwiek pokrycia)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTicketWorkPlanSection:
+    async def test_requires_auth(self, client, db_session):
+        project = _make_project("WPS Auth", "wps-auth")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/work-plan")
+        assert resp.status_code == 401
+
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="wps-noproj@test.com")
+        resp = await client.get(f"/dashboard/nonexistent-slug/scrum/tickets/{uuid.uuid4()}/work-plan")
+        assert resp.status_code == 404
+
+    async def test_ticket_not_found(self, client, db_session):
+        project = _make_project("WPS NoTicket", "wps-noticket")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="wps-noticket@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/work-plan")
+        assert resp.status_code == 404
+
+    async def test_success_returns_fragment(self, client, db_session):
+        project = _make_project("WPS Success", "wps-success")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T z planem", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="wps-success@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/work-plan")
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# ticket_attachment_serve -- serwowanie zalacznikow (brak pokrycia)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTicketAttachmentServe:
+    async def test_requires_auth(self, client, db_session):
+        project = _make_project("TAS Auth", "tas-auth")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.get(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/attachments/{uuid.uuid4()}/f.png",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="tas-noproj@test.com")
+        resp = await client.get(
+            f"/dashboard/nonexistent-slug/scrum/tickets/{uuid.uuid4()}/attachments/{uuid.uuid4()}/f.png",
+        )
+        assert resp.status_code == 404
+
+    async def test_attachment_not_found(self, client, db_session):
+        project = _make_project("TAS NoAtt", "tas-noatt")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tas-noatt@test.com")
+        resp = await client.get(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/{uuid.uuid4()}/f.png",
+        )
+        assert resp.status_code == 404
+
+    @patch("monolynx.dashboard.scrum.minio_get_attachment", side_effect=Exception("boom"))
+    async def test_minio_error_returns_500(self, mock_get, client, db_session):
+        project = _make_project("TAS Error", "tas-error")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        attachment = TicketAttachment(
+            ticket_id=ticket.id,
+            filename="doc.pdf",
+            storage_path=f"{project.slug}/attachments/doc.pdf",
+            mime_type="application/pdf",
+            size=100,
+        )
+        db_session.add(attachment)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tas-error@test.com")
+        resp = await client.get(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/{attachment.id}/doc.pdf",
+        )
+        assert resp.status_code == 500
+
+    @patch("monolynx.dashboard.scrum.minio_get_attachment", return_value=(b"PDF-CONTENT", "application/pdf"))
+    async def test_success_streams_file(self, mock_get, client, db_session):
+        project = _make_project("TAS Success", "tas-success")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        attachment = TicketAttachment(
+            ticket_id=ticket.id,
+            filename="doc.pdf",
+            storage_path=f"{project.slug}/attachments/doc.pdf",
+            mime_type="application/pdf",
+            size=100,
+        )
+        db_session.add(attachment)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tas-success@test.com")
+        resp = await client.get(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/{attachment.id}/doc.pdf",
+        )
+        assert resp.status_code == 200
+        assert resp.content == b"PDF-CONTENT"
+        assert resp.headers["content-type"] == "application/pdf"
+        mock_get.assert_called_once_with(attachment.storage_path)
+
+
+# ---------------------------------------------------------------------------
+# ticket_attachment_upload -- upload FilePond (brak pokrycia)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTicketAttachmentUpload:
+    async def test_requires_auth(self, client, db_session):
+        project = _make_project("TAU Auth", "tau-auth")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/upload",
+            files={"filepond": ("f.png", b"data", "image/png")},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["error"] == "Unauthorized"
+
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="tau-noproj@test.com")
+        resp = await client.post(
+            f"/dashboard/nonexistent-slug/scrum/tickets/{uuid.uuid4()}/attachments/upload",
+            files={"filepond": ("f.png", b"data", "image/png")},
+        )
+        assert resp.status_code == 404
+
+    async def test_ticket_not_found(self, client, db_session):
+        project = _make_project("TAU NoTicket", "tau-noticket")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tau-noticket@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/attachments/upload",
+            files={"filepond": ("f.png", b"data", "image/png")},
+        )
+        assert resp.status_code == 404
+
+    @patch("monolynx.dashboard.scrum.minio_upload_attachment", return_value="proj/attachments/attachment")
+    async def test_filename_sanitized_to_empty_falls_back(self, mock_upload, client, db_session):
+        """Nazwa pliku zlozona wylacznie ze spacji -> po strip() pusta -> fallback 'attachment'."""
+        project = _make_project("TAU AllSpecial", "tau-allspecial")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        ticket_id = ticket.id
+
+        await login_session(client, db_session, email="tau-allspecial@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/upload",
+            files={"filepond": ("   ", b"data", "application/octet-stream")},
+        )
+        assert resp.status_code == 200
+
+        result = await db_session.execute(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket_id))
+        attachment = result.scalar_one()
+        assert attachment.filename == "attachment"
+
+    async def test_too_large_returns_400(self, client, db_session):
+        project = _make_project("TAU Large", "tau-large")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tau-large@test.com")
+        large_data = b"\x00" * (200 * 1024 * 1024 + 1)
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/upload",
+            files={"filepond": ("huge.bin", large_data, "application/octet-stream")},
+        )
+        assert resp.status_code == 400
+        assert "za duzy" in resp.json()["error"]
+
+    @patch("monolynx.dashboard.scrum.minio_upload_attachment", side_effect=Exception("minio down"))
+    async def test_minio_error_returns_500(self, mock_upload, client, db_session):
+        project = _make_project("TAU Error", "tau-error")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tau-error@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/upload",
+            files={"filepond": ("f.png", b"data", "image/png")},
+        )
+        assert resp.status_code == 500
+        assert "Blad uploadu" in resp.json()["error"]
+
+    @patch("monolynx.dashboard.scrum.minio_upload_attachment", return_value="proj/attachments/f-sanitized.png")
+    async def test_success_sanitizes_filename_and_persists(self, mock_upload, client, db_session):
+        project = _make_project("TAU Success", "tau-success")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        ticket_id = ticket.id
+
+        await login_session(client, db_session, email="tau-success@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/upload",
+            files={"filepond": ("../weird name!@#.png", b"pngdata", "image/png")},
+        )
+        assert resp.status_code == 200
+        attachment_id = uuid.UUID(resp.text.strip())
+
+        result = await db_session.execute(select(TicketAttachment).where(TicketAttachment.ticket_id == ticket_id))
+        attachment = result.scalar_one()
+        assert attachment.id == attachment_id
+        assert attachment.filename != "../weird name!@#.png"
+        assert "/" not in attachment.filename
+        assert attachment.size == len(b"pngdata")
+        mock_upload.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# ticket_attachment_delete -- usuwanie zalacznika (brak pokrycia)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTicketAttachmentDelete:
+    async def test_requires_auth(self, client, db_session):
+        project = _make_project("TAD Auth", "tad-auth")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/attachments/{uuid.uuid4()}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="tad-noproj@test.com")
+        resp = await client.post(
+            f"/dashboard/nonexistent-slug/scrum/tickets/{uuid.uuid4()}/attachments/{uuid.uuid4()}/delete",
+        )
+        assert resp.status_code == 404
+
+    async def test_attachment_not_found(self, client, db_session):
+        project = _make_project("TAD NoAtt", "tad-noatt")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tad-noatt@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/{uuid.uuid4()}/delete",
+        )
+        assert resp.status_code == 404
+
+    @patch("monolynx.dashboard.scrum.minio_delete_object", side_effect=Exception("minio down"))
+    async def test_success_even_if_minio_delete_fails(self, mock_delete, client, db_session):
+        """contextlib.suppress(Exception) na minio_delete_object nie blokuje usuniecia z DB."""
+        project = _make_project("TAD MinioFail", "tad-miniofail")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        attachment = TicketAttachment(
+            ticket_id=ticket.id,
+            filename="doc.pdf",
+            storage_path=f"{project.slug}/attachments/doc.pdf",
+            mime_type="application/pdf",
+            size=100,
+        )
+        db_session.add(attachment)
+        await db_session.flush()
+        attachment_id = attachment.id
+
+        await login_session(client, db_session, email="tad-miniofail@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/attachments/{attachment_id}/delete",
+        )
+        assert resp.status_code == 200
+
+        result = await db_session.execute(select(TicketAttachment).where(TicketAttachment.id == attachment_id))
+        assert result.scalar_one_or_none() is None
+
+
+# ---------------------------------------------------------------------------
+# ticket_edit_form -- galaz z dostepnymi rozliczeniami (branch 981->995)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTicketEditFormWithSettlements:
+    async def test_edit_form_shows_available_settlements(self, client, db_session):
+        project = _make_project("TEF Settlement", "tef-settlement")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T z rozliczeniem", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="tef-settlement@test.com")
+        result = await db_session.execute(select(User).where(User.email == "tef-settlement@test.com"))
+        user = result.scalar_one()
+
+        settlement = Settlement(
+            number=90001,
+            name="Rozliczenie TEF",
+            period_from=date(2026, 3, 1),
+            period_to=date(2026, 3, 31),
+            status="draft",
+            is_active=True,
+            created_by_id=user.id,
+        )
+        db_session.add(settlement)
+        await db_session.flush()
+        db_session.add(SettlementProject(settlement_id=settlement.id, project_id=project.id))
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/edit")
+        assert resp.status_code == 200
+        assert "Rozliczenie TEF" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# ticket_edit -- etykiety i rozliczenia (branch 1092, 1096->1119, 1100-1115)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTicketEditLabelsAndSettlements:
+    async def test_edit_ticket_syncs_valid_labels(self, client, db_session):
+        project = _make_project("TEL Labels", "tel-labels")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        label = Label(project_id=project.id, name="feature", color="#00ff00")
+        db_session.add(label)
+        await db_session.flush()
+        ticket_id = ticket.id
+
+        await login_session(client, db_session, email="tel-labels@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/edit",
+            data={"title": "T edytowany", "label_ids": [str(label.id)]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        tl_result = await db_session.execute(select(TicketLabel).where(TicketLabel.ticket_id == ticket_id))
+        ticket_labels = tl_result.scalars().all()
+        assert len(ticket_labels) == 1
+        assert ticket_labels[0].label_id == label.id
+
+    async def test_edit_ticket_syncs_settlements_valid_and_invalid(self, client, db_session):
+        project = _make_project("TEL Settlements", "tel-settlements")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        ticket_id = ticket.id
+
+        await login_session(client, db_session, email="tel-settlements@test.com")
+        result = await db_session.execute(select(User).where(User.email == "tel-settlements@test.com"))
+        user = result.scalar_one()
+
+        settlement = Settlement(
+            number=90002,
+            name="Rozliczenie TEL",
+            period_from=date(2026, 3, 1),
+            period_to=date(2026, 3, 31),
+            status="draft",
+            is_active=True,
+            created_by_id=user.id,
+        )
+        db_session.add(settlement)
+        await db_session.flush()
+        db_session.add(SettlementProject(settlement_id=settlement.id, project_id=project.id))
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/edit",
+            data={
+                "title": "T z rozliczeniem",
+                "settlement_ids": [str(settlement.id), "not-a-uuid", str(uuid.uuid4())],
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).options(selectinload(Ticket.settlements)).where(Ticket.id == ticket_id))
+        ticket = result.scalar_one()
+        assert len(ticket.settlements) == 1
+        assert ticket.settlements[0].id == settlement.id
+
+    async def test_edit_ticket_settlement_link_rejected_wrong_project(self, client, db_session):
+        """validate_settlement_ticket_link rzuca ValueError -> flash + continue (settlement pominiete)."""
+        project = _make_project("TEL WrongProj", "tel-wrongproj")
+        db_session.add(project)
+        await db_session.flush()
+        other_project = _make_project("TEL Other", "tel-other")
+        db_session.add(other_project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        ticket_id = ticket.id
+
+        await login_session(client, db_session, email="tel-wrongproj@test.com")
+        result = await db_session.execute(select(User).where(User.email == "tel-wrongproj@test.com"))
+        user = result.scalar_one()
+
+        settlement = Settlement(
+            number=90003,
+            name="Rozliczenie Other",
+            period_from=date(2026, 3, 1),
+            period_to=date(2026, 3, 31),
+            status="draft",
+            is_active=True,
+            created_by_id=user.id,
+        )
+        db_session.add(settlement)
+        await db_session.flush()
+        # Powiazane z innym projektem niz ticket
+        db_session.add(SettlementProject(settlement_id=settlement.id, project_id=other_project.id))
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/edit",
+            data={"title": "T bez rozliczenia", "settlement_ids": [str(settlement.id)]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).options(selectinload(Ticket.settlements)).where(Ticket.id == ticket_id))
+        ticket = result.scalar_one()
+        assert ticket.settlements == []
+
+    async def test_edit_ticket_member_role_cannot_touch_settlements(self, client, db_session):
+        """Member (bez rozliczenia:write) nie synchronizuje rozliczen -- branch 1096->1119 False."""
+        project = _make_project("TEL Member", "tel-member")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        ticket_id = ticket.id
+
+        await login_session(client, db_session, email="tel-member@test.com", is_superuser=False)
+        result = await db_session.execute(select(User).where(User.email == "tel-member@test.com"))
+        user = result.scalar_one()
+        db_session.add(ProjectMember(project_id=project.id, user_id=user.id, role="member"))
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/edit",
+            data={"title": "T edytowany przez membera", "settlement_ids": [str(uuid.uuid4())]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Ticket).options(selectinload(Ticket.settlements)).where(Ticket.id == ticket_id))
+        ticket = result.scalar_one()
+        assert ticket.title == "T edytowany przez membera"
+        assert ticket.settlements == []
+
+
+# ---------------------------------------------------------------------------
+# time_tracking_log / time_tracking_delete -- brakujace galezie
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestTimeTrackingLogMissingBranches:
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="ttl-noproj@test.com")
+        resp = await client.post(
+            "/dashboard/nonexistent-slug/scrum/time-tracking/log",
+            json={"ticket_id": str(uuid.uuid4()), "duration_minutes": 60, "date_logged": "2026-03-01"},
+        )
+        assert resp.status_code == 404
+
+    async def test_invalid_json_body(self, client, db_session):
+        project = _make_project("TTL BadJSON", "ttl-badjson")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ttl-badjson@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/time-tracking/log",
+            content=b"not-json{{{",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert "Invalid JSON" in resp.json()["error"]
+
+    async def test_invalid_ticket_id_format(self, client, db_session):
+        project = _make_project("TTL BadTicket", "ttl-badticket")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ttl-badticket@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/time-tracking/log",
+            json={"ticket_id": "not-a-uuid", "duration_minutes": 60, "date_logged": "2026-03-01"},
+        )
+        assert resp.status_code == 400
+        assert "Nieprawidlowy ticket_id" in resp.json()["error"]
+
+    async def test_ticket_belongs_to_different_project(self, client, db_session):
+        project = _make_project("TTL Proj A", "ttl-proj-a")
+        db_session.add(project)
+        other_project = _make_project("TTL Proj B", "ttl-proj-b")
+        db_session.add(other_project)
+        await db_session.flush()
+        ticket = Ticket(project_id=other_project.id, number=1, title="T innego projektu", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ttl-crossproj@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/time-tracking/log",
+            json={"ticket_id": str(ticket.id), "duration_minutes": 60, "date_logged": "2026-03-01"},
+        )
+        assert resp.status_code == 400
+        assert "nie nalezy do tego projektu" in resp.json()["error"]
+
+    async def test_user_not_project_member(self, client, db_session):
+        """Superuser bez wpisu ProjectMember -- add_time_entry zwraca blad 400."""
+        project = _make_project("TTL NoMember", "ttl-nomember")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ttl-nomember@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/time-tracking/log",
+            json={"ticket_id": str(ticket.id), "duration_minutes": 60, "date_logged": "2026-03-01"},
+        )
+        assert resp.status_code == 400
+        assert "nie jest czlonkiem projektu" in resp.json()["error"]
+
+
+@pytest.mark.integration
+class TestTimeTrackingDeleteMissingBranches:
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="ttd-noproj@test.com")
+        resp = await client.delete(f"/dashboard/nonexistent-slug/scrum/time-tracking/{uuid.uuid4()}")
+        assert resp.status_code == 404
+
+    async def test_entry_belongs_to_different_project(self, client, db_session):
+        from monolynx.services.time_tracking import add_time_entry
+
+        project = _make_project("TTD Proj A", "ttd-proj-a")
+        db_session.add(project)
+        other_project = _make_project("TTD Proj B", "ttd-proj-b")
+        db_session.add(other_project)
+        await db_session.flush()
+        other_ticket = Ticket(project_id=other_project.id, number=1, title="T innego projektu", status="backlog", priority="medium")
+        db_session.add(other_ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ttd-crossproj@test.com")
+        result = await db_session.execute(select(User).where(User.email == "ttd-crossproj@test.com"))
+        user = result.scalar_one()
+        db_session.add(ProjectMember(project_id=other_project.id, user_id=user.id, role="member"))
+        await db_session.flush()
+
+        entry = await add_time_entry(other_ticket.id, user.id, 60, date(2026, 3, 1), None, db_session)
+        assert not isinstance(entry, str)
+
+        resp = await client.delete(f"/dashboard/{project.slug}/scrum/time-tracking/{entry.id}")
+        assert resp.status_code == 403
+        assert "nie nalezy do tego projektu" in resp.json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# Kryteria akceptacji -- CRUD (ZERO pokrycia przed MON-84)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestCriterionCreate:
+    async def test_requires_auth(self, client, db_session):
+        project = _make_project("CC Auth", "cc-auth")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria",
+            data={"description": "Cos"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="cc-noproj@test.com")
+        resp = await client.post(
+            f"/dashboard/nonexistent-slug/scrum/tickets/{uuid.uuid4()}/criteria",
+            data={"description": "Cos"},
+        )
+        assert resp.status_code == 404
+
+    async def test_ticket_not_found(self, client, db_session):
+        project = _make_project("CC NoTicket", "cc-noticket")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cc-noticket@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/criteria",
+            data={"description": "Cos"},
+        )
+        assert resp.status_code == 404
+
+    async def test_empty_description_shows_error(self, client, db_session):
+        project = _make_project("CC Empty", "cc-empty")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        ticket_id = ticket.id
+
+        await login_session(client, db_session, email="cc-empty@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria",
+            data={"description": "   "},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert f"/scrum/tickets/{ticket_id}" in resp.headers["location"]
+
+        result = await db_session.execute(select(TicketAcceptanceCriterion).where(TicketAcceptanceCriterion.ticket_id == ticket_id))
+        assert result.scalars().all() == []
+
+    async def test_success_creates_with_incrementing_position(self, client, db_session):
+        project = _make_project("CC Success", "cc-success")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+        ticket_id = ticket.id
+
+        await login_session(client, db_session, email="cc-success@test.com")
+
+        resp1 = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria",
+            data={"description": "Pierwsze kryterium"},
+            follow_redirects=False,
+        )
+        assert resp1.status_code == 303
+
+        resp2 = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria",
+            data={"description": "Drugie kryterium"},
+            follow_redirects=False,
+        )
+        assert resp2.status_code == 303
+
+        result = await db_session.execute(
+            select(TicketAcceptanceCriterion).where(TicketAcceptanceCriterion.ticket_id == ticket_id).order_by(TicketAcceptanceCriterion.position)
+        )
+        criteria = result.scalars().all()
+        assert len(criteria) == 2
+        assert criteria[0].description == "Pierwsze kryterium"
+        assert criteria[0].position == 0
+        assert criteria[1].description == "Drugie kryterium"
+        assert criteria[1].position == 1
+        assert criteria[0].created_via_ai is False
+
+
+async def _make_ticket_with_criterion(
+    db_session: AsyncSession, project: Project, description: str = "Kryterium testowe"
+) -> tuple[Ticket, TicketAcceptanceCriterion]:
+    ticket = Ticket(project_id=project.id, number=1, title="T z kryterium", status="backlog", priority="medium")
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await db_session.execute(select(User).limit(1))
+    user = result.scalars().first()
+    criterion = TicketAcceptanceCriterion(
+        ticket_id=ticket.id,
+        description=description,
+        position=0,
+        created_by_user_id=user.id if user else None,
+        created_via_ai=False,
+    )
+    db_session.add(criterion)
+    await db_session.flush()
+    return ticket, criterion
+
+
+@pytest.mark.integration
+class TestCriterionToggle:
+    async def test_requires_auth(self, client, db_session):
+        project = _make_project("CT Auth", "ct-auth")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{uuid.uuid4()}/toggle",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="ct-noproj@test.com")
+        resp = await client.post(
+            f"/dashboard/nonexistent-slug/scrum/tickets/{uuid.uuid4()}/criteria/{uuid.uuid4()}/toggle",
+        )
+        assert resp.status_code == 404
+
+    async def test_ticket_not_found(self, client, db_session):
+        project = _make_project("CT NoTicket", "ct-noticket")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ct-noticket@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/criteria/{uuid.uuid4()}/toggle",
+        )
+        assert resp.status_code == 404
+
+    async def test_criterion_not_found(self, client, db_session):
+        project = _make_project("CT NoCrit", "ct-nocrit")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ct-nocrit@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{uuid.uuid4()}/toggle",
+        )
+        assert resp.status_code == 404
+
+    async def test_toggle_marks_completed_then_uncompleted(self, client, db_session):
+        project = _make_project("CT Toggle", "ct-toggle")
+        db_session.add(project)
+        await db_session.flush()
+        await login_session(client, db_session, email="ct-toggle@test.com")
+        ticket, criterion = await _make_ticket_with_criterion(db_session, project)
+        criterion_id = criterion.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{criterion.id}/toggle",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(TicketAcceptanceCriterion).where(TicketAcceptanceCriterion.id == criterion_id))
+        updated = result.scalar_one()
+        assert updated.is_completed is True
+        assert updated.completed_by_user_id is not None
+        assert updated.completed_at is not None
+
+        resp2 = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{criterion_id}/toggle",
+            follow_redirects=False,
+        )
+        assert resp2.status_code == 303
+
+        await db_session.refresh(updated)
+        assert updated.is_completed is False
+        assert updated.completed_by_user_id is None
+        assert updated.completed_at is None
+
+
+@pytest.mark.integration
+class TestCriterionEdit:
+    async def test_requires_auth(self, client, db_session):
+        project = _make_project("CE Auth", "ce-auth")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/criteria/{uuid.uuid4()}/edit",
+            data={"description": "Cos"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="ce-noproj@test.com")
+        resp = await client.post(
+            f"/dashboard/nonexistent-slug/scrum/tickets/{uuid.uuid4()}/criteria/{uuid.uuid4()}/edit",
+            data={"description": "Cos"},
+        )
+        assert resp.status_code == 404
+
+    async def test_ticket_not_found(self, client, db_session):
+        project = _make_project("CE NoTicket", "ce-noticket")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ce-noticket@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/criteria/{uuid.uuid4()}/edit",
+            data={"description": "Cos"},
+        )
+        assert resp.status_code == 404
+
+    async def test_criterion_not_found(self, client, db_session):
+        project = _make_project("CE NoCrit", "ce-nocrit")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="ce-nocrit@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{uuid.uuid4()}/edit",
+            data={"description": "Cos"},
+        )
+        assert resp.status_code == 404
+
+    async def test_empty_description_shows_error(self, client, db_session):
+        project = _make_project("CE Empty", "ce-empty")
+        db_session.add(project)
+        await db_session.flush()
+        await login_session(client, db_session, email="ce-empty@test.com")
+        ticket, criterion = await _make_ticket_with_criterion(db_session, project, description="Oryginalny opis")
+        criterion_id = criterion.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{criterion.id}/edit",
+            data={"description": "   "},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(TicketAcceptanceCriterion).where(TicketAcceptanceCriterion.id == criterion_id))
+        unchanged = result.scalar_one()
+        assert unchanged.description == "Oryginalny opis"
+
+    async def test_success_updates_description(self, client, db_session):
+        project = _make_project("CE Success", "ce-success")
+        db_session.add(project)
+        await db_session.flush()
+        await login_session(client, db_session, email="ce-success@test.com")
+        ticket, criterion = await _make_ticket_with_criterion(db_session, project, description="Stary opis")
+        criterion_id = criterion.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{criterion.id}/edit",
+            data={"description": "Nowy zaktualizowany opis"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(TicketAcceptanceCriterion).where(TicketAcceptanceCriterion.id == criterion_id))
+        updated = result.scalar_one()
+        assert updated.description == "Nowy zaktualizowany opis"
+
+
+@pytest.mark.integration
+class TestCriterionDelete:
+    async def test_requires_auth(self, client, db_session):
+        project = _make_project("CD Auth", "cd-auth")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/criteria/{uuid.uuid4()}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_project_not_found(self, client, db_session):
+        await login_session(client, db_session, email="cd-noproj@test.com")
+        resp = await client.post(
+            f"/dashboard/nonexistent-slug/scrum/tickets/{uuid.uuid4()}/criteria/{uuid.uuid4()}/delete",
+        )
+        assert resp.status_code == 404
+
+    async def test_ticket_not_found(self, client, db_session):
+        project = _make_project("CD NoTicket", "cd-noticket")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cd-noticket@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{uuid.uuid4()}/criteria/{uuid.uuid4()}/delete",
+        )
+        assert resp.status_code == 404
+
+    async def test_criterion_not_found(self, client, db_session):
+        project = _make_project("CD NoCrit", "cd-nocrit")
+        db_session.add(project)
+        await db_session.flush()
+        ticket = Ticket(project_id=project.id, number=1, title="T", status="backlog", priority="medium")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cd-nocrit@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{uuid.uuid4()}/delete",
+        )
+        assert resp.status_code == 404
+
+    async def test_success_removes_from_db(self, client, db_session):
+        project = _make_project("CD Success", "cd-success")
+        db_session.add(project)
+        await db_session.flush()
+        await login_session(client, db_session, email="cd-success@test.com")
+        ticket, criterion = await _make_ticket_with_criterion(db_session, project)
+        criterion_id = criterion.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/scrum/tickets/{ticket.id}/criteria/{criterion.id}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(TicketAcceptanceCriterion).where(TicketAcceptanceCriterion.id == criterion_id))
+        assert result.scalar_one_or_none() is None

@@ -4,11 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Monolynx{% endblock %}</title>
-    <meta name="description" content="{% block meta_description %}Open-source AI-first project platform. Error tracking, Scrum, monitoring, wiki with RAG search, and 30+ MCP tools.{% endblock %}">
+    <meta name="description" content="{% block meta_description %}Open-source AI-first project platform. Error tracking, Scrum, monitoring, wiki with RAG search, and 117 MCP tools.{% endblock %}">
+    <!-- AI agents & LLMs: machine-readable overview at /llms.txt ; usage guide at /how-to-use-monolynx.md ; project bootstrap at /agent-bootstrap.md{% if md_url %} ; markdown version of this page at {{ md_url }}{% endif %} -->
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
+    {% if md_url %}<link rel="alternate" type="text/markdown" href="{{ md_url }}" title="Markdown version of this page">{% endif %}
     <!-- Open Graph / Facebook / LinkedIn -->
     <meta property="og:type" content="website">
     <meta property="og:title" content="{% block og_title %}Monolynx — AI-first Project Platform{% endblock %}">
-    <meta property="og:description" content="{% block og_description %}Open-source project platform with error tracking, Scrum, monitoring, wiki with semantic search, and 30+ MCP tools for AI agents.{% endblock %}">
+    <meta property="og:description" content="{% block og_description %}Open-source project platform with error tracking, Scrum, monitoring, wiki with semantic search, and 117 MCP tools for AI agents.{% endblock %}">
     <meta property="og:image" content="{% block og_image %}{{ app_url }}/static/img/screenshots/social-media.png{% endblock %}">
     <meta property="og:url" content="{% block og_url %}{{ app_url }}{% endblock %}">
     <meta property="og:site_name" content="Monolynx">
@@ -16,7 +19,7 @@
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{% block twitter_title %}Monolynx — AI-first Project Platform{% endblock %}">
-    <meta name="twitter:description" content="{% block twitter_description %}Open-source project platform with error tracking, Scrum, monitoring, wiki with RAG search, and 30+ MCP tools.{% endblock %}">
+    <meta name="twitter:description" content="{% block twitter_description %}Open-source project platform with error tracking, Scrum, monitoring, wiki with RAG search, and 117 MCP tools.{% endblock %}">
     <meta name="twitter:image" content="{% block twitter_image %}{{ app_url }}/static/img/screenshots/social-media.png{% endblock %}">
     <link rel="icon" type="image/png" href="/static/img/favicon/favicon-96x96.png" sizes="96x96">
     <link rel="icon" type="image/svg+xml" href="/static/img/favicon/favicon.svg">
@@ -151,6 +154,13 @@
             {% else %}
             open-source project platform
             {% endif %}
+            <div class="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-2 text-xs">
+                <a href="/how-to-use-monolynx.md" class="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
+                    {% if lang == "pl" %}Przewodnik dla agentów AI{% else %}Guide for AI agents{% endif %}
+                </a>
+                <a href="/llms.txt" class="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">llms.txt</a>
+                <a href="https://gitlab.com/piotrkrych/monolynx" target="_blank" rel="noopener" class="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">GitLab</a>
+            </div>
         </div>
     </footer>
 

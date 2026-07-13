@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ from monolynx.services.notifications import (
     ALERT_DEBOUNCE_MINUTES,
     _build_alert_message,
     _is_webhook_url_safe,
+    _send_slack_webhook_sync,
     send_monitor_alert,
 )
 
@@ -20,7 +22,7 @@ from monolynx.services.notifications import (
 # ---------------------------------------------------------------------------
 
 
-def _make_monitor(notification_config: dict, last_alert_sent_at=None) -> MagicMock:
+def _make_monitor(notification_config: dict | None, last_alert_sent_at=None) -> MagicMock:
     """Pomocnik tworzacy mock Monitor."""
     monitor = MagicMock()
     monitor.id = uuid.uuid4()
@@ -111,6 +113,67 @@ class TestIsWebhookUrlSafe:
     def test_url_without_hostname_is_blocked(self):
         """URL bez nazwy hosta jest blokowany."""
         assert _is_webhook_url_safe("https:///no-host") is False
+
+    def test_malformed_url_raises_value_error_is_caught(self):
+        """Blad parsowania URL (ValueError) -> traktowany jako niebezpieczny."""
+        with patch("urllib.parse.urlparse", side_effect=ValueError("malformed URL")):
+            assert _is_webhook_url_safe("http://example.com/hook") is False
+
+    def test_dns_failure_is_blocked(self):
+        """Blad rozwiazania DNS (socket.gaierror) -> niebezpieczny."""
+        with patch(
+            "monolynx.services.notifications.socket.getaddrinfo",
+            side_effect=socket.gaierror("Name or service not known"),
+        ):
+            assert _is_webhook_url_safe("https://nonexistent.invalid/hook") is False
+
+    def test_private_ip_is_blocked(self):
+        """Domena rozwiazujaca sie do adresu prywatnego jest blokowana."""
+        with patch(
+            "monolynx.services.notifications.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))],
+        ):
+            assert _is_webhook_url_safe("https://internal.example.com/hook") is False
+
+    def test_loopback_ip_is_blocked(self):
+        """Domena rozwiazujaca sie do adresu loopback jest blokowana."""
+        with patch(
+            "monolynx.services.notifications.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.5", 0))],
+        ):
+            assert _is_webhook_url_safe("https://sneaky.example.com/hook") is False
+
+    def test_link_local_ip_is_blocked(self):
+        """Domena rozwiazujaca sie do adresu link-local jest blokowana."""
+        with patch(
+            "monolynx.services.notifications.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.1.1", 0))],
+        ):
+            assert _is_webhook_url_safe("https://link-local.example.com/hook") is False
+
+    def test_reserved_ip_is_blocked(self):
+        """Domena rozwiazujaca sie do adresu zarezerwowanego jest blokowana."""
+        with patch(
+            "monolynx.services.notifications.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("240.0.0.1", 0))],
+        ):
+            assert _is_webhook_url_safe("https://reserved.example.com/hook") is False
+
+    def test_public_ip_is_safe(self):
+        """Domena rozwiazujaca sie do publicznego adresu -> bezpieczny."""
+        with patch(
+            "monolynx.services.notifications.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
+        ):
+            assert _is_webhook_url_safe("https://hooks.slack.com/services/TEST") is True
+
+    def test_invalid_ip_in_addrinfo_is_skipped(self):
+        """Niepoprawny adres IP w wyniku getaddrinfo jest pomijany, nie crashuje."""
+        with patch(
+            "monolynx.services.notifications.socket.getaddrinfo",
+            return_value=[(socket.AF_UNIX, socket.SOCK_STREAM, 6, "", ("not-an-ip",))],
+        ):
+            assert _is_webhook_url_safe("https://weird.example.com/hook") is True
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +525,91 @@ class TestSendMonitorAlertSlack:
             side_effect=RuntimeError("webhook failed"),
         ):
             await send_monitor_alert(monitor, check, db)  # nie powinno rzucac
+
+
+# ---------------------------------------------------------------------------
+# Testy _send_slack_webhook_sync (funkcja synchroniczna wywolywana w executorze)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSendSlackWebhookSync:
+    """Testy niskopoziomowej funkcji wysylajacej webhook Slack."""
+
+    def test_unsafe_url_does_not_send(self):
+        """Niebezpieczny URL webhooka -> wczesny return, brak wysylki."""
+        with (
+            patch("monolynx.services.notifications._is_webhook_url_safe", return_value=False) as mock_safe,
+            patch("monolynx.services.notifications.urllib.request.urlopen") as mock_urlopen,
+        ):
+            _send_slack_webhook_sync("http://localhost/hook", "message")
+
+        mock_safe.assert_called_once_with("http://localhost/hook")
+        mock_urlopen.assert_not_called()
+
+    def test_urlopen_success_logs_status(self):
+        """Udane wyslanie -- urlopen wywolane z poprawnym requestem."""
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = False
+
+        with (
+            patch("monolynx.services.notifications._is_webhook_url_safe", return_value=True),
+            patch("monolynx.services.notifications.urllib.request.urlopen", return_value=mock_resp) as mock_urlopen,
+        ):
+            _send_slack_webhook_sync("https://hooks.slack.com/services/TEST", "message")
+
+        mock_urlopen.assert_called_once()
+
+    def test_urlopen_exception_is_caught(self):
+        """Wyjatek podczas wysylania webhooka jest lapany (logger.exception), nie propaguje."""
+        with (
+            patch("monolynx.services.notifications._is_webhook_url_safe", return_value=True),
+            patch(
+                "monolynx.services.notifications.urllib.request.urlopen",
+                side_effect=RuntimeError("connection failed"),
+            ),
+        ):
+            _send_slack_webhook_sync("https://hooks.slack.com/services/TEST", "message")  # nie powinno rzucac
+
+
+# ---------------------------------------------------------------------------
+# Testy debouncingu z naiwnym (bez tzinfo) last_alert_sent_at
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSendMonitorAlertNaiveDatetime:
+    """last_alert_sent_at bez tzinfo jest traktowany jako UTC."""
+
+    async def test_naive_datetime_within_debounce_blocks_send(self):
+        """Naiwny datetime sprzed 1 minuty -> debounce blokuje wysylke."""
+        monitor = _make_monitor(
+            {"email_enabled": True, "email_recipients": ["ops@example.com"]},
+            last_alert_sent_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1),
+        )
+        check = _make_check()
+        db = AsyncMock()
+
+        with patch("monolynx.services.email.send_email") as mock_email:
+            await send_monitor_alert(monitor, check, db)
+
+        mock_email.assert_not_called()
+
+    async def test_naive_datetime_past_debounce_allows_send(self):
+        """Naiwny datetime sprzed 10 minut -> po debounce, wysyla."""
+        monitor = _make_monitor(
+            {"email_enabled": True, "email_recipients": ["ops@example.com"]},
+            last_alert_sent_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=10),
+        )
+        check = _make_check()
+        db = AsyncMock()
+
+        with patch("monolynx.services.email.send_email") as mock_email:
+            await send_monitor_alert(monitor, check, db)
+
+        mock_email.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
