@@ -610,3 +610,660 @@ class TestMonitorCreatePostAuth:
             },
         )
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# MON-85: dodatkowe pokrycie dashboard/monitoring.py (79% -> 95%)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestSsrfRealPrivateIps:
+    """SSRF: literalne prywatne/loopback IP blokowane bez DNS (offline-safe)."""
+
+    async def test_create_blocks_literal_loopback_ip(self, client, db_session):
+        project = _make_project("cov-ssrf-loopback")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-ssrf-loopback@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "http://127.0.0.1:9000/health",
+                "name": "Loopback",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+            },
+        )
+        assert resp.status_code == 200
+        assert "niedozwolone" in resp.text
+
+    async def test_create_blocks_literal_private_ip(self, client, db_session):
+        project = _make_project("cov-ssrf-private")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-ssrf-private@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "http://10.1.2.3/health",
+                "name": "Private IP",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+            },
+        )
+        assert resp.status_code == 200
+        assert "niedozwolone" in resp.text
+
+    async def test_create_blocks_link_local_ip(self, client, db_session):
+        project = _make_project("cov-ssrf-linklocal")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-ssrf-linklocal@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "http://169.254.169.254/latest/meta-data/",
+                "name": "Link local (cloud metadata)",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+            },
+        )
+        assert resp.status_code == 200
+        assert "niedozwolone" in resp.text
+
+
+@pytest.mark.integration
+class TestMonitorLimitPerProject:
+    """Limit MAX_MONITORS_PER_PROJECT=20 monitorow na projekt."""
+
+    async def test_create_21st_monitor_exceeds_limit(self, client, db_session):
+        project = _make_project("cov-limit-20")
+        db_session.add(project)
+        await db_session.flush()
+
+        for i in range(20):
+            db_session.add(_make_monitor(project.id, url=f"https://limit-{i}.example.com", name=f"Limit {i}"))
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-limit-20@test.com")
+        with patch("monolynx.dashboard.monitoring._is_url_safe", return_value=None):
+            resp = await client.post(
+                f"/dashboard/{project.slug}/monitoring/create",
+                data={
+                    "url": "https://limit-21.example.com",
+                    "name": "21st Monitor",
+                    "interval_value": "5",
+                    "interval_unit": "minutes",
+                },
+            )
+        assert resp.status_code == 200
+        assert "limit" in resp.text.lower()
+
+        result = await db_session.execute(select(Monitor).where(Monitor.project_id == project.id, Monitor.url == "https://limit-21.example.com"))
+        assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.integration
+class TestMonitorDetailNotFound:
+    """monitor_detail: monitor nie istnieje w danym projekcie -- 404."""
+
+    async def test_detail_nonexistent_monitor_returns_404(self, client, db_session):
+        project = _make_project("cov-det-404")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-det-404@test.com")
+        fake_id = uuid.uuid4()
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/{fake_id}")
+        assert resp.status_code == 404
+
+    async def test_detail_nonexistent_project_returns_404(self, client, db_session):
+        await login_session(client, db_session, email="cov-det-noproj-404@test.com")
+        fake_id = uuid.uuid4()
+        resp = await client.get(f"/dashboard/totally-fake-project/monitoring/{fake_id}")
+        assert resp.status_code == 404
+
+    async def test_detail_requires_login(self, client, db_session):
+        project = _make_project("cov-det-nologin")
+        db_session.add(project)
+        await db_session.flush()
+
+        fake_id = uuid.uuid4()
+        resp = await client.get(
+            f"/dashboard/{project.slug}/monitoring/{fake_id}",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+
+@pytest.mark.integration
+class TestMonitorTestAlert:
+    """POST /{slug}/monitoring/{id}/test-alert -- cala sciezka."""
+
+    async def test_test_alert_requires_login(self, client, db_session):
+        project = _make_project("cov-alert-nologin")
+        db_session.add(project)
+        await db_session.flush()
+        fake_id = uuid.uuid4()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/{fake_id}/test-alert",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+    async def test_test_alert_nonexistent_project_redirects_to_login(self, client, db_session):
+        await login_session(client, db_session, email="cov-alert-noproj@test.com")
+        fake_id = uuid.uuid4()
+        resp = await client.post(
+            "/dashboard/totally-fake-project-alert/monitoring/" + str(fake_id) + "/test-alert",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+    async def test_test_alert_nonexistent_monitor_redirects_to_list(self, client, db_session):
+        project = _make_project("cov-alert-nomonitor")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-alert-nomonitor@test.com")
+        fake_id = uuid.uuid4()
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/{fake_id}/test-alert",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == f"/dashboard/{project.slug}/monitoring/"
+
+    async def test_test_alert_no_notification_config_flashes_error(self, client, db_session):
+        project = _make_project("cov-alert-noconfig")
+        db_session.add(project)
+        await db_session.flush()
+
+        monitor = _make_monitor(project.id, name="NoConfig Monitor")
+        db_session.add(monitor)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-alert-noconfig@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/{monitor.id}/test-alert",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == f"/dashboard/{project.slug}/monitoring/{monitor.id}"
+
+    async def test_test_alert_success_with_mocked_send(self, client, db_session):
+        project = _make_project("cov-alert-success")
+        db_session.add(project)
+        await db_session.flush()
+
+        monitor = _make_monitor(project.id, name="AlertOK Monitor")
+        monitor.notification_config = {
+            "email_enabled": True,
+            "email_recipients": ["ops@example.com"],
+            "sms_enabled": False,
+            "sms_recipients": [],
+            "slack_enabled": False,
+            "slack_channels": [],
+        }
+        db_session.add(monitor)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-alert-success@test.com")
+        with patch("monolynx.services.notifications.send_monitor_alert") as mock_send:
+            mock_send.return_value = None
+            resp = await client.post(
+                f"/dashboard/{project.slug}/monitoring/{monitor.id}/test-alert",
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == f"/dashboard/{project.slug}/monitoring/{monitor.id}"
+        mock_send.assert_called_once()
+
+    async def test_test_alert_exception_rolls_back_last_alert_sent_at(self, client, db_session):
+        project = _make_project("cov-alert-exception")
+        db_session.add(project)
+        await db_session.flush()
+
+        original_last_alert = datetime.now(UTC) - timedelta(hours=1)
+        monitor = _make_monitor(project.id, name="AlertFail Monitor")
+        monitor.notification_config = {
+            "email_enabled": True,
+            "email_recipients": ["ops@example.com"],
+            "sms_enabled": False,
+            "sms_recipients": [],
+            "slack_enabled": False,
+            "slack_channels": [],
+        }
+        monitor.last_alert_sent_at = original_last_alert
+        db_session.add(monitor)
+        await db_session.flush()
+        monitor_id = monitor.id
+
+        await login_session(client, db_session, email="cov-alert-exception@test.com")
+        with patch("monolynx.services.notifications.send_monitor_alert", side_effect=RuntimeError("boom")):
+            resp = await client.post(
+                f"/dashboard/{project.slug}/monitoring/{monitor_id}/test-alert",
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == f"/dashboard/{project.slug}/monitoring/{monitor_id}"
+
+        result = await db_session.execute(select(Monitor).where(Monitor.id == monitor_id))
+        reloaded = result.scalar_one()
+        assert reloaded.last_alert_sent_at is not None
+
+
+@pytest.mark.integration
+class TestMonitorDetailPagination:
+    """Paginacja checkow na stronie szczegolow monitora."""
+
+    async def _make_monitor_with_checks(self, db_session, slug: str, count: int) -> tuple[Project, Monitor]:
+        project = _make_project(slug)
+        db_session.add(project)
+        await db_session.flush()
+
+        monitor = _make_monitor(project.id, name=f"Paged {slug}")
+        db_session.add(monitor)
+        await db_session.flush()
+
+        now = datetime.now(UTC)
+        for i in range(count):
+            db_session.add(
+                MonitorCheck(
+                    monitor_id=monitor.id,
+                    status_code=200,
+                    response_time_ms=100,
+                    is_success=True,
+                    checked_at=now - timedelta(minutes=i),
+                )
+            )
+        await db_session.flush()
+        return project, monitor
+
+    async def test_detail_more_than_25_checks_paginates(self, client, db_session):
+        project, monitor = await self._make_monitor_with_checks(db_session, "cov-page-many", 30)
+
+        await login_session(client, db_session, email="cov-page-many@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/{monitor.id}?page=1")
+        assert resp.status_code == 200
+
+        resp2 = await client.get(f"/dashboard/{project.slug}/monitoring/{monitor.id}?page=2")
+        assert resp2.status_code == 200
+
+    async def test_detail_page_beyond_range_clamps_to_last_page(self, client, db_session):
+        project, monitor = await self._make_monitor_with_checks(db_session, "cov-page-clamp", 30)
+
+        await login_session(client, db_session, email="cov-page-clamp@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/{monitor.id}?page=999")
+        assert resp.status_code == 200
+
+    async def test_detail_invalid_page_param_defaults_to_1(self, client, db_session):
+        project, monitor = await self._make_monitor_with_checks(db_session, "cov-page-invalid", 5)
+
+        await login_session(client, db_session, email="cov-page-invalid@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/{monitor.id}?page=abc")
+        assert resp.status_code == 200
+
+    async def test_detail_negative_page_clamps_to_1(self, client, db_session):
+        project, monitor = await self._make_monitor_with_checks(db_session, "cov-page-neg", 5)
+
+        await login_session(client, db_session, email="cov-page-neg@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/{monitor.id}?page=-5")
+        assert resp.status_code == 200
+
+
+@pytest.mark.integration
+class TestIsUrlSafeMoreEdgeCases:
+    """Dodatkowe pokrycie _is_url_safe: ValueError z urlparse, gaierror, IP niepoprawny w getaddrinfo."""
+
+    async def test_url_safe_malformed_ipv6_raises_value_error_in_urlparse(self, client, db_session):
+        """Niedomkniety nawias IPv6 -- urlparse rzuca ValueError (linie 36-37)."""
+        project = _make_project("cov-ssrf-malformed")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-ssrf-malformed@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "http://[::1/path",
+                "name": "Malformed IPv6",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+            },
+        )
+        assert resp.status_code == 200
+        assert "URL" in resp.text
+
+    async def test_url_safe_dns_resolution_failure(self, client, db_session):
+        """Hostname z rezerwowanej domeny .invalid (RFC 2606) -- gaierror bez sieci (linie 51-52)."""
+        project = _make_project("cov-ssrf-dnsfail")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-ssrf-dnsfail@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "http://this-host-does-not-exist.invalid/health",
+                "name": "DNS Fail",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+            },
+        )
+        assert resp.status_code == 200
+        assert "rozwiazac" in resp.text
+
+    def test_is_url_safe_skips_unparseable_ip_from_getaddrinfo(self):
+        """Wpis z getaddrinfo z niepoprawnym IP jest pomijany (linie 58-59), sprawdzany bezposrednio."""
+        from monolynx.dashboard.monitoring import _is_url_safe
+
+        fake_addr_infos = [
+            (2, 1, 6, "", ("not-an-ip", 0)),
+            (2, 1, 6, "", ("8.8.8.8", 0)),
+        ]
+        with patch("monolynx.dashboard.monitoring.socket.getaddrinfo", return_value=fake_addr_infos):
+            result = _is_url_safe("http://example.com/")
+        assert result is None
+
+
+@pytest.mark.integration
+class TestNotificationConfigValidation:
+    """Pokrycie _parse_notification_config: walidacja email/sms/slack (linie 86-88, 91-93, 96-101, 279)."""
+
+    async def test_create_invalid_email_recipient_shows_error(self, client, db_session):
+        project = _make_project("cov-notif-badmail")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-notif-badmail@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "https://example.com",
+                "name": "Bad Email Notif",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+                "notification_email_enabled": "on",
+                "notification_email_recipients": "not-an-email",
+            },
+        )
+        assert resp.status_code == 200
+        assert "adresu email" in resp.text
+
+    async def test_create_invalid_sms_recipient_shows_error(self, client, db_session):
+        project = _make_project("cov-notif-badsms")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-notif-badsms@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "https://example.com",
+                "name": "Bad SMS Notif",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+                "notification_sms_enabled": "on",
+                "notification_sms_recipients": "abc",
+            },
+        )
+        assert resp.status_code == 200
+        assert "numeru telefonu" in resp.text
+
+    async def test_create_invalid_slack_webhook_scheme_shows_error(self, client, db_session):
+        project = _make_project("cov-notif-badslack")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-notif-badslack@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "https://example.com",
+                "name": "Bad Slack Notif",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+                "notification_slack_enabled": "on",
+                "notification_slack_channels": "ftp://not-http.example.com",
+            },
+        )
+        assert resp.status_code == 200
+        assert "webhooka Slack" in resp.text
+
+    async def test_create_slack_webhook_ssrf_blocked_shows_error(self, client, db_session):
+        project = _make_project("cov-notif-slackssrf")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-notif-slackssrf@test.com")
+        with patch("monolynx.dashboard.monitoring._is_url_safe") as mock_safe:
+            # Pierwsze wywolanie (walidacja URL monitora) -- OK; drugie (webhook Slack) -- blad
+            mock_safe.side_effect = [None, "Adresy prywatne i wewnetrzne sa niedozwolone"]
+            resp = await client.post(
+                f"/dashboard/{project.slug}/monitoring/create",
+                data={
+                    "url": "https://example.com",
+                    "name": "Slack SSRF Notif",
+                    "interval_value": "5",
+                    "interval_unit": "minutes",
+                    "notification_slack_enabled": "on",
+                    "notification_slack_channels": "http://10.0.0.5/webhook",
+                },
+            )
+        assert resp.status_code == 200
+        assert "Webhook Slack" in resp.text
+
+    async def test_create_with_valid_notification_config_succeeds(self, client, db_session):
+        project = _make_project("cov-notif-valid")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-notif-valid@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "https://example.com",
+                "name": "Valid Notif Monitor",
+                "interval_value": "5",
+                "interval_unit": "minutes",
+                "notification_email_enabled": "on",
+                "notification_email_recipients": "ops@example.com",
+                "notification_sms_enabled": "on",
+                "notification_sms_recipients": "+48123456789",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(Monitor).where(Monitor.project_id == project.id, Monitor.url == "https://example.com"))
+        created = result.scalar_one_or_none()
+        assert created is not None
+        assert created.notification_config["email_recipients"] == ["ops@example.com"]
+        assert created.notification_config["sms_recipients"] == ["+48123456789"]
+
+
+@pytest.mark.integration
+class TestMonitorCreateIntervalValidation:
+    """Pokrycie walidacji interwalu i jednostki (linie 258, 264-265)."""
+
+    async def test_create_interval_value_too_high_shows_error(self, client, db_session):
+        project = _make_project("cov-interval-high")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-interval-high@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "https://example.com",
+                "name": "Too High Interval",
+                "interval_value": "100",
+                "interval_unit": "minutes",
+            },
+        )
+        assert resp.status_code == 200
+        assert "miedzy 1 a 60" in resp.text
+
+    async def test_create_interval_value_too_low_shows_error(self, client, db_session):
+        project = _make_project("cov-interval-low")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-interval-low@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "https://example.com",
+                "name": "Too Low Interval",
+                "interval_value": "0",
+                "interval_unit": "minutes",
+            },
+        )
+        assert resp.status_code == 200
+        assert "miedzy 1 a 60" in resp.text
+
+    async def test_create_invalid_interval_unit_shows_error(self, client, db_session):
+        project = _make_project("cov-interval-unit")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-interval-unit@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={
+                "url": "https://example.com",
+                "name": "Bad Unit",
+                "interval_value": "5",
+                "interval_unit": "fortnights",
+            },
+        )
+        assert resp.status_code == 200
+        assert "jednostka interwalu" in resp.text
+
+
+@pytest.mark.integration
+class TestMonitoringAuthRedirects:
+    """Pokrycie redirectow /auth/login dla brakujacej sesji (linie 135, 197, 228, 448, 484)."""
+
+    async def test_monitor_list_requires_login(self, client, db_session):
+        project = _make_project("cov-auth-list")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+    async def test_monitor_create_form_requires_login(self, client, db_session):
+        project = _make_project("cov-auth-createform")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/create", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+    async def test_monitor_create_post_requires_login(self, client, db_session):
+        project = _make_project("cov-auth-createpost")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/create",
+            data={"url": "https://example.com", "interval_value": "5", "interval_unit": "minutes"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+    async def test_monitor_toggle_requires_login(self, client, db_session):
+        project = _make_project("cov-auth-toggle")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/{uuid.uuid4()}/toggle",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+    async def test_monitor_delete_requires_login(self, client, db_session):
+        project = _make_project("cov-auth-delete")
+        db_session.add(project)
+        await db_session.flush()
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/{uuid.uuid4()}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+
+@pytest.mark.integration
+class TestMonitorToggleDeleteNotFound:
+    """Pokrycie monitor_toggle/monitor_delete: monitor nie istnieje (linie 458, 494)."""
+
+    async def test_toggle_nonexistent_monitor_returns_404(self, client, db_session):
+        project = _make_project("cov-toggle-404")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-toggle-404@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/{uuid.uuid4()}/toggle",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 404
+
+    async def test_delete_nonexistent_monitor_returns_404(self, client, db_session):
+        project = _make_project("cov-delete-404")
+        db_session.add(project)
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-delete-404@test.com")
+        resp = await client.post(
+            f"/dashboard/{project.slug}/monitoring/{uuid.uuid4()}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 404
+
+
+@pytest.mark.integration
+class TestMonitorListWithLastCheck:
+    """Pokrycie monitor_list: monitor z ostatnim checkiem obecnym w subquery (linie 160->172, 170)."""
+
+    async def test_list_populates_last_check_for_monitor(self, client, db_session):
+        project = _make_project("cov-list-lastchk")
+        db_session.add(project)
+        await db_session.flush()
+
+        monitor = _make_monitor(project.id, name="HasCheck Monitor")
+        db_session.add(monitor)
+        await db_session.flush()
+
+        db_session.add(
+            MonitorCheck(
+                monitor_id=monitor.id,
+                status_code=200,
+                response_time_ms=150,
+                is_success=True,
+                checked_at=datetime.now(UTC),
+            )
+        )
+        await db_session.flush()
+
+        await login_session(client, db_session, email="cov-list-lastchk@test.com")
+        resp = await client.get(f"/dashboard/{project.slug}/monitoring/")
+        assert resp.status_code == 200
+        assert "HasCheck Monitor" in resp.text

@@ -1,13 +1,21 @@
-"""Testy jednostkowe -- CLI (main, createsuperuser)."""
+"""Testy jednostkowe -- CLI (main, createsuperuser, backfill-backlinks, backfill-embeddings)."""
 
 from __future__ import annotations
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from monolynx.cli import COMMANDS, MIN_PASSWORD_LENGTH, createsuperuser, main
+from monolynx.cli import (
+    COMMANDS,
+    MIN_PASSWORD_LENGTH,
+    backfill_backlinks_cmd,
+    backfill_embeddings_cmd,
+    createsuperuser,
+    main,
+)
 
 
 @pytest.mark.unit
@@ -340,6 +348,134 @@ class TestCreateSuperuser:
 
             call_kwargs = mock_user_cls.call_args[1]
             assert call_kwargs["email"] == "admin@example.com"
+
+
+@pytest.mark.unit
+class TestBackfillBacklinksCmd:
+    """Testy komendy backfill-backlinks -- odtworzenie backlinkow wiki."""
+
+    @patch("monolynx.cli.async_session_factory")
+    async def test_prints_count_of_processed_pages(self, mock_factory, capsys):
+        """Wywoluje backfill_backlinks i wypisuje liczbe przetworzonych stron."""
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_factory.return_value = mock_session
+
+        with patch("monolynx.services.wiki.backfill_backlinks", new=AsyncMock(return_value=7)) as mock_backfill:
+            await backfill_backlinks_cmd()
+
+        mock_backfill.assert_awaited_once_with(mock_session)
+        captured = capsys.readouterr()
+        assert "Przetworzono stron: 7" in captured.out
+
+    @patch("monolynx.cli.async_session_factory")
+    async def test_zero_pages_processed(self, mock_factory, capsys):
+        """Zero stron do przetworzenia -- nadal wypisuje komunikat sukcesu."""
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_factory.return_value = mock_session
+
+        with patch("monolynx.services.wiki.backfill_backlinks", new=AsyncMock(return_value=0)):
+            await backfill_backlinks_cmd()
+
+        captured = capsys.readouterr()
+        assert "Przetworzono stron: 0" in captured.out
+
+
+@pytest.mark.unit
+class TestBackfillEmbeddingsCmd:
+    """Testy komendy backfill-embeddings -- generowanie embeddingow dla stron wiki."""
+
+    @patch("monolynx.cli.async_session_factory")
+    async def test_no_pages_skips_update_and_prints_count(self, mock_factory, capsys):
+        """Brak stron -- update_page_embeddings nie jest wywolywane, liczba embeddingow wypisana."""
+        result_pages = MagicMock()
+        result_pages.scalars.return_value.all.return_value = []
+        result_count = MagicMock()
+        result_count.scalar.return_value = 0
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(side_effect=[result_pages, result_count])
+        mock_factory.return_value = mock_session
+
+        with patch("monolynx.services.embeddings.update_page_embeddings", new=AsyncMock()) as mock_update:
+            await backfill_embeddings_cmd()
+
+        mock_update.assert_not_awaited()
+        captured = capsys.readouterr()
+        assert "Gotowe! Laczna liczba embeddingow: 0" in captured.out
+
+    @patch("monolynx.cli.async_session_factory")
+    async def test_generates_embeddings_for_each_page(self, mock_factory, capsys):
+        """Kazda strona wiki -> jedno wywolanie update_page_embeddings, wypisuje tytul."""
+        page1 = MagicMock(id="id-1", title="Strona pierwsza")
+        page2 = MagicMock(id="id-2", title="Strona druga")
+
+        result_pages = MagicMock()
+        result_pages.scalars.return_value.all.return_value = [page1, page2]
+        result_count = MagicMock()
+        result_count.scalar.return_value = 42
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(side_effect=[result_pages, result_count])
+        mock_factory.return_value = mock_session
+
+        with (
+            patch("monolynx.services.embeddings.update_page_embeddings", new=AsyncMock()) as mock_update,
+            patch("monolynx.services.wiki.get_page_content", side_effect=["tresc 1", "tresc 2"]) as mock_content,
+        ):
+            await backfill_embeddings_cmd()
+
+        assert mock_update.await_count == 2
+        assert mock_content.call_count == 2
+        captured = capsys.readouterr()
+        assert "Strona pierwsza" in captured.out
+        assert "Strona druga" in captured.out
+        assert "Gotowe! Laczna liczba embeddingow: 42" in captured.out
+
+
+@pytest.mark.unit
+class TestCliBackfillCommandsRegression:
+    """Regresja: komendy backfill musza pozostac bezargumentowe i zarejestrowane w COMMANDS.
+
+    Patrz .claude/rules/makefile-cli.md -- Makefile nie moze zawierac logiki,
+    komendy CLI musza byc `async def` bez argumentow zeby dzialaly przez
+    `python -m monolynx.cli <command>`.
+    """
+
+    def test_commands_contains_backfill_backlinks(self):
+        assert "backfill-backlinks" in COMMANDS
+
+    def test_commands_contains_backfill_embeddings(self):
+        assert "backfill-embeddings" in COMMANDS
+
+    def test_commands_backfill_backlinks_points_to_function(self):
+        assert COMMANDS["backfill-backlinks"] is backfill_backlinks_cmd
+
+    def test_commands_backfill_embeddings_points_to_function(self):
+        assert COMMANDS["backfill-embeddings"] is backfill_embeddings_cmd
+
+    def test_backfill_backlinks_cmd_takes_no_arguments(self):
+        """Funkcja musi byc wywolywalna bez argumentow (asyncio.run(COMMANDS[cmd]()))."""
+        sig = inspect.signature(backfill_backlinks_cmd)
+        assert len(sig.parameters) == 0
+
+    def test_backfill_embeddings_cmd_takes_no_arguments(self):
+        """Funkcja musi byc wywolywalna bez argumentow (asyncio.run(COMMANDS[cmd]()))."""
+        sig = inspect.signature(backfill_embeddings_cmd)
+        assert len(sig.parameters) == 0
+
+    def test_backfill_backlinks_cmd_is_coroutine_function(self):
+        assert inspect.iscoroutinefunction(backfill_backlinks_cmd)
+
+    def test_backfill_embeddings_cmd_is_coroutine_function(self):
+        assert inspect.iscoroutinefunction(backfill_embeddings_cmd)
 
 
 @pytest.mark.unit

@@ -110,7 +110,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Your projects.",
         "hero_line2": "AI-first platform.",
         "hero_sub": (
-            "100 AI-ready tools, semantic wiki search, and Claude Code skills"
+            "117 AI-ready tools, semantic wiki search, and Claude Code skills"
             " - Monolynx isn't just another dashboard."
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
@@ -164,7 +164,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Twoje projekty.",
         "hero_line2": "AI-first platforma.",
         "hero_sub": (
-            "100 narzędzi AI, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
+            "117 narzędzi AI, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
             " - Monolynx to nie kolejny dashboard."
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
@@ -229,6 +229,49 @@ async def llms_txt() -> Response:
     if not llms_path.is_file():
         return Response(status_code=404, content="Not Found")
     return Response(content=llms_path.read_text(encoding="utf-8"), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt() -> Response:
+    """Robots policy for crawlers and AI agents; points to the sitemap and llms.txt."""
+    base = settings.APP_URL.rstrip("/")
+    content = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /dashboard/\n"
+        "Disallow: /auth/\n"
+        "Disallow: /api/\n"
+        "Disallow: /mcp\n"
+        "\n"
+        f"Sitemap: {base}/sitemap.xml\n"
+        "\n"
+        f"# AI assistants: machine-readable overview at {base}/llms.txt\n"
+        f"# Usage guide for AI agents: {base}/how-to-use-monolynx.md\n"
+    )
+    return Response(content=content, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml() -> Response:
+    """Sitemap with the public marketing pages and the AI-facing markdown docs."""
+    from monolynx.features import feature_slugs
+
+    base = settings.APP_URL.rstrip("/")
+    urls: list[str] = []
+    for lang in ("en", "pl"):
+        urls.append(f"{base}/?lang={lang}")
+        urls.extend(f"{base}/features/{slug}?lang={lang}" for slug in feature_slugs())
+        urls.append(f"{base}/contact?lang={lang}")
+    urls += [
+        f"{base}/llms.txt",
+        f"{base}/how-to-use-monolynx.md",
+        f"{base}/agent-bootstrap.md",
+        f"{base}/agent-explain.md",
+        f"{base}/index.md",
+    ]
+    entries = "\n".join(f"  <url><loc>{url.replace('&', '&amp;')}</loc></url>" for url in urls)
+    content = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{entries}\n</urlset>\n'
+    return Response(content=content, media_type="application/xml; charset=utf-8")
 
 
 @app.get("/how-to-use-monolynx.md", include_in_schema=False)
@@ -331,9 +374,9 @@ def _landing_markdown(lang: str) -> str:
         "```",
         "",
         (
-            "Serwer MCP udostępnia 100 narzędzi we wszystkich modułach (uwierzytelnianie tokenem Bearer)."
+            "Serwer MCP udostępnia 117 narzędzi we wszystkich modułach (uwierzytelnianie tokenem Bearer)."
             if is_pl
-            else "The MCP server exposes 100 tools across all modules (Bearer token authentication)."
+            else "The MCP server exposes 117 tools across all modules (Bearer token authentication)."
         ),
         "",
     ]
@@ -369,6 +412,27 @@ def _landing_markdown(lang: str) -> str:
             "`/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
             "`/monolynx:help`, `/monolynx:create-graph-ci-script`.",
             "",
+        ]
+
+    lines.append("## Przewodniki dla agentów AI" if is_pl else "## Guides for AI agents")
+    lines.append("")
+    if is_pl:
+        lines += [
+            f"- [Jak używać Monolynx (przewodnik dla asystentów AI)]({base}/how-to-use-monolynx.md):"
+            " pełny workflow - instalacja marketplace'u i pluginu, konfiguracja MCP, wiki jako źródło prawdy,"
+            " tworzenie ticketów i praca przez skille.",
+            f"- [Bootstrap projektu]({base}/agent-bootstrap.md): instrukcja krok po kroku dla agenta,"
+            " który ma skonfigurować połączenie z Monolynx w repozytorium użytkownika.",
+            f"- [llms.txt]({base}/llms.txt): maszynowy przegląd platformy - wszystkie moduły i punkty wejścia.",
+        ]
+    else:
+        lines += [
+            f"- [How to use Monolynx (guide for AI assistants)]({base}/how-to-use-monolynx.md):"
+            " the full workflow - installing the marketplace and plugin, configuring MCP, the wiki as the"
+            " source of truth, creating tickets and working through the skills.",
+            f"- [Project bootstrap]({base}/agent-bootstrap.md): step-by-step instructions for an agent"
+            " configuring the Monolynx connection inside a user's repository.",
+            f"- [llms.txt]({base}/llms.txt): machine-readable overview of the platform - all modules and entry points.",
         ]
     return "\n".join(lines).rstrip() + "\n"
 

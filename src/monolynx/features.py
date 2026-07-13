@@ -1688,6 +1688,11 @@ def _feature_pipelines(lang: str) -> dict[str, Any]:
     }
 
 
+def feature_slugs() -> list[str]:
+    """Public list of feature-page slugs (used by the sitemap)."""
+    return list(_FEATURES)
+
+
 _FEATURES: dict[str, Any] = {
     "500ki": _feature_500ki,
     "scrum": _feature_scrum,

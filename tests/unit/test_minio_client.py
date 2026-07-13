@@ -1,19 +1,149 @@
 """Testy klienta MinIO -- upload, download, delete plikow wiki i zalacznikow."""
 
 import io
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+import monolynx.services.minio_client as minio_client_module
 from monolynx.services.minio_client import (
+    _date_prefix,
     delete_object,
     ensure_bucket,
     get_attachment,
     get_markdown,
+    get_minio_client,
     upload_attachment,
     upload_markdown,
+    upload_object,
 )
+
+
+@pytest.mark.unit
+class TestGetMinioClient:
+    """Testy tworzenia singletona klienta MinIO."""
+
+    def setup_method(self):
+        """Resetuj singleton przed kazdym testem, zeby stan nie przeciekal."""
+        minio_client_module._client = None
+
+    def teardown_method(self):
+        """Resetuj singleton po kazdym tescie."""
+        minio_client_module._client = None
+
+    @patch("monolynx.services.minio_client.settings")
+    @patch("monolynx.services.minio_client.Minio")
+    def test_creates_client_when_none(self, mock_minio_cls, mock_settings):
+        """_client is None -> tworzy nowego klienta Minio z ustawieniami."""
+        mock_settings.MINIO_ENDPOINT = "minio:9000"
+        mock_settings.MINIO_ACCESS_KEY = "access-key"
+        mock_settings.MINIO_SECRET_KEY = "secret-key"
+        mock_settings.MINIO_USE_SSL = False
+        mock_instance = MagicMock()
+        mock_minio_cls.return_value = mock_instance
+
+        result = get_minio_client()
+
+        mock_minio_cls.assert_called_once_with(
+            "minio:9000",
+            access_key="access-key",
+            secret_key="secret-key",
+            secure=False,
+        )
+        assert result is mock_instance
+
+    @patch("monolynx.services.minio_client.settings")
+    @patch("monolynx.services.minio_client.Minio")
+    def test_returns_same_instance_on_subsequent_calls(self, mock_minio_cls, mock_settings):
+        """Kolejne wywolania zwracaja ten sam singleton, bez ponownego tworzenia klienta."""
+        mock_settings.MINIO_ENDPOINT = "minio:9000"
+        mock_settings.MINIO_ACCESS_KEY = "access-key"
+        mock_settings.MINIO_SECRET_KEY = "secret-key"
+        mock_settings.MINIO_USE_SSL = True
+        mock_minio_cls.return_value = MagicMock()
+
+        first = get_minio_client()
+        second = get_minio_client()
+
+        mock_minio_cls.assert_called_once()
+        assert first is second
+
+
+@pytest.mark.unit
+class TestDatePrefix:
+    """Testy _date_prefix -- format YYYY/MM/DD dla sciezek zalacznikow."""
+
+    @patch("monolynx.services.minio_client.datetime")
+    def test_returns_year_month_day_format(self, mock_datetime):
+        """Zwraca date w formacie YYYY/MM/DD na podstawie biezacej daty UTC."""
+        mock_datetime.now.return_value = datetime(2026, 3, 5, 12, 0, tzinfo=UTC)
+
+        result = _date_prefix()
+
+        assert result == "2026/03/05"
+
+    @patch("monolynx.services.minio_client.datetime")
+    def test_pads_single_digit_month_and_day(self, mock_datetime):
+        """Miesiac i dzien jednocyfrowy sa uzupelniane zerem."""
+        mock_datetime.now.return_value = datetime(2026, 1, 9, tzinfo=UTC)
+
+        result = _date_prefix()
+
+        assert result == "2026/01/09"
+
+
+@pytest.mark.unit
+class TestUploadObject:
+    """Testy upload_object -- ogolny upload dowolnego obiektu do MinIO."""
+
+    @patch("monolynx.services.minio_client.settings")
+    @patch("monolynx.services.minio_client.get_minio_client")
+    def test_returns_storage_path(self, mock_get_client, mock_settings):
+        """Zwraca dokladnie podana sciezke storage_path."""
+        mock_settings.MINIO_BUCKET = "settlements-bucket"
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        result = upload_object("settlements/attachments/123.pdf", b"pdf-data", "application/pdf")
+
+        assert result == "settlements/attachments/123.pdf"
+
+    @patch("monolynx.services.minio_client.settings")
+    @patch("monolynx.services.minio_client.get_minio_client")
+    def test_calls_put_object_with_correct_params(self, mock_get_client, mock_settings):
+        """Wywoluje put_object z poprawnym bucketem, sciezka, danymi i content-type."""
+        mock_settings.MINIO_BUCKET = "settlements-bucket"
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        data = b"binary content of an attachment"
+
+        upload_object("custom/path/file.bin", data, "application/octet-stream")
+
+        mock_client.put_object.assert_called_once()
+        call_args = mock_client.put_object.call_args
+        assert call_args[0][0] == "settlements-bucket"
+        assert call_args[0][1] == "custom/path/file.bin"
+        data_arg = call_args[0][2]
+        assert isinstance(data_arg, io.BytesIO)
+        assert data_arg.read() == data
+        assert call_args.kwargs["length"] == len(data)
+        assert call_args.kwargs["content_type"] == "application/octet-stream"
+
+    @patch("monolynx.services.minio_client.settings")
+    @patch("monolynx.services.minio_client.get_minio_client")
+    def test_empty_data(self, mock_get_client, mock_settings):
+        """Upload pustych danych -- length=0."""
+        mock_settings.MINIO_BUCKET = "settlements-bucket"
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        result = upload_object("empty/file.bin", b"", "application/octet-stream")
+
+        assert result == "empty/file.bin"
+        call_args = mock_client.put_object.call_args
+        assert call_args.kwargs["length"] == 0
 
 
 @pytest.mark.unit

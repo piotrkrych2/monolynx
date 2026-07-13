@@ -6,11 +6,33 @@ import secrets
 import uuid
 
 import pytest
+from sqlalchemy.exc import ProgrammingError
 
 from monolynx.models.user import User
 from monolynx.models.user_api_token import UserApiToken
 from monolynx.services.auth import hash_password
 from monolynx.services.mcp_auth import generate_api_token
+
+
+def _raise_programming_error_once(session, monkeypatch, *, method: str = "execute"):
+    """Monkeypatchuje `session.<method>` tak, ze PIERWSZE wywolanie rzuca
+    ProgrammingError (symulacja brakujacej tabeli oauth_clients), a kolejne
+    wywolania dzialaja normalnie (deleguja do oryginalnej metody).
+    """
+    original = getattr(session, method)
+    state = {"called": False}
+
+    async def _patched(*args, **kwargs):
+        if not state["called"]:
+            state["called"] = True
+            raise ProgrammingError(
+                "SELECT/INSERT oauth_clients",
+                {},
+                Exception('relation "oauth_clients" does not exist'),
+            )
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(session, method, _patched)
 
 
 def _generate_pkce() -> tuple[str, str]:
@@ -23,6 +45,18 @@ def _generate_pkce() -> tuple[str, str]:
 
 @pytest.mark.integration
 class TestOAuthMetadata:
+    async def test_protected_resource_endpoint(self, client):
+        """GET /.well-known/oauth-protected-resource zwraca poprawne RFC 9728 metadata."""
+        response = await client.get("/.well-known/oauth-protected-resource")
+        assert response.status_code == 200
+        data = response.json()
+        assert "resource" in data
+        assert "authorization_servers" in data
+        assert isinstance(data["authorization_servers"], list)
+        assert len(data["authorization_servers"]) == 1
+        assert data["authorization_servers"][0] == data["resource"]
+        assert data["bearer_methods_supported"] == ["header"]
+
     async def test_metadata_endpoint(self, client):
         """GET /.well-known/oauth-authorization-server zwraca poprawny JSON."""
         response = await client.get("/.well-known/oauth-authorization-server")
@@ -867,3 +901,92 @@ class TestOAuthServiceErrors:
                 code_challenge_method="plain",
                 db=db_session,
             )
+
+
+# ---------------------------------------------------------------------------
+# Brakujaca tabela oauth_clients -- graceful degradation (503, nie 500)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestOAuthMissingTable:
+    """Symuluje brak migracji OAuth (relation oauth_clients does not exist).
+
+    Kazdy endpoint dotykajacy OAuthClient lapie ProgrammingError i zwraca
+    kod bledu (503 / 400 + tresc HTML) zamiast nieobslugiwanego 500.
+    """
+
+    async def test_register_missing_table_returns_503(self, client, db_session, monkeypatch):
+        # register_client() robi tylko db.add() + await db.flush() -- pierwsze
+        # (jedyne) wywolanie flush symuluje brak tabeli.
+        _raise_programming_error_once(db_session, monkeypatch, method="flush")
+
+        response = await client.post(
+            "/register",
+            json={
+                "client_name": "Missing Table Test",
+                "redirect_uris": ["http://localhost:8000/cb"],
+                "grant_types": ["authorization_code"],
+            },
+        )
+
+        assert response.status_code == 503
+        data = response.json()
+        assert data["error"] == "server_error"
+
+    async def test_authorize_get_missing_table_returns_503(self, client, db_session, monkeypatch):
+        _raise_programming_error_once(db_session, monkeypatch, method="execute")
+        _verifier, challenge = _generate_pkce()
+
+        response = await client.get(
+            "/authorize",
+            params={
+                "client_id": "whatever_client",
+                "redirect_uri": "http://localhost:8001/cb",
+                "response_type": "code",
+                "state": "",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+
+        assert response.status_code == 503
+        assert "OAuth not configured" in response.text
+
+    async def test_authorize_post_missing_table_returns_503(self, client, db_session, monkeypatch):
+        _raise_programming_error_once(db_session, monkeypatch, method="execute")
+        _verifier, challenge = _generate_pkce()
+
+        response = await client.post(
+            "/authorize",
+            data={
+                "client_id": "whatever_client",
+                "redirect_uri": "http://localhost:8002/cb",
+                "state": "",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "scope": "",
+                "action": "consent",
+            },
+        )
+
+        assert response.status_code == 503
+        assert "OAuth not configured" in response.text
+
+    async def test_token_missing_table_returns_503(self, client, db_session, monkeypatch):
+        _raise_programming_error_once(db_session, monkeypatch, method="execute")
+
+        response = await client.post(
+            "/token",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": "whatever_client",
+                "code": "fake_code",
+                "code_verifier": "fake_verifier",
+                "redirect_uri": "http://localhost:8003/cb",
+            },
+        )
+
+        assert response.status_code == 503
+        data = response.json()
+        assert data["error"] == "server_error"
