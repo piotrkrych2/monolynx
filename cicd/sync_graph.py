@@ -305,6 +305,22 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
+    # Guard against unexpanded CI variables (e.g. a `variables:` block with
+    # self-references like MONOLYNX_URL: "${MONOLYNX_URL}" overriding the
+    # project-level value with the literal string).
+    for name, value in (
+        ("MONOLYNX_URL", args.monolynx_url),
+        ("MONOLYNX_GRAPH_TOKEN", args.token),
+        ("MONOLYNX_PROJECT_SLUG", args.project_slug),
+    ):
+        if "${" in value:
+            log.error(
+                "%s zawiera nieodwinieta referencje (%r) - usun blok variables: z joba CI i ustaw zmienna w CI/CD Settings -> Variables.",
+                name,
+                value,
+            )
+            return 1
+
     graph = load_graph(Path(args.graph_json))
     if graph is None:
         return 0  # non-blocking: the host project's build must pass
