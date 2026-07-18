@@ -47,7 +47,11 @@ Wyszukiwanie semantyczne (RAG) w wiki projektu. Uzyj gdy potrzebujesz informacji
 
 ### `/monolynx:create-graph-ci-script`
 
-Generuje skrypt CI (`cicd/sync_graph.py`) i stage w `.gitlab-ci.yml`, ktory automatycznie synchronizuje graf zaleznosci kodu z platforma Monolynx. Dzieki temu modul Polaczenia zawsze odzwierciedla aktualna strukture kodu. Uzyj raz w kazdym projekcie Python - potem CI robi reszte.
+Konfiguruje [graphify](https://github.com/Graphify-Labs/graphify) (zewnetrzny ekstraktor AST, 36 jezykow, offline) jako zrodlo grafu zaleznosci kodu: wykrywa system CI (GitLab/GitHub/Bitbucket/Jenkins), generuje `.graphifyignore` i cienki `cicd/sync_graph.py` (graph.json -> `replace_graph`), dodaje non-blocking step CI. WYMOG: graphify musi byc zainstalowane na runnerze CI (lub lokalnie) przez wlasciciela projektu - step CI go tylko uzywa, nigdy nie instaluje; brak graphify nie psuje builda. Uzyj raz w dowolnym projekcie - potem CI robi reszte.
+
+### `/monolynx:graph-sync`
+
+Lokalna synchronizacja grafu zaleznosci za reke - komplement do CI-owego `create-graph-ci-script`. Wykrywa graphify (przy braku prowadzi przez instalacje na macOS/Linux/Windows), generuje `.graphifyignore`, uruchamia offline ekstrakcje AST (`graphify update .`) i wypycha graf przez `cicd/sync_graph.py` (tool `replace_graph`). Uzyj przy pierwszym zasileniu grafu projektu albo do odswiezenia ad hoc bez CI.
 
 ---
 

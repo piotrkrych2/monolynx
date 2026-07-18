@@ -334,6 +334,34 @@ class TestGraphApi:
         assert "nodes" in data
         assert "edges" in data
 
+    async def test_graph_api_edge_metadata_passthrough(self, client, db_session):
+        slug = f"ga-meta-{uuid.uuid4().hex[:8]}"
+        project = await _create_project(db_session, slug)
+        email = f"ga-meta-{uuid.uuid4().hex[:8]}@test.com"
+        await _login_and_add_member(client, db_session, project, email)
+
+        with patch("monolynx.dashboard.connections.graph_service") as mock_gs:
+            _mock_graph_service_enabled(mock_gs)
+            mock_gs.get_graph = AsyncMock(
+                return_value={
+                    "nodes": [{"id": "n1", "name": "A", "type": "File"}],
+                    "edges": [
+                        {
+                            "source_id": "n1",
+                            "target_id": "n2",
+                            "type": "CALLS",
+                            "metadata": {"confidence": "INFERRED", "source_relation": "indirect_call"},
+                        }
+                    ],
+                }
+            )
+            resp = await client.get(f"/dashboard/{project.slug}/connections/api/graph")
+
+        assert resp.status_code == 200
+        edge = resp.json()["edges"][0]
+        assert edge["metadata"]["confidence"] == "INFERRED"
+        assert edge["metadata"]["source_relation"] == "indirect_call"
+
     async def test_graph_api_unauthorized(self, client, db_session):
         slug = f"ga-unauth-{uuid.uuid4().hex[:8]}"
         project = await _create_project(db_session, slug)
@@ -342,3 +370,67 @@ class TestGraphApi:
             follow_redirects=False,
         )
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 7. Setup guide
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestConnectionsSetupGuide:
+    async def test_setup_guide_requires_auth(self, client, db_session):
+        slug = f"sg-auth-{uuid.uuid4().hex[:8]}"
+        project = await _create_project(db_session, slug)
+        resp = await client.get(
+            f"/dashboard/{project.slug}/connections/setup-guide",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_setup_guide_loads(self, client, db_session):
+        slug = f"sg-load-{uuid.uuid4().hex[:8]}"
+        project = await _create_project(db_session, slug)
+        email = f"sg-load-{uuid.uuid4().hex[:8]}@test.com"
+        await _login_and_add_member(client, db_session, project, email)
+
+        resp = await client.get(f"/dashboard/{project.slug}/connections/setup-guide")
+
+        assert resp.status_code == 200
+        assert "Jak zasilić graf?" in resp.text
+        assert "graphify" in resp.text
+        assert "graphifyy" in resp.text
+        assert "sync_graph.py" in resp.text
+        assert "/dashboard/profile/tokens" in resp.text
+        assert "uv tool install" in resp.text
+        assert "allow_failure" in resp.text
+        assert "monolynx:graph-sync" in resp.text
+        assert "Windows" in resp.text
+        assert project.slug in resp.text
+
+    async def test_setup_guide_project_not_found(self, client, db_session):
+        email = f"sg-nf-{uuid.uuid4().hex[:8]}@test.com"
+        from tests.conftest import login_session
+
+        await login_session(client, db_session, email=email)
+        resp = await client.get(
+            "/dashboard/nie-istnieje-xyz/connections/setup-guide",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/dashboard/"
+
+    async def test_index_links_to_setup_guide(self, client, db_session):
+        slug = f"sg-link-{uuid.uuid4().hex[:8]}"
+        project = await _create_project(db_session, slug)
+        email = f"sg-link-{uuid.uuid4().hex[:8]}@test.com"
+        await _login_and_add_member(client, db_session, project, email)
+
+        with patch("monolynx.dashboard.connections.graph_service") as mock_gs:
+            _mock_graph_service_enabled(mock_gs)
+            mock_gs.get_stats = AsyncMock(return_value=None)
+            resp = await client.get(f"/dashboard/{project.slug}/connections/")
+
+        assert resp.status_code == 200
+        assert f"/dashboard/{project.slug}/connections/setup-guide" in resp.text

@@ -255,3 +255,55 @@ class TestGraphSearchResult:
         result = GraphSearchResult(nodes=nodes, edges=edges)
         assert len(result.nodes) == 3
         assert len(result.edges) == 2
+
+
+@pytest.mark.unit
+class TestEdgeProvenance:
+    def test_edge_create_accepts_confidence_and_source_relation(self):
+        edge = GraphEdgeCreate(
+            source_id="a",
+            target_id="b",
+            type="CALLS",
+            confidence="INFERRED",
+            source_relation="indirect_call",
+        )
+        assert edge.validate_confidence() is True
+        assert edge.to_metadata() == {"confidence": "INFERRED", "source_relation": "indirect_call"}
+
+    def test_edge_create_confidence_optional_backwards_compatible(self):
+        edge = GraphEdgeCreate(source_id="a", target_id="b", type="USES")
+        assert edge.confidence is None
+        assert edge.source_relation is None
+        assert edge.validate_confidence() is True
+        assert edge.to_metadata() == {}
+
+    def test_edge_create_invalid_confidence(self):
+        edge = GraphEdgeCreate(source_id="a", target_id="b", type="USES", confidence="MAYBE")
+        assert edge.validate_confidence() is False
+
+    def test_edge_create_to_metadata_explicit_fields_win(self):
+        edge = GraphEdgeCreate(
+            source_id="a",
+            target_id="b",
+            type="USES",
+            confidence="EXTRACTED",
+            metadata={"confidence": "INFERRED", "weight": 2},
+        )
+        merged = edge.to_metadata()
+        assert merged["confidence"] == "EXTRACTED"
+        assert merged["weight"] == 2
+
+    def test_edge_response_extracts_provenance_from_metadata(self):
+        edge = GraphEdgeResponse(
+            source_id="a",
+            target_id="b",
+            type="CALLS",
+            metadata={"confidence": "EXTRACTED", "source_relation": "calls"},
+        )
+        assert edge.confidence == "EXTRACTED"
+        assert edge.source_relation == "calls"
+
+    def test_edge_response_without_provenance(self):
+        edge = GraphEdgeResponse(source_id="a", target_id="b", type="CALLS")
+        assert edge.confidence is None
+        assert edge.source_relation is None

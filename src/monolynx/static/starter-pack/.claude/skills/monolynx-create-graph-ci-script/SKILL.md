@@ -1,260 +1,266 @@
 ---
 name: monolynx-create-graph-ci-script
-description: "Wygeneruj skrypt CI do synchronizacji grafu zaleznosci kodu z platforma Monolynx. Analizuje projekt Python (Django, FastAPI, Flask itp.), tworzy cicd/sync_graph.py i stage w .gitlab-ci.yml. Uzyj w dowolnym projekcie Python."
+description: "Skonfiguruj graphify jako ekstraktor grafu zaleznosci kodu dla Monolynx. Wykrywa system CI (GitLab/GitHub/Bitbucket/Jenkins), generuje .graphifyignore i cienki cicd/sync_graph.py (graph.json -> replace_graph), dodaje non-blocking step CI oraz instrukcje lokalne. Dziala dla kazdego jezyka wspieranego przez graphify (36 jezykow). Uzyj w dowolnym projekcie, ktory ma byc widoczny w module Polaczenia."
 user-invocable: true
 argument-hint: [monolynx-url]
+allowed-tools: mcp__monolynx__replace_graph, mcp__monolynx__query_graph, mcp__monolynx__get_graph_stats, AskUserQuestion, Bash, Read, Write, Edit, Glob, Grep
 ---
 
-# Generowanie skryptu synchronizacji grafu kodu z Monolynx
+# Konfiguracja graphify jako ekstraktora grafu kodu dla Monolynx
 
-Twoim zadaniem jest wygenerowac skrypt `cicd/sync_graph.py` i stage w `.gitlab-ci.yml` dla **biezacego projektu Python**. Skrypt analizuje kod zrodlowy (AST) i synchronizuje graf zaleznosci z platforma Monolynx.
+Twoim zadaniem jest skonfigurowanie synchronizacji grafu zaleznosci kodu **biezacego projektu** z platforma Monolynx (modul Polaczenia).
+
+**Podzial rol:**
+- **[graphify](https://github.com/Graphify-Labs/graphify)** - zewnetrzny ekstraktor: tree-sitter AST, 36 jezykow, w pelni offline (kod nie opuszcza maszyny, zero kosztow API). Generuje `graphify-out/graph.json`.
+- **`cicd/sync_graph.py`** - cienki mapper (generujesz go w KROK 3): czyta `graph.json`, mapuje taksonomie graphify -> Monolynx i wypycha graf przez MCP tool `replace_graph` (pelna podmiana, idempotentnie).
+- **Monolynx** - przyjmuje, przechowuje (Neo4j) i serwuje graf (UI + MCP).
+
+**Zasada kluczowa: CI NIE instaluje graphify.** Instalacja graphify na runnerze (gitlab-runner, self-hosted agent) to jednorazowy setup wlasciciela projektu - instrukcje w Monolynx: modul Polaczenia -> "Jak zasilic graf?". Step CI tylko UZYWA graphify; gdy go brak - konczy sie non-blocking z czytelnym komunikatem, a build projektu przechodzi dalej.
 
 **Monolynx URL**: `$ARGUMENTS` (domyslnie: `https://monolynx.com`)
 
 ---
 
-## KROK 1: Analiza projektu
+## KROK 0: Resolucja konfiguracji
 
-### 1a. Znajdz pakiet Python
+Ustal trzy wartosci (w tej kolejnosci, pierwsza znaleziona wygrywa):
 
-Przeszukaj projekt i ustal:
+1. **Slug projektu**: zmienna `MONOLYNX_PROJECT_SLUG` z `.env` / srodowiska -> `user_config.project_slug` pluginu -> zapytaj uzytkownika (AskUserQuestion).
+2. **URL**: `$ARGUMENTS` -> `MONOLYNX_URL` -> `user_config.mcp_endpoint` (bez suffixu `/mcp`) -> `https://monolynx.com`.
+3. **Token**: `MONOLYNX_GRAPH_TOKEN` (uzytkownik generuje w Monolynx -> Profil -> Tokeny API). NIE wypisuj wartosci tokenu.
 
-- **Glowny katalog zrodlowy** — szukaj w kolejnosci: `src/<nazwa>/`, `<nazwa>/`, `app/`
-- **Nazwa pakietu** — z `pyproject.toml` (pole `name`), `setup.py` lub `setup.cfg`
-- **Framework** — sprawdz importy: `django`, `fastapi`, `flask`, `celery`
+```bash
+echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
+```
 
-Przyklad: jesli `pyproject.toml` ma `name = "myapp"` i istnieje `src/myapp/`, to:
-- `src_dir = "src/myapp"`
-- `package_name = "myapp"`
-
-### 1b. Zmapuj strukture katalogow
-
-Wylistuj wszystkie katalogi w pakiecie. Typowe wzorce:
-
-| Framework | Typowe katalogi |
-|---|---|
-| Django | `views/`, `models/`, `serializers/`, `tasks/`, `signals/`, `admin/`, `management/`, `templatetags/` |
-| FastAPI | `api/`, `routers/`, `services/`, `models/`, `schemas/`, `middleware/` |
-| Flask | `views/`, `blueprints/`, `models/`, `services/` |
-| Ogolne | `core/`, `utils/`, `helpers/`, `config/`, `cli/`, `tests/` (pomijaj!) |
-
-### 1c. Wygeneruj PREFIX_MAP
-
-Reguly generowania prefiksow dla funkcji/metod:
-
-1. **Plik w podkatalogu** — uzyj nazwy pliku (stem) jako prefiksu:
-   - `services/payment.py` → `"payment"`
-   - `views/orders.py` → `"orders"`
-
-2. **Konflikt nazw** (dwa pliki z ta sama nazwa w roznych katalogach) — dodaj katalog:
-   - `views/users.py` → `"views_users"`
-   - `api/users.py` → `"api_users"`
-
-3. **Pliki w katalogu glownym** — uzyj nazwy pliku:
-   - `config.py` → `"cfg"`
-   - `main.py` → `"app"`
-   - `celery.py` → `"celery"`
-
-4. **Pliki `__init__.py`** — pomijaj jesli puste
-
-### 1d. Wygeneruj MODULE_MAP
-
-Kazdy podkatalog z plikami `.py` staje sie modulem:
-- `views/` → `"Views"`
-- `services/` → `"Services"`
-- `models/` → `"Models"`
-
-Pomijaj: `tests/`, `migrations/`, `__pycache__/`
-
-### 1e. Zapytaj uzytkownika
-
-Zapytaj:
-- **Slug projektu na Monolynx** — nazwa projektu na platformie (np. `myapp`, `ecommerce`)
-- **Potwierdz PREFIX_MAP** — pokaz wygenerowana mape i zapytaj czy jest OK
+W przykladach ponizej uzywaj placeholderow `<PROJECT-SLUG>` i `<MONOLYNX_URL>` - NIE hardkoduj konkretnego sluga.
 
 ---
 
-## KROK 2: Wygeneruj skrypt `cicd/sync_graph.py`
+## KROK 1: Wykryj system CI
 
-Stworz plik `cicd/sync_graph.py` na bazie ponizszej specyfikacji.
+Sprawdz w korzeniu repo (w tej kolejnosci):
 
-### Architektura skryptu
-
-```
-cicd/sync_graph.py
-├── MonolynxClient          — komunikacja HTTP z Monolynx MCP API
-├── ASTAnalyzer             — analiza AST codebase'u (2 przebiegi)
-├── compute_diff()          — porownanie desired vs current
-└── main()                  — CLI z argparse
-```
-
-### Klasa MonolynxClient — komunikacja z Monolynx
-
-Skrypt komunikuje sie z Monolynx przez **MCP Streamable HTTP** (JSON-RPC). Uzyj `urllib.request` (stdlib, zero zaleznosci).
-
-**Protokol:**
-
-1. **Inicjalizacja sesji:**
-```http
-POST {monolynx_url}/mcp/ HTTP/1.1
-Authorization: Bearer {token}
-Content-Type: application/json
-
-{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"sync_graph","version":"1.0"}},"id":1}
-```
-Odpowiedz zawiera header `Mcp-Session-Id` — zapisz go i dolaczaj do kazdego kolejnego requestu.
-
-2. **Wywolanie narzeadzia** (po inicjalizacji):
-```http
-POST {monolynx_url}/mcp/ HTTP/1.1
-Authorization: Bearer {token}
-Mcp-Session-Id: {session_id}
-Content-Type: application/json
-
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_graph_nodes","arguments":{"project_slug":"myproject","limit":1000}},"id":2}
-```
-
-3. **Parsowanie odpowiedzi:**
-Odpowiedz to JSON-RPC result. Wynik narzeadzia jest w `result.content[0].text` jako JSON string — parsuj go.
-
-**Dostepne narzedzia MCP:**
-
-| Narzedzie | Argumenty | Opis |
+| Plik / katalog | System | Step w KROK 4 |
 |---|---|---|
-| `list_graph_nodes` | `project_slug, type?, search?, limit?` | Lista node'ow (max 1000) |
-| `query_graph` | `project_slug, node_type?, limit?` | Caly graf (nodes + edges) |
-| `get_graph_stats` | `project_slug` | Statystyki (count per typ) |
-| `bulk_create_graph_nodes` | `project_slug, nodes[]` | Tworzenie node'ow. Kazdy: `{type, name, file_path?, line_number?}` |
-| `bulk_create_graph_edges` | `project_slug, edges[]` | Tworzenie krawedzi. Kazdy: `{source_id, target_id, type}` |
-| `delete_graph_node` | `project_slug, node_id` | Usun node + krawedzie (cascade) |
-| `delete_graph_edge` | `project_slug, source_id, target_id, type` | Usun krawedz |
-
-**WAZNE**: `bulk_create_graph_edges` wymaga `source_id` i `target_id` (UUID), nie nazw. Algorytm:
-1. Pobierz istniejace node'y → `name → id` map
-2. Stworz nowe node'y → zapisz ich ID z odpowiedzi
-3. Polacz mapy
-4. Twórz krawedzie z ID
-
-### Klasa ASTAnalyzer — analiza kodu
-
-Identyczna logika jak analiza AST — dwa przebiegi:
-
-**Pass 1 — struktura:**
-- `File` nodes (kazdy plik .py z wyjatkiem pustych)
-- `Class` nodes (ast.ClassDef) + edge CONTAINS (File→Class)
-- `Function` nodes (top-level ast.FunctionDef/AsyncFunctionDef) + edge CONTAINS (File→Function)
-- `Method` nodes (FunctionDef w ClassDef, bez dunder) + edge CONTAINS (Class→Method)
-- `Const` nodes (UPPER_CASE ast.Assign) + edge CONTAINS (File→Const)
-- `Module` nodes (z MODULE_MAP) + edges CONTAINS (Module→File)
-- `IMPORTS` edges (File→File) — tylko import wewnatrzprojektowe (`from {package_name}.X import Y`)
-- `INHERITS` edges (Class→Class) — pomijaj `object`, `BaseModel`, `Base`, `Model` (Django)
-
-**Pass 2 — CALLS:**
-- Buduj mape importow per plik: `from {package_name}.X.Y import func` → `func` pochodzi z `X/Y.py`
-- Buduj mape aliasow modulow: `from {package_name}.X import Y` → `Y.func()` to `func` z `X/Y.py`
-- Dla kazdej funkcji/metody, przeszukaj cialo (ast.Call) i mapuj na znane funkcje
-
-**Typy krawedzi:**
-- **Fully managed (create + delete):** CONTAINS, IMPORTS, INHERITS
-- **Append-only (create, nigdy delete):** CALLS
-- **Nie zarzadzane:** USES, IMPLEMENTS
-
-### Algorytm diff
-
-1. AST → desired state (nodes + edges)
-2. `query_graph(limit=1000)` → current state (nodes z ID + edges)
-3. Diff:
-   - Nowe node'y: w desired, nie w current (match po `type + name`)
-   - Usuniete node'y: w current, nie w desired → `delete_graph_node` (cascade)
-   - Nowe krawedzie: w desired, nie w current (match po `source_name + target_name + edge_type`)
-   - Usuniete krawedzie: w current, nie w desired (tylko MANAGED_EDGE_TYPES)
-4. Kolejnosc: usun node'y → usun krawedzie → stworz node'y → stworz krawedzie
-
-### CLI (argparse)
-
-```
-python cicd/sync_graph.py [opcje]
-
---monolynx-url    URL instancji Monolynx (default: env MONOLYNX_URL lub https://monolynx.com)
---token           Bearer token (default: env MONOLYNX_GRAPH_TOKEN)
---project-slug    Slug projektu na Monolynx (default: env MONOLYNX_PROJECT_SLUG)
---src-dir         Katalog zrodlowy (default: auto-detekcja)
---dry-run         Tylko pokaz diff, bez zapisu
---verbose         Szczegolowe logi
-```
-
-### Wymagania techniczne
-
-- **Zero zewnetrznych zaleznosci** — uzyj wylacznie stdlib (`ast`, `urllib.request`, `json`, `argparse`, `pathlib`, `uuid`, `re`, `logging`)
-- **Skrypt standalone** — nie importuj nic z projektu docelowego
-- Poprawna obsluga bledow HTTP (retry, timeout, logi)
+| `.gitlab-ci.yml` | GitLab CI | wariant A |
+| `.github/workflows/` | GitHub Actions | wariant B |
+| `bitbucket-pipelines.yml` | Bitbucket Pipelines | wariant C |
+| `Jenkinsfile` | Jenkins | wariant D |
+| zaden z powyzszych | brak CI | tylko instrukcja lokalna (KROK 5) |
 
 ---
 
-## KROK 3: Dodaj stage do `.gitlab-ci.yml`
+## KROK 2: Wygeneruj `.graphifyignore`
 
-Dodaj job `sync-graph` w etapie deploy:
+Utworz `.graphifyignore` w korzeniu repo (jesli istnieje - zaproponuj scalenie). Dostosuj do struktury projektu; baza:
+
+```
+tests/
+test/
+migrations/
+alembic/
+docs/
+scripts/
+node_modules/
+vendor/
+static/
+templates/
+.venv/
+*.md
+*.png
+*.svg
+*.ico
+```
+
+Zostaw katalogi z KODEM PRODUKTU. Uzasadnienie: bez ignore graf bywa 5x wiekszy, a 70-80% wezlow to testy - szum w wizualizacji i ryzyko przekroczenia limitow `replace_graph` (20 000 wezlow / 60 000 krawedzi).
+
+---
+
+## KROK 3: Wygeneruj `cicd/sync_graph.py`
+
+Utworz katalog `cicd/` i plik `cicd/sync_graph.py`. **Zero analizy AST** - to czysty mapper + klient MCP. Wymagania:
+
+### 3a. Klient MCP (stdlib only, bez zaleznosci)
+
+Klasa `MonolynxClient` - MCP Streamable HTTP (JSON-RPC przez `urllib.request`):
+- naglowki: `Authorization: Bearer {token}`, `Content-Type: application/json`, `Accept: application/json`
+- endpoint `{url}/mcp/`; sekwencja: `initialize` (protocolVersion `2025-03-26`) -> zapisz naglowek odpowiedzi `Mcp-Session-Id` -> doklejaj go do kolejnych requestow -> `tools/call`
+- wynik toola: `result.content[0].text` to JSON string -> `json.loads`; jesli `result.isError` -> blad
+- retry x3 z backoff; HTTP < 500 rzuca od razu
+- jedna metoda domenowa: `replace_graph(nodes, edges, clear_first=True)` wolajaca tool `replace_graph` z argumentami `{project_slug, nodes, edges, clear_first}`
+
+### 3b. Mapowanie taksonomii (zrodlo prawdy: wiki "Mapowanie taksonomii Graphify -> Monolynx")
+
+`graph.json` to format NetworkX node-link: klucze `nodes` + **`links`** (nie `edges`).
+
+**Krawedzie** - mapa relacji (relacje spoza mapy pomijamy: `references`, `rationale_for` - graf code-only):
+
+```python
+RELATION_TO_EDGE_TYPE = {
+    "calls": "CALLS", "indirect_call": "CALLS",
+    "contains": "CONTAINS", "method": "CONTAINS",
+    "imports": "IMPORTS", "imports_from": "IMPORTS", "re_exports": "IMPORTS",
+    "inherits": "INHERITS", "uses": "USES",
+}
+```
+
+Kazda krawedz dostaje `metadata: {"source_relation": <relacja graphify>, "confidence": <EXTRACTED|INFERRED>}`. Krawedzie INFERRED zostaja (odroznialne w UI). Krawedz, ktorej endpoint odpadl po filtrze wezlow - pomijana.
+
+**Wezly** - graphify NIE typuje wezlow kodu; typ wnioskuj heurystykami (pierwsza pasujaca wygrywa; zweryfikowane na graphify 0.9.18):
+
+| Warunek | Wynik |
+|---|---|
+| `file_type == "rationale"` / pusty `source_file` / `type == "package"` | pomin (v1 code-only) |
+| `label` konczy sie `.py` (lub rozszerzeniem jezyka projektu) | `File` |
+| target krawedzi `method` lub `label` zaczyna sie od `.` | `Method` |
+| source krawedzi `method` | `Class` |
+| `label` konczy sie `()` | `Function` |
+| `label` CamelCase (identyfikator z wielkiej litery) | `Class` |
+| pozostale | `Const` |
+
+Pola wezla: `id` (z graph.json - WYMAGANE, krawedzie referuja po nim), `name` (label bez sufiksu `()` i wiodacej kropki), `file_path` = `source_file`, `line_number` = `source_location` bez prefiksu `L`, `metadata.community` = `community`.
+
+### 3c. Obsluga brakow (twarde wymagania)
+
+- Brak `graphify-out/graph.json` -> `log.error("Missing ... - run graphify update .")` + **`exit 0`** (bez tracebacku; build projektu przechodzi)
+- Brak `MONOLYNX_GRAPH_TOKEN` -> log + `exit 0` (skip)
+- Brak sluga -> log.error + `exit 1`
+- Payload > 20 000 wezlow / 60 000 krawedzi -> log.error ("tighten .graphifyignore") + `exit 1`
+- `--dry-run` -> tylko mapowanie i liczby, bez requestow
+
+### 3d. CLI
+
+`argparse`: `--monolynx-url` (env `MONOLYNX_URL`), `--token` (env `MONOLYNX_GRAPH_TOKEN`), `--project-slug` (env `MONOLYNX_PROJECT_SLUG`), `--graph-json` (default `graphify-out/graph.json`), `--dry-run`, `--verbose`. Komentarze w skrypcie po angielsku.
+
+**Wzorzec referencyjny**: repo monolynx ma taki skrypt w `cicd/sync_graph.py` - mozesz go skopiowac i dostosowac rozszerzenie plikow w heurystyce `File` do jezyka projektu.
+
+---
+
+## KROK 4: Dodaj step CI (wariant wg KROK 1)
+
+Wspolne dla wszystkich: step uruchamia sie po merge do main, jest **non-blocking**, a przy braku graphify na runnerze konczy sie komunikatem i sukcesem (guard `command -v graphify`).
+
+### Wariant A: GitLab (`.gitlab-ci.yml`)
 
 ```yaml
 sync-graph:
   stage: deploy
-  image: python:3.12-slim
-  script:
-    - python cicd/sync_graph.py
+  allow_failure: true
   variables:
     MONOLYNX_URL: "${MONOLYNX_URL}"
     MONOLYNX_GRAPH_TOKEN: "${MONOLYNX_GRAPH_TOKEN}"
     MONOLYNX_PROJECT_SLUG: "${MONOLYNX_PROJECT_SLUG}"
+  script:
+    - command -v graphify || { echo "graphify nie zainstalowane na runnerze - setup: https://github.com/Graphify-Labs/graphify (patrz Monolynx -> Polaczenia -> Jak zasilic graf)"; exit 0; }
+    - graphify update .
+    - python cicd/sync_graph.py
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       when: on_success
 ```
 
-Jesli nie istnieje etap `deploy` w stages, dodaj go.
+Uwaga: job wymaga runnera z Pythonem 3.10+ i graphify w PATH (self-hosted / dedykowany obraz wlasciciela projektu - NIE instaluj graphify w stepie).
+
+### Wariant B: GitHub Actions (`.github/workflows/sync-graph.yml`)
+
+```yaml
+name: sync-graph
+on:
+  push:
+    branches: [main]
+jobs:
+  sync-graph:
+    runs-on: self-hosted
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: command -v graphify || { echo "graphify nie zainstalowane na runnerze"; exit 0; }
+      - run: graphify update .
+      - run: python cicd/sync_graph.py
+        env:
+          MONOLYNX_URL: ${{ secrets.MONOLYNX_URL }}
+          MONOLYNX_GRAPH_TOKEN: ${{ secrets.MONOLYNX_GRAPH_TOKEN }}
+          MONOLYNX_PROJECT_SLUG: ${{ vars.MONOLYNX_PROJECT_SLUG }}
+```
+
+### Wariant C: Bitbucket (`bitbucket-pipelines.yml`)
+
+```yaml
+pipelines:
+  branches:
+    main:
+      - step:
+          name: sync-graph
+          runs-on:
+            - self.hosted
+          script:
+            - command -v graphify || { echo "graphify nie zainstalowane na runnerze"; exit 0; }
+            - graphify update . || exit 0
+            - python cicd/sync_graph.py || exit 0
+```
+
+Bitbucket nie ma natywnego `allow_failure` - non-blocking realizuja guardy `|| exit 0`.
+
+### Wariant D: Jenkins (`Jenkinsfile`, nowy stage)
+
+```groovy
+stage('sync-graph') {
+  when { branch 'main' }
+  steps {
+    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+      sh 'command -v graphify || { echo "graphify nie zainstalowane na runnerze"; exit 0; }'
+      sh 'graphify update .'
+      sh 'python cicd/sync_graph.py'
+    }
+  }
+}
+```
+
+Po dodaniu stepu wypisz uzytkownikowi, jakie zmienne/sekrety musi ustawic w CI:
+
+```
+MONOLYNX_URL           = <MONOLYNX_URL>
+MONOLYNX_GRAPH_TOKEN     = (token z Monolynx -> Profil -> Tokeny API)
+MONOLYNX_PROJECT_SLUG  = <PROJECT-SLUG>
+```
 
 ---
 
-## KROK 4: Makefile (opcjonalnie)
+## KROK 5: Uruchomienie lokalne (takze gdy brak CI)
 
-Jesli w projekcie jest Makefile, dodaj:
+Kazdy dev z zainstalowanym graphify moze zasilic graf recznie:
+
+```bash
+# jednorazowo (macOS/Linux/Windows): uv tool install graphifyy   (pakiet PyPI ma podwojne "y"!)
+graphify update .
+MONOLYNX_URL=<MONOLYNX_URL> MONOLYNX_GRAPH_TOKEN=osk_xxx MONOLYNX_PROJECT_SLUG=<PROJECT-SLUG> \
+  python cicd/sync_graph.py --dry-run   # najpierw dry-run, potem bez flagi
+```
+
+Dla uzytkownikow Claude Code najprostsza sciezka to skill `/monolynx:graph-sync` (prowadzi za reke, z instalacja per OS).
+
+---
+
+## KROK 6: Makefile (opcjonalnie)
 
 ```makefile
-sync-graph: ## Synchronizuj graf kodu z Monolynx
-	python cicd/sync_graph.py
+sync-graph: ## Synchronizuj graf kodu z Monolynx (wymaga graphify)
+	graphify update . && python cicd/sync_graph.py
 
-sync-graph-dry: ## Pokaz zmiany w grafie bez zapisu
-	python cicd/sync_graph.py --dry-run --verbose
-```
-
----
-
-## KROK 5: Instrukcje dla uzytkownika
-
-Po zakonczeniu, wyswietl:
-
-```
-=== Graf kodu — konfiguracja CI ===
-
-Dodaj te zmienne w GitLab CI/CD Settings → Variables:
-
-  MONOLYNX_URL           = {url}
-  MONOLYNX_GRAPH_TOKEN   = (token API z Monolynx → Profil → Tokeny API)
-  MONOLYNX_PROJECT_SLUG  = {slug}
-
-Test lokalny:
-  MONOLYNX_URL={url} MONOLYNX_GRAPH_TOKEN=osk_xxx MONOLYNX_PROJECT_SLUG={slug} python cicd/sync_graph.py --dry-run
-
-Graf bedzie automatycznie synchronizowany po kazdym merge do main.
+sync-graph-dry: ## Zmapuj graf bez wysylki
+	graphify update . && python cicd/sync_graph.py --dry-run --verbose
 ```
 
 ---
 
 ## WAZNE ZASADY
 
-1. **Pomijaj katalogi**: `tests/`, `test/`, `migrations/`, `__pycache__/`, `.venv/`, `venv/`, `node_modules/`
-2. **Pomijaj puste pliki** `.py` (np. `__init__.py` bez kodu)
-3. **Nazwy node'ow musza byc unikalne** w ramach typu — jesli wykryjesz duplikat, dodaj prefix z katalogu
-4. **Prefiksy klas i stalych** — NIE dodawaj prefiksow do klas (`Project`, `User`) ani stalych (`MAX_RETRIES`)
-5. **Prefiksy funkcji/metod** — ZAWSZE dodawaj prefix z PREFIX_MAP (np. `payment:process_order`)
-6. **Nie modyfikuj istniejacego kodu projektu** — tworzysz TYLKO `cicd/sync_graph.py`, edytujesz `.gitlab-ci.yml` i opcjonalnie `Makefile`
-7. **Jezyk komentarzy w skrypcie**: angielski (skrypt jest uniwersalny)
+1. **CI nie instaluje graphify** - to jednorazowy setup wlasciciela runnera. Step tylko uzywa; brak = non-blocking fail z linkiem do repo graphify.
+2. **Brak graph.json / tokenu = skip z exit 0** - synchronizacja grafu NIGDY nie moze wywalic builda projektu.
+3. **Zrodlem prawdy mapowania** jest strona wiki "Mapowanie taksonomii Graphify -> Monolynx" projektu monolynx - przy rozjezdzie aktualizuj skrypt wg wiki, nie odwrotnie.
+4. **Graf code-only (v1)**: pomijaj rationale, symbole zewnetrzne (pusty `source_file`), pakiety, relacje `references`/`rationale_for`.
+5. **INHERITS moze zniknac** po filtrze symboli zewnetrznych (klasy bazowe z bibliotek) - to nie jest blad.
+6. **Nie modyfikuj kodu projektu** - tworzysz `.graphifyignore`, `cicd/sync_graph.py`, step CI i opcjonalnie Makefile.
+7. **Jezyk komentarzy w skrypcie**: angielski. Placeholder `<PROJECT-SLUG>` w dokumentacji - nigdy konkretny slug.
+8. **Token**: zawsze `MONOLYNX_GRAPH_TOKEN` - dedykowany token syncu grafu (NIE mylic z `MONOLYNX_MCP_TOKEN` uzywanym przez wiki-post-merge i polaczenie MCP Claude Code).

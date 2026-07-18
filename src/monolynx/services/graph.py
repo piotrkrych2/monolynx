@@ -303,6 +303,164 @@ async def delete_edge(
 
 
 # ---------------------------------------------------------------------------
+# Replace (pelna podmiana grafu projektu)
+# ---------------------------------------------------------------------------
+
+# Sanity limity dla replace_graph -- przekroczenie sugeruje brak .graphifyignore
+# po stronie ekstraktora (patrz wiki: Mapowanie taksonomii Graphify -> Monolynx)
+REPLACE_MAX_NODES = 20_000
+REPLACE_MAX_EDGES = 60_000
+_REPLACE_BATCH_SIZE = 500
+
+
+def _validate_replace_payload(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
+    """Walidacja fail-fast payloadu replace_graph. Rzuca ValueError PRZED dotknieciem bazy."""
+    if len(nodes) > REPLACE_MAX_NODES:
+        raise ValueError(f"Za duzo node'ow: {len(nodes)} (limit {REPLACE_MAX_NODES}). Ogranicz ekstrakcje (.graphifyignore)")
+    if len(edges) > REPLACE_MAX_EDGES:
+        raise ValueError(f"Za duzo krawedzi: {len(edges)} (limit {REPLACE_MAX_EDGES}). Ogranicz ekstrakcje (.graphifyignore)")
+
+    seen_ids: set[str] = set()
+    for i, node in enumerate(nodes):
+        for field in ("id", "name", "type"):
+            if not node.get(field):
+                raise ValueError(f"Node [{i}]: wymagane pola: id, name, type")
+        if node["type"] not in GRAPH_NODE_TYPES:
+            raise ValueError(f"Node [{i}]: nieznany typ '{node['type']}'. Dozwolone: {list(GRAPH_NODE_TYPES)}")
+        if node["id"] in seen_ids:
+            raise ValueError(f"Node [{i}]: zduplikowane id '{node['id']}'")
+        seen_ids.add(node["id"])
+
+    for i, edge in enumerate(edges):
+        for field in ("source_id", "target_id", "type"):
+            if not edge.get(field):
+                raise ValueError(f"Krawedz [{i}]: wymagane pola: source_id, target_id, type")
+        if edge["type"] not in GRAPH_EDGE_TYPES:
+            raise ValueError(f"Krawedz [{i}]: nieznany typ '{edge['type']}'. Dozwolone: {list(GRAPH_EDGE_TYPES)}")
+
+
+async def replace_graph(
+    project_id: uuid.UUID,
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    *,
+    clear_first: bool = True,
+) -> dict[str, Any]:
+    """Pelna podmiana grafu projektu: skasuj wszystkie node'y/krawedzie i wstaw nowy zestaw.
+
+    Idempotentna operacja pod sync z zewnetrznego ekstraktora (graphify) -- rebuild
+    from scratch, bez diffowania. Node'y przyjmuja `id` z wejscia (w odroznieniu od
+    create_node), bo krawedzie referuja source_id/target_id.
+
+    Walidacja calego payloadu odbywa sie PRZED kasowaniem (fail fast) -- bledny
+    payload nie zostawia pustego grafu. Delete + insert wykonuja sie w jednej
+    transakcji zapisu. clear_first=False pozwala dokladac kolejne batche bez
+    kasowania (dla payloadow dzielonych po stronie klienta).
+    """
+    _validate_replace_payload(nodes, edges)
+
+    nodes_by_type: dict[str, list[dict[str, Any]]] = {}
+    for node in nodes:
+        nodes_by_type.setdefault(node["type"], []).append(
+            {
+                "id": node["id"],
+                "name": node["name"],
+                "file_path": node.get("file_path"),
+                "line_number": node.get("line_number"),
+                "metadata": json.dumps(node.get("metadata", {})),
+            }
+        )
+
+    edges_by_type: dict[str, list[dict[str, Any]]] = {}
+    for edge in edges:
+        edges_by_type.setdefault(edge["type"], []).append(
+            {
+                "source_id": edge["source_id"],
+                "target_id": edge["target_id"],
+                "metadata": json.dumps(edge.get("metadata", {})),
+            }
+        )
+
+    pid = str(project_id)
+    deleted_nodes = 0
+    deleted_edges = 0
+    inserted_nodes = 0
+    inserted_edges = 0
+
+    async with get_neo4j_session() as session:
+        tx = await session.begin_transaction()
+        try:
+            if clear_first:
+                result = await tx.run(
+                    "MATCH (a {project_id: $project_id})-[r]->() RETURN count(r) AS count",
+                    project_id=pid,
+                )
+                record = await result.single()
+                deleted_edges = record["count"] if record else 0
+
+                result = await tx.run(
+                    "MATCH (n {project_id: $project_id}) DETACH DELETE n RETURN count(n) AS deleted",
+                    project_id=pid,
+                )
+                record = await result.single()
+                deleted_nodes = record["deleted"] if record else 0
+
+            for node_type, rows in nodes_by_type.items():
+                for start in range(0, len(rows), _REPLACE_BATCH_SIZE):
+                    batch = rows[start : start + _REPLACE_BATCH_SIZE]
+                    result = await tx.run(
+                        f"UNWIND $rows AS row "
+                        f"CREATE (n:{node_type} {{id: row.id, project_id: $project_id, name: row.name, "
+                        f"file_path: row.file_path, line_number: row.line_number, metadata: row.metadata}}) "
+                        f"RETURN count(n) AS created",
+                        rows=batch,
+                        project_id=pid,
+                    )
+                    record = await result.single()
+                    inserted_nodes += record["created"] if record else 0
+
+            for edge_type, rows in edges_by_type.items():
+                for start in range(0, len(rows), _REPLACE_BATCH_SIZE):
+                    batch = rows[start : start + _REPLACE_BATCH_SIZE]
+                    result = await tx.run(
+                        f"UNWIND $rows AS row "
+                        f"MATCH (a {{id: row.source_id, project_id: $project_id}}), "
+                        f"(b {{id: row.target_id, project_id: $project_id}}) "
+                        f"CREATE (a)-[r:{edge_type} {{metadata: row.metadata}}]->(b) "
+                        f"RETURN count(r) AS created",
+                        rows=batch,
+                        project_id=pid,
+                    )
+                    record = await result.single()
+                    inserted_edges += record["created"] if record else 0
+
+            await tx.commit()
+        except Exception:
+            await tx.rollback()
+            raise
+        finally:
+            await tx.close()
+
+    skipped_edges = len(edges) - inserted_edges
+    logger.info(
+        "replace_graph projekt %s: usunieto %d node'ow / %d krawedzi, wstawiono %d node'ow / %d krawedzi, pominieto %d krawedzi",
+        pid,
+        deleted_nodes,
+        deleted_edges,
+        inserted_nodes,
+        inserted_edges,
+        skipped_edges,
+    )
+    return {
+        "deleted_nodes": deleted_nodes,
+        "deleted_edges": deleted_edges,
+        "inserted_nodes": inserted_nodes,
+        "inserted_edges": inserted_edges,
+        "skipped_edges": skipped_edges,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Zapytania (query)
 # ---------------------------------------------------------------------------
 

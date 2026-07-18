@@ -1,0 +1,23 @@
+# MON-115 PoC v1: graf code-only dla src/monolynx (bez testow, migracji, narzedzi agentowych)
+tests/
+alembic/
+sdk/
+cicd/
+scripts/
+plugin/
+skills/
+docs/
+.agents/
+.claude/
+.codex/
+graphify-out/
+src/monolynx/static/
+src/monolynx/templates/
+*.md
+*.png
+*.svg
+*.ico
+*.gif
+tmp*.txt
+generate_errors.py
+install_skills.sh

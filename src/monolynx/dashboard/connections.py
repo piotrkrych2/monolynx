@@ -74,6 +74,39 @@ async def connections_index(
     )
 
 
+# --- Setup guide (jak zasilic graf przez graphify) ---
+
+
+@router.get(
+    "/{slug}/connections/setup-guide",
+    response_class=HTMLResponse,
+    response_model=None,
+)
+async def setup_guide(
+    request: Request,
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    user_id = _get_user_id(request)
+    if not user_id:
+        return RedirectResponse("/auth/login", status_code=302)
+    project = await _get_project(slug, db)
+    if not project:
+        return RedirectResponse("/dashboard/", status_code=302)
+
+    await require_permission(db, user_id, project.id, "connections", "read")
+
+    return await render_project_page(
+        request,
+        "dashboard/connections/setup_guide.html",
+        {
+            "project": project,
+            "active_module": "connections",
+        },
+        db,
+    )
+
+
 # --- Lista node'ow ---
 
 

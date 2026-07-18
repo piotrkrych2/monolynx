@@ -137,10 +137,14 @@ deploy-staging:
     - if: $CI_COMMIT_BRANCH == "main"
       when: manual
 
+# graphify musi byc zainstalowane na runnerze (jednorazowy setup) - step go
+# tylko uzywa; brak = non-blocking skip, build przechodzi (MON-118)
 sync-graph:
   stage: deploy
-  image: python:3.12-slim
+  allow_failure: true
   script:
+    - command -v graphify || { echo "graphify nie zainstalowane na runnerze - setup https://github.com/Graphify-Labs/graphify"; exit 0; }
+    - graphify update .
     - python cicd/sync_graph.py
   variables:
     MONOLYNX_URL: "${MONOLYNX_URL}"

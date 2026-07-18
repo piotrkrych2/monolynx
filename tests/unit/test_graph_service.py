@@ -1,11 +1,13 @@
 """Testy jednostkowe -- serwis grafu Neo4j (CRUD, zapytania, helpery)."""
 
+import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from monolynx.services.graph import (
+    REPLACE_MAX_NODES,
     _parse_metadata,
     create_edge,
     create_node,
@@ -17,6 +19,7 @@ from monolynx.services.graph import (
     get_stats,
     is_enabled,
     list_nodes,
+    replace_graph,
     update_node,
 )
 
@@ -335,6 +338,29 @@ class TestCreateEdge:
         project_id = uuid.uuid4()
         with pytest.raises(ValueError, match="Nieznany typ krawedzi"):
             await create_edge(project_id, "src", "tgt", "INVALID_EDGE")
+
+    async def test_create_edge_with_provenance_metadata(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        provenance = {"confidence": "INFERRED", "source_relation": "indirect_call"}
+        record = _make_record(
+            {
+                "source_id": "src-1",
+                "target_id": "tgt-1",
+                "type": "CALLS",
+                "metadata": json.dumps(provenance),
+            }
+        )
+        result_mock = AsyncMock()
+        result_mock.single.return_value = record
+        session.run.return_value = result_mock
+
+        result = await create_edge(uuid.uuid4(), "src-1", "tgt-1", "CALLS", provenance)
+
+        assert result is not None
+        assert result["metadata"]["confidence"] == "INFERRED"
+        assert result["metadata"]["source_relation"] == "indirect_call"
+        # metadata serializowana do JSON string w parametrach Cypher
+        assert json.loads(session.run.call_args.kwargs["metadata"]) == provenance
 
     async def test_create_edge_nodes_not_found(self, mock_driver: tuple) -> None:
         _driver, session = mock_driver
@@ -755,3 +781,189 @@ class TestGetNeighbors:
         # Check that the Cypher query contains *1..5 (clamped from 10)
         query = session.run.call_args[0][0]
         assert "*1..5" in query
+
+
+# ---------------------------------------------------------------------------
+# replace_graph
+# ---------------------------------------------------------------------------
+
+
+def _make_single_result(data: dict) -> AsyncMock:
+    """Mock wyniku tx.run z pojedynczym rekordem."""
+    result = AsyncMock()
+    result.single.return_value = _make_record(data)
+    return result
+
+
+def _make_tx(session: AsyncMock, run_results: list) -> AsyncMock:
+    """Podpina mock transakcji pod session.begin_transaction z sekwencja wynikow tx.run."""
+    tx = AsyncMock()
+    tx.run.side_effect = run_results
+    session.begin_transaction.return_value = tx
+    return tx
+
+
+def _replace_nodes() -> list[dict]:
+    return [
+        {"id": "f1", "name": "main.py", "type": "File", "file_path": "src/main.py"},
+        {"id": "fn1", "name": "run", "type": "Function", "file_path": "src/main.py", "line_number": 10},
+    ]
+
+
+def _replace_edges() -> list[dict]:
+    return [{"source_id": "f1", "target_id": "fn1", "type": "CONTAINS", "metadata": {"confidence": "EXTRACTED"}}]
+
+
+@pytest.mark.unit
+class TestReplaceGraph:
+    async def test_replace_graph_full(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        tx = _make_tx(
+            session,
+            [
+                _make_single_result({"count": 4}),  # deleted edges count
+                _make_single_result({"deleted": 3}),  # DETACH DELETE
+                _make_single_result({"created": 1}),  # insert File
+                _make_single_result({"created": 1}),  # insert Function
+                _make_single_result({"created": 1}),  # insert CONTAINS
+            ],
+        )
+
+        project_id = uuid.uuid4()
+        result = await replace_graph(project_id, _replace_nodes(), _replace_edges())
+
+        assert result == {
+            "deleted_nodes": 3,
+            "deleted_edges": 4,
+            "inserted_nodes": 2,
+            "inserted_edges": 1,
+            "skipped_edges": 0,
+        }
+        tx.commit.assert_awaited_once()
+        tx.rollback.assert_not_awaited()
+        # Izolacja projektow: kazde zapytanie (delete i insert) filtruje po project_id
+        for call in tx.run.await_args_list:
+            assert call.kwargs["project_id"] == str(project_id)
+
+    async def test_replace_graph_no_clear(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        tx = _make_tx(
+            session,
+            [
+                _make_single_result({"created": 1}),
+                _make_single_result({"created": 1}),
+                _make_single_result({"created": 1}),
+            ],
+        )
+
+        result = await replace_graph(uuid.uuid4(), _replace_nodes(), _replace_edges(), clear_first=False)
+
+        assert result["deleted_nodes"] == 0
+        assert result["deleted_edges"] == 0
+        assert result["inserted_nodes"] == 2
+        # Zadne wywolanie nie zawiera DETACH DELETE
+        for call in tx.run.await_args_list:
+            assert "DETACH DELETE" not in call.args[0]
+
+    async def test_replace_graph_skipped_edges(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        _make_tx(
+            session,
+            [
+                _make_single_result({"count": 0}),
+                _make_single_result({"deleted": 0}),
+                _make_single_result({"created": 1}),
+                _make_single_result({"created": 1}),
+                _make_single_result({"created": 0}),  # MATCH nie znalazl endpointow
+            ],
+        )
+        edges = [{"source_id": "f1", "target_id": "nie-istnieje", "type": "CALLS"}]
+
+        result = await replace_graph(uuid.uuid4(), _replace_nodes(), edges)
+
+        assert result["inserted_edges"] == 0
+        assert result["skipped_edges"] == 1
+
+    async def test_replace_graph_invalid_node_type_fails_before_delete(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        nodes = [{"id": "x1", "name": "X", "type": "BadType"}]
+
+        with pytest.raises(ValueError, match="nieznany typ"):
+            await replace_graph(uuid.uuid4(), nodes, [])
+
+        session.begin_transaction.assert_not_called()
+
+    async def test_replace_graph_invalid_edge_type_fails_before_delete(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        edges = [{"source_id": "a", "target_id": "b", "type": "BAD"}]
+
+        with pytest.raises(ValueError, match="nieznany typ"):
+            await replace_graph(uuid.uuid4(), _replace_nodes(), edges)
+
+        session.begin_transaction.assert_not_called()
+
+    async def test_replace_graph_duplicate_node_id(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        nodes = [
+            {"id": "dup", "name": "A", "type": "File"},
+            {"id": "dup", "name": "B", "type": "File"},
+        ]
+
+        with pytest.raises(ValueError, match="zduplikowane id"):
+            await replace_graph(uuid.uuid4(), nodes, [])
+
+        session.begin_transaction.assert_not_called()
+
+    async def test_replace_graph_missing_node_fields(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+
+        with pytest.raises(ValueError, match="wymagane pola"):
+            await replace_graph(uuid.uuid4(), [{"name": "bez-id", "type": "File"}], [])
+
+        session.begin_transaction.assert_not_called()
+
+    async def test_replace_graph_over_node_limit(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        nodes = [{"id": f"n{i}", "name": "N", "type": "File"} for i in range(REPLACE_MAX_NODES + 1)]
+
+        with pytest.raises(ValueError, match="Za duzo node'ow"):
+            await replace_graph(uuid.uuid4(), nodes, [])
+
+        session.begin_transaction.assert_not_called()
+
+    async def test_replace_graph_rollback_on_error(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        tx = AsyncMock()
+        tx.run.side_effect = [
+            _make_single_result({"count": 0}),
+            _make_single_result({"deleted": 0}),
+            RuntimeError("boom"),
+        ]
+        session.begin_transaction.return_value = tx
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await replace_graph(uuid.uuid4(), _replace_nodes(), [])
+
+        tx.rollback.assert_awaited_once()
+        tx.commit.assert_not_awaited()
+
+    async def test_replace_graph_batching(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        from monolynx.services.graph import _REPLACE_BATCH_SIZE
+
+        n_nodes = _REPLACE_BATCH_SIZE + 1  # 2 batche jednego typu
+        nodes = [{"id": f"n{i}", "name": "N", "type": "Function"} for i in range(n_nodes)]
+        tx = _make_tx(
+            session,
+            [
+                _make_single_result({"count": 0}),
+                _make_single_result({"deleted": 0}),
+                _make_single_result({"created": _REPLACE_BATCH_SIZE}),
+                _make_single_result({"created": 1}),
+            ],
+        )
+
+        result = await replace_graph(uuid.uuid4(), nodes, [])
+
+        assert result["inserted_nodes"] == n_nodes
+        assert tx.run.await_count == 4  # 2x delete-stat + 2 batche

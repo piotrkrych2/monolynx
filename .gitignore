@@ -45,3 +45,8 @@ Thumbs.db
 seed_pipelines.py
 raport-pipelines-per-projekt.md
 spec-driven-debate.md
+
+# graphify - lokalny artefakt buildu (odtwarzalny: graphify update .);
+# wspolny graf zyje w Monolynx (replace_graph), .graphifyignore commitujemy
+graphify-out/
+

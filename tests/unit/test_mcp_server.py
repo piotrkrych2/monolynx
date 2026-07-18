@@ -233,6 +233,7 @@ EXPECTED_TOOLS = [
     "get_graph_stats",
     "bulk_create_graph_nodes",
     "bulk_create_graph_edges",
+    "replace_graph",
     "create_ticket_from_issue",
     "list_heartbeats",
     "get_heartbeat",

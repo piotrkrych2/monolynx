@@ -1,7 +1,11 @@
-.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings backfill-backlinks sync-graph
+.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings backfill-backlinks sync-graph sync-graph-dry clear-all-graphs
+
+# Zaladuj .env, zeby targety hostowe (sync-graph) widzialy MONOLYNX_MCP_TOKEN itd.
+-include .env
+export
 
 help: ## Pokaz dostepne komendy
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(firstword $(MAKEFILE_LIST)) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 # --- Docker ---
@@ -49,11 +53,14 @@ backfill-backlinks: ## Wygeneruj backlinki dla istniejacych stron wiki
 	docker compose --profile dev exec app python -m monolynx.cli backfill-backlinks
 
 # --- Graf kodu ---
-sync-graph: ## Synchronizuj graf zaleznosci kodu z Monolynx
-	python cicd/sync_graph.py
+sync-graph: ## Synchronizuj graf zaleznosci kodu z Monolynx (wymaga graphify)
+	graphify update . && python cicd/sync_graph.py
 
-sync-graph-dry: ## Pokaz zmiany w grafie bez zapisu
-	python cicd/sync_graph.py --dry-run --verbose
+sync-graph-dry: ## Zmapuj graf bez wysylki (wymaga graphify)
+	graphify update . && python cicd/sync_graph.py --dry-run --verbose
+
+clear-all-graphs: ## Zaoraj grafy Neo4j WSZYSTKICH projektow (interaktywne potwierdzenie)
+	docker compose --profile dev exec app python -m monolynx.cli clear-all-graphs
 
 # --- Build ---
 build: ## Zbuduj produkcyjny obraz Docker
