@@ -147,10 +147,6 @@ Wspolne dla wszystkich: step uruchamia sie po merge do main, jest **non-blocking
 sync-graph:
   stage: deploy
   allow_failure: true
-  variables:
-    MONOLYNX_URL: "${MONOLYNX_URL}"
-    MONOLYNX_GRAPH_TOKEN: "${MONOLYNX_GRAPH_TOKEN}"
-    MONOLYNX_PROJECT_SLUG: "${MONOLYNX_PROJECT_SLUG}"
   script:
     - command -v graphify || { echo "graphify nie zainstalowane na runnerze - setup: https://github.com/Graphify-Labs/graphify (patrz Monolynx -> Polaczenia -> Jak zasilic graf)"; exit 0; }
     - graphify update .
@@ -160,7 +156,9 @@ sync-graph:
       when: on_success
 ```
 
-Uwaga: job wymaga runnera z Pythonem 3.10+ i graphify w PATH (self-hosted / dedykowany obraz wlasciciela projektu - NIE instaluj graphify w stepie).
+Uwaga 1: job wymaga runnera z Pythonem 3.10+ i graphify w PATH (self-hosted / dedykowany obraz wlasciciela projektu - NIE instaluj graphify w stepie).
+
+Uwaga 2 (PULAPKA): NIE dodawaj bloku `variables:` z wpisami typu `MONOLYNX_URL: "${MONOLYNX_URL}"` - zmienne z CI/CD Settings -> Variables sa dostepne w srodowisku joba automatycznie, a taka self-referencja nadpisuje je LITERALNYM stringiem `${MONOLYNX_URL}` i sync konczy sie bledem "unknown url type".
 
 ### Wariant B: GitHub Actions (`.github/workflows/sync-graph.yml`)
 
