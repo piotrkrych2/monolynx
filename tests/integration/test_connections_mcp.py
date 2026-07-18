@@ -17,6 +17,7 @@ from monolynx.mcp_server import (
     get_graph_stats,
     list_graph_nodes,
     query_graph,
+    replace_graph,
 )
 
 # ---------------------------------------------------------------------------
@@ -493,3 +494,74 @@ class TestBulkCreateGraphEdges:
         assert result["created"] == 1
         assert result["skipped"] == 1  # s4/t4 not found
         assert len(result["errors"]) == 3  # [1] bad type, [2] missing fields, [3] not found
+
+
+# ---------------------------------------------------------------------------
+# 12. replace_graph
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestReplaceGraph:
+    async def test_replace_graph(self):
+        mock_auth_fn, _user, project = _mock_auth()
+        stats = {
+            "deleted_nodes": 50,
+            "deleted_edges": 120,
+            "inserted_nodes": 742,
+            "inserted_edges": 2192,
+            "skipped_edges": 3,
+        }
+        nodes = [{"id": "f1", "name": "main.py", "type": "File"}]
+        edges = [{"source_id": "f1", "target_id": "f1", "type": "IMPORTS"}]
+
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", mock_auth_fn),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.replace_graph = AsyncMock(return_value=stats)
+
+            result = await replace_graph(_make_ctx(), "test-project", nodes=nodes, edges=edges)
+
+        assert result == stats
+        mock_gs.replace_graph.assert_awaited_once_with(project.id, nodes, edges, clear_first=True)
+
+    async def test_replace_graph_forwards_clear_first_false(self):
+        mock_auth_fn, _user, project = _mock_auth()
+
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", mock_auth_fn),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.replace_graph = AsyncMock(return_value={})
+
+            await replace_graph(_make_ctx(), "test-project", nodes=[], edges=[], clear_first=False)
+
+        mock_gs.replace_graph.assert_awaited_once_with(project.id, [], [], clear_first=False)
+
+    async def test_replace_graph_disabled(self):
+        mock_auth_fn, _user, _project = _mock_auth()
+
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", mock_auth_fn),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = False
+
+            with pytest.raises(ValueError, match="ENABLE_GRAPH_DB"):
+                await replace_graph(_make_ctx(), "test-project", nodes=[], edges=[])
+
+    async def test_replace_graph_validation_error_propagates(self):
+        mock_auth_fn, _user, _project = _mock_auth()
+
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", mock_auth_fn),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.replace_graph = AsyncMock(side_effect=ValueError("Node [0]: nieznany typ 'Bad'"))
+
+            with pytest.raises(ValueError, match="nieznany typ"):
+                await replace_graph(_make_ctx(), "test-project", nodes=[{"id": "x", "name": "X", "type": "Bad"}], edges=[])

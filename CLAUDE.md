@@ -67,7 +67,7 @@ Two separate packages in one repo:
 - `dashboard/scrum.py` — Scrum module: backlog (with pagination + filtering), Kanban board, ticket CRUD with comments, sprints with status filtering (`/dashboard/{slug}/scrum/*`)
 - `dashboard/monitoring.py` — URL monitoring module: monitor CRUD, check history with pagination, toggle on/off (`/dashboard/{slug}/monitoring/*`); includes SSRF protection (blocks localhost, private IPs), limit 20 monitors per project
 - `dashboard/wiki.py` — Wiki module: page CRUD, tree hierarchy, markdown rendering, image upload to MinIO, semantic search via pgvector (`/dashboard/{slug}/wiki/*`); page detail shows an "incoming links" (backlinks) panel, gated on `wiki_llm_enabled`
-- `dashboard/connections.py` — Connections module: graph visualization with Cytoscape.js, node/edge CRUD forms, graph API endpoint (`/dashboard/{slug}/connections/*`); graceful degradation when Neo4j unavailable
+- `dashboard/connections.py` — Connections module: graph visualization with Cytoscape.js, node/edge CRUD forms, graph API endpoint, setup guide page (`/dashboard/{slug}/connections/*`); graceful degradation when Neo4j unavailable. The graph is populated by the external [graphify](https://github.com/Graphify-Labs/graphify) extractor (offline tree-sitter AST, installed by the runner owner, never by CI) via `cicd/sync_graph.py` -> `replace_graph`; skills `/monolynx:create-graph-ci-script` (CI) and `/monolynx:graph-sync` (local, guided). Edge metadata carries `confidence` (EXTRACTED/INFERRED/AMBIGUOUS) and `source_relation`; taxonomy mapping lives on the wiki page "Mapowanie taksonomii Graphify -> Monolynx"
 - `dashboard/settings.py` — project settings, member management (`/dashboard/{slug}/settings`)
 - `dashboard/reports.py` — global cross-project work reports with multi-select filtering (project, user, sprint), date range, and PDF export via weasyprint (`/dashboard/reports`)
 - `dashboard/work_plan.py`: Work Plan module (prefix `/dashboard/plan`): personal per-user cross-project scheduling via junction model (`User x Ticket x Date`), Gantt view (frappe-gantt) and monthly calendar, REST endpoints for entries CRUD plus JSON data and ticket autocomplete; independent of sprint assignment
@@ -104,7 +104,7 @@ Two separate packages in one repo:
 
 **MCP Server** (`mcp_server.py`):
 - FastMCP-based server mounted at `/mcp` in the main app
-- 117 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Wiki LLM method (`get_wiki_config`, `set_wiki_config`, `bootstrap_wiki_llm`, `lint_wiki`, `get_wiki_backlinks`, `regenerate_wiki_index`, `append_wiki_log`), Graph (node/edge CRUD, bulk operations, query, path finding, stats), Work Plan (`schedule_ticket`, `update_work_plan_entry`, `delete_work_plan_entry`, `list_work_plan`, `get_today_tasks`, `get_ticket_schedule`), Pipelines (`create_pipeline`, `create_pipeline_job`, `update_pipeline_job`, `append_job_log`, `finish_pipeline`, `list_pipelines`, `get_pipeline`, `get_pipeline_job_log`, `clean_pipeline_logs`), project summary
+- 118 tools across all modules: projects, 500ki issues, monitoring, Scrum (tickets, sprints, board, comments), Wiki (CRUD, semantic search), Wiki LLM method (`get_wiki_config`, `set_wiki_config`, `bootstrap_wiki_llm`, `lint_wiki`, `get_wiki_backlinks`, `regenerate_wiki_index`, `append_wiki_log`), Graph (node/edge CRUD, bulk operations, `replace_graph` full-replace sync, query, path finding, stats), Work Plan (`schedule_ticket`, `update_work_plan_entry`, `delete_work_plan_entry`, `list_work_plan`, `get_today_tasks`, `get_ticket_schedule`), Pipelines (`create_pipeline`, `create_pipeline_job`, `update_pipeline_job`, `append_job_log`, `finish_pipeline`, `list_pipelines`, `get_pipeline`, `get_pipeline_job_log`, `clean_pipeline_logs`), project summary
 - Bearer token auth via `Authorization` header (tokens managed in `/dashboard/profile/tokens`)
 - `.mcp.json` at project root configures Claude Code connection (env var `MONOLYNX_MCP_TOKEN`)
 - `install_monolynx_skills` tool serves skill copies from `static/skills/` for manual install into a project's `.claude/skills/` (used by claude.ai web and environments without plugin support)
@@ -269,3 +269,13 @@ Two separate packages in one repo:
 ## Project language
 
 Planning docs, comments, and UI text are in Polish.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

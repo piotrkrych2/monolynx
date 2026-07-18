@@ -88,6 +88,9 @@ GRAPH_NODE_TYPES = ("File", "Class", "Method", "Function", "Const", "Module")
 
 GRAPH_EDGE_TYPES = ("CONTAINS", "CALLS", "IMPORTS", "INHERITS", "USES", "IMPLEMENTS")
 
+# Pochodzenie krawedzi z ekstraktora (graphify): metadata.confidence
+GRAPH_EDGE_CONFIDENCE = ("EXTRACTED", "INFERRED", "AMBIGUOUS")
+
 GRAPH_NODE_LABELS = {
     "File": "Plik",
     "Class": "Klasa",

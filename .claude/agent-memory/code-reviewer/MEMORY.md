@@ -5,6 +5,7 @@
 - [migration_head_verify.md](migration_head_verify.md) — Alembic review: zawsze sam licz head + sprawdz unikalnosc revision ID, nie wierz ticketowi (MON-73 blocker).
 - [review_history.md](review_history.md) — Historia ocen ticketow MON-* (score/iteracje/znaleziska per ticket). MON-84 pokrycie scrum.py: 92/100 APPROVED.
 - [wiki_llm_method.md](wiki_llm_method.md) — Metoda LLM Wiki (MON-73): sygnatury wiki/wiki_lint/wiki_bootstrap, marker sprzecznosci regex, RESERVED_SLUGS, patch MinIO gotcha (wiki_lint ma wlasny import get_markdown).
+- [graphify_sync.md](graphify_sync.md) — Graf graphify->Monolynx (MON-115/116/118): kontrakt replace_graph (pola/typy/limity), mapowanie taksonomii, transport MCP wzorzec, em-dash pitfall w SKILL.md. MON-118: 87/100 APPROVED.
 
 ## Project Patterns Confirmed
 - Services use module-level `logger = logging.getLogger("monolynx.<module>")` pattern

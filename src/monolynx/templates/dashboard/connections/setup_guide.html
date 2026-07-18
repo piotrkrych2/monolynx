@@ -1,0 +1,162 @@
+{% extends "layouts/project.html" %}
+
+{% block title %}Jak zasilić graf? - {{ project.name }}{% endblock %}
+
+{% block module_content %}
+<div class="max-w-3xl">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">Jak zasilić graf?</h1>
+    <p class="text-gray-600 dark:text-gray-400 mb-8">
+        Graf zależności kodu buduje zewnętrzny ekstraktor
+        <a href="https://github.com/Graphify-Labs/graphify" target="_blank" rel="noopener" class="text-indigo-400 hover:text-indigo-300">graphify</a>
+        (tree-sitter AST, 36 języków). Ekstrakcja jest w pełni offline - kod nie opuszcza Twojej maszyny ani runnera CI.
+        Monolynx tylko przyjmuje, przechowuje i serwuje graf. Synchronizacja jest <strong>opcjonalna per projekt</strong> -
+        jej brak niczego nie psuje, graf po prostu pozostaje pusty lub nieaktualny.
+    </p>
+
+    <!-- Krok 1: instalacja graphify -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">1. Zainstaluj graphify (jednorazowo)</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+            Na swojej maszynie lub na runnerze CI (gitlab-runner, self-hosted agent) - to odpowiedzialność właściciela projektu,
+            step CI graphify <strong>tylko używa</strong>, nigdy nie instaluje.
+            Uwaga: pakiet PyPI nazywa się <code class="text-indigo-300 font-mono">graphifyy</code> (podwójne „y"), komenda to <code class="text-indigo-300 font-mono">graphify</code>.
+        </p>
+        <div class="space-y-3">
+            <div>
+                <p class="text-xs text-gray-500 mb-1">macOS / Linux</p>
+                <div class="relative">
+                    <pre class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-700 dark:text-gray-300 overflow-x-auto"><code>uv tool install graphifyy   # albo: pipx install graphifyy</code></pre>
+                    <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-gray-300 p-1" title="Kopiuj">
+                        <svg class="w-4 h-4 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                        <svg class="w-4 h-4 check-icon hidden text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    </button>
+                </div>
+            </div>
+            <div>
+                <p class="text-xs text-gray-500 mb-1">Windows (PowerShell) - po instalacji zrestartuj terminal (PATH)</p>
+                <div class="relative">
+                    <pre class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-700 dark:text-gray-300 overflow-x-auto"><code>uv tool install graphifyy   # albo: pipx install graphifyy</code></pre>
+                    <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-gray-300 p-1" title="Kopiuj">
+                        <svg class="w-4 h-4 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                        <svg class="w-4 h-4 check-icon hidden text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Krok 2: token -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">2. Wygeneruj token API</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+            Przejdź do <a href="/dashboard/profile/tokens" class="text-indigo-400 hover:text-indigo-300">Profil → Tokeny API</a>
+            i wygeneruj token (prefiks <code class="text-indigo-300 font-mono">osk_</code>). Slug tego projektu:
+            <code class="text-indigo-300 font-mono">{{ project.slug }}</code>.
+        </p>
+    </div>
+
+    <!-- Krok 3: skill / sync_graph.py -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">3. Wygeneruj skrypt synchronizacji</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+            W Claude Code uruchom w katalogu swojego projektu skill
+            <code class="text-indigo-300 font-mono">/monolynx:create-graph-ci-script</code> - wykryje system CI
+            (GitLab / GitHub Actions / Bitbucket / Jenkins), wygeneruje <code class="text-indigo-300 font-mono">.graphifyignore</code>,
+            <code class="text-indigo-300 font-mono">cicd/sync_graph.py</code> i step CI.
+            Do jednorazowej, prowadzonej za rękę synchronizacji lokalnej służy skill
+            <code class="text-indigo-300 font-mono">/monolynx:graph-sync</code>.
+        </p>
+    </div>
+
+    <!-- Krok 4: lokalnie -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">4. Synchronizacja lokalna</h2>
+        <div class="relative">
+            <pre class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-700 dark:text-gray-300 overflow-x-auto"><code>graphify update .
+MONOLYNX_URL=https://monolynx.com \
+MONOLYNX_GRAPH_TOKEN=osk_xxx \
+MONOLYNX_PROJECT_SLUG={{ project.slug }} \
+python cicd/sync_graph.py --dry-run   # najpierw dry-run, potem bez flagi</code></pre>
+            <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-gray-300 p-1" title="Kopiuj">
+                <svg class="w-4 h-4 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                <svg class="w-4 h-4 check-icon hidden text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Krok 5: CI -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-indigo-400 mb-3">5. Synchronizacja w CI (po merge do main)</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+            Step jest <strong>non-blocking</strong>: gdy graphify nie jest zainstalowane na runnerze, kończy się
+            komunikatem i build projektu przechodzi dalej. Zmienne do ustawienia w CI:
+            <code class="text-indigo-300 font-mono">MONOLYNX_URL</code>,
+            <code class="text-indigo-300 font-mono">MONOLYNX_GRAPH_TOKEN</code>,
+            <code class="text-indigo-300 font-mono">MONOLYNX_PROJECT_SLUG</code>.
+        </p>
+        <p class="text-xs text-gray-500 mb-1">GitLab CI (.gitlab-ci.yml)</p>
+        <div class="relative mb-3">
+            <pre class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-700 dark:text-gray-300 overflow-x-auto"><code>sync-graph:
+  stage: deploy
+  allow_failure: true
+  script:
+    - command -v graphify || { echo "graphify nie zainstalowane na runnerze"; exit 0; }
+    - graphify update .
+    - python cicd/sync_graph.py
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"</code></pre>
+            <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-gray-300 p-1" title="Kopiuj">
+                <svg class="w-4 h-4 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                <svg class="w-4 h-4 check-icon hidden text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+            </button>
+        </div>
+        <p class="text-xs text-gray-500 mb-1">GitHub Actions (.github/workflows/sync-graph.yml)</p>
+        <div class="relative">
+            <pre class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-700 dark:text-gray-300 overflow-x-auto"><code>jobs:
+  sync-graph:
+    runs-on: self-hosted
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: command -v graphify || { echo "graphify nie zainstalowane"; exit 0; }
+      - run: graphify update .
+      - run: python cicd/sync_graph.py</code></pre>
+            <button onclick="copyBlock(this)" class="absolute top-2 right-2 text-gray-500 hover:text-gray-300 p-1" title="Kopiuj">
+                <svg class="w-4 h-4 copy-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                <svg class="w-4 h-4 check-icon hidden text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Alternatywa -->
+    <div class="mb-8 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Alternatywa: ręczne budowanie grafu</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+            Dla przypadków niestandardowych graf można budować ręcznie - formularzami w tym module
+            (Dodaj node / Dodaj krawędź) albo narzędziami MCP:
+            <code class="text-indigo-300 font-mono">create_graph_node</code>,
+            <code class="text-indigo-300 font-mono">bulk_create_graph_nodes</code>,
+            <code class="text-indigo-300 font-mono">bulk_create_graph_edges</code>,
+            <code class="text-indigo-300 font-mono">replace_graph</code>.
+        </p>
+    </div>
+
+    <div class="text-center">
+        <a href="/dashboard/{{ project.slug }}/connections/" class="text-indigo-400 hover:text-indigo-300 text-sm">Wróć do połączeń</a>
+    </div>
+</div>
+
+<script>
+function copyBlock(btn) {
+    var code = btn.parentElement.querySelector('code');
+    navigator.clipboard.writeText(code.innerText).then(function() {
+        btn.querySelector('.copy-icon').classList.add('hidden');
+        btn.querySelector('.check-icon').classList.remove('hidden');
+        setTimeout(function() {
+            btn.querySelector('.copy-icon').classList.remove('hidden');
+            btn.querySelector('.check-icon').classList.add('hidden');
+        }, 1500);
+    });
+}
+</script>
+{% endblock %}

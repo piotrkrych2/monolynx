@@ -4153,6 +4153,32 @@ async def bulk_create_graph_edges(
     }
 
 
+@mcp.tool()
+async def replace_graph(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    clear_first: bool = True,
+) -> dict[str, Any]:
+    """Pelna podmiana grafu projektu: kasuje WSZYSTKIE node'y i krawedzie projektu, wstawia nowy zestaw.
+
+    Idempotentny sync z zewnetrznego ekstraktora (graphify) -- rebuild from scratch.
+    Node: {id, type, name, file_path?, line_number?, metadata?} -- `id` jest wymagane
+    (krawedzie referuja source_id/target_id). Krawedz: {source_id, target_id, type, metadata?}.
+    Bledny payload nie kasuje niczego (walidacja przed zapisem). Limity: 20000 node'ow,
+    60000 krawedzi. Dla wiekszych payloadow dziel na czesci: pierwsze wywolanie z
+    clear_first=True, kolejne z clear_first=False (dokladaja bez kasowania).
+    Zwraca statystyki: deleted/inserted nodes+edges, skipped_edges (brakujacy endpoint).
+    """
+    _user, project = await _get_user_and_project(ctx, project_slug)
+
+    if not graph_service.is_enabled():
+        raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
+
+    return await graph_service.replace_graph(project.id, nodes, edges, clear_first=clear_first)
+
+
 # --- Heartbeat ---
 
 

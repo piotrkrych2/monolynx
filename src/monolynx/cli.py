@@ -77,10 +77,49 @@ async def backfill_embeddings_cmd() -> None:
     print(f"Gotowe! Laczna liczba embeddingow: {count}")
 
 
+async def clear_all_graphs_cmd() -> None:
+    """Zaoraj grafy Neo4j WSZYSTKICH projektow (rollout graphify, MON-121)."""
+    from sqlalchemy import select
+
+    from monolynx.models.project import Project
+    from monolynx.services import graph
+
+    confirm = input("Ta operacja NIEODWRACALNIE usunie grafy WSZYSTKICH projektow. Wpisz TAK aby kontynuowac: ").strip()
+    if confirm != "TAK":
+        print("Przerwano - nic nie usunieto.")
+        return
+
+    await graph.init_driver()
+    if not graph.is_enabled() or graph._driver is None:
+        print("Graf Neo4j niedostepny (ENABLE_GRAPH_DB=false lub brak polaczenia) - nic do zrobienia.")
+        return
+    try:
+        async with async_session_factory() as session:
+            # celowo bez filtra is_active -- pelne zaoranie lapie tez osierocone
+            # wezly projektow nieaktywnych
+            projects = list((await session.execute(select(Project))).scalars().all())
+
+        total_nodes = 0
+        total_edges = 0
+        for project in projects:
+            result = await graph.replace_graph(project.id, [], [], clear_first=True)
+            deleted_nodes = result["deleted_nodes"]
+            deleted_edges = result["deleted_edges"]
+            total_nodes += deleted_nodes
+            total_edges += deleted_edges
+            marker = "" if project.is_active else " (nieaktywny)"
+            print(f"{project.slug}{marker}: usunieto {deleted_nodes} node'ow / {deleted_edges} krawedzi")
+
+        print(f"Gotowe! Lacznie usunieto {total_nodes} node'ow i {total_edges} krawedzi z {len(projects)} projektow.")
+    finally:
+        await graph.close_driver()
+
+
 COMMANDS = {
     "createsuperuser": createsuperuser,
     "backfill-backlinks": backfill_backlinks_cmd,
     "backfill-embeddings": backfill_embeddings_cmd,
+    "clear-all-graphs": clear_all_graphs_cmd,
 }
 
 

@@ -495,7 +495,7 @@ Wyswietl uzytkownikowi krotkie podsumowanie:
 5. **Nie zgaduj** - jesli cos jest niejasne w tickecie, zapytaj uzytkownika
 6. **Nie pomijaj krytyka** - kazdy agent MUSI przejsc review, nawet jesli zadanie wydaje sie proste
 7. **Graf kodu jest opcjonalny** - jesli Neo4j niedostepny, Researcher kontynuuje bez grafu
-8. **Graf jest aktualizowany automatycznie** - skrypt `cicd/sync_graph.py` synchronizuje graf z kodem po merge do main. Nie trzeba recznie aktualizowac grafu w trakcie pracy
+8. **Graf jest aktualizowany przez graphify** - zewnetrzny ekstraktor [graphify](https://github.com/Graphify-Labs/graphify) (zainstalowany na runnerze CI lub lokalnie) buduje graf, a `cicd/sync_graph.py` wypycha go do Monolynx po merge do main (tool `replace_graph`). Nie trzeba recznie aktualizowac grafu w trakcie pracy; setup: skill `/monolynx:create-graph-ci-script` (CI) lub `/monolynx:graph-sync` (lokalnie)
 9. **Branch musi byc zwalidowany** - KROK 2 jest obowiazkowy, NIE wolno go pominac
 10. **Researcher jest pierwszym krokiem** - KROK 3 jest obowiazkowy. Bez raportu Researchera nie uruchamiaj zespolu agentow (chyba ze uzytkownik swiadomie zrezygnuje z Researchera)
 11. **Praca rownlegla jest obowiazkowa** - w KROK 6 WSZYSCY agenci (developerzy + krytyk) startuja JEDNOCZESNIE w jednej wiadomosci
