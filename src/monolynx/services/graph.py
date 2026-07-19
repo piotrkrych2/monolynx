@@ -630,6 +630,91 @@ async def get_graph(
     return {"nodes": nodes, "edges": edges}
 
 
+async def search_graph(
+    project_id: uuid.UUID,
+    search: str,
+    type_filter: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Znajdź node'y pasujące do `search` (substring w name/file_path) i ich bezpośrednich sąsiadów.
+
+    W przeciwieństwie do `get_graph`, nie wymaga znajomości node_id ani typu - to punkt
+    wejścia "znajdź po nazwie i pokaż powiązania" dla agentów researchujących kod.
+
+    Args:
+        project_id: ID projektu.
+        search: Fragment nazwy lub ścieżki pliku (case-insensitive, substring match).
+        type_filter: Filtruj DOPASOWANIA po typie node'a. Sąsiedzi zwracani są niezależnie
+            od typu, żeby np. search="Ticket", type_filter="Class" nadal pokazało
+            wszystkie powiązania klasy Ticket, nie tylko inne klasy.
+        limit: Maksymalna liczba dopasowań (nie całego podgrafu razem z sąsiadami).
+    """
+    if type_filter and type_filter in GRAPH_NODE_TYPES:
+        match_clause = f"MATCH (n:{type_filter} {{project_id: $project_id}})"
+    else:
+        match_clause = "MATCH (n {project_id: $project_id})"
+
+    params: dict[str, Any] = {"project_id": str(project_id), "search": search, "limit": limit}
+
+    async with get_neo4j_session() as session:
+        match_result = await session.run(
+            f"{match_clause} "
+            "WHERE toLower(n.name) CONTAINS toLower($search) "
+            "OR toLower(coalesce(n.file_path, '')) CONTAINS toLower($search) "
+            "RETURN n, labels(n) AS labels ORDER BY n.name LIMIT $limit",
+            **params,
+        )
+        match_records = [record async for record in match_result]
+
+        if not match_records:
+            return {"nodes": [], "edges": []}
+
+        match_ids = [record["n"]["id"] for record in match_records]
+
+        neighbor_result = await session.run(
+            "MATCH (n {project_id: $project_id})-[r]-(neighbor {project_id: $project_id}) "
+            "WHERE n.id IN $match_ids "
+            "RETURN DISTINCT n, labels(n) AS n_labels, neighbor, labels(neighbor) AS neighbor_labels, "
+            "startNode(r).id AS source_id, endNode(r).id AS target_id, "
+            "type(r) AS edge_type, r.metadata AS edge_metadata",
+            project_id=str(project_id),
+            match_ids=match_ids,
+        )
+        neighbor_records = [record async for record in neighbor_result]
+
+    nodes_map: dict[str, dict[str, Any]] = {}
+    for record in match_records:
+        labels = [lbl for lbl in record["labels"] if lbl in GRAPH_NODE_TYPES]
+        node_type = labels[0] if labels else "Unknown"
+        node = _node_to_dict(record["n"], node_type)
+        nodes_map[node["id"]] = node
+
+    edges_set: set[tuple[str, str, str]] = set()
+    edges: list[dict[str, Any]] = []
+    for record in neighbor_records:
+        for node_key, labels_key in (("n", "n_labels"), ("neighbor", "neighbor_labels")):
+            node = record[node_key]
+            node_id_val = node["id"]
+            if node_id_val not in nodes_map:
+                labels = [lbl for lbl in record[labels_key] if lbl in GRAPH_NODE_TYPES]
+                node_type = labels[0] if labels else "Unknown"
+                nodes_map[node_id_val] = _node_to_dict(node, node_type)
+
+        edge_key = (record["source_id"], record["target_id"], record["edge_type"])
+        if edge_key not in edges_set:
+            edges_set.add(edge_key)
+            edges.append(
+                {
+                    "source_id": record["source_id"],
+                    "target_id": record["target_id"],
+                    "type": record["edge_type"],
+                    "metadata": _parse_metadata(record.get("edge_metadata", "{}")),
+                }
+            )
+
+    return {"nodes": list(nodes_map.values()), "edges": edges}
+
+
 async def find_path(
     project_id: uuid.UUID,
     source_id: str,

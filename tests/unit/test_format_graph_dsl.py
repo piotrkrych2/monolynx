@@ -52,13 +52,13 @@ def _sample_node(
     }
 
 
-def _sample_edge(source_id, target_id, edge_type="CALLS"):
+def _sample_edge(source_id, target_id, edge_type="CALLS", metadata=None):
     """Zwraca przykladowy dict edge'a."""
     return {
         "source_id": source_id,
         "target_id": target_id,
         "type": edge_type,
-        "metadata": {},
+        "metadata": metadata or {},
     }
 
 
@@ -209,6 +209,34 @@ class TestFormatGraphDslWithoutDepthMap:
         result = _format_graph_dsl(data)
         assert "unknown-id --CALLS--> KnownNode" in result
 
+    def test_edge_without_metadata_no_suffix(self) -> None:
+        """Edge bez metadata (pusty dict) -- brak nawiasu za strzalka."""
+        data = {
+            "nodes": [_sample_node(node_id="s1", name="SourceNode"), _sample_node(node_id="t1", name="TargetNode")],
+            "edges": [_sample_edge("s1", "t1", "CALLS")],
+        }
+        result = _format_graph_dsl(data)
+        assert "SourceNode --CALLS--> TargetNode" in result
+        assert "SourceNode --CALLS--> TargetNode (" not in result
+
+    def test_edge_with_confidence_metadata_shows_suffix(self) -> None:
+        """Edge z confidence w metadata -- widoczne w nawiasie za strzalka."""
+        data = {
+            "nodes": [_sample_node(node_id="s1", name="SourceNode"), _sample_node(node_id="t1", name="TargetNode")],
+            "edges": [_sample_edge("s1", "t1", "REFERENCES", metadata={"confidence": "INFERRED"})],
+        }
+        result = _format_graph_dsl(data)
+        assert "SourceNode --REFERENCES--> TargetNode (confidence=INFERRED)" in result
+
+    def test_edge_with_confidence_and_source_relation_shows_both(self) -> None:
+        """Edge z confidence i source_relation -- oba klucze w nawiasie."""
+        data = {
+            "nodes": [_sample_node(node_id="s1", name="A"), _sample_node(node_id="t1", name="B")],
+            "edges": [_sample_edge("s1", "t1", "USES", metadata={"confidence": "EXTRACTED", "source_relation": "imports"})],
+        }
+        result = _format_graph_dsl(data)
+        assert "A --USES--> B (confidence=EXTRACTED,source_relation=imports)" in result
+
     def test_none_depth_map_is_backwards_compatible(self) -> None:
         """depth_map=None: traktowany jak brak depth_map -- format backwards-compatible."""
         data = {
@@ -328,6 +356,16 @@ class TestFormatGraphDslWithDepthMap:
         pos_calls = result.index("=== CALLS ===")
         pos_uses = result.index("=== USES ===")
         assert pos_calls < pos_uses
+
+    def test_edge_with_metadata_shows_suffix_in_grouped_format(self) -> None:
+        """Z depth_map -- sufiks metadanych dziala tez w sekcjach === TYPE ==="""
+        data = {
+            "nodes": [_sample_node(node_id="a", name="A"), _sample_node(node_id="b", name="B")],
+            "edges": [_sample_edge("a", "b", "REFERENCES", metadata={"confidence": "AMBIGUOUS"})],
+            "depth_map": {"a": 0, "b": 1},
+        }
+        result = _format_graph_dsl(data)
+        assert "A --REFERENCES--> B (confidence=AMBIGUOUS)" in result
 
     def test_node_missing_from_depth_map_defaults_to_depth_zero(self) -> None:
         """Node nieobecny w depth_map: domyslnie depth=0 (fallback w depth_map.get)."""

@@ -485,6 +485,13 @@ def _format_graph_dsl(data: dict[str, Any]) -> str:
 
         === CONTAINS ===
         contacts/models.py --CONTAINS--> Contact
+
+    Krawędzie zsynchronizowane z zewnętrznego ekstraktora (graphify) niosą metadane
+    pochodzenia w edge["metadata"] - confidence (EXTRACTED/INFERRED/AMBIGUOUS) i
+    source_relation (oryginalna relacja przed mapowaniem). Gdy obecne, doklejane są
+    w nawiasie za strzałką, np. `X --REFERENCES--> Y (confidence=INFERRED,source_relation=references)`.
+    EXTRACTED to relacja odczytana wprost z AST; INFERRED/AMBIGUOUS to zgadywana przez
+    ekstraktor - traktuj ją z mniejszym zaufaniem niż EXTRACTED.
     """
     nodes: list[dict[str, Any]] = data.get("nodes", [])
     edges: list[dict[str, Any]] = data.get("edges", [])
@@ -493,6 +500,12 @@ def _format_graph_dsl(data: dict[str, Any]) -> str:
     node_map: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
 
     lines: list[str] = [f"{len(nodes)} nodes, {len(edges)} edges", ""]
+
+    def _edge_meta_suffix(e: dict[str, Any]) -> str:
+        md = e.get("metadata") or {}
+        if not md:
+            return ""
+        return f" ({','.join(f'{k}={v}' for k, v in md.items())})"
 
     def _node_line(n: dict[str, Any]) -> str:
         ntype = n.get("type", "Unknown")
@@ -542,14 +555,14 @@ def _format_graph_dsl(data: dict[str, Any]) -> str:
                 for e in by_edge_type[etype]:
                     src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
                     tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
-                    lines.append(f"{src} --{etype}--> {tgt}")
+                    lines.append(f"{src} --{etype}--> {tgt}{_edge_meta_suffix(e)}")
                 lines.append("")
         else:
             # Backwards-compatible: płaska lista edges
             for e in edges:
                 src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
                 tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
-                lines.append(f"{src} --{e['type']}--> {tgt}")
+                lines.append(f"{src} --{e['type']}--> {tgt}{_edge_meta_suffix(e)}")
 
     return "\n".join(lines)
 
@@ -4010,19 +4023,33 @@ async def query_graph(
     ctx: Context[Any, Any],
     project_slug: str,
     node_type: str | None = None,
+    search: str | None = None,
     limit: int = 200,
 ) -> str:
     """Pobierz graf lub podgraf projektu (node'y + krawedzie) w kompaktowym formacie Arrow DSL.
 
-    Zwraca tekst z node'ami jako [Type] name (metadata) i krawędziami jako src --TYPE--> tgt.
-    Opcjonalnie filtruj po typie node'a.
+    Zwraca tekst z node'ami jako [Type] name (metadata) i krawędziami jako src --TYPE--> tgt
+    (metadane krawedzi typu confidence/source_relation, gdy obecne, w nawiasie za strzalka).
+
+    search: fragment nazwy lub sciezki pliku (case-insensitive) - zwraca dopasowane node'y
+        oraz ich bezposrednich sasiadow (1 hop), bez potrzeby znajomosci node_id. To glowny
+        punkt wejscia do "znajdz element kodu po nazwie i pokaz jego powiazania" (np. w
+        researchu przed implementacja ticketu). Gdy podany razem z node_type, node_type
+        filtruje TYLKO dopasowania - sasiedzi zwracani sa niezaleznie od typu. limit ogranicza
+        wtedy liczbe dopasowan, nie calego podgrafu.
+    node_type: bez `search` - filtruje caly zwracany podgraf po typie node'a.
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
 
-    data = await graph_service.get_graph(project.id, type_filter=node_type, limit=limit)
+    if search is not None:
+        if not search.strip():
+            raise ValueError("search nie moze byc pusty")
+        data = await graph_service.search_graph(project.id, search=search, type_filter=node_type, limit=limit)
+    else:
+        data = await graph_service.get_graph(project.id, type_filter=node_type, limit=limit)
     return _format_graph_dsl(data)
 
 
