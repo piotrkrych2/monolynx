@@ -318,6 +318,90 @@ class TestQueryGraph:
         assert "[File] A" in result
         assert "[File] B" in result
 
+    async def test_query_graph_without_search_uses_get_graph(self):
+        """Bez `search` - dotychczasowa sciezka przez graph_service.get_graph, nie search_graph."""
+        mock_auth_fn, _user, _project = _mock_auth()
+        graph_data = {"nodes": [], "edges": []}
+
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", mock_auth_fn),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.get_graph = AsyncMock(return_value=graph_data)
+            mock_gs.search_graph = AsyncMock()
+
+            await query_graph(_make_ctx(), "test-project", node_type="Class")
+
+        mock_gs.get_graph.assert_awaited_once_with(_project.id, type_filter="Class", limit=200)
+        mock_gs.search_graph.assert_not_called()
+
+    async def test_query_graph_with_search_calls_search_graph(self):
+        """Z `search` - graph_service.search_graph, nie get_graph."""
+        mock_auth_fn, _user, _project = _mock_auth()
+        graph_data = {
+            "nodes": [_sample_node(node_id="t1", name="Ticket", node_type="Class")],
+            "edges": [{"source_id": "t1", "target_id": "b1", "type": "USES", "metadata": {}}],
+        }
+
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", mock_auth_fn),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.search_graph = AsyncMock(return_value=graph_data)
+            mock_gs.get_graph = AsyncMock()
+
+            result = await query_graph(_make_ctx(), "test-project", search="Ticket", node_type="Class")
+
+        mock_gs.search_graph.assert_awaited_once_with(_project.id, search="Ticket", type_filter="Class", limit=200)
+        mock_gs.get_graph.assert_not_called()
+        assert "[Class] Ticket" in result
+
+    async def test_query_graph_blank_search_raises_value_error(self):
+        """search zlozony z samych bialych znakow - ValueError, brak wywolania serwisu."""
+        mock_auth_fn, _user, _project = _mock_auth()
+
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", mock_auth_fn),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.search_graph = AsyncMock()
+            mock_gs.get_graph = AsyncMock()
+
+            with pytest.raises(ValueError, match="search nie moze byc pusty"):
+                await query_graph(_make_ctx(), "test-project", search="   ")
+
+        mock_gs.search_graph.assert_not_called()
+        mock_gs.get_graph.assert_not_called()
+
+    async def test_query_graph_edge_with_metadata_shows_confidence_suffix(self):
+        """Krawedz z confidence/source_relation w metadata - widoczna w wyniku Arrow DSL."""
+        mock_auth_fn, _user, _project = _mock_auth()
+        graph_data = {
+            "nodes": [_sample_node(node_id="a", name="A"), _sample_node(node_id="b", name="B")],
+            "edges": [
+                {
+                    "source_id": "a",
+                    "target_id": "b",
+                    "type": "REFERENCES",
+                    "metadata": {"confidence": "INFERRED", "source_relation": "references"},
+                }
+            ],
+        }
+
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", mock_auth_fn),
+            patch("monolynx.mcp_server.graph_service") as mock_gs,
+        ):
+            mock_gs.is_enabled.return_value = True
+            mock_gs.get_graph = AsyncMock(return_value=graph_data)
+
+            result = await query_graph(_make_ctx(), "test-project")
+
+        assert "A --REFERENCES--> B (confidence=INFERRED,source_relation=references)" in result
+
 
 # ---------------------------------------------------------------------------
 # 8. find_graph_path

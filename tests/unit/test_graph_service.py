@@ -20,6 +20,7 @@ from monolynx.services.graph import (
     is_enabled,
     list_nodes,
     replace_graph,
+    search_graph,
     update_node,
 )
 
@@ -477,6 +478,79 @@ class TestGetGraph:
         assert len(result["edges"]) == 1
         assert result["nodes"][0]["name"] == "GraphNode"
         assert result["edges"][0]["type"] == "CALLS"
+
+
+# ---------------------------------------------------------------------------
+# search_graph
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSearchGraph:
+    async def test_search_graph_finds_match_and_neighbor(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        project_id = uuid.uuid4()
+
+        match_node = _make_node_props(node_id="t1", name="Ticket")
+        match_record = _make_record({"n": match_node, "labels": ["Class"]})
+        match_result = _make_result_with_records(match_record)
+
+        neighbor_node = _make_node_props(node_id="b1", name="Base")
+        neighbor_record = _make_record(
+            {
+                "n": match_node,
+                "n_labels": ["Class"],
+                "neighbor": neighbor_node,
+                "neighbor_labels": ["Class"],
+                "source_id": "t1",
+                "target_id": "b1",
+                "edge_type": "USES",
+                "edge_metadata": "{}",
+            }
+        )
+        neighbor_result = _make_result_with_records(neighbor_record)
+
+        session.run.side_effect = [match_result, neighbor_result]
+
+        result = await search_graph(project_id, "Ticket")
+
+        assert len(result["nodes"]) == 2
+        node_names = {n["name"] for n in result["nodes"]}
+        assert node_names == {"Ticket", "Base"}
+        assert len(result["edges"]) == 1
+        assert result["edges"][0]["type"] == "USES"
+
+    async def test_search_graph_no_matches_skips_neighbor_query(self, mock_driver: tuple) -> None:
+        """Brak dopasowan -- drugie zapytanie (sasiedzi) nie jest wolane."""
+        _driver, session = mock_driver
+        project_id = uuid.uuid4()
+        session.run.return_value = _make_result_with_records()
+
+        result = await search_graph(project_id, "Nieistniejace")
+
+        assert result == {"nodes": [], "edges": []}
+        session.run.assert_called_once()
+
+    async def test_search_graph_type_filter_applied_to_match_query(self, mock_driver: tuple) -> None:
+        _driver, session = mock_driver
+        project_id = uuid.uuid4()
+        session.run.return_value = _make_result_with_records()
+
+        await search_graph(project_id, "Ticket", type_filter="Class")
+
+        query = session.run.call_args_list[0][0][0]
+        assert ":Class" in query
+
+    async def test_search_graph_invalid_type_filter_ignored(self, mock_driver: tuple) -> None:
+        """type_filter spoza GRAPH_NODE_TYPES -- brak filtra etykiety, tak jak w get_graph."""
+        _driver, session = mock_driver
+        project_id = uuid.uuid4()
+        session.run.return_value = _make_result_with_records()
+
+        await search_graph(project_id, "Ticket", type_filter="NotARealType")
+
+        query = session.run.call_args_list[0][0][0]
+        assert ":NotARealType" not in query
 
 
 # ---------------------------------------------------------------------------
