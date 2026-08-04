@@ -22,6 +22,7 @@ from monolynx.services.sidebar import get_sidebar_badges
 logger = logging.getLogger(__name__)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+templates.env.globals["ga_measurement_id"] = settings.GA_MEASUREMENT_ID
 
 _app_tz = ZoneInfo(settings.APP_TIMEZONE)
 

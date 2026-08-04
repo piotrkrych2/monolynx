@@ -102,6 +102,7 @@ app.add_middleware(
 
 
 _templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+_templates.env.globals["ga_measurement_id"] = settings.GA_MEASUREMENT_ID
 
 _LANDING_I18N: dict[str, dict[str, str]] = {
     "en": {
