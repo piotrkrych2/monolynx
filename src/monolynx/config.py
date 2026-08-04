@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # SMS (lepszesmsy.pl)
     LEPSZESMSY_LICENSE_KEY: str = ""
 
+    # Google Analytics (GA4) - pusty = tag nie renderowany
+    GA_MEASUREMENT_ID: str = ""
+
     # Embeddings (RAG search for Wiki)
     OPENAI_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"

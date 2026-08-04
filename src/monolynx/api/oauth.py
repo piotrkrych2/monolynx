@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["oauth"])
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+templates.env.globals["ga_measurement_id"] = settings.GA_MEASUREMENT_ID
 
 
 @router.get("/.well-known/oauth-protected-resource")

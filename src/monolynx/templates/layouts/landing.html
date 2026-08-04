@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% include "partials/_google_analytics.html" %}
     <title>{% block title %}Monolynx{% endblock %}</title>
     <meta name="description" content="{% block meta_description %}Open-source AI-first project platform. Error tracking, Scrum, monitoring, wiki with RAG search, and 117 MCP tools.{% endblock %}">
     <!-- AI agents & LLMs: machine-readable overview at /llms.txt ; usage guide at /how-to-use-monolynx.md ; project bootstrap at /agent-bootstrap.md{% if md_url %} ; markdown version of this page at {{ md_url }}{% endif %} -->
