@@ -10,7 +10,26 @@ allowed-tools: mcp__monolynx__list_sprints, mcp__monolynx__create_pipeline, mcp_
 
 Orkiestrujesz zamkniecie sprintu w projekcie Monolynx. Calosc modelujesz jako pipeline `sprint_close` z dwoma stepami: **wiki-update** (zebranie wiedzy ze sprintu do wiki) i **wrap-up** (realne zamkniecie sprintu i podsumowanie). Pipeline to warstwa obserwowalnosci - raportujesz do niego **best-effort**, ale nigdy nie pozwalasz, by blad raportowania zablokowal zamkniecie sprintu.
 
-**Projekt**: `<PROJECT-SLUG>`
+---
+
+## Ustalenie slug projektu
+
+Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
+
+```bash
+echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
+```
+
+- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
+- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
+
+  ```json
+  {
+    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
+  }
+  ```
+
+  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
 
 ---
 
@@ -174,7 +193,7 @@ Na koniec pokaz:
 1. **Pipeline jest best-effort, nie gate** - blad ktoregokolwiek toola pipeline (`create_pipeline`, joby, `append_job_log`, `finish_pipeline`) NIGDY nie przerywa zamkniecia sprintu. Odnotuj i kontynuuj. Gdy toole pipeline sa niedostepne (starszy serwer MCP), pomin CALA instrumentacje i wykonaj samo `complete_sprint`.
 2. **complete_sprint to realne zamkniecie** - niedokonczone tickety wracaja do backlogu. ZAWSZE potwierdz z uzytkownikiem przed jobem `close-sprint`.
 3. **Joby step `wiki-update` wykonuj sekwencyjnie** - ingest, potem lint, potem clean (clean dopiero po zaingestowaniu wiedzy).
-4. **Nigdy nie czysc logow po nieudanym ingescie** - `wiki-clean` wolno wykonac TYLKO gdy `wiki-ingest` sie powiodl. Inaczej skasujesz jedyne zrodlo wiedzy ze sprintu.
-5. **Praca wiki jest niezalezna od pipeline** - INGEST, LINT, CLEAN i `complete_sprint` dzialaja nawet bez modulu Pipelines. Niedostepnosc pipeline degraduje tylko raportowanie, nie zakres pracy domkniecia.
-6. **Brak aktywnego/nieznaleziony sprint** - czytelny komunikat PL i przerwanie, bez zgadywania.
-7. **Jezyk**: polski (terminy techniczne i nazwy narzedzi w oryginale).
+6. **Nigdy nie czysc logow po nieudanym ingescie** - `wiki-clean` wolno wykonac TYLKO gdy `wiki-ingest` sie powiodl. Inaczej skasujesz jedyne zrodlo wiedzy ze sprintu.
+7. **Praca wiki jest niezalezna od pipeline** - INGEST, LINT, CLEAN i `complete_sprint` dzialaja nawet bez modulu Pipelines. Niedostepnosc pipeline degraduje tylko raportowanie, nie zakres pracy domkniecia.
+4. **Brak aktywnego/nieznaleziony sprint** - czytelny komunikat PL i przerwanie, bez zgadywania.
+5. **Jezyk**: polski (terminy techniczne i nazwy narzedzi w oryginale).

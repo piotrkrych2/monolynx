@@ -39,9 +39,27 @@ So the full first-time sequence a developer runs is:
 4. Set `MONOLYNX_PROJECT_SLUG` in the repo's `.env` (or the plugin `project_slug`).
 5. Start using the `/monolynx:*` skills.
 
-After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all 117 MCP tools. This is full power.
+After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all 118 MCP tools. This is full power.
 
 If you are an agent asked to set this up inside a user's repository, follow the imperative checklist at <https://monolynx.com/agent-bootstrap.md> - it walks you through SETUP, NOTIFY, and COLLABORATE phases, including verifying the connection with `list_projects`.
+
+### Codex and Cursor: skills without the plugin
+
+The plugin marketplace is a Claude Code mechanism, but the `SKILL.md` format is shared. Codex and Cursor read the same skills - only the directory differs, so `install_monolynx_skills` takes a `target` parameter:
+
+| `target` | Directory | Runtime |
+|---|---|---|
+| `claude` (default) | `.claude/skills/` | Claude Code |
+| `codex` | `.codex/skills/` | Codex CLI |
+| `cursor` | `.cursor/skills/` | Cursor |
+
+```
+install_monolynx_skills(project_slug="my-project", target="codex")
+```
+
+The tool returns `skills: [{name, files: [{relative_path, content}]}]`. **Write every file in `files`**, not just `SKILL.md` - `monolynx-work` also ships `pipeline.md` and `review-rubric.md`.
+
+Connect the MCP server separately: Codex through `~/.codex/config.toml`, Cursor through `.cursor/mcp.json` (key `mcpServers`, HTTP + `Authorization: Bearer osk_...`). In both, the `monolynx:work` skills read agent roles from `AGENTS.md` in the repo root instead of `.claude/agents/`.
 
 ### Fallback - chat clients (Claude.ai, ChatGPT): MCP connector only
 
@@ -52,7 +70,7 @@ Claude.ai and ChatGPT cannot install Claude Code plugins, so they cannot get the
 3. Connector URL: `https://your-instance/mcp` (replace `your-instance` with the actual host, e.g. `https://monolynx.com/mcp`).
 4. Authorize with your Monolynx Bearer token (`osk_...`).
 
-This gives you all 117 MCP tools (read/write tickets, sprints, wiki, dependency graph, pipelines) but **no `/monolynx:*` skills**. In this mode you must replicate the skill workflow manually - call the MCP tools in the same order the skills would (see Steps 3 and 4). It works, but the orchestrated, repeatable flow lives in the plugin. For serious development use Claude Code with the plugin.
+This gives you all 118 MCP tools (read/write tickets, sprints, wiki, dependency graph, pipelines) but **no `/monolynx:*` skills**. In this mode you must replicate the skill workflow manually - call the MCP tools in the same order the skills would (see Steps 3 and 4). It works, but the orchestrated, repeatable flow lives in the plugin. For serious development use Claude Code with the plugin.
 
 ---
 
@@ -91,20 +109,34 @@ A ticket written this way can be picked up and finished by an AI agent **without
 
 ## Step 4: Do the work through `monolynx:work`
 
-To execute a ticket, use **`monolynx:work <ticket-id>`** (Claude Code). For small tickets (< 8 story points - hotfixes, cleanups, verifying finished work) use **`monolynx:work-simple`**.
+To execute a ticket, use **`monolynx:work <ticket-id>`** (Claude Code). For small tickets (up to 3 story points - hotfixes, cleanups, verifying finished work) use **`monolynx:work-simple`**, which runs one developer plus the reviewer instead of a full team.
 
 `monolynx:work` runs a full Team Manager flow:
 
-1. Resolves the project slug and validates you are on the right git branch.
+1. Resolves the project slug and validates the git branch (working on `main`/`master` always asks first).
 2. Opens a pipeline (observability) of type `ticket_work` with steps research -> coding -> wrap-up.
-3. Runs a **Researcher** that reads the ticket, the spec page, the constitution, the wiki, the code, and the dependency graph, then writes a report.
-4. Selects a minimal team of project agents plus a **mandatory code-reviewer** (quality gate), and runs them in parallel.
-5. Each agent reports back: a comment on the ticket, logged time, and acceptance criteria checked off.
-6. Verifies all acceptance criteria, finishes the pipeline, and moves the ticket to `in_review`.
+3. Runs a **Researcher** that reads the ticket, the spec page, the constitution, the `toolchain` page, the wiki, the code, and the dependency graph, then writes a report.
+4. Selects a minimal team of project agents plus a **mandatory code-reviewer** (quality gate) and assigns each agent **specific files**. Agents whose file sets overlap run sequentially; the rest run in parallel.
+5. The reviewer scores each agent against a fixed rubric (hard point deductions, pass mark 82). Below the mark, that agent iterates - up to 3 times.
+6. **Runs lint and tests before closing.** Red tests block the move to `in_review`.
+7. Each agent reports its own working time; comments, `log_time` and acceptance criteria are written back to the ticket.
+8. Verifies all acceptance criteria, finishes the pipeline, and moves the ticket to `in_review`.
+
+Lint and test commands come from the project's `toolchain` wiki page - create it once with **`monolynx:project-toolchain`**, which detects the stack (Makefile, Python, Node, Rust, Go, PHP, Ruby, Java) and asks you to confirm. Without that page the skills ask whether to continue unverified.
+
+By default the skills **print commands instead of running them**. Environment variables in `.claude/settings.json` change that deliberately:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MONOLYNX_PROJECT_SLUG` | - | Project slug. Without it the skills refuse to guess |
+| `MONOLYNX_BRANCH_MODE` | `ticket` | `ticket` - branch must contain the ticket number; `sprint` - any branch but main, no questions; `off` - no validation |
+| `MONOLYNX_AUTOTEST` | `false` | `true` - the skill runs lint and tests itself |
+| `MONOLYNX_AUTOCOMMIT` | `false` | `true` - commits after tests pass |
+| `MONOLYNX_AUTOPUSH` | `false` | `true` - pushes without asking |
 
 In a chat client without skills, you can still call the underlying MCP tools in the same order: `get_ticket`, `update_ticket(status="in_progress")`, `search_wiki`/`query_graph`, do the work, `add_comment`, `log_time`, `update_acceptance_criterion`, `update_ticket(status="in_review")`.
 
-**The two skills that matter most are `monolynx:ticket-create` and `monolynx:work`.** Everything else (`search`, `ticket-review`, `wiki-ingest`, `wiki-lint`, `sprint-end`) supports that core loop.
+**The two skills that matter most are `monolynx:ticket-create` and `monolynx:work`.** Everything else (`project-toolchain`, `search`, `ticket-review`, `wiki-ingest`, `wiki-lint`, `sprint-end`, `graph-sync`) supports that core loop.
 
 ---
 
@@ -138,7 +170,8 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Understand the project | `search_wiki`, `get_wiki_page` (read the `constitution` page if present) |
 | Add a task | `monolynx:ticket-create` (or replicate its steps with MCP tools) |
 | Review a ticket before starting | `monolynx:ticket-review` |
-| Do a task | `monolynx:work <ticket-id>` (small, < 8 SP: `monolynx:work-simple`) |
+| Do a task | `monolynx:work <ticket-id>` (small, up to 3 SP: `monolynx:work-simple`) |
+| Set up lint and test commands | `monolynx:project-toolchain` (run once per project) |
 | Close a sprint | `monolynx:sprint-end` (INGEST work logs, LINT, close the sprint) |
 | Define your team | `.claude/agents/*.md` (Claude Code) or `AGENTS.md` (Codex) - per project, not shipped by Monolynx |
 | Enable the LLM Wiki method | `monolynx:wiki-init` (run once per project) |

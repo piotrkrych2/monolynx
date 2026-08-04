@@ -381,8 +381,26 @@
                         <span class="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded font-mono">MCP tool</span>
                     </div>
                     <p class="text-sm text-gray-700 dark:text-gray-300 mb-3">
-                        <strong>Zalecany sposób to plugin (Krok 4).</strong> Tej ścieżki użyj tylko tam, gdzie plugin nie działa (np. claude.ai web). Działa w <strong>dowolnym projekcie</strong> podłączonym do Monolynx MCP: Claude pobiera skille przez MCP i zapisuje je do <code class="text-indigo-300 font-mono text-sm">.claude/skills/</code>. Placeholdery <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-SLUG&gt;</code> / <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-ID&gt;</code> są automatycznie podmieniane na slug Twojego projektu.
+                        <strong>Zalecany sposób to plugin (Krok 4).</strong> Tej ścieżki użyj tam, gdzie plugin nie działa (claude.ai web) oraz w <strong>Codeksie i Cursorze</strong>, które nie mają marketplace'u pluginów. Działa w <strong>dowolnym projekcie</strong> podłączonym do Monolynx MCP: agent pobiera skille przez MCP i zapisuje je na dysk. Placeholdery <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-SLUG&gt;</code> / <code class="text-indigo-300 font-mono text-sm">&lt;PROJECT-ID&gt;</code> są automatycznie podmieniane na slug Twojego projektu.
                     </p>
+
+                    <p class="text-xs text-gray-600 dark:text-gray-400 mb-2">Katalog docelowy zależy od parametru <code class="text-indigo-300 font-mono text-xs">target</code>:</p>
+                    <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 mb-3 overflow-x-auto">
+                        <table class="text-xs w-full">
+                            <thead>
+                                <tr class="text-gray-500 dark:text-gray-400 text-left">
+                                    <th class="pr-4 pb-1 font-semibold">target</th>
+                                    <th class="pr-4 pb-1 font-semibold">katalog</th>
+                                    <th class="pb-1 font-semibold">runtime</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-gray-700 dark:text-gray-300 font-mono">
+                                <tr><td class="pr-4">claude <span class="text-gray-500">(domyślnie)</span></td><td class="pr-4 text-indigo-300">.claude/skills/</td><td>Claude Code</td></tr>
+                                <tr><td class="pr-4">codex</td><td class="pr-4 text-indigo-300">.codex/skills/</td><td>Codex CLI</td></tr>
+                                <tr><td class="pr-4">cursor</td><td class="pr-4 text-indigo-300">.cursor/skills/</td><td>Cursor</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
 
                     <p class="text-xs text-gray-600 dark:text-gray-400 mb-2">Użycie w Claude Code / Claude Desktop — jeden prompt:</p>
                     <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 mb-3">
@@ -396,10 +414,15 @@
 
 install_monolynx_skills(
     project_slug="moj-projekt",
-    skill_names=[...]  // wszystkie nazwy z katalogu
+    skill_names=[...],  // wszystkie nazwy z katalogu
+    target="claude"     // lub "codex" / "cursor"
 )
-// → pełna treść skilli → Claude zapisuje je do .claude/skills/</code>
+// → skills: [{name, files: [{relative_path, content}]}]</code>
                     </div>
+
+                    <p class="text-xs text-amber-700 dark:text-amber-400 mb-3">
+                        <strong>Zapisz WSZYSTKIE pliki z listy <code class="font-mono">files</code></strong>, nie tylko <code class="font-mono">SKILL.md</code>. Skill <code class="font-mono">monolynx-work</code> ma dodatkowo <code class="font-mono">pipeline.md</code> i <code class="font-mono">review-rubric.md</code> - ich pominięcie okroi go o część instrukcji.
+                    </p>
 
                     <div class="flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-400">
                         <span class="inline-flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
