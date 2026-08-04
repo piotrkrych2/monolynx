@@ -14,13 +14,32 @@ Użyj tego Skill'a gdy użytkownik:
 - Chce wiedzieć jak coś działa w projekcie i informacja może być w wiki
 - Wspomina "monolynx", "wiki", "dokumentacja projektu"
 
+## Ustalenie slug projektu
+
+Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
+
+```bash
+echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
+```
+
+- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
+- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
+
+  ```json
+  {
+    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
+  }
+  ```
+
+  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
+
 ## Proces
 
 ### Krok 1: Ustal projekt
 
-Jeśli użytkownik podał slug projektu (np. "<PROJECT-ID>") - użyj go.
+Jeśli użytkownik podał slug projektu - użyj go (nadpisuje powyższe).
 
-Jeśli NIE podał projektu:
+Jeśli NIE podał projektu i `PROJECT_SLUG` nie jest ustawiony ze środowiska:
 1. Użyj `mcp__monolynx__list_projects` aby wylistować dostępne projekty
 2. Jeśli jest tylko 1 projekt - użyj go automatycznie
 3. Jeśli jest więcej projektów - zapytaj użytkownika za pomocą `AskUserQuestion`:
@@ -30,7 +49,7 @@ Jeśli NIE podał projektu:
 ### Krok 2: Wyszukaj w wiki
 
 Użyj `mcp__monolynx__search_wiki` z:
-- `project_slug`: slug projektu
+- `project_slug`: ustalony slug projektu
 - `query`: pytanie użytkownika (w naturalnym języku)
 - `limit`: 5 (domyślnie)
 

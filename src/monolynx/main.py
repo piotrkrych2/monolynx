@@ -135,9 +135,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Claude Code skills - one prompt, zero setup",
         "skills_sub": (
-            "The flagship AI tool install_monolynx_skills drops all 12 ticket and wiki"
-            " skills into any project connected to Monolynx - no ZIPs,"
-            " no manual placeholder replacement."
+            "The flagship AI tool install_monolynx_skills drops all 14 ticket and wiki"
+            " skills into any project connected to Monolynx - Claude Code, Codex or Cursor."
+            " No ZIPs, no manual placeholder replacement."
         ),
         "skills_prompt_label": "Just say it in Claude",
         "skills_prompt": "Install the default Monolynx skills for project acme-inc.",
@@ -148,7 +148,11 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "skills_what_2": (
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG"
         ),
-        "skills_what_3": "/monolynx:create-graph-ci-script, /monolynx:help; placeholders replaced with your project slug automatically",
+        "skills_what_3": (
+            "/monolynx:project-toolchain, /monolynx:create-graph-ci-script, /monolynx:graph-sync,"
+            " /monolynx:help - setup and code graph;"
+            " placeholders replaced with your project slug automatically"
+        ),
         "oss_title": "Open Source",
         "oss_desc": (
             "Monolynx is free and open source. Self-host it on your own infrastructure,"
@@ -191,9 +195,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Skille Claude Code - jeden prompt, zero konfiguracji",
         "skills_sub": (
-            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 12 skilli"
-            " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - bez ZIP-ów"
-            " i ręcznego podmieniania placeholderów."
+            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 14 skilli"
+            " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - w Claude Code,"
+            " Codeksie lub Cursorze. Bez ZIP-ów i ręcznego podmieniania placeholderów."
         ),
         "skills_prompt_label": "Po prostu powiedz Claude'owi",
         "skills_prompt": "Zainstaluj domyślne skille Monolynx dla projektu acme-inc.",
@@ -204,7 +208,11 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "skills_what_2": (
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG"
         ),
-        "skills_what_3": "/monolynx:create-graph-ci-script, /monolynx:help; placeholdery automatycznie podmieniane na slug Twojego projektu",
+        "skills_what_3": (
+            "/monolynx:project-toolchain, /monolynx:create-graph-ci-script, /monolynx:graph-sync,"
+            " /monolynx:help - setup i graf kodu;"
+            " placeholdery automatycznie podmieniane na slug Twojego projektu"
+        ),
         "oss_title": "Open Source",
         "oss_desc": (
             "Monolynx jest darmowy i open source. Hostuj go na własnej infrastrukturze,"

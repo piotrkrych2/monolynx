@@ -1,6 +1,8 @@
 ---
 name: monolynx-wiki-lint
 description: "Audyt zdrowia wiki projektu (metoda LLM Wiki). Wykrywa sieroty, martwe linki, sprzecznosci i luki, prezentuje raport i proponuje naprawy. Uzyj gdy chcesz sprawdzic spojnosc wiki i ja uporzadkowac."
+user-invocable: true
+argument-hint: []
 allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__lint_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_backlinks, mcp__monolynx__create_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__append_wiki_log, AskUserQuestion, Bash
 ---
 
@@ -8,7 +10,26 @@ allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__lint_wiki, mcp__mo
 
 Realizujesz operacje **LINT** metody LLM Wiki: okresowy audyt spojnosci wiki. Sprawdzasz, czy graf wiedzy jest spojny (brak sierot i martwych linkow), czy nie ma nierozstrzygnietych sprzecznosci i czy nie brakuje stron dla wielokrotnie wzmiankowanych konceptow. Po raporcie pomagasz uzytkownikowi naprawic znalezione problemy.
 
-**Projekt**: `<PROJECT-SLUG>`
+---
+
+## Ustalenie slug projektu
+
+Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
+
+```bash
+echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
+```
+
+- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
+- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
+
+  ```json
+  {
+    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
+  }
+  ```
+
+  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
 
 ---
 

@@ -55,6 +55,7 @@ Jesli wszystko jest ustawione i `list_projects` dziala - napisz to wprost i prze
 
 Zaproponuj uzytkownikowi konkretny start. Zasugeruj skille dobrane do typowych pierwszych krokow:
 
+- **`/monolynx:project-toolchain`** - wykryj komendy lint i testow projektu i zapisz je jako strone wiki `toolchain`; bez tego `work` nie zweryfikuje kodu przed zamknieciem ticketu.
 - **`/monolynx:create-graph-ci-script`** - wygeneruj skrypt CI, ktory synchronizuje graf zaleznosci kodu z Monolynx (dobry pierwszy krok w repo bez grafu).
 - **`/monolynx:wiki-init`** - wlacz metode LLM Wiki dla projektu (strony systemowe: regulamin, katalog, dziennik); fundament dla wiki jako zrodla prawdy.
 - **`/monolynx:ticket-create`** - utworz pierwszy porzadny ticket z kontekstem z wiki, grafu i kodu.
@@ -63,10 +64,11 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 
 ---
 
-## Komplet 12 skilli `/monolynx:*`
+## Komplet 14 skilli `/monolynx:*`
 
-- **`work`** - podejmij ticket pelnym flow: research + zespol agentow + obowiazkowy krytyk.
-- **`work-simple`** - uproszczony flow dla mniejszych ticketow (< 8 SP): 1 dev + krytyk, bez Agent Teams.
+- **`work`** - podejmij ticket pelnym flow: research + zespol agentow + obowiazkowy krytyk + lint i testy przed zamknieciem.
+- **`work-simple`** - uproszczony flow dla malych ticketow (do 3 SP): 1 dev + krytyk, bez Agent Teams.
+- **`project-toolchain`** - wykryj komendy lint/test projektu i zapisz jako strone wiki `toolchain` (raz per projekt).
 - **`ticket-create`** - utworz ticket z kontekstu wiki, grafu i kodu, w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci).
 - **`ticket-review`** - zrecenzuj ticket pod katem formy i zgodnosci z wiki oraz kodem.
 - **`sprint-end`** - zamknij sprint jako pipeline `sprint_close`: INGEST logow pracy do wiki + LINT + domkniecie sprintu.
@@ -77,5 +79,6 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 - **`wiki-sync-merge`** - post-merge INGEST do wiki, uruchamiany po merge ticketow/PR do main.
 - **`help`** - przewodnik po skillach Monolynx i flow pracy z ticketami.
 - **`create-graph-ci-script`** - wygeneruj skrypt CI synchronizujacy graf zaleznosci kodu z Monolynx.
+- **`graph-sync`** - zsynchronizuj graf zaleznosci lokalnie, bez CI (pierwsze zasilenie albo odswiezenie ad hoc).
 
 Pelna dokumentacja modulow i narzedzi: <https://monolynx.com/llms.txt>.

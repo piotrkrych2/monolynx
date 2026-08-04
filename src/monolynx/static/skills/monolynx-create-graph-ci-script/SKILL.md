@@ -98,10 +98,15 @@ Klasa `MonolynxClient` - MCP Streamable HTTP (JSON-RPC przez `urllib.request`):
 
 ```python
 RELATION_TO_EDGE_TYPE = {
-    "calls": "CALLS", "indirect_call": "CALLS",
-    "contains": "CONTAINS", "method": "CONTAINS",
-    "imports": "IMPORTS", "imports_from": "IMPORTS", "re_exports": "IMPORTS",
-    "inherits": "INHERITS", "uses": "USES",
+    "calls": "CALLS",
+    "indirect_call": "CALLS",
+    "contains": "CONTAINS",
+    "method": "CONTAINS",
+    "imports": "IMPORTS",
+    "imports_from": "IMPORTS",
+    "re_exports": "IMPORTS",
+    "inherits": "INHERITS",
+    "uses": "USES",
 }
 ```
 

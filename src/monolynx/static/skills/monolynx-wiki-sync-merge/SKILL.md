@@ -53,7 +53,7 @@ git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
 ## Krok 0: Gating - sprawdź czy metoda LLM Wiki jest włączona
 
 ```
-mcp__monolynx__get_wiki_config(project_slug="<PROJECT_SLUG>")
+mcp__monolynx__get_wiki_config(project_slug="<PROJECT-SLUG>")
 ```
 
 - **Jeśli `wiki_llm_enabled` jest `false`** - zakończ z informacją: _"LLM Wiki wyłączona dla tego projektu, INGEST pominięty. Włącz metodę przez `/monolynx:wiki-init`."_ Nie wykonuj żadnych zapisów.
@@ -75,7 +75,7 @@ mcp__monolynx__get_wiki_config(project_slug="<PROJECT_SLUG>")
 Zawsze zacznij od regulaminu, żeby trzymać się konwencji projektu (typy stron, frontmatter, format markera sprzeczności):
 
 ```
-mcp__monolynx__get_wiki_page(project_slug="<PROJECT_SLUG>", page_id="<schema_page_id>")
+mcp__monolynx__get_wiki_page(project_slug="<PROJECT-SLUG>", page_id="<schema_page_id>")
 ```
 
 Zastosuj jego zasady w całym INGEST. Kluczowe zasady z regulaminu:
@@ -93,7 +93,7 @@ Zastosuj jego zasady w całym INGEST. Kluczowe zasady z regulaminu:
 Dla każdego ticket-id z listy pobierz dane:
 
 ```
-mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ticket-id>")
+mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<ticket-id>")
 ```
 
 Zapamiętaj dla każdego ticketu:
@@ -114,7 +114,7 @@ Dla każdego ticketu wykonaj pełny INGEST (wzoruj się na flow z `wiki-ingest`)
 Zanim cokolwiek stworzysz, sprawdź co już jest - żeby aktualizować, nie duplikować:
 
 ```
-mcp__monolynx__search_wiki(project_slug="<PROJECT_SLUG>", query="<kluczowe słowa z tytułu ticketu>")
+mcp__monolynx__search_wiki(project_slug="<PROJECT-SLUG>", query="<kluczowe słowa z tytułu ticketu>")
 ```
 
 Dla kandydatów do aktualizacji pobierz pełną treść (`get_wiki_page`) i sprawdź powiązania (`get_wiki_backlinks`).
@@ -127,7 +127,7 @@ Typ strony ustalasz przez frontmatter YAML na początku `content`.
 
    ```
    mcp__monolynx__create_wiki_page(
-     project_slug="<PROJECT_SLUG>",
+     project_slug="<PROJECT-SLUG>",
      title="<np. 'MON-75: wiki-sync-merge - INGEST po merge'>",
      content="---\ntype: źródło\nstatus: aktywna\nostatni_przeglad: <YYYY-MM-DD>\ntagi: [...]\n---\n\n<1-2 zdania summary>\n\n<opis co zmieniono + wikilinki [[slug]]>"
    )
@@ -154,7 +154,7 @@ Typ strony ustalasz przez frontmatter YAML na początku `content`.
 Po przetworzeniu wszystkich ticketów:
 
 ```
-mcp__monolynx__regenerate_wiki_index(project_slug="<PROJECT_SLUG>")
+mcp__monolynx__regenerate_wiki_index(project_slug="<PROJECT-SLUG>")
 ```
 
 Katalog `wiki-index` zbiera streszczenia wszystkich stron; po dodaniu/zmianie stron trzeba go przebudować.
@@ -166,7 +166,7 @@ Katalog `wiki-index` zbiera streszczenia wszystkich stron; po dodaniu/zmianie st
 Jeden wpis zbiorczy dla całego przebiegu (nie osobny na każdy ticket):
 
 ```
-mcp__monolynx__append_wiki_log(project_slug="<PROJECT_SLUG>", entry="INGEST po merge: <lista ticketów, np. MON-75, MON-76> - utworzono N stron, zaktualizowano M stron")
+mcp__monolynx__append_wiki_log(project_slug="<PROJECT-SLUG>", entry="INGEST po merge: <lista ticketów, np. MON-75, MON-76> - utworzono N stron, zaktualizowano M stron")
 ```
 
 Dziennik `wiki-log` jest append-only - nie kasuj historii.

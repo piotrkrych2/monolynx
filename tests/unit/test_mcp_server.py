@@ -333,17 +333,17 @@ class TestMcpToolRegistration:
             assert tool.description, f"{tool.name} nie ma opisu"
 
     async def test_all_tools_have_input_schema(self):
-        """Kazde narzedzie ma schemat parametrow (inputSchema)."""
+        """Kazde narzedzie ma schemat parametrow (input_schema)."""
         tools = await mcp.list_tools()
         for tool in tools:
-            assert tool.inputSchema is not None, f"{tool.name} nie ma schematu"
-            assert "properties" in tool.inputSchema, f"{tool.name} brak properties w schemacie"
+            assert tool.input_schema is not None, f"{tool.name} nie ma schematu"
+            assert "properties" in tool.input_schema, f"{tool.name} brak properties w schemacie"
 
     async def test_all_tools_require_project_slug_except_list_projects(self):
         """Wszystkie narzedzia poza wyjatkami wymagaja project_slug."""
         tools = await mcp.list_tools()
         for tool in tools:
-            props = tool.inputSchema.get("properties", {})
+            props = tool.input_schema.get("properties", {})
             if tool.name in _TOOLS_WITHOUT_PROJECT_SLUG:
                 continue
             assert "project_slug" in props, f"{tool.name} nie ma parametru project_slug"
@@ -351,20 +351,36 @@ class TestMcpToolRegistration:
 
 @pytest.mark.unit
 class TestMcpServerConfig:
-    """Weryfikacja konfiguracji serwera MCP."""
+    """Weryfikacja konfiguracji transportu serwera MCP.
+
+    Od MCP SDK 2.0 parametry transportu nie sa czescia konstruktora MCPServer -
+    przekazuje je `build_mcp_http_app()` do `streamable_http_app()`. Testy
+    sprawdzaja to wywolanie zamiast `mcp.settings`.
+    """
+
+    @staticmethod
+    def _transport_kwargs() -> dict:
+        from monolynx.mcp_server import build_mcp_http_app
+
+        with patch.object(mcp, "streamable_http_app") as mock_app:
+            build_mcp_http_app()
+
+        mock_app.assert_called_once()
+        return dict(mock_app.call_args.kwargs)
 
     def test_json_response_enabled(self):
         """json_response=True -- odpowiedzi JSON zamiast SSE (kompatybilnosc z proxy)."""
-        assert mcp.settings.json_response is True
+        assert self._transport_kwargs()["json_response"] is True
 
     def test_streamable_http_path(self):
         """Sciezka HTTP transportu to /."""
-        assert mcp.settings.streamable_http_path == "/"
+        assert self._transport_kwargs()["streamable_http_path"] == "/"
 
     def test_dns_rebinding_protection_enabled(self):
         """Ochrona DNS rebinding jest wlaczona."""
-        assert mcp.settings.transport_security is not None
-        assert mcp.settings.transport_security.enable_dns_rebinding_protection is True
+        transport_security = self._transport_kwargs()["transport_security"]
+        assert transport_security is not None
+        assert transport_security.enable_dns_rebinding_protection is True
 
 
 # ---------------------------------------------------------------------------

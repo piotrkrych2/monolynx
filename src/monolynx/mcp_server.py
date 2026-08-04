@@ -17,7 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -146,6 +146,13 @@ logger = logging.getLogger("monolynx.mcp")
 
 _STATIC_SKILLS_DIR = Path(__file__).resolve().parent / "static" / "skills"
 _SKILL_SLUG_PLACEHOLDERS = ("<PROJECT-SLUG>", "<PROJECT-ID>")
+# Katalog skilli per runtime. Format SKILL.md (frontmatter + pliki towarzyszace)
+# jest wspolny dla Claude Code, Codex i Cursora - rozni sie tylko lokalizacja.
+_SKILL_TARGET_DIRS = {
+    "claude": ".claude/skills",
+    "codex": ".codex/skills",
+    "cursor": ".cursor/skills",
+}
 
 
 def _build_allowed_hosts() -> list[str]:
@@ -159,7 +166,7 @@ def _build_allowed_hosts() -> list[str]:
     return hosts
 
 
-mcp = FastMCP(
+mcp = MCPServer(
     "Monolynx",
     instructions=(
         "Serwer MCP platformy Monolynx. "
@@ -168,12 +175,6 @@ mcp = FastMCP(
         "Monitoring (URL health checks, uptime), "
         "Wiki (strony markdown z hierarchia). "
         "Wymaga tokenu API (Bearer) w naglowku Authorization."
-    ),
-    streamable_http_path="/",
-    json_response=True,
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=_build_allowed_hosts(),
     ),
 )
 
@@ -223,7 +224,7 @@ async def _verify_token(raw_token: str) -> User:
 class _MCPBearerAuthMiddleware:
     """Lekki ASGI middleware wymuszajacy Bearer auth na calym mountcie /mcp.
 
-    Dlaczego nie FastMCP(auth=AuthSettings(...))?
+    Dlaczego nie MCPServer(auth=AuthSettings(...))?
     AuthSettings wymaga issuer_url i resource_server_url (pola OAuth AS/RS),
     co dodaloby .well-known/oauth-protected-resource bezposrednio pod /mcp
     i wymagaloby pelnej konfiguracji OAuth serwera autoryzacji. Nasz OAuth
@@ -296,8 +297,20 @@ def build_mcp_http_app() -> ASGIApp:
     Wywolaj zamiast mcp.streamable_http_app() zeby zapewnic
     ze kazdy JSON-RPC request (initialize, tools/list, tools/call)
     wymaga waznego tokenu Bearer.
+
+    Parametry transportu ida tutaj, nie do konstruktora MCPServer - w MCP SDK 2.0
+    konstruktor odpowiada tylko za tozsamosc serwera.
     """
-    return _MCPBearerAuthMiddleware(mcp.streamable_http_app())
+    return _MCPBearerAuthMiddleware(
+        mcp.streamable_http_app(
+            streamable_http_path="/",
+            json_response=True,
+            transport_security=TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=_build_allowed_hosts(),
+            ),
+        )
+    )
 
 
 def _format_board(sprint: Sprint, project_code: str, columns: dict[str, list[dict[str, Any]]]) -> str:
@@ -5997,6 +6010,12 @@ def _list_available_skills() -> list[str]:
     return names
 
 
+def _list_skill_files(skill_dir: Path) -> list[Path]:
+    """Zwroc pliki markdown skilla: SKILL.md pierwszy, pliki pomocnicze alfabetycznie."""
+    extras = sorted(p for p in skill_dir.glob("*.md") if p.name != "SKILL.md")
+    return [skill_dir / "SKILL.md", *extras]
+
+
 def _render_skill_content(raw: str, project_slug: str) -> str:
     """Podmien placeholdery projektu w tresci SKILL.md."""
     content = raw
@@ -6026,8 +6045,9 @@ async def install_monolynx_skills(
     ctx: Context[Any, Any],
     project_slug: str,
     skill_names: list[str] | None = None,
+    target: str = "claude",
 ) -> dict[str, Any]:
-    """Pobierz domyslne skille Monolynx do zapisu w `.claude/skills/` projektu uzytkownika.
+    """Pobierz domyslne skille Monolynx do zapisu w katalogu skilli projektu uzytkownika.
 
     Dwa tryby:
     - `skill_names=None` (domyslnie): zwraca LISTE dostepnych skilli z nazwami i opisami
@@ -6038,18 +6058,27 @@ async def install_monolynx_skills(
     Argumenty:
     - `project_slug`: slug projektu Monolynx (wymagany; weryfikuje czlonkostwo uzytkownika)
     - `skill_names`: opcjonalna lista nazw skilli do pobrania pelnej tresci
+    - `target`: runtime docelowy - `claude` (domyslnie, `.claude/skills/`),
+      `codex` (`.codex/skills/`) lub `cursor` (`.cursor/skills/`). Format plikow jest
+      identyczny dla wszystkich trzech; zmienia sie tylko katalog w `relative_path`.
 
     Zwraca (tryb listy):
     - `project_slug`, `available` (nazwy), `catalog`: [{name, description}]
 
     Zwraca (tryb pelny):
-    - `project_slug`, `available`, `skills`: [{name, relative_path, content}]
-      gdzie `relative_path` to docelowa sciezka (np. `.claude/skills/monolynx-work/SKILL.md`)
+    - `project_slug`, `available`, `skills`: [{name, files: [{relative_path, content}]}]
+      gdzie `relative_path` to docelowa sciezka (np. `.claude/skills/monolynx-work/SKILL.md`).
+      Skill moze miec pliki pomocnicze obok `SKILL.md` (np. `pipeline.md`) - zapisz
+      WSZYSTKIE pliki z listy `files`, inaczej skill straci czesc instrukcji.
 
     Zalecane uzycie: najpierw wywolaj bez `skill_names` zeby zobaczyc katalog, potem
     pobieraj pelna tresc per 1-3 skille aby uniknac przekroczenia limitu odpowiedzi.
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
+
+    skills_dir = _SKILL_TARGET_DIRS.get(target)
+    if skills_dir is None:
+        raise ValueError(f"Nieznany target: {target}. Dostepne: {', '.join(_SKILL_TARGET_DIRS)}")
 
     available = _list_available_skills()
     if not available:
@@ -6068,6 +6097,8 @@ async def install_monolynx_skills(
             )
         return {
             "project_slug": project.slug,
+            "target": target,
+            "skills_dir": skills_dir,
             "available": available,
             "catalog": catalog,
             "hint": "Wywolaj ponownie z `skill_names=[...]` aby pobrac pelna tresc wybranych skilli.",
@@ -6078,21 +6109,21 @@ async def install_monolynx_skills(
         raise ValueError(f"Nieznane skille: {', '.join(unknown)}. Dostepne: {', '.join(available)}")
     selected = list(dict.fromkeys(skill_names))
 
-    skills: list[dict[str, str]] = []
+    skills: list[dict[str, Any]] = []
     for name in selected:
-        skill_file = _STATIC_SKILLS_DIR / name / "SKILL.md"
-        raw = skill_file.read_text(encoding="utf-8")
-        content = _render_skill_content(raw, project.slug)
-        skills.append(
+        files = [
             {
-                "name": name,
-                "relative_path": f".claude/skills/{name}/SKILL.md",
-                "content": content,
+                "relative_path": f"{skills_dir}/{name}/{path.name}",
+                "content": _render_skill_content(path.read_text(encoding="utf-8"), project.slug),
             }
-        )
+            for path in _list_skill_files(_STATIC_SKILLS_DIR / name)
+        ]
+        skills.append({"name": name, "files": files})
 
     return {
         "project_slug": project.slug,
+        "target": target,
+        "skills_dir": skills_dir,
         "available": available,
         "skills": skills,
     }

@@ -1,6 +1,8 @@
 ---
 name: monolynx-wiki-ingest
 description: "Zintegruj nowe zrodlo (plik, URL lub wklejona tresc) z wiki projektu metoda LLM Wiki. Tworzy strone zrodla, aktualizuje powiazane strony, linkuje wikilinkami, odswieza katalog i dziennik. Uzyj gdy masz dokument lub artykul do wlaczenia w wiki."
+user-invocable: true
+argument-hint: [sciezka pliku / URL / temat zrodla]
 allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__search_wiki, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, mcp__monolynx__create_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__regenerate_wiki_index, mcp__monolynx__append_wiki_log, mcp__monolynx__get_wiki_backlinks, AskUserQuestion, Bash, Read, WebFetch
 ---
 
@@ -8,7 +10,26 @@ allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__search_wiki, mcp__
 
 Realizujesz operacje **INGEST** metody LLM Wiki: bierzesz jedno zrodlo (dokument, artykul, transkrypcje, wklejona tresc) i wpisujesz jego wiedze trwale w wiki projektu. Wiki to narastajacy artefakt - jedno dobre zrodlo zwykle dotyka wielu stron, a nie jednej. Twoim celem jest **aktualizowac istniejace strony**, nie duplikowac wiedzy, i wszystko **linkowac wikilinkami**, zeby graf rosl.
 
-**Projekt**: `<PROJECT-SLUG>`
+---
+
+## Ustalenie slug projektu
+
+Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
+
+```bash
+echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
+```
+
+- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
+- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
+
+  ```json
+  {
+    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
+  }
+  ```
+
+  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
 
 ---
 

@@ -1,6 +1,8 @@
 ---
 name: monolynx-wiki-init
 description: "Wlacz metode LLM Wiki dla biezacego projektu. Tworzy strony systemowe (regulamin, katalog, dziennik) i wlacza flage. Uzyj gdy chcesz zaczac prowadzic wiki metoda LLM Wiki (wg Karpathy'ego)."
+user-invocable: true
+argument-hint: []
 allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__bootstrap_wiki_llm, mcp__monolynx__list_projects, AskUserQuestion, Bash
 ---
 
@@ -8,7 +10,26 @@ allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__bootstrap_wiki_llm
 
 Wlaczasz dla biezacego projektu metode **LLM Wiki** (wg pomyslu Andreja Karpathy'ego): wiki to narastajacy, kompilowany artefakt wiedzy, ktory pisze i utrzymuje agent AI, a czlowiek dostarcza zrodla i zadaje pytania. Ten skill jednorazowo przygotowuje projekt: tworzy strony systemowe i wlacza flage metody.
 
-**Projekt**: `<PROJECT-SLUG>`
+---
+
+## Ustalenie slug projektu
+
+Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
+
+```bash
+echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
+```
+
+- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
+- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
+
+  ```json
+  {
+    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
+  }
+  ```
+
+  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
 
 ---
 

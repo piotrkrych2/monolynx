@@ -52,6 +52,13 @@ backfill-embeddings: ## Wygeneruj embeddingi dla istniejacych stron wiki
 backfill-backlinks: ## Wygeneruj backlinki dla istniejacych stron wiki
 	docker compose --profile dev exec app python -m monolynx.cli backfill-backlinks
 
+# --- Skille pluginowe ---
+sync-skills: ## Skopiuj plugin/skills -> static/skills (zrodlo dla install_monolynx_skills)
+	python3 scripts/sync_skills.py
+
+sync-skills-check: ## Sprawdz czy static/skills jest zgodne z plugin/skills (exit 1 gdy nie)
+	python3 scripts/sync_skills.py --check
+
 # --- Graf kodu ---
 sync-graph: ## Synchronizuj graf zaleznosci kodu z Monolynx (wymaga graphify)
 	graphify update . && python cicd/sync_graph.py

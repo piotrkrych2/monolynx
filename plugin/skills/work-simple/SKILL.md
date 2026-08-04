@@ -1,5 +1,5 @@
 ---
-description: "Podejmij prostszy ticket (<8 SP) z biezacego projektu Monolynx. Uproszczony flow: 1 dev + krytyk jako zwykle subagenty (bez Agent Teams). Research wiki/graf/kod opt-in na starcie. Pelna ceremonia self-reporting. Eskaluje do monolynx-work jesli scope sie rozrasta. Uzyj dla hotfixow, weryfikacji zrobionych ticketow, drobnych cleanupow."
+description: "Podejmij prosty ticket (max 3 SP) z biezacego projektu Monolynx. Uproszczony flow: 1 dev + krytyk jako zwykle subagenty (bez Agent Teams). Research wiki/graf/kod opt-in na starcie. Pelna ceremonia self-reporting, lint i testy przed zamknieciem. Eskaluje do monolynx-work jesli scope sie rozrasta. Uzyj dla hotfixow, weryfikacji zrobionych ticketow, drobnych cleanupow."
 user-invocable: true
 argument-hint: [ticket-id]
 ---
@@ -8,7 +8,21 @@ argument-hint: [ticket-id]
 
 Jestes **Team Managerem Lite**. Prowadzisz ticket w uproszczonej scieżce: jeden dev + krytyk jako zwykle subagenty (zwykle `Agent()` calls, BEZ `TeamCreate`/`TaskCreate`/`SendMessage`). Cala ceremonia komentarzy, log_time, status_update zostaje.
 
-**Kiedy NIE uzywac:** ticket >= 8 SP, ticket obejmuje backend + frontend + migracja + i18n, lub user jawnie chce `/monolynx-work` (full Agent Teams).
+**Kiedy NIE uzywac:** ticket > 3 SP, ticket obejmuje backend + frontend + migracja + i18n, lub user jawnie chce `/monolynx-work` (full Agent Teams).
+
+## Konfiguracja skilla
+
+```bash
+echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false}"
+```
+
+| Zmienna | Domyslnie | Znaczenie |
+|---|---|---|
+| `MONOLYNX_AUTOTEST` | `false` | `true` - skill sam odpala lint i testy; `false` - wypisuje komendy i czeka na wynik |
+| `MONOLYNX_AUTOCOMMIT` | `false` | `true` - commit po zielonym tescie; `false` - wypisuje komende |
+| `MONOLYNX_AUTOPUSH` | `false` | `true` - push bez pytania; `false` - nigdy nie pushuje |
+
+Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env`).
 
 ---
 
@@ -67,7 +81,7 @@ Inaczej ENTER - kontynuuje SIMPLE.
 ```
 
 **Reguly:**
-- Jesli `SP >= 8` lub user pisze `full` → zatrzymaj, powiedz "Ticket poza scope simple. Uzyj `/monolynx-work [ticket-id]`". Koniec.
+- Jesli `SP > 3` lub user pisze `full` → zatrzymaj, powiedz "Ticket poza scope simple (max 3 SP). Uzyj `/monolynx-work [ticket-id]`". Koniec.
 - Inaczej kontynuuj SIMPLE.
 
 ### 0.4. Opt-in research
@@ -84,6 +98,29 @@ Wybierz zrodla rozpoznania (wpisz litery, np. "wk" lub "wgk"):
 Poczekaj na odpowiedz. Zapisz wybor jako `research_sources = {"wiki": bool, "graph": bool, "code_explore": bool}`.
 
 **Uwaga:** Jesli user wybierze `wgk` (wszystkie 3) → Faza 1 dziala identycznie jak w full skill (uruchamiamy pelnego Explore agenta z wiki + graf + kod). Simple zostaje tylko w Fazie 3 (subagenty zamiast Agent Teams).
+
+### 0.45. Branch + toolchain
+
+```bash
+git branch --show-current
+```
+
+**Twardy gate**: jesli branch to `main` lub `master` - zapytaj uzytkownika i poczekaj
+na odpowiedz. Nigdy nie zaczynaj pracy na glownym branchu bez jawnej zgody. Kazdy
+inny branch jest OK - simple flow nie wymusza konwencji nazw.
+
+Pobierz komendy lint/test projektu:
+
+```
+mcp__monolynx__search_wiki(project_slug="<PROJECT_SLUG>", query="toolchain lint test", limit=1)
+```
+
+Strona ze slugiem `toolchain` -> pobierz pelna tresc przez `get_wiki_page` i zapamietaj
+komendy lint/test oraz flage TDD. Brak strony -> zapamietaj `toolchain_missing = true`
+(obsluzone w FAZA 3.5).
+
+Jesli strona mowi `TDD: tak` - w prompcie dev agenta (2.3) dodaj polecenie napisania
+failing testu przed implementacja.
 
 ### 0.5. Status + timestamp
 
@@ -241,9 +278,8 @@ mcp__monolynx__log_time(
 
 ## ZAKAZY
 
-- NIE uruchamiaj testow (pytest/vitest) - user robi to recznie (CLAUDE.md reguła).
-- NIE uruchamiaj black/isort/flake8 - user robi recznie.
-- NIE rob commit/push - user robi recznie po review.
+- NIE uruchamiaj testow ani lintera - robi to Team Manager w FAZA 3.5, wg konfiguracji projektu.
+- NIE rob commit/push - decyzja nalezy do Team Managera i uzytkownika (4.6).
 - NIE uzywaj TaskCreate/TeamCreate/SendMessage - to simple flow, nie Agent Teams."
 )
 ```
@@ -275,7 +311,22 @@ ZAKRES PRACY DEV: [krotki opis z ticketa + ewentualne uwagi z komentarza dev]
 ## CO ZROBIC
 
 1. Przeczytaj `git diff` lub Read zmienionych plikow (wymienione w komentarzu dev agenta).
-2. Ocen 0-100. Werdykt: APPROVED (>=83) lub NEEDS WORK (<83).
+2. Ocen wedlug rubryki. Start 100, twarde odjecia, kazde z lokalizacja `plik:linia`:
+
+   | Naruszenie | Odjecie |
+   |---|---|
+   | Lint lub test nie przechodzi | -40 |
+   | Zapis do DB bez commit | -30 |
+   | Naruszenie reguly z `.claude/rules/*` | -25 za regule |
+   | Brak testu dla nowego kodu (gdy projekt ma testy) | -20 |
+   | Kryterium akceptacji nietkniete | -15 za kryterium |
+   | Brak obslugi bledu na granicy systemu | -10 |
+   | Over-engineering (abstrakcja bez 3 uzyc) | -10 |
+   | Niezgodnosc z konwencja sasiedniego pliku | -5 |
+
+   Przed ocena przeczytaj `.claude/rules/*.md` (jesli istnieja) - to zrodlo kategorii -25.
+   Werdykt: APPROVED (>=82) lub NEEDS WORK (<82). Wypisz kazde odjecie, ocena bez
+   uzasadnienia jest niewazna.
 3. Komentarz do ticketa + log_time (ponizej).
 4. RAPORT DO PIPELINE (best-effort): zapisz ocene do joba dev oraz zamknij swoj job:
    mcp__monolynx__update_pipeline_job(project_slug='<PROJECT_SLUG>', job_id='[dev_job_id]', score=[0-100])
@@ -315,11 +366,11 @@ Format zwrotu do TM: `NEEDS WORK [score] | REGULA: [zdanie] | UWAGI: [lista]`."
 
 ## FAZA 3: Reakcja na critic
 
-### 3.1. APPROVED (>=83)
+### 3.1. APPROVED (>=82)
 
-Przejdz do Fazy 4.
+Przejdz do Fazy 3.5.
 
-### 3.2. NEEDS WORK (<83) - max 3 iteracje
+### 3.2. NEEDS WORK (<82) - max 3 iteracje
 
 1. Dopisz regule z feedbacku critica do `.claude/agent-memory/<dev-subagent-type>/MEMORY.md` (sekcja `## Reguly z review krytyka`). Jesli sekcja nie istnieje - dodaj na koncu.
 2. Spawnuj kolejnego dev agenta (ten sam typ) z promptem:
@@ -334,6 +385,42 @@ Przejdz do Fazy 4.
 3. Po poprawce - spawnuj nowego critica (ten sam prompt co 2.4).
 4. Instrumentacja (best-effort): w prompcie iteracji poprawkowej dev dodaj podbicie `attempt` joba dev: `mcp__monolynx__update_pipeline_job(project_slug='<PROJECT_SLUG>', job_id='[dev_job_id]', attempt=[numer_iteracji])` + doklejenie poprawek przez `append_job_log`.
 5. Max 3 iteracje. Po 3. NEEDS WORK - zatrzymaj, zapytaj usera "Krytyk 3x NEEDS WORK. Co robimy? (a) eskaluj do /monolynx-work, (b) akceptuj mimo to, (c) stop".
+
+---
+
+## FAZA 3.5: Lint i testy - gate przed zamknieciem
+
+Komendy pochodza ze strony wiki `toolchain` (pobranej w 0.45).
+
+**`toolchain_missing = true`** - poinformuj uzytkownika:
+
+> Projekt nie ma strony wiki `toolchain`, wiec nie znam komend lint/test.
+> Uruchom `/monolynx:project-toolchain` zeby ja utworzyc (jednorazowo).
+>
+> Kontynuowac bez lintu i testow? (tak / podam komendy recznie)
+
+Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu.
+
+**`MONOLYNX_AUTOTEST=false`** (domyslnie) - wypisz komendy i poczekaj na wynik:
+
+> Uruchom i wklej wynik:
+> ```
+> [komenda lint]
+> [komenda test]
+> ```
+
+**`MONOLYNX_AUTOTEST=true`** - odpal komendy sam.
+
+Decyzja:
+
+- **Zielone** -> FAZA 4
+- **Czerwone** -> spawnuj dev agenta z trescia bledu (ten sam typ, prompt jak 3.2
+  ale z wynikiem lint/test zamiast feedbacku krytyka). Powtorz lint i testy.
+  Max 3 iteracje, potem zapytaj uzytkownika.
+- **Pominiete za zgoda uzytkownika** -> odnotuj w podsumowaniu (4.7)
+
+Instrumentacja (best-effort): job `lint-test` w stepie `wrap-up`, status
+`success` / `failed` / `skipped`, log z komendami i wynikiem.
 
 ---
 
@@ -384,20 +471,32 @@ mcp__monolynx__finish_pipeline(project_slug="<PROJECT_SLUG>", pipeline_id="<pipe
 
 `finish_pipeline` bez `status` wylicza status koncowy ze stepow. Best-effort: blad pipeline nie przerywa zamkniecia.
 
-### 4.6. Status → in_review
+### 4.6. Commit
+
+**`MONOLYNX_AUTOCOMMIT=false`** (domyslnie) - wypisz gotowa komende, nie wykonuj:
+
+> ```bash
+> git add -A && git commit -m "[KEY] [tytul ticketu]"
+> ```
+
+**`MONOLYNX_AUTOCOMMIT=true`** - wykonaj commit (tylko po zielonym lincie i testach).
+**`MONOLYNX_AUTOPUSH=true`** - dodatkowo `git push`. Przy `false` nigdy nie pushuj.
+
+### 4.7. Status → in_review
 
 ```
 mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ID>", status="in_review")
 ```
 
-### 4.7. Podsumowanie dla usera
+### 4.8. Podsumowanie dla usera
 
 Wyswietl zwiezle:
 - Co zostalo zrobione
 - Ocena critica
+- Wynik lintu i testow (lub informacja, ze pominiete)
 - Czas TM
 - Status ticketa
-- Co user ma zrobic manualnie (testy, lint, commit, push, po merge: `/monolynx:wiki-sync-merge <ticket-id>`)
+- Co user ma zrobic manualnie (commit/push jesli flagi na `false`, po merge: `/monolynx:wiki-sync-merge <ticket-id>`)
 
 ---
 
@@ -434,9 +533,10 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 4. **Scope guard w dev prompcie** - dev sam sygnalizuje "to za duze na simple".
 5. **Research opt-in, ale krytyk ma obowiazek** przeczytac diff przed review.
 6. **Agent-memory MEMORY.md** po NEEDS WORK - zostaje jak w full (nauka agenta).
-7. **User uruchamia** testy / lint / commit / push - skill tego nie robi (CLAUDE.md reguła).
-8. **Jezyk komentarzy**: polski.
-9. **Gdy dev sygnalizuje SCOPE GREW** - NIE ignoruj, eskaluj. Celem simple jest szybkie dowozenie malych zmian, nie rozkladanie sie dla duzych.
-10. **Maksymalnie 3 iteracje NEEDS WORK** - dalej user decyduje.
-11. **Agentow zawsze dobieramy dynamicznie** - skill nie narzuca konkretnych typow agentow; wybor zalezy od tego, co dostepne w projekcie i czego wymaga ticket.
-12. **Pipeline jest best-effort, nie gate** - instrumentacja pipeline (create_pipeline, joby, append_job_log, finish_pipeline) to warstwa obserwowalnosci. Blad ktoregokolwiek toola pipeline NIGDY nie przerywa pracy nad ticketem - odnotuj i kontynuuj. Jesli toole niedostepne (starszy serwer MCP) - pomin instrumentacje.
+7. **Lint i testy sa gate'em** - FAZA 3.5 przed `in_review`, komendy ze strony wiki `toolchain`. Domyslnie uruchamia je user (skill wypisuje komendy); `MONOLYNX_AUTOTEST=true` zmienia to swiadomie. Pominiecie tylko za jawna zgoda, odnotowane w podsumowaniu.
+8. **Commit i push tylko za zgoda** - domyslnie skill wypisuje komendy, nie wykonuje. Flagi `MONOLYNX_AUTOCOMMIT` / `MONOLYNX_AUTOPUSH` zmieniaja to swiadomie. Twardy gate na `main`/`master` przy starcie (0.45).
+9. **Jezyk komentarzy**: polski.
+10. **Gdy dev sygnalizuje SCOPE GREW** - NIE ignoruj, eskaluj. Celem simple jest szybkie dowozenie malych zmian, nie rozkladanie sie dla duzych.
+11. **Maksymalnie 3 iteracje NEEDS WORK** - dalej user decyduje.
+12. **Agentow zawsze dobieramy dynamicznie** - skill nie narzuca konkretnych typow agentow; wybor zalezy od tego, co dostepne w projekcie i czego wymaga ticket.
+13. **Pipeline jest best-effort, nie gate** - instrumentacja pipeline (create_pipeline, joby, append_job_log, finish_pipeline) to warstwa obserwowalnosci. Blad ktoregokolwiek toola pipeline NIGDY nie przerywa pracy nad ticketem - odnotuj i kontynuuj. Jesli toole niedostepne (starszy serwer MCP) - pomin instrumentacje.

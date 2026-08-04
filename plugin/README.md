@@ -114,25 +114,64 @@ Plugin to **preferowana ścieżka** dla użytkowników Claude Code CLI. Nie zast
 
 Narzędzie MCP `install_monolynx_skills` oraz kopie skilli w repozytorium **pozostają i nie są usuwane**:
 
-- `src/monolynx/static/skills/`: źródło skilli pobieranych przez `install_monolynx_skills`,
-- `src/monolynx/static/starter-pack/`: gotowy pakiet startowy do ręcznej instalacji.
+- `src/monolynx/static/skills/`: źródło skilli pobieranych przez `install_monolynx_skills`, synchronizowane z `plugin/skills/` przez `make sync-skills`.
 
 Są one **alternatywą dla użytkowników niekorzystających z mechanizmu pluginów**, między innymi:
 
 - dostęp przez claude.ai (web), bez CLI i bez możliwości dodania marketplace,
 - środowiska, w których nie da się dodać marketplace ani zainstalować pluginu,
-- ręczna instalacja skilli do `.claude/skills/` projektu (narzędzie zwraca treść skilla z podmienionymi placeholderami `<PROJECT-SLUG>` i `<PROJECT-ID>`, gotową do zapisu na dysk).
+- ręczna instalacja skilli do katalogu skilli projektu (narzędzie zwraca treść skilla z podmienionymi placeholderami `<PROJECT-SLUG>` i `<PROJECT-ID>`, gotową do zapisu na dysk),
+- **runtime'y inne niż Claude Code** - patrz niżej.
 
 Innymi słowy:
 
 - **Plugin**: preferowana, jednorazowa instalacja dla Claude Code CLI (skille + agenci + zdalny MCP w jednym).
-- **`install_monolynx_skills`**: ścieżka manualna / fallback dla środowisk bez pluginów.
+- **`install_monolynx_skills`**: ścieżka manualna / fallback dla środowisk bez pluginów oraz dla Codex i Cursora.
+
+### Codex i Cursor
+
+Marketplace pluginów jest mechanizmem Claude Code. Codex i Cursor nie mają jego odpowiednika, ale **czytają ten sam format `SKILL.md`** (katalog + frontmatter `name` / `description` + opcjonalne pliki towarzyszące). Różni się wyłącznie katalog docelowy, dlatego `install_monolynx_skills` przyjmuje parametr `target`:
+
+| `target` | Katalog | Runtime |
+|---|---|---|
+| `claude` (domyślnie) | `.claude/skills/` | Claude Code |
+| `codex` | `.codex/skills/` | Codex CLI |
+| `cursor` | `.cursor/skills/` | Cursor |
+
+```
+install_monolynx_skills(project_slug="moj-projekt", target="codex")
+install_monolynx_skills(project_slug="moj-projekt", skill_names=["monolynx-work"], target="codex")
+```
+
+Narzędzie zwraca `skills: [{name, files: [{relative_path, content}]}]`. **Zapisz wszystkie pliki z listy `files`** - skill może mieć pliki towarzyszące obok `SKILL.md` (np. `monolynx-work` ma `pipeline.md` i `review-rubric.md`); pominięcie ich okroi skill o część instrukcji.
+
+Serwer MCP podłącza się poza skillami:
+
+- **Codex**: wpis w `~/.codex/config.toml` (grupa `mcp_servers`), HTTP + nagłówek `Authorization: Bearer osk_...`.
+- **Cursor**: `.cursor/mcp.json` w projekcie lub `~/.cursor/mcp.json` globalnie, klucz `mcpServers` - ten sam kształt co `.mcp.json` pluginu.
+
+Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cursorze skille `/monolynx:work` i `/monolynx:work-simple` dobierają role z `AGENTS.md` w korzeniu repo.
 
 ### Serwer MCP bez zmian funkcjonalnych
 
 `src/monolynx/mcp_server.py` **pozostaje bez zmian funkcjonalnych**. Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. W pliku `.mcp.json` pluginu deklaruje wyłącznie dostęp (HTTP + Bearer) do **istniejącego** serwera MCP pod adresem `${user_config.mcp_endpoint}`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.4.0
+
+- **Lint i testy jako gate**: `/monolynx:work` (KROK 6.5) i `/monolynx:work-simple` (FAZA 3.5) uruchamiają lint i testy przed zmianą statusu na `in_review`. Komendy pochodzą ze strony wiki `toolchain` projektu.
+- **Nowy skill `/monolynx:project-toolchain`**: jednorazowo wykrywa komendy lint/test projektu i zapisuje je jako stronę wiki `toolchain`. Wspiera Makefile, Python, Node, Rust, Go, PHP, Ruby, Javę.
+- **Flagi środowiskowe**: `MONOLYNX_AUTOTEST`, `MONOLYNX_AUTOCOMMIT`, `MONOLYNX_AUTOPUSH` (domyślnie `false` - skill wypisuje komendy zamiast je wykonywać) oraz `MONOLYNX_BRANCH_MODE` (`ticket` / `sprint` / `off`) dla pracy na jednym branchu przez cały sprint.
+- **Krytyk ocenia według rubryki** (`review-rubric.md`): twarde odjęcia punktowe z lokalizacją `plik:linia` zamiast oceny "na wyczucie". Próg zaliczenia ujednolicony do 82.
+- **Naprawiona synchronizacja krytyka z developerami**: w Agent Teams developerzy wołają krytyka przez `SendMessage`, bez Agent Teams krytyk uruchamiany jest sekwencyjnie po nich. Wcześniej krytyk mógł oceniać niekompletny `git diff`.
+- **Czas pracy raportuje każdy agent osobno** - Team Manager loguje zgłoszone wartości zamiast kopiować jeden wspólny pomiar. Czas Researchera jest teraz logowany.
+- **Rozłączny przydział plików** w KROK 5: agenci o wspólnych plikach pracują sekwencyjnie, nie równolegle.
+- **Skille wieloplikowe**: `install_monolynx_skills` zwraca wszystkie pliki skilla (`files[]`), nie tylko `SKILL.md`.
+- **Codex i Cursor**: parametr `target` w `install_monolynx_skills` (`claude` / `codex` / `cursor`).
+- **`/monolynx:work-simple`** obsługuje tickety do 3 SP (wcześniej deklarował < 8 SP).
+- **`/monolynx:help` przepisany**: wymienia wszystkie 14 skilli (wcześniej brakowało `work-simple` i całej rodziny `wiki-*`), dodaje sekcję setupu jednorazowego, tabelę wyboru `work` vs `work-simple`, tabelę zmiennych konfiguracyjnych i instrukcje dla Codeksa oraz Cursora.
+- **Usunięty `src/monolynx/static/starter-pack/`**: martwa trzecia kopia skilli (7 z 14, `monolynx-work` starszy o 84 linie), nieserwowana przez żaden endpoint ani tool. Ręczna instalacja idzie przez `install_monolynx_skills`.
 
 ### 1.2.2
 
