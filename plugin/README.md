@@ -48,8 +48,8 @@ Plugin pyta o trzy parametry przy instalacji. Możesz je później zmienić prze
 
 | Parametr | Wymagany | Wartość domyślna | Opis |
 |----------|----------|------------------|------|
-| `mcp_token` | tak | brak | Token API Monolynx (`osk_...`). Oznaczony jako `sensitive`, trafia do keychain systemu, nie jest zapisywany jako zwykły tekst. Trafia do nagłówka `Authorization: Bearer <token>` zdalnego serwera MCP. |
-| `mcp_endpoint` | nie | `https://monolynx.com/mcp` | URL zdalnego serwera MCP. Zmień tylko jeśli korzystasz z własnej instancji Monolynx. |
+| `mcp_token` | nie | brak | Token API Monolynx (`osk_...`). Oznaczony jako `sensitive`, trafia do keychain systemu. Potrzebny tylko przy ręcznej konfiguracji MCP - connector pluginu uwierzytelnia się przez OAuth. |
+| `mcp_endpoint` | nie | `https://monolynx.com/mcp` | Adres Twojej instancji, używany przez skille (m.in. synchronizację grafu). **Nie zmienia adresu connectora** - ten jest zapisany na stałe w manifeście. |
 | `project_slug` | nie | brak | Domyślny slug projektu. Używany jako fallback, gdy w projekcie nie ma `MONOLYNX_PROJECT_SLUG`. |
 
 ### Token API (`mcp_token`)
@@ -60,9 +60,28 @@ Plugin pyta o trzy parametry przy instalacji. Możesz je później zmienić prze
 
 Token możesz w każdej chwili unieważnić w tym samym panelu (`/revoke`). Po unieważnieniu wygeneruj nowy i zaktualizuj konfigurację pluginu.
 
-### Punkt końcowy MCP (`mcp_endpoint`)
+### Connector MCP
 
-Domyślnie plugin łączy się z `https://monolynx.com/mcp`. Połączenie jest typu HTTP, z autoryzacją Bearer (`${user_config.mcp_token}`). Adres podmień tylko dla self-hosted instancji.
+Plugin deklaruje serwer MCP w dwóch miejscach o identycznej treści: `mcpServers` w `.claude-plugin/plugin.json` (manifest) oraz `.mcp.json` w katalogu pluginu. Dublowanie jest celowe - różne środowiska Claude'a czytają różne źródła, a rozjazd między nimi kończy się brakiem connectora.
+
+```json
+{
+  "mcpServers": {
+    "monolynx": {
+      "type": "http",
+      "url": "https://monolynx.com/mcp"
+    }
+  }
+}
+```
+
+Adres jest **literalny, bez placeholderów**. Składnia `${user_config.*}` działa wyłącznie w Claude Code; w pozostałych klientach trafia do konfiguracji dosłownie, daje nieprawidłowy URL i connector w ogóle nie powstaje.
+
+Uwierzytelnianie idzie przez **OAuth 2.1 z Dynamic Client Registration** (RFC 7591) - klient rejestruje się sam i przeprowadza użytkownika przez logowanie. Statyczny token w nagłówku nie jest potrzebny.
+
+**Self-hosted**: connector pluginu wskazuje na `https://monolynx.com/mcp`. Dla własnej instancji dodaj connector ręcznie w ustawieniach klienta, podając adres swojego serwera MCP.
+
+Klucz `monolynx` w `mcpServers` jest częścią nazw narzędzi (`mcp__monolynx__get_ticket`), do których odwołują się wszystkie skille. **Nie zmieniaj go** - zmiana zerwie każdy skill w pakiecie.
 
 ### Ustalanie slug projektu (`project_slug`)
 
@@ -154,9 +173,16 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 
 ### Serwer MCP bez zmian funkcjonalnych
 
-`src/monolynx/mcp_server.py` **pozostaje bez zmian funkcjonalnych**. Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. W pliku `.mcp.json` pluginu deklaruje wyłącznie dostęp (HTTP + Bearer) do **istniejącego** serwera MCP pod adresem `${user_config.mcp_endpoint}`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
+Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.5.0
+
+- **Connector MCP widoczny po instalacji**: deklaracja serwera przeniesiona także do `mcpServers` w `plugin.json` (obok `.mcp.json`), z **literalnym** adresem `https://monolynx.com/mcp`. Wcześniejsze `${user_config.mcp_endpoint}` rozwijało się wyłącznie w Claude Code - w pozostałych klientach trafiało do konfiguracji dosłownie, dawało nieprawidłowy URL i connector nie powstawał.
+- **Uwierzytelnianie przez OAuth 2.1** zamiast nagłówka Bearer ze statycznym tokenem. Serwer wspiera Dynamic Client Registration, więc klient rejestruje się sam.
+- `mcp_token` przestaje być polem wymaganym - potrzebny tylko przy ręcznej konfiguracji MCP.
+- `mcp_endpoint` zostaje dla skilli (m.in. synchronizacja grafu), ale nie steruje już adresem connectora.
 
 ### 1.4.0
 

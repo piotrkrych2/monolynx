@@ -111,7 +111,8 @@ Two separate packages in one repo:
 
 **Claude Code plugin** (`plugin/`):
 - Bundles skills (`/monolynx:*` commands), 7 role agents, and remote MCP access into one installable plugin; marketplace manifest at `.claude-plugin/marketplace.json` (root), plugin manifest at `plugin/.claude-plugin/plugin.json`
-- `userConfig`: `mcp_token` (sensitive, keychain), `mcp_endpoint` (default `https://monolynx.com/mcp`), `project_slug` (optional fallback)
+- Connector MCP declared in BOTH `.claude-plugin/plugin.json` (`mcpServers`) and `.mcp.json`, with identical literal content (`https://monolynx.com/mcp`, no `${user_config.*}` placeholders — those only expand in Claude Code, elsewhere they break the connector). Auth via OAuth 2.1 + Dynamic Client Registration. The `monolynx` key is part of every tool name (`mcp__monolynx__*`) referenced by all skills — never rename it
+- `userConfig`: `mcp_token` (sensitive, optional — only for manual MCP setup), `mcp_endpoint` (used by skills, NOT by the connector), `project_slug` (optional fallback)
 - Skill project slug resolution order: `MONOLYNX_PROJECT_SLUG` from project `.env` → `user_config.project_slug` → `"monolynx"`; works cross-project
 - Preferred path for Claude Code CLI users; `install_monolynx_skills` remains the manual/fallback path. Plugin only declares access to the existing MCP server; `mcp_server.py` is unchanged. See `plugin/README.md`
 - LLM Wiki skills added in plugin 1.1.1: `wiki-init` (runs `bootstrap_wiki_llm`), `wiki-ingest` (the INGEST workflow), `wiki-lint` (the audit workflow); the existing `search` skill is extended with QUERY (writes the answer back into the wiki)
