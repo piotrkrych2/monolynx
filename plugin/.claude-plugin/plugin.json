@@ -1,21 +1,26 @@
 {
   "name": "monolynx",
-  "version": "1.4.0",
-  "description": "Monolynx: platforma multi-modułowa (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy). Skille, agenci i zdalny serwer MCP dla Claude Code.",
+  "version": "1.5.0",
+  "description": "Monolynx: platforma multi-modułowa (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy). Skille, agenci i zdalny serwer MCP.",
   "homepage": "https://monolynx.com",
   "author": { "name": "Monolynx" },
+  "mcpServers": {
+    "monolynx": {
+      "type": "http",
+      "url": "https://monolynx.com/mcp"
+    }
+  },
   "userConfig": {
     "mcp_token": {
       "type": "string",
-      "title": "Token API Monolynx",
-      "description": "Token API Monolynx (osk_...). Wygeneruj w panelu: /dashboard/profile/tokens.",
-      "sensitive": true,
-      "required": true
+      "title": "Token API Monolynx (opcjonalny)",
+      "description": "Token API (osk_...) z panelu /dashboard/profile/tokens. Potrzebny tylko przy ręcznej konfiguracji MCP - connector pluginu loguje się przez OAuth.",
+      "sensitive": true
     },
     "mcp_endpoint": {
       "type": "string",
-      "title": "URL serwera MCP",
-      "description": "URL zdalnego serwera MCP Monolynx.",
+      "title": "URL instancji Monolynx",
+      "description": "Adres Twojej instancji, używany przez skille (np. synchronizację grafu). Connector pluginu łączy się z https://monolynx.com/mcp - dla własnej instancji dodaj connector ręcznie.",
       "default": "https://monolynx.com/mcp"
     },
     "project_slug": {
