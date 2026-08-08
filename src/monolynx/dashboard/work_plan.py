@@ -16,7 +16,11 @@ from monolynx.database import get_db
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.ticket import Ticket
-from monolynx.schemas.work_plan import WorkPlanEntryCreate, WorkPlanEntryResponse, WorkPlanEntryUpdate
+from monolynx.schemas.work_plan import (
+    WorkPlanEntryCreate,
+    WorkPlanEntryResponse,
+    WorkPlanEntryUpdate,
+)
 from monolynx.services import work_plan as work_plan_service
 from monolynx.services.work_plan import _UNSET
 

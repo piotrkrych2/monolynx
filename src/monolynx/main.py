@@ -80,7 +80,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# MCP Server mount
+# MCP Server mount - import celowo po utworzeniu app (cykl importow, patrz CLAUDE.md)
 from monolynx.mcp_server import build_mcp_http_app  # noqa: E402
 from monolynx.mcp_server import mcp as mcp_server  # noqa: E402
 

@@ -627,6 +627,7 @@ class TestParseMetadata:
 # init_driver
 # ---------------------------------------------------------------------------
 
+# celowy late-import przy sekcji init_driver - wczesniejsze testy nie moga dotykac singletona drivera
 import monolynx.services.graph as graph_module  # noqa: E402
 
 

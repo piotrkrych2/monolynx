@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="spectrum" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#E9571B"/>
+      <stop offset="25%" stop-color="#F59E0B"/>
+      <stop offset="50%" stop-color="#34D399"/>
+      <stop offset="75%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#818CF8"/>
+    </linearGradient>
+    <marker id="arrowLoop" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5B6478"/>
+    </marker>
+    <style>
+      .num      { font-size:20px; font-weight:700; letter-spacing:4px; fill:#0B1020; fill-opacity:.55; }
+      .title    { font-size:41px; font-weight:800; letter-spacing:.5px; fill:#0B1020; }
+      .tag      { font-size:17.5px; font-weight:500; fill:#0B1020; fill-opacity:.72; }
+      .bullet   { font-size:17px; font-weight:500; fill:#0B1020; fill-opacity:.88; }
+      .divider  { stroke:#0B1020; stroke-opacity:.28; stroke-width:1.5; }
+      .dot      { fill:#0B1020; fill-opacity:.55; }
+      .skill    { font-size:16px; font-weight:600; letter-spacing:.3px;
+                  font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace; }
+      .skill2   { font-size:15px; font-weight:500; fill:#6B7488;
+                  font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace; }
+      .looptext { font-size:17px; font-weight:500; fill:#8891A4; }
+      .looppath { fill:none; stroke:#3A4152; stroke-width:2; stroke-dasharray:7 6; }
+      .kicker   { font-size:15px; font-weight:700; letter-spacing:4.5px; fill:#6B7488;
+                  font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace; }
+      .baseline { font-size:29px; font-weight:700; fill:#EEF1F7; }
+      .basenote { font-size:18px; font-weight:500; fill:#8891A4; }
+      .foot     { font-size:15px; font-weight:500; fill:#5B6478;
+                  font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace; }
+
+      /* ---- stan wygaszony: krok jeszcze nieodkryty ---- */
+      .dim .chev    { fill:#0C1017; stroke:#242B3A; stroke-width:2; }
+      .dim .num     { fill:#4A5264; fill-opacity:1; }
+      .dim .title,
+      .dim .tag,
+      .dim .bullet,
+      .dim .divider,
+      .dim .dot,
+      .dim .skill,
+      .dim .skill2,
+      .dim .looppath,
+      .dim .looptext { opacity:0; }
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="#030712"/>
+
+  <!-- ============ NAGLOWEK ============ -->
+  <text x="84" y="112" font-size="48" font-weight="800" letter-spacing="1.5" fill="#E9571B">MONOLYNX<tspan dx="26" fill="#3A4152" font-weight="300">/</tspan><tspan dx="26" fill="#EEF1F7" font-weight="300">cykl wytwarzania oprogramowania</tspan></text>
+  <text x="84" y="158" font-size="21" font-weight="500" fill="#8891A4">Od pomysłu do wiedzy - pięć kroków, jedna pętla</text>
+
+  <!-- ============ KROK 1 - SETUP ============ -->
+  <g id="step-1">
+    <path class="chev" d="M84,230 H396 L428,385 L396,540 H84 Z" fill="#E9571B"/>
+    <text x="256" y="282" class="num" text-anchor="middle">01</text>
+    <text x="256" y="332" class="title" text-anchor="middle">SETUP</text>
+    <text x="256" y="362" class="tag" text-anchor="middle">raz per projekt</text>
+    <line class="divider" x1="136" y1="382" x2="376" y2="382"/>
+    <circle class="dot" cx="122" cy="413" r="3"/>
+    <text x="136" y="418" class="bullet">toolchain: lint + testy</text>
+    <circle class="dot" cx="122" cy="445" r="3"/>
+    <text x="136" y="450" class="bullet">wiki-init: LLM Wiki</text>
+    <circle class="dot" cx="122" cy="477" r="3"/>
+    <text x="136" y="482" class="bullet">graf kodu (graphify)</text>
+    <text x="256" y="576" class="skill" fill="#E9571B" text-anchor="middle">/project-toolchain · /wiki-init</text>
+    <text x="256" y="600" class="skill2" text-anchor="middle">/graph-sync · /create-graph-ci-script</text>
+  </g>
+
+  <!-- ============ KROK 2 - TICKET ============ -->
+  <g id="step-2" class="dim">
+    <path class="chev" d="M436,230 H748 L780,385 L748,540 H436 L468,385 Z" fill="#F59E0B"/>
+    <text x="608" y="282" class="num" text-anchor="middle">02</text>
+    <text x="608" y="332" class="title" text-anchor="middle">TICKET</text>
+    <text x="608" y="362" class="tag" text-anchor="middle">opis z kontekstu</text>
+    <line class="divider" x1="488" y1="382" x2="728" y2="382"/>
+    <circle class="dot" cx="474" cy="413" r="3"/>
+    <text x="488" y="418" class="bullet">czyta wiki, graf, kod</text>
+    <circle class="dot" cx="474" cy="445" r="3"/>
+    <text x="488" y="450" class="bullet">cel, zakres, kryteria</text>
+    <circle class="dot" cx="474" cy="477" r="3"/>
+    <text x="488" y="482" class="bullet">trafia do sprintu</text>
+    <text x="608" y="576" class="skill" fill="#F59E0B" text-anchor="middle">/ticket-create</text>
+  </g>
+
+  <!-- ============ KROK 3 - REVIEW ============ -->
+  <g id="step-3" class="dim">
+    <path class="chev" d="M788,230 H1100 L1132,385 L1100,540 H788 L820,385 Z" fill="#34D399"/>
+    <text x="960" y="282" class="num" text-anchor="middle">03</text>
+    <text x="960" y="332" class="title" text-anchor="middle">REVIEW</text>
+    <text x="960" y="362" class="tag" text-anchor="middle">zanim ruszy praca</text>
+    <line class="divider" x1="840" y1="382" x2="1080" y2="382"/>
+    <circle class="dot" cx="826" cy="413" r="3"/>
+    <text x="840" y="418" class="bullet">forma: OK / do poprawy</text>
+    <circle class="dot" cx="826" cy="445" r="3"/>
+    <text x="840" y="450" class="bullet">zgodność z wiki i kodem</text>
+    <circle class="dot" cx="826" cy="477" r="3"/>
+    <text x="840" y="482" class="bullet">pętla aż zielono</text>
+    <text x="960" y="576" class="skill" fill="#34D399" text-anchor="middle">/ticket-review</text>
+  </g>
+
+  <!-- ============ KROK 4 - PRACA ============ -->
+  <g id="step-4" class="dim">
+    <path class="chev" d="M1140,230 H1452 L1484,385 L1452,540 H1140 L1172,385 Z" fill="#38BDF8"/>
+    <text x="1312" y="282" class="num" text-anchor="middle">04</text>
+    <text x="1312" y="332" class="title" text-anchor="middle">PRACA</text>
+    <text x="1312" y="362" class="tag" text-anchor="middle">zespół agentów</text>
+    <line class="divider" x1="1192" y1="382" x2="1432" y2="382"/>
+    <circle class="dot" cx="1178" cy="413" r="3"/>
+    <text x="1192" y="418" class="bullet">research → kodowanie</text>
+    <circle class="dot" cx="1178" cy="445" r="3"/>
+    <text x="1192" y="450" class="bullet">krytyk, próg 82</text>
+    <circle class="dot" cx="1178" cy="477" r="3"/>
+    <text x="1192" y="482" class="bullet">gate: lint + testy</text>
+    <text x="1312" y="576" class="skill" fill="#38BDF8" text-anchor="middle">/work · /work-simple</text>
+    <text x="1312" y="600" class="skill2" text-anchor="middle">podgląd: moduł Pipelines</text>
+  </g>
+
+  <!-- ============ KROK 5 - DOMKNIECIE ============ -->
+  <g id="step-5" class="dim">
+    <path class="chev" d="M1492,230 H1804 L1836,385 L1804,540 H1492 L1524,385 Z" fill="#818CF8"/>
+    <text x="1664" y="282" class="num" text-anchor="middle">05</text>
+    <text x="1664" y="332" class="title" text-anchor="middle">DOMKNIĘCIE</text>
+    <text x="1664" y="362" class="tag" text-anchor="middle">wiedza wraca</text>
+    <line class="divider" x1="1544" y1="382" x2="1784" y2="382"/>
+    <circle class="dot" cx="1530" cy="413" r="3"/>
+    <text x="1544" y="418" class="bullet">merge → INGEST do wiki</text>
+    <circle class="dot" cx="1530" cy="445" r="3"/>
+    <text x="1544" y="450" class="bullet">audyt wiki (LINT)</text>
+    <circle class="dot" cx="1530" cy="477" r="3"/>
+    <text x="1544" y="482" class="bullet">zamknięcie sprintu</text>
+    <text x="1664" y="576" class="skill" fill="#818CF8" text-anchor="middle">/wiki-sync-merge</text>
+    <text x="1664" y="600" class="skill2" text-anchor="middle">/sprint-end</text>
+  </g>
+
+  <!-- ============ PETLA ZWROTNA ============ -->
+  <g id="loop" class="dim">
+    <path class="looppath" d="M1664,628 C1664,700 1500,712 1330,712"/>
+    <path class="looppath" d="M950,712 C780,712 608,700 608,634" marker-end="url(#arrowLoop)"/>
+    <text x="1140" y="718" class="looptext" text-anchor="middle">każdy cykl zasila następny</text>
+  </g>
+
+  <!-- ============ WARSTWA WIEDZY ============ -->
+  <g id="baseline">
+    <rect x="84" y="748" width="1752" height="172" rx="18" fill="#0C1017" stroke="url(#spectrum)" stroke-width="2.5"/>
+    <text x="120" y="788" class="kicker">WARSTWA WIEDZY</text>
+    <text x="120" y="830" class="baseline">WIKI (RAG + LLM Wiki)  ·  GRAF KODU  ·  KOD ŹRÓDŁOWY</text>
+    <text x="120" y="874" class="skill2">w dowolnym momencie <tspan class="skill" fill="#C6CDDB">/search · /wiki-ingest · /wiki-lint</tspan></text>
+    <text x="1800" y="822" class="basenote" text-anchor="end">Każdy krok z niej czyta</text>
+    <text x="1800" y="850" class="basenote" text-anchor="end">i do niej dopisuje</text>
+  </g>
+
+  <!-- ============ STOPKA ============ -->
+  <text x="84" y="978" class="foot">Wszystkie skille z prefiksem /monolynx:  ·  nie wiesz co dalej: /monolynx:help</text>
+  <text x="1836" y="978" class="foot" fill="#E9571B" text-anchor="end">monolynx.com</text>
+</svg>

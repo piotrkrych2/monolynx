@@ -77,8 +77,7 @@ def _duration_str(started: datetime | None, finished: datetime | None) -> str | 
     if end.tzinfo is None:
         end = end.replace(tzinfo=UTC)
     total = int((end - started).total_seconds())
-    if total < 0:
-        total = 0
+    total = max(total, 0)
     hours, rem = divmod(total, 3600)
     minutes, seconds = divmod(rem, 60)
     if hours:

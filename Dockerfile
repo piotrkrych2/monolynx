@@ -37,6 +37,8 @@ COPY pyproject.toml .
 COPY src/ src/
 COPY tests/ tests/
 COPY sdk/ sdk/
+COPY plugin/ plugin/
+COPY scripts/ scripts/
 RUN pip install --no-cache-dir -e ".[dev]"
 
 # ============================================================

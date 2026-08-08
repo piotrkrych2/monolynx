@@ -17,8 +17,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from monolynx.schemas.wiki import WikiBacklinkResponse
-from monolynx.services.wiki import RESERVED_SLUGS, extract_wiki_links, is_wiki_llm_enabled, strip_code_spans
-from monolynx.services.wiki_lint import _find_contradictions, _find_dead_links, _find_gaps
+from monolynx.services.wiki import (
+    RESERVED_SLUGS,
+    extract_wiki_links,
+    is_wiki_llm_enabled,
+    strip_code_spans,
+)
+from monolynx.services.wiki_lint import (
+    _find_contradictions,
+    _find_dead_links,
+    _find_gaps,
+)
 from monolynx.services.wiki_templates import DEFAULT_WIKI_SCHEMA
 
 # ---------------------------------------------------------------------------
@@ -140,17 +149,17 @@ class TestIsWikiLlmEnabled:
     def test_returns_true_when_enabled(self):
         """Zwraca True gdy wiki_llm_enabled = True."""
         project = SimpleNamespace(wiki_llm_enabled=True)
-        assert is_wiki_llm_enabled(project) is True  #
+        assert is_wiki_llm_enabled(project) is True
 
     def test_returns_false_when_disabled(self):
         """Zwraca False gdy wiki_llm_enabled = False."""
         project = SimpleNamespace(wiki_llm_enabled=False)
-        assert is_wiki_llm_enabled(project) is False  #
+        assert is_wiki_llm_enabled(project) is False
 
     def test_returns_false_when_none(self):
         """Zwraca False gdy wiki_llm_enabled = None."""
         project = SimpleNamespace(wiki_llm_enabled=None)
-        assert is_wiki_llm_enabled(project) is False  #
+        assert is_wiki_llm_enabled(project) is False
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="wrapArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3A4152"/>
+    </marker>
+    <style>
+      .kick   { font-size:13px; font-weight:700; letter-spacing:4px;
+                font-family:'SF Mono',Menlo,Consolas,monospace; }
+      .ctitle { font-size:23px; font-weight:800; fill:#EEF1F7; }
+      .bul    { font-size:15px; font-weight:500; fill:#A8B0C0; }
+      .mono   { font-family:'SF Mono',Menlo,Consolas,monospace; }
+      .boxk   { font-size:13px; font-weight:700; letter-spacing:3.5px;
+                font-family:'SF Mono',Menlo,Consolas,monospace; }
+      .boxb   { font-size:15.5px; font-weight:500; fill:#C6CDDB; }
+      .foot   { font-size:14px; font-weight:500; fill:#5B6478;
+                font-family:'SF Mono',Menlo,Consolas,monospace; }
+      .chev   { fill:none; stroke:#39414F; stroke-width:2.5;
+                stroke-linecap:round; stroke-linejoin:round; }
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="#030712"/>
+
+  <!-- ══════════ NAGLOWEK ══════════ -->
+  <text x="84" y="60" class="kick" fill="#5B6478">ANATOMIA SKILLA</text>
+  <text x="84" y="112" font-size="40" font-weight="800" fill="#E9571B"
+        font-family="'SF Mono',Menlo,Consolas,monospace">/monolynx:work</text>
+  <text x="84" y="152" font-size="20" font-weight="500" fill="#8891A4">Team Manager prowadzi zespół agentów: od ticketu ze sprintu do statusu <tspan font-weight="700" fill="#EEF1F7">in_review</tspan></text>
+  <text x="1836" y="112" class="foot" text-anchor="end" fill="#8891A4">8 etapów  ·  1 obowiązkowy krytyk  ·  2 twarde gate'y</text>
+
+  <!-- ══════════ RZAD 1 ══════════ -->
+
+  <!-- KARTA 1 -->
+  <g>
+    <rect x="84" y="190" width="417" height="280" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <rect x="84" y="190" width="417" height="4" rx="2" fill="#E9571B"/>
+    <text x="108" y="228" class="kick" fill="#E9571B">KROK 1  ·  START</text>
+    <text x="108" y="262" class="ctitle">Wczytanie kontekstu</text>
+    <text x="108" y="302" class="bul">•   Slug z MONOLYNX_PROJECT_SLUG</text>
+    <text x="108" y="336" class="bul">•   Brak sluga to twardy stop, bez zgadywania</text>
+    <text x="108" y="370" class="bul">•   ToolSearch x3: ticket, wiki i graf, pipeline</text>
+    <text x="108" y="404" class="bul">•   Ticket z ID albo wybór z tablicy Kanban</text>
+    <text x="108" y="438" class="bul">•   Brak toolów pipeline: pracuje bez nich</text>
+  </g>
+  <path class="chev" d="M509,322 L519,330 L509,338"/>
+
+  <!-- KARTA 2 -->
+  <g>
+    <rect x="529" y="190" width="417" height="280" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <rect x="529" y="190" width="417" height="4" rx="2" fill="#E9571B"/>
+    <text x="553" y="228" class="kick" fill="#E9571B">KROK 2  ·  BRANCH</text>
+    <text x="553" y="262" class="ctitle">Walidacja brancha</text>
+    <text x="553" y="302" class="bul">•   main lub master: zawsze pytanie</text>
+    <text x="553" y="336" class="bul">•   tryb ticket: numer ticketu w nazwie brancha</text>
+    <text x="553" y="370" class="bul">•   tryb sprint: dowolny branch poza main</text>
+    <text x="553" y="404" class="bul">•   tryb off: walidacja pominięta</text>
+    <text x="553" y="438" class="bul">•   Może utworzyć feature-[nr]-[slug] za Ciebie</text>
+  </g>
+  <path class="chev" d="M954,322 L964,330 L954,338"/>
+
+  <!-- KARTA 3 -->
+  <g>
+    <rect x="974" y="190" width="417" height="280" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <rect x="974" y="190" width="417" height="4" rx="2" fill="#F59E0B"/>
+    <text x="998" y="228" class="kick" fill="#F59E0B">KROK 3  ·  RESEARCHER</text>
+    <text x="998" y="262" class="ctitle">Agent Explore</text>
+    <text x="998" y="302" class="bul">•   Obowiązkowy, przed startem zespołu</text>
+    <text x="998" y="336" class="bul">•   Ładuje spec-page, constitution i toolchain</text>
+    <text x="998" y="370" class="bul">•   Przeszukuje kod, wiki (RAG) i graf zależności</text>
+    <text x="998" y="404" class="bul">•   Raport: pliki, ryzyka, agenci, podział plików</text>
+    <text x="998" y="438" class="bul">•   Własny wpis w log_time</text>
+  </g>
+  <path class="chev" d="M1399,322 L1409,330 L1399,338"/>
+
+  <!-- KARTA 4 -->
+  <g>
+    <rect x="1419" y="190" width="417" height="280" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <rect x="1419" y="190" width="417" height="4" rx="2" fill="#F59E0B"/>
+    <text x="1443" y="228" class="kick" fill="#F59E0B">KROK 4-5  ·  PLAN</text>
+    <text x="1443" y="262" class="ctitle">Dobór zespołu</text>
+    <text x="1443" y="302" class="bul">•   Status ticketu na in_progress</text>
+    <text x="1443" y="336" class="bul">•   Agenci z .claude/agents, minimalny zestaw</text>
+    <text x="1443" y="370" class="bul">•   Krytyk zawsze w zespole</text>
+    <text x="1443" y="404" class="bul">•   Każdy agent dostaje konkretne pliki</text>
+    <text x="1443" y="438" class="bul">•   Wspólny plik: agenci idą sekwencyjnie</text>
+  </g>
+
+  <!-- zawiniecie wiersza -->
+  <path d="M1627,478 V494 H292 V502" fill="none" stroke="#2A3140" stroke-width="1.8"
+        stroke-dasharray="6 6" marker-end="url(#wrapArrow)"/>
+
+  <!-- ══════════ RZAD 2 ══════════ -->
+
+  <!-- KARTA 5 -->
+  <g>
+    <rect x="84" y="510" width="417" height="280" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <rect x="84" y="510" width="417" height="4" rx="2" fill="#38BDF8"/>
+    <text x="108" y="548" class="kick" fill="#38BDF8">KROK 6  ·  PRACA</text>
+    <text x="108" y="582" class="ctitle">Praca równoległa</text>
+    <text x="108" y="622" class="bul">•   Rozłączne pliki: agenci startują razem</text>
+    <text x="108" y="656" class="bul">•   TDD: testy najpierw, sekwencyjnie</text>
+    <text x="108" y="690" class="bul">•   Agent Teams: sygnał przez SendMessage</text>
+    <text x="108" y="724" class="bul">•   Bez Agent Teams: krytyk po developerach</text>
+    <text x="108" y="758" class="bul">•   Każdy agent mierzy własny czas</text>
+  </g>
+  <path class="chev" d="M509,642 L519,650 L509,658"/>
+
+  <!-- KARTA 6 -->
+  <g>
+    <rect x="529" y="510" width="417" height="280" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <rect x="529" y="510" width="417" height="4" rx="2" fill="#38BDF8"/>
+    <text x="553" y="548" class="kick" fill="#38BDF8">KROK 6  ·  KRYTYK</text>
+    <text x="553" y="582" class="ctitle">Ocena według rubryki</text>
+    <text x="553" y="622" class="bul">•   Próg zaliczenia: 82 punkty</text>
+    <text x="553" y="656" class="bul">•   -40 lint lub test nie przechodzi</text>
+    <text x="553" y="690" class="bul">•   -30 zapis do bazy bez db.commit()</text>
+    <text x="553" y="724" class="bul">•   -25 za regułę złamaną z .claude/rules</text>
+    <text x="553" y="758" class="bul">•   Poniżej 82: poprawka, maks. 3 iteracje</text>
+  </g>
+  <path class="chev" d="M954,642 L964,650 L954,658"/>
+
+  <!-- KARTA 7 -->
+  <g>
+    <rect x="974" y="510" width="417" height="280" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <rect x="974" y="510" width="417" height="4" rx="2" fill="#34D399"/>
+    <text x="998" y="548" class="kick" fill="#34D399">KROK 6.5  ·  GATE</text>
+    <text x="998" y="582" class="ctitle">Lint i testy</text>
+    <text x="998" y="622" class="bul">•   Komendy ze strony wiki toolchain</text>
+    <text x="998" y="656" class="bul">•   AUTOTEST=false: wypisuje i czeka na wynik</text>
+    <text x="998" y="690" class="bul">•   Czerwone: agent poprawia, do 3 iteracji</text>
+    <text x="998" y="724" class="bul">•   Brak toolchain: pyta o świadomą zgodę</text>
+    <text x="998" y="758" class="bul">•   Bez zielonego nie ma in_review</text>
+  </g>
+  <path class="chev" d="M1399,642 L1409,650 L1399,658"/>
+
+  <!-- KARTA 8 -->
+  <g>
+    <rect x="1419" y="510" width="417" height="280" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <rect x="1419" y="510" width="417" height="4" rx="2" fill="#818CF8"/>
+    <text x="1443" y="548" class="kick" fill="#818CF8">KROK 7  ·  WRAP-UP</text>
+    <text x="1443" y="582" class="ctitle">Domknięcie</text>
+    <text x="1443" y="622" class="bul">•   Komentarze: plan, agenci, podsumowanie</text>
+    <text x="1443" y="656" class="bul">•   log_time osobno dla każdego agenta</text>
+    <text x="1443" y="690" class="bul">•   Kryteria akceptacji odhaczone i sprawdzone</text>
+    <text x="1443" y="724" class="bul">•   Commit i push tylko według flag</text>
+    <text x="1443" y="758" class="bul">•   Status ticketu na in_review</text>
+  </g>
+
+  <!-- ══════════ PASEK DOLNY ══════════ -->
+
+  <!-- GATE'Y -->
+  <g>
+    <rect x="84" y="830" width="565" height="185" rx="14" fill="#0C1017" stroke="#3A2018" stroke-width="1.5"/>
+    <text x="110" y="866" class="boxk" fill="#E9571B">GDZIE SKILL SIĘ ZATRZYMUJE</text>
+    <text x="110" y="902" class="boxb">Brak MONOLYNX_PROJECT_SLUG  ·  nie zgaduje</text>
+    <text x="110" y="932" class="boxb">Branch main lub master  ·  zawsze pyta</text>
+    <text x="110" y="962" class="boxb">Ocena krytyka poniżej 82  ·  wraca do agenta</text>
+    <text x="110" y="992" class="boxb">Czerwony lint lub test  ·  blokuje in_review</text>
+  </g>
+
+  <!-- FLAGI -->
+  <g>
+    <rect x="677" y="830" width="565" height="185" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <text x="703" y="866" class="boxk" fill="#8891A4">FLAGI ŚRODOWISKOWE</text>
+    <text x="703" y="902" class="boxb mono" font-size="14.5">MONOLYNX_BRANCH_MODE</text>
+    <text x="1216" y="902" class="boxb mono" font-size="14.5" fill="#8891A4" text-anchor="end">ticket</text>
+    <text x="703" y="932" class="boxb mono" font-size="14.5">MONOLYNX_AUTOTEST</text>
+    <text x="1216" y="932" class="boxb mono" font-size="14.5" fill="#8891A4" text-anchor="end">false</text>
+    <text x="703" y="962" class="boxb mono" font-size="14.5">MONOLYNX_AUTOCOMMIT</text>
+    <text x="1216" y="962" class="boxb mono" font-size="14.5" fill="#8891A4" text-anchor="end">false</text>
+    <text x="703" y="992" class="boxb mono" font-size="14.5">MONOLYNX_AUTOPUSH</text>
+    <text x="1216" y="992" class="boxb mono" font-size="14.5" fill="#8891A4" text-anchor="end">false</text>
+  </g>
+
+  <!-- PIPELINES -->
+  <g>
+    <rect x="1270" y="830" width="566" height="185" rx="14" fill="#0C1017" stroke="#242B3A" stroke-width="1.5"/>
+    <text x="1296" y="866" class="boxk" fill="#38BDF8">PODGLĄD W MODULE PIPELINES</text>
+    <text x="1296" y="902" class="boxb">research: kroki 1-3   ·   coding: 4-6.5   ·   wrap-up: 7</text>
+    <text x="1296" y="932" class="boxb">Każdy agent ma swój job, log ląduje jako strona wiki</text>
+    <text x="1296" y="962" class="boxb">Status, czas i oceny widoczne na żywo</text>
+    <text x="1296" y="992" class="boxb" fill="#8891A4">Best-effort: błąd pipeline nigdy nie przerywa pracy</text>
+  </g>
+
+  <!-- ══════════ STOPKA ══════════ -->
+  <text x="84" y="1053" class="foot">Domyślnie skill wypisuje komendy zamiast je wykonywać  ·  rubryka: review-rubric.md  ·  protokół: pipeline.md</text>
+  <text x="1836" y="1053" class="foot" fill="#E9571B" text-anchor="end">monolynx.com</text>
+</svg>

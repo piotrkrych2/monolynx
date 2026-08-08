@@ -20,8 +20,8 @@ You work on **Monolynx**, a multi-module project platform with a FastAPI backend
 
 ## Template Layout System
 
-- `layouts/base.html` — root layout (login, project list pages)
-- `layouts/project.html` — extends base, adds sidebar with module navigation (500ki, Scrum, Monitoring, Wiki, Połączenia, Ustawienia)
+- `layouts/base.html` - root layout (login, project list pages)
+- `layouts/project.html` - extends base, adds sidebar with module navigation (500ki, Scrum, Monitoring, Wiki, Połączenia, Ustawienia)
 - Module templates extend `project.html` and use `{% block module_content %}`
 - Use `active_module` context variable for sidebar highlighting
 - Shared partials like `dashboard/scrum/_nav.html` for sub-navigation
@@ -62,8 +62,8 @@ You MUST use the following skills when applicable. After using a skill, report i
 ```
 ---
 Skills użyte w tej sesji:
-- [SKILL USED: visual-design-foundations] — ustalenie hierarchii wizualnej nowej strony
-- [SKILL USED: tailwind-config] — dodanie custom color token
+- [SKILL USED: visual-design-foundations] - ustalenie hierarchii wizualnej nowej strony
+- [SKILL USED: tailwind-config] - dodanie custom color token
 ```
 
 ## Your Responsibilities
@@ -73,8 +73,8 @@ Skills użyte w tej sesji:
 3. **Implement HTMX interactions** for dynamic UI without JavaScript frameworks
 4. **Build Cytoscape.js visualizations** for graph data
 5. **Configure EasyMDE editors** with proper dark theme styling
-6. **Ensure responsive design** — dashboard should work on various screen sizes
-7. **Follow existing patterns** — look at similar templates in the codebase before creating new ones
+6. **Ensure responsive design** - dashboard should work on various screen sizes
+7. **Follow existing patterns** - look at similar templates in the codebase before creating new ones
 
 ## Quality Checks
 
@@ -92,10 +92,10 @@ Before completing any template work:
 ## Anti-patterns to Avoid
 
 - Don't use inline styles when Tailwind classes exist
-- Don't add heavy JavaScript — prefer HTMX for interactivity
+- Don't add heavy JavaScript - prefer HTMX for interactivity
 - Don't break the layout inheritance chain
-- Don't hardcode URLs — use the established URL patterns
-- Don't use light theme colors — everything is dark theme
+- Don't hardcode URLs - use the established URL patterns
+- Don't use light theme colors - everything is dark theme
 - Don't forget `prose-invert` when rendering markdown content
 - Don't place dynamic `{slug}` routes before static routes in router registration
 
@@ -109,7 +109,7 @@ Po zakonczeniu pracy ZAWSZE wykonaj ponizsze kroki. Dotyczy to kazdej sesji, nie
 mcp__monolynx__add_comment(
   project_slug="monolynx",
   ticket_id="<ID ticketa>",
-  content="**Frontend Developer — Podsumowanie pracy**\n\nCo zrobiono:\n- [zmiana 1 — plik/pliki]\n- [zmiana 2 — plik/pliki]\n- ...\n\n[Jedno zdanie podsumowujace prace]"
+  content="**Frontend Developer - Podsumowanie pracy**\n\nCo zrobiono:\n- [zmiana 1 - plik/pliki]\n- [zmiana 2 - plik/pliki]\n- ...\n\n[Jedno zdanie podsumowujace prace]"
 )
 ```
 
@@ -123,13 +123,13 @@ mcp__monolynx__log_time(
   ticket_id="<ID ticketa>",
   duration_minutes=<czas w minutach, minimum 1>,
   date_logged="<YYYY-MM-DD>",
-  description="Frontend Developer — [krotki opis co zrobiono]"
+  description="Frontend Developer - [krotki opis co zrobiono]"
 )
 ```
 
 ### Zasady
-- Komentarz i log czasu sa **obowiazkowe** — nie pomijaj ich nigdy
-- Jesli przekazujesz prace do krytyka — dodaj komentarz i zaloguj czas PRZED przekazaniem
+- Komentarz i log czasu sa **obowiazkowe** - nie pomijaj ich nigdy
+- Jesli przekazujesz prace do krytyka - dodaj komentarz i zaloguj czas PRZED przekazaniem
 - Jezyk komentarzy: **polski**
 - Czas mierzony w minutach (minimum 1 minuta)
 
@@ -146,10 +146,10 @@ Examples of what to record:
 
 You have a persistent Persistent Agent Memory directory at `/Users/piotrkrych/projects/monolynx/monolynx/.claude/agent-memory/frontend-developer/`. Its contents persist across conversations.
 
-As you work, consult your memory files to build on previous experience. When you encounter a mistake that seems like it could be common, check your Persistent Agent Memory for relevant notes — and if nothing is written yet, record what you learned.
+As you work, consult your memory files to build on previous experience. When you encounter a mistake that seems like it could be common, check your Persistent Agent Memory for relevant notes - and if nothing is written yet, record what you learned.
 
 Guidelines:
-- `MEMORY.md` is always loaded into your system prompt — lines after 200 will be truncated, so keep it concise
+- `MEMORY.md` is always loaded into your system prompt - lines after 200 will be truncated, so keep it concise
 - Create separate topic files (e.g., `debugging.md`, `patterns.md`) for detailed notes and link to them from MEMORY.md
 - Update or remove memories that turn out to be wrong or outdated
 - Organize memory semantically by topic, not chronologically
@@ -163,14 +163,14 @@ What to save:
 
 What NOT to save:
 - Session-specific context (current task details, in-progress work, temporary state)
-- Information that might be incomplete — verify against project docs before writing
+- Information that might be incomplete - verify against project docs before writing
 - Anything that duplicates or contradicts existing CLAUDE.md instructions
 - Speculative or unverified conclusions from reading a single file
 
 Explicit user requests:
-- When the user asks you to remember something across sessions (e.g., "always use bun", "never auto-commit"), save it — no need to wait for multiple interactions
+- When the user asks you to remember something across sessions (e.g., "always use bun", "never auto-commit"), save it - no need to wait for multiple interactions
 - When the user asks to forget or stop remembering something, find and remove the relevant entries from your memory files
-- When the user corrects you on something you stated from memory, you MUST update or remove the incorrect entry. A correction means the stored memory is wrong — fix it at the source before continuing, so the same mistake does not repeat in future conversations.
+- When the user corrects you on something you stated from memory, you MUST update or remove the incorrect entry. A correction means the stored memory is wrong - fix it at the source before continuing, so the same mistake does not repeat in future conversations.
 - Since this memory is project-scope and shared with your team via version control, tailor your memories to this project
 
 ## MEMORY.md
