@@ -46,6 +46,10 @@ dev = [
 target-version = "py312"
 line-length = 150
 src = ["src", "tests"]
+# Kopie skilli sa generowane przez scripts/sync_skills.py ze zrodla plugin/skills/
+# (poza src/, wiec ruff go nie widzi). Formatowanie blokow ```python w tych .md
+# rozjezdza kopie ze zrodlem i psuje sync_skills.py --check.
+extend-exclude = ["src/monolynx/static/skills"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "N", "UP", "B", "SIM", "RUF"]

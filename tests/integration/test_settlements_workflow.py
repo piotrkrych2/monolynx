@@ -18,7 +18,11 @@ from monolynx.models.settlement_project import SettlementProject
 from monolynx.models.ticket import Ticket
 from monolynx.models.user import User
 from monolynx.services.auth import hash_password
-from monolynx.services.settlements import ALLOWED_SETTLEMENT_TRANSITIONS, change_settlement_status, is_ticket_frozen
+from monolynx.services.settlements import (
+    ALLOWED_SETTLEMENT_TRANSITIONS,
+    change_settlement_status,
+    is_ticket_frozen,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers (powielone z test_settlements_scrum_integration.py dla izolacji)

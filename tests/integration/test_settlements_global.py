@@ -881,7 +881,10 @@ class TestMcpSettlementAttachments:
         GET get_settlement_attachment -> base64 decode = identyczne bytes.
         AC ebcb816a + f5e60b11.
         """
-        from monolynx.mcp_server import add_settlement_attachment, get_settlement_attachment
+        from monolynx.mcp_server import (
+            add_settlement_attachment,
+            get_settlement_attachment,
+        )
 
         suffix = secrets.token_hex(4)
         project = await _create_project(db_session, f"MCP Attach {suffix}")
@@ -1019,7 +1022,10 @@ class TestMcpSettlementAttachments:
 
     async def test_list_attachments_no_bytes(self, db_session):
         """Response metadane (id, filename, size, category, state) bez file_base64."""
-        from monolynx.mcp_server import add_settlement_attachment, list_settlement_attachments
+        from monolynx.mcp_server import (
+            add_settlement_attachment,
+            list_settlement_attachments,
+        )
 
         suffix = secrets.token_hex(4)
         project = await _create_project(db_session, f"MCP ListAttach {suffix}")

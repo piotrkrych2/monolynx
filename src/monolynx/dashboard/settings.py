@@ -11,7 +11,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monolynx.constants import ACTION_LABELS, MEMBER_ROLES, MODULE_LABELS, PERMISSION_ACTIONS, PERMISSION_MODULES, ROLE_LABELS
+from monolynx.constants import (
+    ACTION_LABELS,
+    MEMBER_ROLES,
+    MODULE_LABELS,
+    PERMISSION_ACTIONS,
+    PERMISSION_MODULES,
+    ROLE_LABELS,
+)
 from monolynx.dashboard.projects import CODE_PATTERN
 from monolynx.database import get_db
 from monolynx.models.project import Project

@@ -14,7 +14,12 @@ from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,7 +54,10 @@ from monolynx.services.minio_client import delete_object as minio_delete_object
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
 from monolynx.services.permissions import check_permission, require_permission
-from monolynx.services.settlements import is_ticket_frozen, validate_settlement_ticket_link
+from monolynx.services.settlements import (
+    is_ticket_frozen,
+    validate_settlement_ticket_link,
+)
 from monolynx.services.sprint import complete_sprint, start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
 from monolynx.services.time_tracking import (

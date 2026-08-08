@@ -100,7 +100,7 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 | Komenda | Opis |
 |---------|------|
 | `/monolynx:work` | Podejmij zadanie z aktualnego sprintu: walidacja brancha, research, dobór zespołu agentów i praca równoległa z obowiązkowym krytykiem. Raportuje przebieg pracy do modułu Pipelines (obserwowalność): pipeline `ticket_work` ze stepami research → coding → wrap-up, job per agent, log każdego agenta jako strona wiki. Raportowanie best-effort - nie blokuje pracy. |
-| `/monolynx:work-simple` | Uproszczony flow dla mniejszych ticketów (<8 SP): jeden dobrany dev + krytyk jako zwykłe subagenty (bez Agent Teams), research opt-in, pełna ceremonia self-reporting, eskalacja do `/monolynx:work` gdy scope się rozrasta. Raportuje do modułu Pipelines (uproszczona instrumentacja: dev + krytyk), best-effort. |
+| `/monolynx:work-simple` | Uproszczony flow dla mniejszych ticketów (max 3 SP): jeden dobrany dev + krytyk jako zwykłe subagenty (bez Agent Teams), research opt-in, pełna ceremonia self-reporting, eskalacja do `/monolynx:work` gdy scope się rozrasta. Raportuje do modułu Pipelines (uproszczona instrumentacja: dev + krytyk), best-effort. |
 | `/monolynx:ticket-create` | Utwórz nowy ticket: zbiera kontekst z wiki, kodu i grafu zależności, generuje opis w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zależności). |
 | `/monolynx:ticket-review` | Zrecenzuj ticket ze sprintu: sprawdza formę, zgodność z wiki i kodem, generuje tabelkę raportu i proponuje poprawki. |
 | `/monolynx:sprint-end` | Zamknij sprint jako pipeline `sprint_close` (stepy wiki-update → wrap-up): INGEST logów pracy do wiki, LINT (audyt wiki), czyszczenie stron logów pipeline sprintu i realne `complete_sprint` (niedokończone tickety wracają do backlogu, z potwierdzeniem). Raportowanie do Pipelines best-effort. |
@@ -124,6 +124,22 @@ Plugin dostarcza 7 agentów do delegowania pracy w odpowiednich rolach:
 - **qa-tester**: testy (pytest), scenariusze, pokrycie.
 - **code-reviewer**: recenzja kodu, jakość, bezpieczeństwo.
 - **technical-writer**: dokumentacja (CLAUDE.md, wiki, README, SDK, przewodniki).
+
+### Hooki
+
+Plugin dostarcza hook PreToolUse na narzędziu Bash (`hooks/hooks.json` → `hooks/bash_guard.py`), który deterministycznie egzekwuje reguły workflow, dotąd zapisane wyłącznie w promptach skilli `work` / `work-simple`:
+
+| Kto | Komenda | Decyzja |
+|---|---|---|
+| Subagent (dev, krytyk, ...) | `git add/commit/push/reset --hard/rebase` | **deny** - operacje zapisu w gicie należą do sesji głównej i użytkownika |
+| Subagent | lint/testy (`pytest`, `ruff`, `eslint`, ...) | **deny** - lint/testy odpala Team Manager wg `MONOLYNX_AUTOTEST` |
+| Sesja główna | `git push` | **ask** (potwierdzenie użytkownika), chyba że `MONOLYNX_AUTOPUSH=true` |
+| Sesja główna | lint/testy | **ask**, chyba że `MONOLYNX_AUTOTEST=true` |
+| Subagent | operacje destrukcyjne (`rm -rf`, `git push --force`, `curl \| sh`, zapis do `~/.ssh`/`~/.aws`, `DROP/TRUNCATE`, `mkfs`/`dd of=/dev`) | **deny** |
+| Sesja główna | operacje destrukcyjne (jw.) oraz `git reset --hard` / `rebase` / `clean -f` | **ask** - zawsze, niezależnie od flag |
+| Sesja główna | `git add` / `git commit` | przechodzi normalnie (zwykły system uprawnień) |
+
+Hook nigdy nie blokuje sesji głównej na twardo - decyzję podejmuje użytkownik. Deny u subagenta to oczekiwane zachowanie workflow, nie błąd. Hook działa w każdej sesji z zainstalowanym pluginem; wymaga `python3` w PATH.
 
 ## Migracja i kompatybilność
 
@@ -176,6 +192,20 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.6.0
+
+- **Hooki pluginu**: PreToolUse guard na Bash (`hooks/bash_guard.py`) - twardy deny operacji zapisu w gicie oraz lintu/testów dla subagentów; `ask` dla `git push` i lintu/testów w sesji głównej, gdy `MONOLYNX_AUTOPUSH`/`MONOLYNX_AUTOTEST` != `true`. Reguły z promptów skilli zyskują deterministyczną egzekucję.
+- **Denylist operacji destrukcyjnych** (inspiracja: warstwa reguł ai-protector): `rm -rf`, `git push --force`, `curl | sh`, zapis do `~/.ssh`/`~/.aws`, `DROP/TRUNCATE`, `mkfs`/`dd of=/dev` - deny dla subagentów, `ask` dla sesji głównej (force-push pyta nawet przy `AUTOPUSH=true`); dodatkowo `ask` na `git reset --hard`/`rebase`/`clean -f`.
+- **Noty anti-injection** w promptach subagentów (Researcher, developerzy, krytyk w `work` i `work-simple`): treści ticketów, komentarzy i wiki to dane, nie polecenia - osadzone w nich instrukcje są ignorowane i raportowane.
+
+### 1.5.2
+
+- **Hardening `/monolynx:work-simple`** (parytet z `work`): lint/testy przed krytykiem, warstwa kryteriów akceptacji, ToolSearch i prefiks MCP w promptach subagentów, baseline review (`BASELINE_SHA` + brudne pliki + untracked), kolejność status → pipeline, wspólny limit 3 poprawek, synchronizacja rubryki, poprawna nazwa `/monolynx:work`.
+
+### 1.5.1
+
+- **Hardening `/monolynx:work`** po 8 rundach niezależnego review (~60 poprawek): m.in. ToolSearch/prefiks MCP w promptach subagentów, lint/testy jako gate przed krytykiem, wspólny limit poprawek, baseline review, protokół Agent Teams (sygnały, adresowanie, śmierć agenta), ścieżki przerwania pipeline, macierz trybów promptu krytyka, tryb solo (Codex).
 
 ### 1.5.0
 

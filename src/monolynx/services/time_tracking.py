@@ -14,7 +14,11 @@ from sqlalchemy.orm import selectinload
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.ticket import Ticket
 from monolynx.models.time_tracking_entry import TimeTrackingEntry
-from monolynx.schemas.time_tracking import TimeTrackingEntryResponse, TimeTrackingFilter, WorkReportResult
+from monolynx.schemas.time_tracking import (
+    TimeTrackingEntryResponse,
+    TimeTrackingFilter,
+    WorkReportResult,
+)
 
 # Regex for flexible duration parsing: "2h30m", "2h", "30m", "2.5", "2.5h", "90m", "8"
 _DURATION_RE = re.compile(
@@ -23,7 +27,7 @@ _DURATION_RE = re.compile(
 )
 
 
-def parse_duration(value: str | int | float) -> int | None:
+def parse_duration(value: str | float) -> int | None:
     """Parse flexible duration string into minutes.
 
     Rules:

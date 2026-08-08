@@ -17,7 +17,7 @@ Wszystkie wywolania w tym pliku sa **best-effort**.
 Toole laduja sie w KROK 1 skilla przez:
 
 ```
-ToolSearch(query="+monolynx pipeline create job finish")
+ToolSearch(query="+monolynx pipeline create job finish", max_results=10)
 ```
 
 Zestaw: `create_pipeline`, `create_pipeline_job`, `update_pipeline_job`,
@@ -25,12 +25,16 @@ Zestaw: `create_pipeline`, `create_pipeline_job`, `update_pipeline_job`,
 
 Brak ktoregokolwiek -> pomin instrumentacje w calosci.
 
+**Prefix tooli**: nazwy `mcp__monolynx__<tool>` w tym pliku to placeholder.
+Rzeczywisty prefix zalezy od instalacji (np. `mcp__claude_ai_Monolynx__*` przy
+connectorze globalnym) - uzywaj DOKLADNIE nazw zwroconych przez ToolSearch.
+
 ---
 
 ## 1. Utworzenie pipeline (po KROK 2 - walidacji brancha)
 
 ```
-mcp__monolynx__create_pipeline(project_slug="<PROJECT_SLUG>", pipeline_type="ticket_work", ticket_id="<ID lub klucz PROJ-XX>", branch="<aktualny_branch>")
+mcp__monolynx__create_pipeline(project_slug="<PROJECT_SLUG>", pipeline_type="ticket_work", ticket_id="<ID ticketu; klucz PROJ-XX tylko jesli serwer go przyjmuje - przy bledzie uzyj ID>", branch="<aktualny_branch>")
 ```
 
 Zwraca `pipeline_id` oraz 3 stepy: `research`, `coding`, `wrap-up`.
@@ -61,7 +65,10 @@ mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<researcher
 mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<researcher_job_id>", status="success", summary="<1-zdaniowe streszczenie raportu>")
 ```
 
-Researcher pominiety (KROK 3b) -> status `skipped` zamiast `success`.
+Researcher pominiety (fallback z KROK 3c)? Job juz istnieje i ma `running` -
+uproszczony raport Team Managera tez appenduj do loga (`append_job_log`), po
+czym domknij job statusem `skipped` zamiast `success` (summary: kto zrobil
+analize zamiast Researchera).
 
 ---
 
@@ -89,14 +96,21 @@ mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<
 
 ## 4. Blok do wklejenia w prompt agenta (KROK 6)
 
-Kazdy agent raportuje siebie sam. Wklej ponizsze do promptu, podstawiajac `job_id`:
+Kazdy agent raportuje siebie sam. Wklej ponizsze do promptu, podstawiajac `job_id`.
+W trybie solo (runtime bez subagentow, np. Codex) subagentow nie ma - Team
+Manager tworzy joby per ROLA (sekcja 3b) i sam wykonuje ponizszy blok dla kazdej
+roli: otwiera job przed praca w roli, zamyka po niej.
 
 ```
 RAPORT DO PIPELINE (job_id: <twoj_job_id>):
 
 Na poczatku pracy:
-  1. Zmierz czas startu: date +%s
-  2. mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<twoj_job_id>", status="running")
+  1. Zaladuj schematy tooli JEDNYM wywolaniem: ToolSearch(query="+monolynx pipeline job log", max_results=10)
+     i uzywaj DOKLADNIE zwroconych nazw (prefix moze roznic sie od mcp__monolynx__).
+     Runtime bez ToolSearch (toole dostepne od razu) -> uzywaj ich bezposrednio.
+     ToolSearch istnieje, ale nic nie zwrocil -> pomin cale raportowanie do pipeline.
+  2. Zmierz czas startu: date +%s
+  3. mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<twoj_job_id>", status="running")
 
 Po zakonczeniu pracy MUSISZ:
   1. Zmierz czas konca: date +%s. Oblicz czas pracy w minutach (minimum 1).
@@ -105,18 +119,20 @@ Po zakonczeniu pracy MUSISZ:
               \n\n**Czas pracy: X min**")
   3. mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<twoj_job_id>",
      status="success", summary="<1-2 zdania do listy>")
+     UWAGA: jesli pracy NIE ukonczyles (porazka, blokada) - ustaw status="failed"
+     zamiast "success", z powodem w summary. Nigdy nie raportuj sukcesu porazki.
   4. W swojej odpowiedzi koncowej podaj linie: `CZAS PRACY: X min`
 
 Jesli toole pipeline niedostepne lub zwroca blad - pomin raportowanie, NIE przerywaj pracy.
 Linie `CZAS PRACY: X min` podaj ZAWSZE, niezaleznie od dostepnosci pipeline.
 ```
 
-Linia `CZAS PRACY` jest zrodlem danych dla `log_time` w KROK 6e - Team Manager
+Linia `CZAS PRACY` jest zrodlem danych dla `log_time` w KROK 6.7a - Team Manager
 loguje czas zgloszony przez agenta, nie wlasny stoper.
 
 ---
 
-## 5. Oceny krytyka (KROK 6c)
+## 5. Oceny krytyka (KROK 6.6)
 
 Krytyk zapisuje ocene do joba KAZDEGO ocenianego agenta:
 
@@ -125,17 +141,26 @@ mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<job_i
 ```
 
 Swoj wlasny job zamyka na koncu: `append_job_log` z trescia review +
-`update_pipeline_job(status="success")`.
+`update_pipeline_job(status="success")`. W trybie Agent Teams "koniec" to
+wiadomosc "review zakonczone" od Team Managera (moga byc iteracje) - bez Teams
+kazde wywolanie krytyka zamyka job po sobie.
 
 ### Iteracja poprawkowa
 
-Przy ponownym uruchomieniu agenta z feedbackiem:
+Przy ponownym uruchomieniu agenta z feedbackiem ustaw status joba na `running`
+(jesli byl juz domkniety - `success`/`failed`) i podbij `attempt`. Pierwotne
+wykonanie joba to `attempt=1`, pierwsza poprawka -> `attempt=2` itd.:
 
 ```
-mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<job_id agenta>", attempt=<numer_iteracji>)
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<job_id agenta>", attempt=<numer_iteracji>, status="running")
 ```
 
+Agent po poprawce ponownie zamyka swoj job (blok z sekcji 4).
 Poprawki doklej do loga przez `append_job_log`.
+
+To samo dotyczy joba KRYTYKA przy ponownym review bez Agent Teams: przed nowym
+wywolaniem krytyka podbij jego `attempt` i ustaw `status="running"` - jego blok
+z sekcji 4 zamknie job ponownie.
 
 ---
 
@@ -148,21 +173,36 @@ mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<lint_
 ```
 
 Status:
-- `success` - lint i testy zielone
-- `failed` - cokolwiek czerwone (blokuje `in_review`)
-- `skipped` - brak strony wiki `toolchain` albo projekt nie ma testow
+- `success` - wszystko, co projekt MA (lint i/lub testy), przeszlo na zielono;
+  projekt z samym lintem bez testow -> status wg wyniku lintu
+- `failed` - cokolwiek czerwone (to SKILL w KROK 6.5 blokuje `in_review` -
+  sam pipeline niczego nie blokuje, tylko raportuje)
+- `skipped` - brak strony wiki `toolchain`, projekt nie ma ANI lintu ANI testow,
+  albo uzytkownik swiadomie pominal lint/testy
+
+Przy powtorkach lintu/testow (iteracje poprawkowe) NIE tworz nowego joba -
+doklej wynik kolejnej rundy do loga tego samego joba (`append_job_log`)
+i zaktualizuj jego status.
 
 ---
 
-## 7. Zamkniecie (KROK 7d)
+## 7. Zamkniecie (KROK 7e)
+
+Wywolaj PO udanej zmianie statusu ticketu na `in_review` - summary joba stwierdza
+ten status, wiec nie moze go wyprzedzac.
 
 ```
 mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="wrap-up", name="team-manager-summary", agent_type="system")
 mcp__monolynx__append_job_log(project_slug="<PROJECT_SLUG>", job_id="<summary_job_id>", content="<podsumowanie zadania + oceny w markdown>")
-mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<summary_job_id>", status="success", summary="Zadanie domkniete, status in_review")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<summary_job_id>", status="success", summary="<stan faktyczny, np. 'Zadanie domkniete, status in_review' - przy nieudanej zmianie statusu wpisz prawde>")
 mcp__monolynx__finish_pipeline(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>")
 ```
 
 `finish_pipeline` bez argumentu `status` wylicza status koncowy ze stepow
 (jakikolwiek failed step -> pipeline failed, inaczej success). Jesli praca
 zakonczyla sie niepowodzeniem - podaj jawnie `status="failed"`.
+
+**Przerwanie pracy przed KROK 7** (odmowa uzytkownika, porzucenie, wyczerpany
+limit poprawek): NIE zostawiaj pipeline'u w `running`. Najpierw domknij otwarte
+joby (best-effort): `running` -> `failed`, `pending` -> `skipped`, z powodem
+w summary. Potem `finish_pipeline(status="failed")` - bez jobow summary.

@@ -138,7 +138,9 @@ from monolynx.services.wiki import (
 from monolynx.services.wiki import (
     update_wiki_page as svc_update_wiki_page,
 )
-from monolynx.services.wiki_bootstrap import bootstrap_wiki_llm as svc_bootstrap_wiki_llm
+from monolynx.services.wiki_bootstrap import (
+    bootstrap_wiki_llm as svc_bootstrap_wiki_llm,
+)
 from monolynx.services.wiki_lint import lint_wiki as svc_lint_wiki
 from monolynx.services.work_plan import _UNSET as _WORK_PLAN_UNSET
 
@@ -4396,10 +4398,8 @@ async def get_activity_log(
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
-    if limit > 200:
-        limit = 200
-    if limit < 1:
-        limit = 1
+    limit = min(limit, 200)
+    limit = max(limit, 1)
 
     if entity_type is not None and entity_type not in ACTIVITY_ENTITY_TYPES:
         raise ValueError(f"Nieprawidlowy entity_type. Dozwolone: {', '.join(sorted(ACTIVITY_ENTITY_TYPES))}")

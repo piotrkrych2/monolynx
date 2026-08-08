@@ -9,7 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monolynx.constants import DEFAULT_ROLE_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_MODULES
+from monolynx.constants import (
+    DEFAULT_ROLE_PERMISSIONS,
+    PERMISSION_ACTIONS,
+    PERMISSION_MODULES,
+)
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.user import User
 

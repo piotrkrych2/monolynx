@@ -7,15 +7,35 @@ from datetime import date
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monolynx.dashboard.helpers import _get_user_id, flash, render_project_page, templates
+from monolynx.dashboard.helpers import (
+    _get_user_id,
+    flash,
+    render_project_page,
+    templates,
+)
 from monolynx.database import get_db
-from monolynx.models import Project, ProjectMember, Settlement, SettlementProject, Ticket
+from monolynx.models import (
+    Project,
+    ProjectMember,
+    Settlement,
+    SettlementProject,
+    Ticket,
+)
 from monolynx.services.permissions import check_permission, require_permission
 from monolynx.services.settlements import (
     change_settlement_status,

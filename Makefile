@@ -59,6 +59,9 @@ sync-skills: ## Skopiuj plugin/skills -> static/skills (zrodlo dla install_monol
 sync-skills-check: ## Sprawdz czy static/skills jest zgodne z plugin/skills (exit 1 gdy nie)
 	python3 scripts/sync_skills.py --check
 
+validate-plugin: ## Sprawdz spojnosc plikow pluginu
+	python3 scripts/validate_plugin_consistency.py
+
 # --- Graf kodu ---
 sync-graph: ## Synchronizuj graf zaleznosci kodu z Monolynx (wymaga graphify)
 	graphify update . && python cicd/sync_graph.py

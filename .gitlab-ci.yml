@@ -67,6 +67,17 @@ clean-code:
     - if: $CI_COMMIT_BRANCH == "develop"
     - if: $CI_COMMIT_BRANCH == "main"
 
+plugin-consistency:
+  stage: lint
+  image: python:3.12-slim
+  script:
+    - python3 scripts/validate_plugin_consistency.py
+    - python3 scripts/sync_skills.py --check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "main"
+
 trivy-scan:
   stage: test
   extends: .docker-dind
