@@ -1031,9 +1031,16 @@ def _feature_reports(lang: str) -> dict[str, Any]:
                 {"title": "Przejrzyj statystyki", "desc": "Na górze widoczne podsumowanie: łączne godziny, średnia, użytkownicy, podział AI/ręczne."},
                 {"title": "Eksportuj do PDF", "desc": "Kliknij przycisk eksportu — raport generuje się server-side i pobiera jako PDF."},
             ],
-            "ai_intro": "Raporty agregują dane logowane przez narzędzie log_time w module Scrum. Agent AI loguje czas pracy przez MCP — wpisy oznaczane automatycznie jako AI.",
+            "ai_intro": (
+                "Raporty agregują dane logowane przez narzędzie log_time w module Scrum. Agent AI loguje czas pracy przez MCP "
+                "(wpisy oznaczane automatycznie jako AI) i odczytuje gotowy raport przez get_work_report."
+            ),
             "mcp_tools": [
                 {"name": "log_time", "desc": "Zaloguj czas pracy do ticketu (w module Scrum). Wpis oznaczony jako AI-created."},
+                {
+                    "name": "get_work_report",
+                    "desc": "Suma godzin i agregacje wg użytkownika, projektu i sprintu. Filtry: projekt, zakres dat, autor, sprint, status, AI/ręczne. Bez zakresu dat liczy cały okres.",
+                },
                 {"name": "list_tickets", "desc": "Przejrzyj tickety z zalogowanym czasem"},
                 {"name": "get_ticket", "desc": "Szczegóły ticketu z listą wpisów czasu"},
             ],
@@ -1079,9 +1086,16 @@ def _feature_reports(lang: str) -> dict[str, Any]:
             {"title": "Review statistics", "desc": "Summary at the top: total hours, average, users, AI/manual breakdown."},
             {"title": "Export to PDF", "desc": "Click the export button — report generates server-side and downloads as PDF."},
         ],
-        "ai_intro": "Reports aggregate data logged via the log_time tool in the Scrum module. AI agent logs work time via MCP — entries automatically marked as AI-created.",
+        "ai_intro": (
+            "Reports aggregate data logged via the log_time tool in the Scrum module. The AI agent logs work time via MCP "
+            "(entries automatically marked as AI-created) and reads the finished report via get_work_report."
+        ),
         "mcp_tools": [
             {"name": "log_time", "desc": "Log work time to a ticket (in the Scrum module). Entry marked as AI-created."},
+            {
+                "name": "get_work_report",
+                "desc": "Total hours plus aggregations by user, project, and sprint. Filters: project, date range, author, sprint, status, AI/manual. With no date range it covers the entire period.",
+            },
             {"name": "list_tickets", "desc": "Browse tickets with logged time"},
             {"name": "get_ticket", "desc": "Ticket details with time entries list"},
         ],
