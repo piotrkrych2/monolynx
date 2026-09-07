@@ -19,6 +19,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,10 +42,12 @@ from monolynx.constants import (
     PIPELINE_TYPES,
     PRIORITIES,
     TICKET_STATUSES,
+    TIME_TRACKING_STATUSES,
 )
 from monolynx.dashboard.helpers import SLUG_PATTERN
 from monolynx.dashboard.monitoring import _is_url_safe
 from monolynx.dashboard.projects import CODE_PATTERN
+from monolynx.dashboard.reports import _get_user_project_ids
 from monolynx.database import async_session_factory
 from monolynx.models.event import Event
 from monolynx.models.heartbeat import Heartbeat
@@ -69,6 +72,7 @@ from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.models.work_plan import WorkPlanEntry
 from monolynx.schemas.pipelines import build_list_item, build_pipeline_response
+from monolynx.schemas.time_tracking import TimeTrackingEntryResponse, TimeTrackingFilter
 from monolynx.schemas.work_plan import WorkPlanEntryResponse
 from monolynx.services import graph as graph_service
 from monolynx.services import pipelines as pipelines_service
@@ -112,6 +116,9 @@ from monolynx.services.sprint import complete_sprint as svc_complete_sprint
 from monolynx.services.sprint import start_sprint as svc_start_sprint
 from monolynx.services.ticket_numbering import get_next_ticket_number
 from monolynx.services.time_tracking import add_time_entry
+from monolynx.services.time_tracking import (
+    get_work_report as svc_get_work_report,
+)
 from monolynx.services.wiki import (
     append_log as svc_append_wiki_log,
 )
@@ -179,6 +186,12 @@ mcp = MCPServer(
         "Wymaga tokenu API (Bearer) w naglowku Authorization."
     ),
 )
+
+# Adnotacje MCP: hinty dla klienta, jak tool traktuje stan serwera.
+# Domena jest zamknieta (wlasna baza Monolynx), stad openWorldHint=False wszedzie.
+READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
+DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False)
 
 
 async def _auth(ctx: Context[Any, Any]) -> User:
@@ -813,7 +826,7 @@ async def _resolve_ticket_uuid(ticket_id: str, project_id: uuid.UUID) -> uuid.UU
 # --- Projekty ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_projects(ctx: Context[Any, Any]) -> list[dict[str, Any]]:
     """Lista projektow, do ktorych uzytkownik jest przypisany."""
     user = await _auth(ctx)
@@ -841,7 +854,7 @@ async def list_projects(ctx: Context[Any, Any]) -> list[dict[str, Any]]:
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_project(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -929,7 +942,7 @@ async def get_project(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_project(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -992,7 +1005,7 @@ async def update_project(
         }
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_project(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1021,7 +1034,7 @@ async def delete_project(
     return {"message": f"Projekt '{proj.name}' usuniety", "deleted_at": deleted_at}
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def invite_member(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1168,7 +1181,7 @@ def _code_from_slug(slug: str) -> str:
     return code
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_project(
     ctx: Context[Any, Any],
     name: str,
@@ -1260,7 +1273,7 @@ async def create_project(
         }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_members(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1301,7 +1314,7 @@ async def list_members(
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def remove_member(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1384,7 +1397,7 @@ def _format_issues_table(issues: list[Any], page: int, total_pages: int, total: 
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_issues(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1480,7 +1493,7 @@ def _format_issue(issue: Issue, events: list[Event]) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_issue(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1512,7 +1525,7 @@ async def get_issue(
     return _format_issue(issue, list(events))
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_issue_status(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1547,7 +1560,7 @@ async def update_issue_status(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_issue(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1643,7 +1656,7 @@ async def create_issue(
 # --- Monitoring ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_monitors(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1709,7 +1722,7 @@ async def list_monitors(
     return _format_monitors_table(monitor_data)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_monitor(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1766,7 +1779,7 @@ async def get_monitor(
     return _format_monitor_detail(monitor, checks, uptime_24h)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_monitor(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1834,7 +1847,7 @@ async def create_monitor(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_monitor(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1912,7 +1925,7 @@ async def update_monitor(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_monitor(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -1947,7 +1960,7 @@ async def delete_monitor(
 # --- Scrum: Tablica Kanban ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_board(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2000,7 +2013,7 @@ async def get_board(
 # --- Podsumowanie projektu ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_project_summary(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2104,7 +2117,7 @@ async def get_project_summary(
 # --- Tickety ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_tickets(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2189,7 +2202,7 @@ async def list_tickets(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def search_tickets(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2310,7 +2323,7 @@ async def search_tickets(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_ticket(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2364,7 +2377,7 @@ async def get_ticket(
     return detail
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_ticket(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2476,7 +2489,7 @@ async def create_ticket(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_ticket(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2595,7 +2608,7 @@ async def update_ticket(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_ticket(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2631,7 +2644,7 @@ async def delete_ticket(
 # --- Labele ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_labels(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2668,7 +2681,7 @@ async def list_labels(
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_label(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2725,7 +2738,7 @@ async def create_label(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def bulk_update_tickets(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2835,7 +2848,7 @@ async def bulk_update_tickets(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_ticket_from_issue(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -2972,7 +2985,7 @@ async def create_ticket_from_issue(
 # --- Sprinty ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_sprints(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3015,7 +3028,7 @@ async def list_sprints(
     return sprint_data
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_sprint(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3057,7 +3070,7 @@ async def get_sprint(
     return _format_sprint_detail(sprint, project.code, tickets)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_sprint(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3092,7 +3105,7 @@ async def create_sprint(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_sprint(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3161,7 +3174,7 @@ async def update_sprint(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def start_sprint(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3181,7 +3194,7 @@ async def start_sprint(
     return {"message": "Sprint rozpoczety", "sprint_id": sprint_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def complete_sprint(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3201,7 +3214,7 @@ async def complete_sprint(
 # --- Komentarze ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_comments(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3241,7 +3254,7 @@ async def list_comments(
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def add_comment(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3282,7 +3295,7 @@ async def add_comment(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def add_attachment(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3378,7 +3391,7 @@ async def add_attachment(
 # --- Time Tracking ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def log_time(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3425,6 +3438,164 @@ async def log_time(
     }
 
 
+@mcp.tool(annotations=READ_ONLY)
+async def get_work_report(
+    ctx: Context[Any, Any],
+    project_slug: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user_email: str | None = None,
+    sprint_id: str | None = None,
+    status: str | None = None,
+    created_via_ai: bool | None = None,
+    include_entries: bool = False,
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    """Raport zalogowanego czasu pracy: suma godzin + agregacje wg uzytkownika, projektu i sprintu.
+
+    project_slug: opcjonalne - bez niego raport obejmuje wszystkie projekty uzytkownika.
+    date_from, date_to: YYYY-MM-DD, granice wlacznie. Pominiecie obu = caly okres
+    (inaczej niz dashboard, ktory domyslnie pokazuje ostatnie 30 dni).
+    user_email: filtr po autorze wpisow. sprint_id: UUID sprintu.
+    status: draft, submitted, approved, rejected. created_via_ai: True=AI, False=recznie.
+    include_entries: dolacz pojedyncze wpisy (paginowane przez page/per_page).
+    """
+    user = await _auth(ctx)
+
+    parsed_from = date.fromisoformat(date_from) if date_from else None
+    parsed_to = date.fromisoformat(date_to) if date_to else None
+    if parsed_from and parsed_to and parsed_from > parsed_to:
+        raise ValueError("date_from nie moze byc pozniejsze niz date_to")
+
+    if status is not None and status not in TIME_TRACKING_STATUSES:
+        raise ValueError(f"Nieprawidlowy status: '{status}'. Dozwolone: {', '.join(TIME_TRACKING_STATUSES)}")
+
+    parsed_sprint_id = None
+    if sprint_id is not None:
+        try:
+            parsed_sprint_id = uuid.UUID(sprint_id)
+        except ValueError:
+            raise ValueError(f"Nieprawidlowy sprint_id: '{sprint_id}'. Podaj UUID") from None
+
+    async with async_session_factory() as db:
+        allowed_project_ids = await _get_user_project_ids(user.id, db, user.is_superuser)
+        if not allowed_project_ids:
+            raise ValueError("Uzytkownik nie ma dostepu do zadnego projektu")
+
+        if project_slug is not None:
+            proj_result = await db.execute(select(Project.id).where(Project.slug == project_slug, Project.is_active.is_(True)))
+            requested_id = proj_result.scalar_one_or_none()
+            if requested_id is None:
+                raise ValueError(f"Projekt '{project_slug}' nie istnieje")
+            if requested_id not in allowed_project_ids:
+                raise ValueError(f"Uzytkownik nie jest czlonkiem projektu '{project_slug}'")
+            project_ids = [requested_id]
+        else:
+            project_ids = allowed_project_ids
+
+        user_ids = None
+        if user_email is not None:
+            user_result = await db.execute(select(User.id).where(func.lower(User.email) == user_email.strip().lower()))
+            filtered_user_id = user_result.scalar_one_or_none()
+            if filtered_user_id is None:
+                raise ValueError(f"Uzytkownik '{user_email}' nie istnieje")
+            user_ids = [filtered_user_id]
+
+        filters = TimeTrackingFilter(
+            project_ids=project_ids,
+            user_ids=user_ids,
+            sprint_ids=[parsed_sprint_id] if parsed_sprint_id else None,
+            date_from=parsed_from,
+            date_to=parsed_to,
+            status=status,
+            created_via_ai=created_via_ai,
+            page=max(1, page),
+            per_page=min(max(1, per_page), 100),
+        )
+
+        # Zawsze paginowane - bez include_entries wpisy sa odrzucane, a paginacja
+        # chroni przed zaciagnieciem calego zbioru tylko dla agregacji
+        report = await svc_get_work_report(filters, db)
+
+        # Zamien UUID w agregacjach na czytelne nazwy - surowe UUID sa bezuzyteczne dla agenta
+        emails = await _lookup_names(db, User.id, User.email, report.hours_by_user)
+        slugs = await _lookup_names(db, Project.id, Project.slug, report.hours_by_project)
+        sprint_names = await _lookup_sprint_names(db, report.hours_by_sprint, prefix_project=len(report.hours_by_project) > 1)
+
+        result: dict[str, Any] = {
+            "total_hours": report.total_hours,
+            "entry_count": report.entry_count,
+            "date_range": ({"from": report.date_range[0].isoformat(), "to": report.date_range[1].isoformat()} if report.date_range else None),
+            "hours_by_user": {emails.get(k, k): v for k, v in report.hours_by_user.items()},
+            "hours_by_project": {slugs.get(k, k): v for k, v in report.hours_by_project.items()},
+            "hours_by_sprint": {sprint_names.get(k, k): v for k, v in report.hours_by_sprint.items()},
+        }
+
+        if include_entries:
+            result["entries"] = await _enrich_time_entries(db, report.entries)
+            result["page"] = report.page
+            result["total_pages"] = report.total_pages
+
+    return result
+
+
+async def _lookup_names(db: AsyncSession, id_column: Any, name_column: Any, keyed_by_uuid: dict[str, float]) -> dict[str, str]:
+    """Zbuduj mape {uuid_str: nazwa} dla kluczy wystepujacych w agregacji."""
+    if not keyed_by_uuid:
+        return {}
+    rows = await db.execute(select(id_column, name_column).where(id_column.in_([uuid.UUID(k) for k in keyed_by_uuid])))
+    return {str(row[0]): row[1] for row in rows.all()}
+
+
+async def _lookup_sprint_names(db: AsyncSession, keyed_by_uuid: dict[str, float], *, prefix_project: bool) -> dict[str, str]:
+    """Zbuduj mape {uuid_str: nazwa sprintu}, z prefiksem slug projektu przy raporcie cross-project."""
+    if not keyed_by_uuid:
+        return {}
+    rows = await db.execute(
+        select(Sprint.id, Sprint.name, Project.slug)
+        .join(Project, Project.id == Sprint.project_id)
+        .where(Sprint.id.in_([uuid.UUID(k) for k in keyed_by_uuid]))
+    )
+    return {str(row[0]): (f"{row[2]}/{row[1]}" if prefix_project else row[1]) for row in rows.all()}
+
+
+async def _enrich_time_entries(db: AsyncSession, entries: list[TimeTrackingEntryResponse]) -> list[dict[str, Any]]:
+    """Dodaj do wpisow klucz ticketa, tytul i e-mail autora zamiast surowych UUID."""
+    if not entries:
+        return []
+
+    ticket_rows = await db.execute(
+        select(Ticket.id, Ticket.number, Ticket.title, Project.code, Project.slug)
+        .join(Project, Project.id == Ticket.project_id)
+        .where(Ticket.id.in_([e.ticket_id for e in entries]))
+    )
+    tickets = {row[0]: row for row in ticket_rows.all()}
+
+    user_rows = await db.execute(select(User.id, User.email).where(User.id.in_([e.user_id for e in entries])))
+    emails = {row[0]: row[1] for row in user_rows.all()}
+
+    enriched: list[dict[str, Any]] = []
+    for e in entries:
+        ticket = tickets.get(e.ticket_id)
+        enriched.append(
+            {
+                "id": str(e.id),
+                "ticket_key": f"{ticket[3]}-{ticket[1]}" if ticket else str(e.ticket_id),
+                "ticket_title": ticket[2] if ticket else None,
+                "project_slug": ticket[4] if ticket else None,
+                "user_email": emails.get(e.user_id, str(e.user_id)),
+                "hours": round(e.duration_minutes / 60, 2),
+                "duration_minutes": e.duration_minutes,
+                "date_logged": e.date_logged.isoformat(),
+                "description": e.description,
+                "status": e.status,
+                "created_via_ai": e.created_via_ai,
+            }
+        )
+    return enriched
+
+
 # --- Wiki ---
 
 
@@ -3453,7 +3624,7 @@ def _format_wiki_tree(pages_data: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_wiki_pages(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3487,7 +3658,7 @@ async def list_wiki_pages(
     return _format_wiki_tree(_flatten(tree))
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_wiki_page(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3525,7 +3696,7 @@ async def get_wiki_page(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_wiki_page(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3565,7 +3736,7 @@ async def create_wiki_page(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_wiki_page(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3611,7 +3782,7 @@ async def update_wiki_page(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def search_wiki(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3631,7 +3802,7 @@ async def search_wiki(
         return await search_wiki_pages(project.id, query, db, limit=limit)
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_wiki_page(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3655,7 +3826,7 @@ async def delete_wiki_page(
 # --- Wiki LLM (gating: project.wiki_llm_enabled) ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_wiki_config(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3685,7 +3856,7 @@ async def get_wiki_config(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def set_wiki_config(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3709,7 +3880,7 @@ async def set_wiki_config(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def bootstrap_wiki_llm(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3734,7 +3905,7 @@ async def bootstrap_wiki_llm(
         return await svc_bootstrap_wiki_llm(project=proj, user_id=user.id, db=db)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def lint_wiki(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3756,7 +3927,7 @@ async def lint_wiki(
         return await svc_lint_wiki(project.id, db)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_wiki_backlinks(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3805,7 +3976,7 @@ async def get_wiki_backlinks(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def regenerate_wiki_index(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3832,7 +4003,7 @@ async def regenerate_wiki_index(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def append_wiki_log(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3865,7 +4036,7 @@ async def append_wiki_log(
 # --- Graf (polaczenia) ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_graph_node(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3898,7 +4069,7 @@ async def create_graph_node(
     return {**node, "message": f"Node '{name}' ({type}) utworzony"}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_graph_nodes(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3915,7 +4086,7 @@ async def list_graph_nodes(
     return await graph_service.list_nodes(project.id, type_filter=type, search=search, limit=limit)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_graph_node(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3963,7 +4134,7 @@ async def get_graph_node(
     return _format_graph_dsl(neighbors)
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_graph_node(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -3982,7 +4153,7 @@ async def delete_graph_node(
     return {"message": "Node usuniety", "node_id": node_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_graph_edge(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4007,7 +4178,7 @@ async def create_graph_edge(
     return {**edge, "message": f"Krawedz {type} utworzona"}
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_graph_edge(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4033,7 +4204,7 @@ async def delete_graph_edge(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def query_graph(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4068,7 +4239,7 @@ async def query_graph(
     return _format_graph_dsl(data)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def find_graph_path(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4085,7 +4256,7 @@ async def find_graph_path(
     return _format_graph_dsl(data)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_graph_stats(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4099,7 +4270,7 @@ async def get_graph_stats(
     return await graph_service.get_stats(project.id)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def bulk_create_graph_nodes(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4146,7 +4317,7 @@ async def bulk_create_graph_nodes(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def bulk_create_graph_edges(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4195,7 +4366,7 @@ async def bulk_create_graph_edges(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def replace_graph(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4241,7 +4412,7 @@ def _heartbeat_dict(hb: Heartbeat, *, include_token: bool = False) -> dict[str, 
     return d
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_heartbeats(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4256,7 +4427,7 @@ async def list_heartbeats(
     return [_heartbeat_dict(hb) for hb in heartbeats]
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_heartbeat(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4279,7 +4450,7 @@ async def get_heartbeat(
     return _heartbeat_dict(hb, include_token=True)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_heartbeat(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4317,7 +4488,7 @@ async def create_heartbeat(
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_heartbeat(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4355,7 +4526,7 @@ async def update_heartbeat(
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_heartbeat(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4382,7 +4553,7 @@ async def delete_heartbeat(
     return {"message": f"Heartbeat '{name}' usuniety", "heartbeat_id": heartbeat_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_activity_log(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4461,7 +4632,7 @@ async def get_activity_log(
     return output
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_burndown(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4484,7 +4655,7 @@ async def get_burndown(
 # --- Zalaczniki do ticketow (pobieranie) ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_attachment(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4532,7 +4703,7 @@ async def get_attachment(
 # --- Zalaczniki do stron Wiki ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_wiki_attachment(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4577,7 +4748,7 @@ async def get_wiki_attachment(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def add_wiki_page_attachment(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4659,7 +4830,7 @@ async def add_wiki_page_attachment(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_wiki_page_attachments(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4699,7 +4870,7 @@ async def list_wiki_page_attachments(
 # --- Globalne pliki Wiki ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def add_wiki_file(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4774,7 +4945,7 @@ async def add_wiki_file(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_wiki_file(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4815,7 +4986,7 @@ async def get_wiki_file(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_wiki_file(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4855,7 +5026,7 @@ async def update_wiki_file(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_wiki_files(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4883,7 +5054,7 @@ async def list_wiki_files(
 # --- Kryteria akceptacji ---
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_acceptance_criteria(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4930,7 +5101,7 @@ async def list_acceptance_criteria(
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def add_acceptance_criterion(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -4973,7 +5144,7 @@ async def add_acceptance_criterion(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_acceptance_criterion(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5039,7 +5210,7 @@ async def update_acceptance_criterion(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_acceptance_criterion(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5076,7 +5247,7 @@ async def delete_acceptance_criterion(
     return {"message": "Kryterium akceptacji usunięte", "id": criterion_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_roles(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5106,7 +5277,7 @@ async def list_roles(
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_role(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5161,7 +5332,7 @@ async def create_role(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_role(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5231,7 +5402,7 @@ async def update_role(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_role(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5276,7 +5447,7 @@ async def delete_role(
     return {"message": f"Rola '{role_name}' zostala usunieta z projektu '{project_slug}'"}
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def assign_role(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5341,7 +5512,7 @@ async def assign_role(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_member_permissions(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5439,7 +5610,7 @@ def _settlement_to_dict(s: Settlement) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_settlements(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5504,7 +5675,7 @@ async def list_settlements(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_settlement(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5548,7 +5719,7 @@ async def get_settlement(
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_settlement(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5602,7 +5773,7 @@ async def create_settlement(
     return _settlement_to_dict(settlement)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_settlement(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5665,7 +5836,7 @@ async def update_settlement(
     return _settlement_to_dict(settlement)
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_settlement(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5687,7 +5858,7 @@ async def delete_settlement(
     return {"deleted": True, "settlement_id": settlement_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def change_settlement_status(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5720,7 +5891,7 @@ async def change_settlement_status(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def link_ticket_to_settlement(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5754,7 +5925,7 @@ async def link_ticket_to_settlement(
     return {"linked": True, "settlement_id": settlement_id, "ticket_id": ticket_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def unlink_ticket_from_settlement(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5786,7 +5957,7 @@ async def unlink_ticket_from_settlement(
     return {"unlinked": True, "settlement_id": settlement_id, "ticket_id": ticket_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_settlement_tickets(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5816,7 +5987,7 @@ async def list_settlement_tickets(
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_settlement_attachments(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5857,7 +6028,7 @@ async def list_settlement_attachments(
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def add_settlement_attachment(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5929,7 +6100,7 @@ async def add_settlement_attachment(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_settlement_attachment(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -5969,7 +6140,7 @@ async def get_settlement_attachment(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_settlement_attachment(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6040,7 +6211,7 @@ def _parse_skill_frontmatter(raw: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def install_monolynx_skills(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6167,7 +6338,7 @@ async def _resolve_ticket_globally(ticket_id_str: str) -> uuid.UUID:
         return ticket_uuid
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def schedule_ticket(
     ctx: Context[Any, Any],
     ticket_id: str,
@@ -6218,7 +6389,7 @@ async def schedule_ticket(
     return WorkPlanEntryResponse.from_entry(result).model_dump(mode="json")
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_work_plan_entry(
     ctx: Context[Any, Any],
     entry_id: str,
@@ -6272,7 +6443,7 @@ async def update_work_plan_entry(
     return WorkPlanEntryResponse.from_entry(result).model_dump(mode="json")
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def delete_work_plan_entry(
     ctx: Context[Any, Any],
     entry_id: str,
@@ -6298,7 +6469,7 @@ async def delete_work_plan_entry(
     return {"success": True, "message": "Wpis usuniety"}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_work_plan(
     ctx: Context[Any, Any],
     start_date: str,
@@ -6344,7 +6515,7 @@ async def list_work_plan(
     return [WorkPlanEntryResponse.from_entry(e).model_dump(mode="json") for e in entries]
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_today_tasks(
     ctx: Context[Any, Any],
     project_slug: str | None = None,
@@ -6379,7 +6550,7 @@ async def get_today_tasks(
     return [WorkPlanEntryResponse.from_entry(e).model_dump(mode="json") for e in entries]
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_ticket_schedule(
     ctx: Context[Any, Any],
     ticket_id: str,
@@ -6405,7 +6576,7 @@ async def get_ticket_schedule(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_pipeline(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6474,7 +6645,7 @@ async def create_pipeline(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def create_pipeline_job(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6526,7 +6697,7 @@ async def create_pipeline_job(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def update_pipeline_job(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6586,7 +6757,7 @@ async def update_pipeline_job(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def append_job_log(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6634,7 +6805,7 @@ async def append_job_log(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITE)
 async def finish_pipeline(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6683,7 +6854,7 @@ async def finish_pipeline(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_pipelines(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6724,7 +6895,7 @@ async def list_pipelines(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_pipeline(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6758,7 +6929,7 @@ async def get_pipeline(
     return build_pipeline_response(p, ticket_key).model_dump(mode="json")
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_pipeline_job_log(
     ctx: Context[Any, Any],
     project_slug: str,
@@ -6809,7 +6980,7 @@ async def get_pipeline_job_log(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE)
 async def clean_pipeline_logs(
     ctx: Context[Any, Any],
     project_slug: str,

@@ -28,6 +28,7 @@ from monolynx.mcp_server import (
     get_project_summary,
     get_sprint,
     get_ticket,
+    get_work_report,
     invite_member,
     list_comments,
     list_issues,
@@ -63,6 +64,7 @@ from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_comment import TicketComment
+from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.auth import hash_password
@@ -216,6 +218,7 @@ EXPECTED_TOOLS = [
     "add_comment",
     "add_attachment",
     "log_time",
+    "get_work_report",
     "list_wiki_pages",
     "get_wiki_page",
     "create_wiki_page",
@@ -331,6 +334,28 @@ class TestMcpToolRegistration:
         tools = await mcp.list_tools()
         for tool in tools:
             assert tool.description, f"{tool.name} nie ma opisu"
+
+    async def test_all_tools_have_annotations(self):
+        """Kazde narzedzie ma adnotacje read-only / write / destructive."""
+        tools = await mcp.list_tools()
+        for tool in tools:
+            assert tool.annotations is not None, f"{tool.name} nie ma adnotacji"
+            assert tool.annotations.read_only_hint is not None, f"{tool.name} nie ma read_only_hint"
+
+    async def test_read_prefixed_tools_are_read_only(self):
+        """Narzedzia get_/list_/search_ nie moga deklarowac zapisu."""
+        tools = await mcp.list_tools()
+        for tool in tools:
+            if tool.name.startswith(("get_", "list_", "search_")):
+                assert tool.annotations.read_only_hint is True, f"{tool.name} powinien byc read-only"
+
+    async def test_delete_tools_are_destructive(self):
+        """Narzedzia delete_ musza byc oznaczone jako destrukcyjne."""
+        tools = await mcp.list_tools()
+        for tool in tools:
+            if tool.name.startswith("delete_"):
+                assert tool.annotations.read_only_hint is False, f"{tool.name} nie moze byc read-only"
+                assert tool.annotations.destructive_hint is True, f"{tool.name} powinien byc destructive"
 
     async def test_all_tools_have_input_schema(self):
         """Kazde narzedzie ma schemat parametrow (input_schema)."""
@@ -2543,6 +2568,162 @@ class TestLogTime:
         ):
             result = await log_time(ctx, mcp_project.slug, str(ticket.id), 30, "2026-02-20")
         assert result["description"] is None
+
+
+@pytest.mark.unit
+class TestGetWorkReport:
+    async def _seed(self, db_session, project, user, *, sprint=None):
+        ticket = Ticket(project_id=project.id, number=1, title="Report ticket", sprint_id=sprint.id if sprint else None)
+        db_session.add(ticket)
+        await db_session.flush()
+
+        db_session.add_all(
+            [
+                TimeTrackingEntry(
+                    ticket_id=ticket.id,
+                    user_id=user.id,
+                    project_id=project.id,
+                    sprint_id=sprint.id if sprint else None,
+                    duration_minutes=120,
+                    date_logged=date(2026, 1, 10),
+                    description="Pierwszy dzien",
+                ),
+                TimeTrackingEntry(
+                    ticket_id=ticket.id,
+                    user_id=user.id,
+                    project_id=project.id,
+                    sprint_id=sprint.id if sprint else None,
+                    duration_minutes=90,
+                    date_logged=date(2026, 3, 5),
+                    created_via_ai=True,
+                ),
+            ]
+        )
+        await db_session.flush()
+        return ticket
+
+    async def test_sums_hours_and_aggregates_by_name(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        await self._seed(db_session, mcp_project, mcp_user)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_work_report(ctx, mcp_project.slug)
+
+        assert result["total_hours"] == 3.5
+        assert result["entry_count"] == 2
+        assert result["date_range"] == {"from": "2026-01-10", "to": "2026-03-05"}
+        assert result["hours_by_user"] == {mcp_user.email: 3.5}
+        assert result["hours_by_project"] == {mcp_project.slug: 3.5}
+        assert "entries" not in result
+
+    async def test_date_range_filters_entries(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        await self._seed(db_session, mcp_project, mcp_user)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_work_report(ctx, mcp_project.slug, date_from="2026-02-01", date_to="2026-12-31")
+
+        assert result["total_hours"] == 1.5
+        assert result["entry_count"] == 1
+
+    async def test_created_via_ai_filter(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        await self._seed(db_session, mcp_project, mcp_user)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_work_report(ctx, mcp_project.slug, created_via_ai=True)
+
+        assert result["total_hours"] == 1.5
+
+    async def test_sprint_aggregation_uses_sprint_name(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        sprint = Sprint(project_id=mcp_project.id, name="Sprint raportowy", start_date=date(2026, 1, 1))
+        db_session.add(sprint)
+        await db_session.flush()
+        await self._seed(db_session, mcp_project, mcp_user, sprint=sprint)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_work_report(ctx, mcp_project.slug)
+
+        assert result["hours_by_sprint"] == {"Sprint raportowy": 3.5}
+
+    async def test_include_entries_enriches_rows(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        await self._seed(db_session, mcp_project, mcp_user)
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await get_work_report(ctx, mcp_project.slug, include_entries=True)
+
+        assert result["total_pages"] == 1
+        assert len(result["entries"]) == 2
+        first = result["entries"][0]
+        assert first["ticket_key"] == f"{mcp_project.code}-1"
+        assert first["project_slug"] == mcp_project.slug
+        assert first["user_email"] == mcp_user.email
+        assert first["hours"] == 1.5  # sortowanie domyslne: data malejaco
+
+    async def test_invalid_status_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Nieprawidlowy status"),
+        ):
+            await get_work_report(ctx, mcp_project.slug, status="pending")
+
+    async def test_reversed_date_range_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="pozniejsze niz date_to"),
+        ):
+            await get_work_report(ctx, mcp_project.slug, date_from="2026-05-01", date_to="2026-04-01")
+
+    async def test_unknown_user_email_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie istnieje"),
+        ):
+            await get_work_report(ctx, mcp_project.slug, user_email="brak@test.com")
+
+    async def test_project_without_membership_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        foreign_slug = f"foreign-{uuid.uuid4().hex[:8]}"
+        db_session.add(
+            Project(
+                name="Foreign",
+                slug=foreign_slug,
+                code=foreign_slug.replace("-", "").upper()[:5],
+                api_key=secrets.token_urlsafe(32),
+                is_active=True,
+            )
+        )
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="nie jest czlonkiem"),
+        ):
+            await get_work_report(ctx, foreign_slug)
 
 
 # ---------------------------------------------------------------------------
