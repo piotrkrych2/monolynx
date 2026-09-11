@@ -136,7 +136,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Claude Code skills - one prompt, zero setup",
         "skills_sub": (
-            "The flagship AI tool install_monolynx_skills drops all 14 ticket and wiki"
+            "The flagship AI tool install_monolynx_skills drops all 17 ticket and wiki"
             " skills into any project connected to Monolynx - Claude Code, Codex or Cursor."
             " No ZIPs, no manual placeholder replacement."
         ),
@@ -144,7 +144,8 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "skills_prompt": "Install the default Monolynx skills for project acme-inc.",
         "skills_what_label": "You get",
         "skills_what_1": (
-            "/monolynx:ticket-create, /monolynx:ticket-review, /monolynx:work, /monolynx:work-simple, /monolynx:sprint-end - the ticket workflow"
+            "/monolynx:brief, /monolynx:ticket-create, /monolynx:ticket-review, /monolynx:work, /monolynx:work-simple,"
+            " /monolynx:resume, /monolynx:sprint-end, /monolynx:retro - the work contract, ticket workflow and sprint retro"
         ),
         "skills_what_2": (
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG"
@@ -196,7 +197,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Skille Claude Code - jeden prompt, zero konfiguracji",
         "skills_sub": (
-            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 14 skilli"
+            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 17 skilli"
             " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - w Claude Code,"
             " Codeksie lub Cursorze. Bez ZIP-ów i ręcznego podmieniania placeholderów."
         ),
@@ -204,7 +205,8 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "skills_prompt": "Zainstaluj domyślne skille Monolynx dla projektu acme-inc.",
         "skills_what_label": "Co dostajesz",
         "skills_what_1": (
-            "/monolynx:ticket-create, /monolynx:ticket-review, /monolynx:work, /monolynx:work-simple, /monolynx:sprint-end - workflow ticketowy"
+            "/monolynx:brief, /monolynx:ticket-create, /monolynx:ticket-review, /monolynx:work, /monolynx:work-simple,"
+            " /monolynx:resume, /monolynx:sprint-end, /monolynx:retro - kontrakt pracy, workflow ticketowy i retro sprintu"
         ),
         "skills_what_2": (
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG"

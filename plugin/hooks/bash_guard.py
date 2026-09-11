@@ -8,6 +8,8 @@ Zasady:
 - Operacje destrukcyjne (rm -rf, force-push, curl|sh, zapis do ~/.ssh,
   DROP/TRUNCATE w SQL, mkfs/dd na urzadzenie): subagent -> deny,
   glowna sesja -> ask.
+- `glab mr create`: subagent -> deny; glowna sesja -> ask, chyba ze
+  MONOLYNX_AUTOMR=true.
 - Glowna sesja nie jest blokowana na twardo: git push / reset --hard / rebase /
   clean -f oraz lint/testy dostaja "ask" (potwierdzenie uzytkownika); push
   przechodzi bez pytania przy MONOLYNX_AUTOPUSH=true, lint/testy przy
@@ -61,6 +63,7 @@ is_subagent = bool(data.get("agent_id")) and agent_type not in ("", "main")
 GIT_WRITE = re.compile(
     r"\bgit\b[^|;&]*?\b(push|commit|add|reset\s+--hard|rebase|clean\s+(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b)"
 )
+GLAB_MR_CREATE = re.compile(r"\bglab\b[^|;&]*?\bmr\b[^|;&]*?\bcreate\b(?!-)")
 TEST_LINT = re.compile(
     r"\b(pytest|ruff|mypy|black|isort|flake8|eslint|prettier|vitest|playwright"
     r"|makemessages|compilemessages)\b"
@@ -92,6 +95,23 @@ for pattern, label in DESTRUCTIVE:
         decide(
             "ask",
             f"Operacja destrukcyjna ({label}) - wymaga potwierdzenia uzytkownika.",
+        )
+
+# glab przed GIT_WRITE (nie po): galaz GIT_WRITE konczy hook przez
+# sys.exit(0), wiec `git push && glab mr create` nigdy by tu nie dotarlo.
+if GLAB_MR_CREATE.search(cmd):
+    if is_subagent:
+        decide(
+            "deny",
+            "Subagent nie tworzy merge requestów - MR zakłada Team Manager "
+            "(główna sesja) po pushu, wg MONOLYNX_AUTOMR. Zgłoś gotowość "
+            "w raporcie końcowym.",
+        )
+    if not flag("MONOLYNX_AUTOMR"):
+        decide(
+            "ask",
+            "glab mr create wymaga potwierdzenia użytkownika "
+            "(MONOLYNX_AUTOMR != true).",
         )
 
 git_match = GIT_WRITE.search(cmd)

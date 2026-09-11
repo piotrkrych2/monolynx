@@ -59,26 +59,30 @@ Zaproponuj uzytkownikowi konkretny start. Zasugeruj skille dobrane do typowych p
 - **`/monolynx:create-graph-ci-script`** - wygeneruj skrypt CI, ktory synchronizuje graf zaleznosci kodu z Monolynx (dobry pierwszy krok w repo bez grafu).
 - **`/monolynx:wiki-init`** - wlacz metode LLM Wiki dla projektu (strony systemowe: regulamin, katalog, dziennik); fundament dla wiki jako zrodla prawdy.
 - **`/monolynx:ticket-create`** - utworz pierwszy porzadny ticket z kontekstem z wiki, grafu i kodu.
+- **`/monolynx:brief`** - dla pracy bez ticketu (konfiguracja, investigation, drobna zmiana): jedno pytanie o kontrakt (gotowe / nie ruszac / stop przed), ENTER i start. Hook `brief_guard` pluginu odpala go sam, gdy pierwszy prompt sesji to goly imperatyw.
 
 Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, graf zaleznosci, error tracking, pipelines) i zacznij od odpowiedniego skilla. Nastepnie prowadz wspolprace.
 
 ---
 
-## Komplet 14 skilli `/monolynx:*`
+## Komplet 17 skilli `/monolynx:*`
 
-- **`work`** - podejmij ticket pelnym flow: research + zespol agentow + obowiazkowy krytyk + lint i testy przed zamknieciem.
-- **`work-simple`** - uproszczony flow dla malych ticketow (do 3 SP): 1 dev + krytyk, bez Agent Teams.
-- **`project-toolchain`** - wykryj komendy lint/test projektu i zapisz jako strone wiki `toolchain` (raz per projekt).
-- **`ticket-create`** - utworz ticket z kontekstu wiki, grafu i kodu, w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci).
-- **`ticket-review`** - zrecenzuj ticket pod katem formy i zgodnosci z wiki oraz kodem.
-- **`sprint-end`** - zamknij sprint jako pipeline `sprint_close`: INGEST logow pracy do wiki + LINT + domkniecie sprintu.
-- **`search`** - semantyczne wyszukiwanie RAG w wiki projektu.
-- **`wiki-init`** - wlacz metode LLM Wiki dla projektu (strony systemowe + flaga).
-- **`wiki-ingest`** - zintegruj nowe zrodlo (plik, URL, wklejona tresc) z wiki, linkujac wikilinkami.
-- **`wiki-lint`** - audyt zdrowia wiki: sieroty, martwe linki, sprzecznosci, luki.
-- **`wiki-sync-merge`** - post-merge INGEST do wiki, uruchamiany po merge ticketow/PR do main.
-- **`help`** - przewodnik po skillach Monolynx i flow pracy z ticketami.
-- **`create-graph-ci-script`** - wygeneruj skrypt CI synchronizujacy graf zaleznosci kodu z Monolynx.
-- **`graph-sync`** - zsynchronizuj graf zaleznosci lokalnie, bez CI (pierwsze zasilenie albo odswiezenie ad hoc).
+- **`/monolynx:brief`** - kontrakt epizodu bez ticketu: gotowe = obserwowalny stan, czego nie ruszac, przed czym sie zatrzymac; ENTER = start pracy.
+- **`/monolynx:work`** - podejmij ticket pelnym flow: research + kontrakt autonomii + zespol agentow + tryb defektu (najpierw czerwony test) + rekoncyliacja z kryteriami + obowiazkowy krytyk + lint i testy przed zamknieciem.
+- **`/monolynx:work-simple`** - uproszczony flow dla malych ticketow (do 3 SP): 1 dev + krytyk, bez Agent Teams; ten sam kontrakt i tryb defektu.
+- **`/monolynx:resume`** - wznow prace po /clear, kompakcji albo nastepnego dnia: stan ticketu z komentarzy, pipeline'u, kryteriow i gita; read-only.
+- **`/monolynx:project-toolchain`** - wykryj komendy lint/test projektu i zapisz jako strone wiki `toolchain` (raz per projekt).
+- **`/monolynx:ticket-create`** - utworz ticket z kontekstu wiki, grafu i kodu, w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci).
+- **`/monolynx:ticket-review`** - zrecenzuj ticket pod katem formy i zgodnosci z wiki oraz kodem.
+- **`/monolynx:sprint-end`** - zamknij sprint jako pipeline `sprint_close`: INGEST logow pracy do wiki + LINT + retro korekt + domkniecie sprintu.
+- **`/monolynx:retro`** - retro korekt sprintu: uwagi krytyka, NEEDS WORK, STOP-y i eskalacje z ticketow oraz pamieci agentow, pogrupowane per ticket, z propozycja trwalej maszynerii (regula, rubryka, constitution).
+- **`/monolynx:search`** - semantyczne wyszukiwanie RAG w wiki projektu.
+- **`/monolynx:wiki-init`** - wlacz metode LLM Wiki dla projektu (strony systemowe + flaga).
+- **`/monolynx:wiki-ingest`** - zintegruj nowe zrodlo (plik, URL, wklejona tresc) z wiki, linkujac wikilinkami.
+- **`/monolynx:wiki-lint`** - audyt zdrowia wiki: sieroty, martwe linki, sprzecznosci, luki.
+- **`/monolynx:wiki-sync-merge`** - post-merge INGEST do wiki, uruchamiany po merge ticketow/PR do main.
+- **`/monolynx:help`** - przewodnik po skillach Monolynx i flow pracy z ticketami.
+- **`/monolynx:create-graph-ci-script`** - wygeneruj skrypt CI synchronizujacy graf zaleznosci kodu z Monolynx.
+- **`/monolynx:graph-sync`** - zsynchronizuj graf zaleznosci lokalnie, bez CI (pierwsze zasilenie albo odswiezenie ad hoc).
 
 Pelna dokumentacja modulow i narzedzi: <https://monolynx.com/llms.txt>.

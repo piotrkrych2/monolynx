@@ -179,6 +179,17 @@ Wygeneruj ticket w nastepujacym formacie i WYSWIETL go uzytkownikowi do akceptac
 [Kazdy obszar jako osobna podsekcja. Podaj nazwy plikow, endpointow, modeli gdzie to mozliwe.
 Uwzglednij powiazania z grafu zaleznosci jesli sa istotne.]
 
+## Nie ruszac
+
+- [plik / modul / zachowanie, ktore ma zostac nietkniete - z powodem, np. "`services/auth.py` - inny ticket w toku", "format odpowiedzi `/api/v1/events` - konsumuje SDK"]
+- [sasiedztwo z grafu (3b), ktore NIE jest potrzebne do zadania, a kusi]
+- *Brak ograniczen poza zakresem powyzej* - jesli naprawde nic nie trzeba chronic
+
+## Odwracalnosc
+
+- Odwracalne: [co da sie cofnac zwyklym revertem - domyslnie caly kod]
+- Nieodwracalne / wymaga zgody przed wykonaniem: [migracja DB (dane), wysylka maila/SMS/webhooka, publikacja pakietu, zmiana publicznego API lub schematu, usuniecie danych - albo *brak*]
+
 ## Zaleznosci
 
 - [KEY] [tytul] (status: [status]) - [dlaczego jest zaleznoscia]
@@ -206,7 +217,9 @@ Pokryj: funkcjonalnosc, MCP tools (jesli dotyczy), UI (jesli dotyczy), testy (je
 3. **Zakres** - zawsze podawaj konkretne pliki/endpointy/modele z kroku 3b/3c. Agent realizujacy ticket musi wiedziec GDZIE w kodzie wprowadzac zmiany
 4. **Zaleznosci** - wymien KAZDY powiazany ticket z kroku 3d/4 + infrastrukture z kroku 3c + powiazania z grafu z kroku 3b
 5. **Kryteria akceptacji** - minimum 3, maksimum 10. Kazde weryfikowalne. Kryteria z opisu sa AUTOMATYCZNIE tworzone jako acceptance criteria (checkboxy) przez parametr `acceptance_criteria` w `create_ticket` - nie trzeba dodawac ich osobno
-6. **Jezyk** - polski (terminy techniczne w oryginale)
+6. **Nie ruszac** - granica jest czescia zadania, nie domyslem. Zrodla: sasiedztwo wezlow z grafu (3b) i pliki z raportu Explore (3c), ktorych zmiana NIE jest potrzebna; powiazane tickety w toku (3d) - ich pliki sa cudze; publiczne kontrakty (API, SDK, format eksportu). Kazda pozycja z powodem. "Brak ograniczen" wolno napisac tylko po sprawdzeniu tych zrodel, nie zamiast sprawdzenia
+7. **Odwracalnosc** - wypisz operacje, ktorych nie cofnie `git revert`: migracja z danymi, wysylka na zewnatrz, publikacja, zmiana schematu/API, kasowanie. To jest lista rzeczy, przed ktorymi agent realizujacy ticket ma sie zatrzymac i zapytac (`work` buduje z niej kontrakt autonomii). Zadanie bez takich operacji -> *brak*, ale napisane wprost
+8. **Jezyk** - polski (terminy techniczne w oryginale)
 
 ---
 
@@ -267,7 +280,7 @@ Przejdz do KROK 7 bez `spec_page_id`.
 mcp__monolynx__create_ticket(
   project_slug="<PROJECT-SLUG>",
   title="<tytul>",
-  description="<pelny opis w markdown - sekcje Cel, Kontekst, Zakres, Zaleznosci, Kryteria akceptacji>",
+  description="<pelny opis w markdown - sekcje Cel, Kontekst, Zakres, Nie ruszac, Odwracalnosc, Zaleznosci, Kryteria akceptacji>",
   priority="<low/medium/high>",
   story_points=<liczba>,
   sprint_id="<UUID sprintu lub null dla backlogu>",
@@ -317,7 +330,7 @@ Jesli tak - powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
 3. **Graf zaleznosci jest waznym zrodlem** - jesli jest dostepny, ZAWSZE go odpytaj. Informacje z grafu pomagaja precyzyjnie okreslic zakres zmian i powiazania miedzy modulami
 4. **Ticket musi byc zrozumialy dla AI-agenta** - agent Claude Code musi moc go podjac i zrealizowac bez dodatkowych pytan
 5. **Badz konkretny** - nazwy plikow, endpointow, modeli, sygnatury. Nie pisz "zmodyfikuj odpowiedni serwis" - pisz "zmodyfikuj `services/wiki.py` - dodaj funkcje `get_page_attachments()`"
-6. **Nie nadmuchuj zakresu** - jesli uzytkownik chce prosta zmiane, nie dodawaj "przy okazji" dodatkowych usprawnien
+6. **Nie nadmuchuj zakresu** - jesli uzytkownik chce prosta zmiane, nie dodawaj "przy okazji" dodatkowych usprawnien. Za to "przy okazji" nasuwajace sie z grafu/kodu wpisz do "Nie ruszac" - granica zapisana jest tansza niz granica odkryta po przekroczeniu
 7. **Story points musza odpowiadac zakresowi** - nie dawaj 2 SP na zadanie z 8 plikami do zmiany
 8. **Jezyk**: polski (terminy techniczne w oryginale)
 9. **Duplikaty sa blokerem** - jesli istnieje duplikat, ZAWSZE informuj uzytkownika przed utworzeniem

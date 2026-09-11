@@ -2,7 +2,7 @@
 
 Plugin Monolynx pakuje w jeden, instalowalny zestaw to, czego potrzebujesz, żeby pracować z platformą Monolynx bezpośrednio z Claude Code:
 
-- **13 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (praca z ticketami w pełnym i uproszczonym flow, tworzenie i recenzja zadań, zamknięcie sprintu, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu),
+- **17 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu),
 - **7 agentów** wyspecjalizowanych w rolach zespołu (backend, frontend, baza danych, DevOps, QA, code review, dokumentacja),
 - **zdalny serwer MCP** Monolynx (HTTP, autoryzacja Bearer), który udostępnia narzędzia do Scrum, 500ki, Monitoringu, Wiki, Połączeń i Planu pracy.
 
@@ -99,11 +99,14 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 
 | Komenda | Opis |
 |---------|------|
-| `/monolynx:work` | Podejmij zadanie z aktualnego sprintu: walidacja brancha, research, dobór zespołu agentów i praca równoległa z obowiązkowym krytykiem. Raportuje przebieg pracy do modułu Pipelines (obserwowalność): pipeline `ticket_work` ze stepami research → coding → wrap-up, job per agent, log każdego agenta jako strona wiki. Raportowanie best-effort - nie blokuje pracy. |
+| `/monolynx:brief` | Kontrakt epizodu bez ticketu (konfiguracja, investigation, docs): w jednej turze ustala "gotowe" jako obserwowalny stan, "nie ruszać" i prawa decyzyjne (sam / stop przed). ENTER = akceptacja i start pracy w tej samej turze. Działa bez MCP. |
+| `/monolynx:work` | Podejmij zadanie z aktualnego sprintu: walidacja brancha, wznowienie przerwanej pracy, tryb defektu (mechanizm + test regresyjny przed fixem), research, dobór zespołu agentów, kontrakt autonomii (STOP CONDITIONS w promptach), praca równoległa, rekoncyliacja raportów, obowiązkowy krytyk z regułami do pamięci agentów, pełny lint/test przed `in_review`. Raportuje przebieg pracy do modułu Pipelines (obserwowalność): pipeline `ticket_work` ze stepami research → coding → wrap-up, job per agent, log każdego agenta jako strona wiki. Raportowanie best-effort - nie blokuje pracy. |
+| `/monolynx:resume` | Wznowienie po `/clear` lub kompakcji: odtwarza stan ticketu z komentarzy, pipeline, kryteriów i gita, wypisuje "gdzie jesteśmy, co zostało, następny krok". Read-only. |
+| `/monolynx:retro` | Retro korekt sprintu: zbiera uwagi krytyka, NEEDS WORK, reguły i eskalacje z komentarzy ticketów, pamięci agentów oraz auto-memory Claude Code (korekty użytkownika z czatu, katalog wykrywany z `$HOME`/`CLAUDE_CONFIG_DIR` i `$PWD`), grupuje powtarzające się i proponuje maszynerię (reguła w `.claude/rules/`, wiersz rubryki, wpis w `constitution`). Opcjonalny job w `sprint-end`. |
 | `/monolynx:work-simple` | Uproszczony flow dla mniejszych ticketów (max 3 SP): jeden dobrany dev + krytyk jako zwykłe subagenty (bez Agent Teams), research opt-in, pełna ceremonia self-reporting, eskalacja do `/monolynx:work` gdy scope się rozrasta. Raportuje do modułu Pipelines (uproszczona instrumentacja: dev + krytyk), best-effort. |
-| `/monolynx:ticket-create` | Utwórz nowy ticket: zbiera kontekst z wiki, kodu i grafu zależności, generuje opis w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zależności). |
-| `/monolynx:ticket-review` | Zrecenzuj ticket ze sprintu: sprawdza formę, zgodność z wiki i kodem, generuje tabelkę raportu i proponuje poprawki. |
-| `/monolynx:sprint-end` | Zamknij sprint jako pipeline `sprint_close` (stepy wiki-update → wrap-up): INGEST logów pracy do wiki, LINT (audyt wiki), czyszczenie stron logów pipeline sprintu i realne `complete_sprint` (niedokończone tickety wracają do backlogu, z potwierdzeniem). Raportowanie do Pipelines best-effort. |
+| `/monolynx:ticket-create` | Utwórz nowy ticket: zbiera kontekst z wiki, kodu i grafu zależności, generuje opis w ustalonej formie (cel, kontekst, zakres, nie ruszać, odwracalność, zależności, kryteria akceptacji). |
+| `/monolynx:ticket-review` | Zrecenzuj ticket ze sprintu: sprawdza formę (8 kryteriów, w tym granice "Nie ruszać" i "Odwracalność"), zgodność z wiki i kodem, generuje tabelkę raportu i proponuje poprawki. |
+| `/monolynx:sprint-end` | Zamknij sprint jako pipeline `sprint_close` (stepy wiki-update → wrap-up): INGEST logów pracy do wiki, LINT (audyt wiki), czyszczenie stron logów pipeline sprintu, opcjonalne `retro` (przed zamknięciem, bo `complete_sprint` wypisuje niedokończone tickety ze sprintu) i realne `complete_sprint` (niedokończone tickety wracają do backlogu, z potwierdzeniem). Raportowanie do Pipelines best-effort. |
 | `/monolynx:search` | Szukaj informacji w wiki projektu (architektura, API, integracje, standardy kodu) przez wyszukiwanie semantyczne; przy włączonej metodzie LLM Wiki proponuje zapis odpowiedzi jako stronę syntezy. |
 | `/monolynx:wiki-init` | Włącz metodę LLM Wiki dla projektu: tworzy strony systemowe (regulamin `wiki-schema`, katalog `wiki-index`, dziennik `wiki-log`) i włącza flagę. Idempotentny bootstrap. |
 | `/monolynx:wiki-ingest` | Zintegruj nowe źródło (plik, URL, wklejona treść) z wiki: strona źródła, aktualizacja powiązanych stron encji/konceptów, wikilinki, odświeżenie katalogu i wpis do dziennika. |
@@ -135,11 +138,70 @@ Plugin dostarcza hook PreToolUse na narzędziu Bash (`hooks/hooks.json` → `hoo
 | Subagent | lint/testy (`pytest`, `ruff`, `eslint`, ...) | **deny** - lint/testy odpala Team Manager wg `MONOLYNX_AUTOTEST` |
 | Sesja główna | `git push` | **ask** (potwierdzenie użytkownika), chyba że `MONOLYNX_AUTOPUSH=true` |
 | Sesja główna | lint/testy | **ask**, chyba że `MONOLYNX_AUTOTEST=true` |
+| Subagent | `glab mr create` | **deny** - "Subagent nie tworzy merge requestów - MR zakłada Team Manager (główna sesja) po pushu, wg MONOLYNX_AUTOMR. Zgłoś gotowość w raporcie końcowym." |
+| Sesja główna | `glab mr create` | **ask** - "glab mr create wymaga potwierdzenia użytkownika (MONOLYNX_AUTOMR != true).", chyba że `MONOLYNX_AUTOMR=true` |
 | Subagent | operacje destrukcyjne (`rm -rf`, `git push --force`, `curl \| sh`, zapis do `~/.ssh`/`~/.aws`, `DROP/TRUNCATE`, `mkfs`/`dd of=/dev`) | **deny** |
 | Sesja główna | operacje destrukcyjne (jw.) oraz `git reset --hard` / `rebase` / `clean -f` | **ask** - zawsze, niezależnie od flag |
 | Sesja główna | `git add` / `git commit` | przechodzi normalnie (zwykły system uprawnień) |
 
 Hook nigdy nie blokuje sesji głównej na twardo - decyzję podejmuje użytkownik. Deny u subagenta to oczekiwane zachowanie workflow, nie błąd. Hook działa w każdej sesji z zainstalowanym pluginem; wymaga `python3` w PATH.
+
+Drugi hook, `UserPromptSubmit` (`hooks/brief_guard.py`, od 1.7.0), pilnuje otwarcia epizodu. Pierwszy prompt sesji, który jest gołym imperatywem bez kontraktu ("napraw build", "W pliku X dodaj endpoint", "ogarnij CI"), dostaje kontrakt z `/monolynx:brief`. Tryby przez `MONOLYNX_BRIEF_GUARD`:
+
+| Tryb | Zachowanie |
+|---|---|
+| `auto` (domyślny) | prompt przechodzi, a hook wstrzykuje do kontekstu treść skilla `brief` z podstawionym promptem - agent zaczyna od propozycji kontraktu (gotowe / nie ruszać / stop przed), ENTER, praca. Tak, jakbyś wpisał `/monolynx:brief <prompt>`, bez przepisywania |
+| `block` | prompt odrzucony z komunikatem "uruchom `/monolynx:brief <prompt>` albo dopisz sam gotowe / nie ruszaj / pytaj przed". Jedyny tryb, w którym kontrakt zostaje w Twoim tekście (to mierzy skan MEGA) |
+| `off` | wyłączony |
+
+Jedno przypomnienie na sesję: drugi prompt przechodzi bez reakcji (marker `~/.cache/monolynx/brief-guard/<session_id>`, `/clear` otwiera nową sesję). Bez reakcji przechodzą też: slash-komendy, prompty z kluczem ticketu (`MON-12` niesie kryteria), dłuższe niż 200 znaków, pytania (zakończone `?`), prompty bez czasownika rozkazującego w pierwszych 60 znakach (lista ~80 czasowników PL/EN) i prompty ze słowami kontraktu. Źródło: raport MEGA (T01 139/322, T18 49/282: "most openings are a bare imperative verb with no stated end state").
+
+## Zmienne konfiguracyjne
+
+Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env`):
+
+| Zmienna | Domyślnie | Znaczenie |
+|---|---|---|
+| `MONOLYNX_PROJECT_SLUG` | - | Slug projektu. Bez niej skille nie zgadują, tylko proszą o konfigurację |
+| `MONOLYNX_BRANCH_MODE` | `ticket` | `ticket` - branch musi zawierać numer ticketu; `sprint` - dowolny branch poza main, bez pytań (praca nad całym sprintem na jednym branchu); `off` - brak walidacji |
+| `MONOLYNX_AUTOTEST` | `false` | `true` - skill sam odpala lint i testy; `false` - wypisuje komendy i czeka na Twój wynik |
+| `MONOLYNX_AUTOCOMMIT` | `false` | `true` - commit po zielonym teście; `false` - wypisuje gotową komendę |
+| `MONOLYNX_AUTOPUSH` | `false` | `true` - push bez pytania; `false` - nigdy nie pushuje |
+| `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia |
+| `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): każde czekanie na odpowiedź użytkownika poza kontraktem kończy turę linią `SPRINT-RUN STOP: <powód>`; implikuje `MONOLYNX_CONTRACT=auto` |
+| `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (działa TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
+| `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goły imperatyw dostaje skill `brief` z propozycją kontraktu; `block` - prompt odrzucony z odesłaniem do `/monolynx:brief`; `off` - wyłączony (patrz sekcja Hooki) |
+
+Domyślne wartości są zachowawcze: skille **wypisują komendy zamiast je wykonywać**.
+Flagi zmieniają to świadomie.
+
+Przykład - praca nad sprintem na jednym branchu, z automatycznym lintem:
+
+```json
+{
+  "env": {
+    "MONOLYNX_PROJECT_SLUG": "twoj-projekt",
+    "MONOLYNX_BRANCH_MODE": "sprint",
+    "MONOLYNX_AUTOTEST": "true"
+  }
+}
+```
+
+Przykład - sesja w tle, odpalana przez dyspozytor `/monolynx:sprint-run`:
+
+```json
+{
+  "env": {
+    "MONOLYNX_PROJECT_SLUG": "twoj-projekt",
+    "MONOLYNX_CONTRACT": "auto",
+    "MONOLYNX_SPRINT_RUN": "1",
+    "MONOLYNX_AUTOTEST": "true",
+    "MONOLYNX_AUTOCOMMIT": "true",
+    "MONOLYNX_AUTOPUSH": "true",
+    "MONOLYNX_AUTOMR": "false"
+  }
+}
+```
 
 ## Migracja i kompatybilność
 
@@ -192,6 +254,24 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.7.0
+
+Poprawki wyprowadzone z raportu MEGA Assessment (skan 377 epizodów, 2026-09-09): najsłabsze cechy to prawa decyzyjne (T18), modelowanie stanu agenta (T03), orientacja na przyczynę (T08), precyzja ograniczeń (T05), integracja wyników (T20). Mocne strony (kryteria akceptacji, trwała pamięć, inspekcja przed edycją, niezależna weryfikacja) zostają bez zmian.
+
+- **Kontrakt autonomii** w `work` / `work-simple`: przed startem zespołu Team Manager wypisuje listę "zatrzymuję się przed" (stałe: limit poprawek, flagi AUTO*, hook, SCOPE GUARD nie podlegają negocjacji), jedno potwierdzenie usera, zapis w komentarzu planu razem z baseline (`BASELINE_SHA`, brudne pliki) i identyfikatorami pipeline. Pozycje "stop przed" trafiają do promptów developerów jako STOP CONDITIONS; naruszenie bez zgłoszenia `STOP:` punktowane w rubryce (-10). Zastępuje sterowanie przez przerywanie w trakcie.
+- **Sekcje "Nie ruszać" i "Odwracalność"** w szablonie `ticket-create`; `ticket-review` ocenia je jako 7. i 8. kryterium formy i proponuje brakujące z dowodami `plik:linia`; Researcher w `work` przepisuje je do sekcji "Granice" raportu.
+- **Tryb defektu** (etykieta `bug`, tytuł "Fix/Napraw", wskazanie usera): Researcher musi nazwać mechanizm (reprodukcja z dosłownym wynikiem, hipoteza, dowód `plik:linia`, klasa błędu), developer pisze test regresyjny przez ścieżkę przyczyny w osobnym pliku, Team Manager w fazie lint/test chowa fix stashem i pokazuje test czerwony, potem zielony; rubryka ma trzy wiersze aktywne tylko w tym trybie (fix bez mechanizmu -20, brak testu regresyjnego -20, klasa błędu niesprawdzona -5). W `work-simple` research kodu jest wtedy obowiązkowy.
+- **Rekoncyliacja raportów** (`work` 6e, `work-simple` 2.4): każdy raport developera dostaje decyzję Team Managera (akceptuję / odrzucam -> re-run / do wyjaśnienia -> jedno pytanie) po porównaniu z `git status`; sprzeczne założenia dwóch agentów rozstrzyga TM i przekazuje krytykowi.
+- **Pełny lint+test po ostatniej zmianie** (`work` 6.6c, `work-simple` 3.5.3): iteracja może testować obszar, `in_review` wymaga pełnego przebiegu, po którym nikt nic nie zmienił.
+- **Reguły krytyka do pamięci agenta** także w `work` (dotąd tylko `work-simple`): linia `REGUŁA:` obowiązkowa przy NEEDS WORK, opisuje wzorzec, nie plik; powtórzona reguła jest oznaczana jako materiał dla `retro`.
+- **Re-run z diffem**: nowy subagent po NEEDS WORK dostaje `git diff <BASELINE_SHA>` swoich plików dosłownie, nie opis słowny poprzedniej pracy.
+- **Wznowienie** w `work` (1b) i `work-simple`: ticket `in_progress` z komentarzem planu -> propozycja wznowienia od ostatniego domkniętego etapu, bez ponownego researchu i bez ponownego pomiaru baseline (bierze go z komentarza planu). Sygnał końca epizodu w podsumowaniu (`/clear` + `resume`).
+- **Nowy skill `/monolynx:brief`**: kontrakt epizodu bez ticketu (gotowe / nie ruszać / autonomia) w jednej turze, bez MCP; po ENTER praca zaczyna się od razu.
+- **Hook `brief_guard.py`** (`UserPromptSubmit`): pierwszy goły imperatyw sesji bez kontraktu dostaje automatycznie skill `brief` (tryb `auto`: wstrzyknięcie treści skilla do kontekstu, agent proponuje kontrakt); `MONOLYNX_BRIEF_GUARD=block` zamiast tego odrzuca prompt z komunikatem o `/monolynx:brief`, `off` wyłącza. Czasownik rozkazujący wykrywany w pierwszych 60 znakach (PL/EN), jedna reakcja na sesję.
+- **Nowy skill `/monolynx:resume`**: read-only odtworzenie stanu ticketu z komentarzy, pipeline, kryteriów i gita, z następnym krokiem.
+- **Nowy skill `/monolynx:retro`**: powtarzające się korekty ze sprintu (komentarze, pamięć agentów; liczone po ticketach, próg 2 tickety) zamieniane w reguły `.claude/rules/`, wiersze rubryki albo wpisy `constitution`; opcjonalny job w `sprint-end` przed `complete_sprint`. Komentarz krytyka w `work` zawiera blok Code Review, żeby retro miało z czego grupować.
+- **Zasada "pytaj RAZ, na starcie"** w regułach `work` / `work-simple`: przerwanie usera w trakcie oznacza niekompletny kontrakt i jest odnotowywane w podsumowaniu.
 
 ### 1.6.0
 

@@ -75,6 +75,8 @@ Oceń ticket pod katem nastepujacych kryteriow:
 | **Kryteria akceptacji (opis)** | Czy w opisie ticketu sa warunki, po ktorych poznamy ze zadanie jest zrobione? |
 | **Kryteria akceptacji (checklist)** | Czy ticket ma acceptance criteria jako checkboxy (osobne od opisu)? Sprawdz przez `mcp__monolynx__list_acceptance_criteria(project_slug="<PROJECT_SLUG>", ticket_id="<ID>")`. Jesli brak - zaproponuj dodanie w kroku 7. |
 | **Zakres zmian** | Czy wiadomo GDZIE w kodzie/systemie trzeba wprowadzic zmiany? |
+| **Nie ruszac** | Czy ticket mowi, czego NIE zmieniac (pliki, zachowania, kontrakty), z powodem? Sekcja "Nie ruszac" z pozycjami = OK; "brak ograniczen" napisane wprost = OK, jesli sasiedztwo w kodzie/grafie tego nie podwaza (sprawdz w KROK 4); sekcji brak = BRAK. |
+| **Odwracalnosc** | Czy ticket wskazuje operacje nieodwracalne (migracja z danymi, wysylka, publikacja, zmiana API/schematu, kasowanie) albo mowi wprost, ze ich nie ma? Sekcja obecna = OK; brak sekcji przy zakresie, ktory takie operacje zawiera = BRAK; brak sekcji przy czysto kodowym zakresie = SLABE. |
 | **Zaleznosci** | Czy wymieniono zaleznosci od innych ticketow, modulow, serwisow? |
 | **Jednoznacznosc** | Czy opis jest wolny od wieloznacznosci i sprzecznosci? |
 
@@ -126,7 +128,15 @@ Odpowiedz w formacie (dla kazdego zalozenia):
 - Zalozenie: [tresc]
 - Status: ZGODNE / NIEPEWNE / NIEZGODNE
 - Dowod: [sciezka:linia - co znaleziono w kodzie]
-- Komentarz: [krotkie wyjasnienie]"
+- Komentarz: [krotkie wyjasnienie]
+
+DODATKOWO - granice (dla kryteriow 'Nie ruszac' i 'Odwracalnosc'):
+- Pliki z sekcji Zakres: [lista]. Dla kazdego: kto jeszcze go importuje / wola
+  (Grep) - to kandydaci do 'Nie ruszac', jesli ticket ich nie wymienia.
+- Czy zakres dotyka: migracji Alembic / wysylki (mail, SMS, webhook) /
+  publikacji / publicznego API lub schematu / kasowania danych? Wypisz
+  z plik:linia. Ticket mowi 'brak operacji nieodwracalnych', a znalazles
+  ktoras -> to NIEZGODNE dla kryterium Odwracalnosc."
 )
 ```
 
@@ -173,6 +183,8 @@ Wygeneruj raport w nastepujacym formacie:
 | Kontekst / Dlaczego | OK/SLABE/BRAK | [krotki komentarz] |
 | Kryteria akceptacji | OK/SLABE/BRAK | [krotki komentarz] |
 | Zakres zmian | OK/SLABE/BRAK | [krotki komentarz] |
+| Nie ruszac | OK/SLABE/BRAK | [krotki komentarz; kandydaci z KROK 4, ktorych ticket nie wymienia] |
+| Odwracalnosc | OK/SLABE/BRAK | [krotki komentarz; operacje nieodwracalne znalezione w KROK 4] |
 | Zaleznosci | OK/SLABE/BRAK | [krotki komentarz] |
 | Jednoznacznosc | OK/SLABE/BRAK | [krotki komentarz] |
 
@@ -241,6 +253,28 @@ Jesli uzytkownik potwierdzi - uzyj `mcp__monolynx__add_acceptance_criterion(proj
 Zaproponuj ulepszenia formy:
 > **Forma ticketu mogłaby byc lepsza w [N] miejscach. Chcesz, zebym zaproponowal poprawiona tresc?**
 
+### 7e. Jesli brak sekcji "Nie ruszac" lub "Odwracalnosc"
+
+Zaproponuj gotowe sekcje z kandydatow znalezionych w KROK 4 (plik:linia jako
+dowod, nie domysl):
+
+```
+## Nie ruszac
+- [plik] - [kto go uzywa poza zakresem ticketu]
+
+## Odwracalnosc
+- Nieodwracalne: [operacja - plik:linia] / brak
+```
+
+Zapytaj:
+> **Ticket nie definiuje granic. Chcesz, zebym dopisal sekcje "Nie ruszac" i "Odwracalnosc" z powyzszymi kandydatami?**
+
+Uzytkownik potwierdza -> `mcp__monolynx__update_ticket(project_slug, ticket_id,
+description=<PELNY dotychczasowy opis z obiema sekcjami wstawionymi przed
+"Zaleznosci">)`. Parametr `description` NADPISUJE caly opis - wyslanie samych
+nowych sekcji skasuje reszte ticketu. `work` buduje z nich kontrakt
+autonomii - bez nich agent dowiaduje sie o granicy dopiero po jej przekroczeniu.
+
 ---
 
 ## KROK 8: Komentarz podsumowujacy
@@ -251,7 +285,7 @@ Dodaj komentarz do ticketu z podsumowaniem recenzji:
 mcp__monolynx__add_comment(
   project_slug="<PROJECT_SLUG>",
   ticket_id="<ID>",
-  content="**Ticket Review - Podsumowanie**\n\nForma: [X/6 kryteriow OK]\nZalozenia: [Y zgodnych] / [Z niepewnych] / [W niezgodnych]\n\n[1-2 zdania podsumowania - najwazniejsze ustalenia]\n\n[Jesli byly poprawki: 'Zaktualizowano opis ticketu o: ...']\n[Jesli byly elementy niepewne: 'Dodano sekcje Zwroc uwage']"
+  content="**Ticket Review - Podsumowanie**\n\nForma: [X/8 kryteriow OK]\nZalozenia: [Y zgodnych] / [Z niepewnych] / [W niezgodnych]\nGranice: [Nie ruszac: OK/SLABE/BRAK; Odwracalnosc: OK/SLABE/BRAK]\n\n[1-2 zdania podsumowania - najwazniejsze ustalenia]\n\n[Jesli byly poprawki: 'Zaktualizowano opis ticketu o: ...']\n[Jesli byly elementy niepewne: 'Dodano sekcje Zwroc uwage']\n[Jesli dopisano granice: 'Dodano sekcje Nie ruszac / Odwracalnosc']"
 )
 ```
 
