@@ -273,3 +273,83 @@ class TestMainCli:
             str(skills_dir),
         ]
         assert validator.main(argv) == 2
+
+
+# ---------------------------------------------------------------------------
+# check_skill_coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCheckSkillCoverage:
+    def test_skill_missing_on_one_page_is_a_violation(self):
+        pages = {
+            "README.md": "| `/monolynx:work` | ... |\n| `/monolynx:retro` | ... |",
+            "help.md": "### /monolynx:work\n",
+        }
+        violations = validator.check_skill_coverage(["work", "retro"], pages)
+        assert violations == ["help.md: brak skilla '/monolynx:retro' - kazdy skill z plugin/skills/ ma tu byc opisany"]
+
+    def test_all_skills_on_all_pages_no_violation(self):
+        pages = {"a.md": "/monolynx:work /monolynx:work-simple", "b.html": "<code>/monolynx:work-simple</code> /monolynx:work"}
+        assert validator.check_skill_coverage(["work", "work-simple"], pages) == []
+
+    def test_prefix_of_longer_name_does_not_count(self):
+        pages = {"a.md": "tylko /monolynx:work-simple tutaj"}
+        violations = validator.check_skill_coverage(["work"], pages)
+        assert len(violations) == 1
+        assert "/monolynx:work'" in violations[0]
+
+    def test_empty_skill_list_no_violation(self):
+        assert validator.check_skill_coverage([], {"a.md": ""}) == []
+
+
+@pytest.mark.unit
+class TestMainCliSkillCoverage:
+    @staticmethod
+    def _write_fixture(tmp_path, page_text):
+        plugin_json = tmp_path / "plugin.json"
+        plugin_json.write_text(json.dumps({"name": "monolynx", "version": "1.5.0"}), encoding="utf-8")
+        readme = tmp_path / "README.md"
+        readme.write_text("# README\n\n## Changelog\n\n### 1.5.0\n- x\n", encoding="utf-8")
+        skills_dir = tmp_path / "plugin"
+        (skills_dir / "skills" / "work").mkdir(parents=True)
+        (skills_dir / "skills" / "work" / "SKILL.md").write_text("---\ndescription: x\n---\n# work\n", encoding="utf-8")
+        (skills_dir / "skills" / "retro").mkdir()
+        (skills_dir / "skills" / "retro" / "SKILL.md").write_text("---\ndescription: y\n---\n# retro\n", encoding="utf-8")
+        page = tmp_path / "guide.html"
+        page.write_text(page_text, encoding="utf-8")
+        return plugin_json, readme, skills_dir, page
+
+    def _argv(self, plugin_json, readme, skills_dir, page):
+        return [
+            "--plugin-json",
+            str(plugin_json),
+            "--readme",
+            str(readme),
+            "--skills-dir",
+            str(skills_dir),
+            "--skills-root",
+            str(skills_dir / "skills"),
+            "--page",
+            str(page),
+        ]
+
+    def test_page_with_all_skills_returns_zero(self, tmp_path):
+        fx = self._write_fixture(tmp_path, "<code>/monolynx:work</code> <code>/monolynx:retro</code>")
+        assert validator.main(self._argv(*fx)) == 0
+
+    def test_page_missing_a_skill_returns_one(self, tmp_path, capsys):
+        fx = self._write_fixture(tmp_path, "<code>/monolynx:work</code>")
+        assert validator.main(self._argv(*fx)) == 1
+        assert "/monolynx:retro" in capsys.readouterr().out
+
+    def test_custom_skills_dir_without_pages_skips_coverage(self, tmp_path):
+        plugin_json, readme, skills_dir, _ = self._write_fixture(tmp_path, "")
+        argv = ["--plugin-json", str(plugin_json), "--readme", str(readme), "--skills-dir", str(skills_dir)]
+        assert validator.main(argv) == 0
+
+    def test_missing_page_file_returns_two(self, tmp_path):
+        plugin_json, readme, skills_dir, _ = self._write_fixture(tmp_path, "")
+        argv = self._argv(plugin_json, readme, skills_dir, tmp_path / "nope.html")
+        assert validator.main(argv) == 2

@@ -324,7 +324,7 @@
         </div>
 
         <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">
-            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz skille i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code> oraz gotowy zdalny serwer MCP, bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code>.
+            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz 17 skilli i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code>, gotowy zdalny serwer MCP bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> oraz dwa hooki: <code class="text-indigo-300 font-mono text-sm">bash_guard</code> (subagenci nie odpalają testów ani operacji zapisu w git) i <code class="text-indigo-300 font-mono text-sm">brief_guard</code> (pierwszy goły imperatyw w sesji, np. „napraw build”, dostaje kontrakt ze skilla <code class="text-indigo-300 font-mono text-sm">/monolynx:brief</code>; tryby <code class="text-indigo-300 font-mono text-sm">MONOLYNX_BRIEF_GUARD=auto|block|off</code>).
         </p>
 
         <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-x-auto mb-4">
@@ -338,14 +338,19 @@
 
         <p class="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-2">Po instalacji dostępne komendy</p>
         <div class="flex flex-wrap gap-2 mb-5">
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:brief</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:work</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:work-simple</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:resume</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:ticket-create</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:ticket-review</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:sprint-end</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:retro</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:search</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:help</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:project-toolchain</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:create-graph-ci-script</code>
-            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:work-simple</code>
-            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:sprint-end</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:graph-sync</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-init</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-ingest</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-lint</code>
@@ -446,13 +451,23 @@ install_monolynx_skills(
         <div class="space-y-3">
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:help</p>
-                <p class="text-xs text-gray-600 dark:text-gray-400">Wyświetla przewodnik po wszystkich skillach Monolynx — flow pracy z ticketami i skille dodatkowe. Zacznij tutaj.</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Wyświetla przewodnik po wszystkich skillach Monolynx - flow pracy z ticketami i skille dodatkowe. Zacznij tutaj.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:help</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:brief</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Kontrakt epizodu dla pracy bez ticketu (konfiguracja, investigation, drobna zmiana). W jednej turze ustala: gotowe = obserwowalny stan, czego nie ruszać, przed czym agent się zatrzymuje. ENTER = akceptacja i start pracy. Hook pluginu <code class="text-indigo-300 font-mono">brief_guard</code> uruchamia go sam, gdy pierwszy prompt sesji to goły imperatyw (np. „napraw build”).</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:brief napraw build na CI</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:work</p>
-                <p class="text-xs text-gray-600 dark:text-gray-400">Koordynator zespołu agentów — podejmuje ticket ze sprintu, rozdziela pracę, loguje czas.</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Koordynator zespołu agentów - podejmuje ticket ze sprintu, uruchamia Researchera, ustala kontrakt autonomii (stop przed migracją, nową zależnością, zmianą poza zakresem), rozdziela pracę, w trybie defektu wymaga najpierw czerwonego testu, na końcu rekoncyliacja z kryteriami akceptacji, lint, testy i obowiązkowy krytyk.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:work [ticket-id]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:resume</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Wznowienie pracy po /clear, kompakcji albo następnego dnia. Odtwarza stan ticketu z trwałych źródeł (komentarze Team Managera, pipeline, kryteria akceptacji, git) i wypisuje: gdzie jesteśmy, co zostało, następny krok. Read-only.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:resume [ticket-id]</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:search</p>
@@ -466,22 +481,22 @@ install_monolynx_skills(
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:ticket-create</p>
-                <p class="text-xs text-gray-600 dark:text-gray-400">Tworzy nowy ticket z pełnym kontekstem — zbiera informacje z wiki, kodu i grafu zależności, generuje opis w ustalonej formie.</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Tworzy nowy ticket z pełnym kontekstem - zbiera informacje z wiki, kodu i grafu zależności, generuje opis w ustalonej formie.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:ticket-create dodaj eksport CSV w raportach</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:ticket-review</p>
-                <p class="text-xs text-gray-600 dark:text-gray-400">Recenzuje ticket przed podjęciem pracy — sprawdza formę, zgodność założeń z wiki i kodem, generuje raport z oceną.</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Recenzuje ticket przed podjęciem pracy - sprawdza formę, zgodność założeń z wiki i kodem, generuje raport z oceną.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:ticket-review [ticket-id]</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:work-simple</p>
-                <p class="text-xs text-gray-600 dark:text-gray-400">Podejmij prostszy ticket (&lt;8 SP). Uproszczony flow: 1 developer + krytyk, bez Agent Teams. Dla hotfixów, weryfikacji, drobnych cleanupów.</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Podejmij prosty ticket (max 3 SP). Uproszczony flow: 1 developer + krytyk, bez Agent Teams. Ten sam kontrakt autonomii i tryb defektu co w work. Eskaluje do work, gdy zakres rośnie. Dla hotfixów, weryfikacji, drobnych cleanupów.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:work-simple [ticket-id]</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:sprint-end</p>
-                <p class="text-xs text-gray-600 dark:text-gray-400">Zamknij sprint jako pipeline sprint_close: INGEST logów pracy do wiki, LINT wiki, czyszczenie logów pipeline'ów sprintu i domknięcie sprintu.</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Zamknij sprint jako pipeline sprint_close: INGEST logów pracy do wiki, LINT wiki, czyszczenie logów pipeline'ów sprintu, retro korekt (przed domknięciem, żeby objąć też niedokończone tickety) i domknięcie sprintu.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:sprint-end [nazwa-sprintu]</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
@@ -503,6 +518,21 @@ install_monolynx_skills(
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:wiki-sync-merge</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Post-merge INGEST do wiki metodą LLM Wiki. Odpalane po merge ticketów/PR do main. Wymaga włączonego LLM Wiki.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:wiki-sync-merge [ticket-id]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:retro</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Retro korekt sprintu: zbiera uwagi krytyka, NEEDS WORK, reguły, eskalacje i STOP-y z komentarzy ticketów oraz pamięci agentów, grupuje powtarzające się (per ticket) i proponuje trwałą maszynerię: regułę w .claude/rules/, wiersz rubryki, wpis w constitution. Zapisuje wybrane.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:retro [nazwa-sprintu]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:project-toolchain</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Wykrywa komendy lint i testów projektu i zapisuje je jako stronę wiki toolchain. Raz per projekt - work i work-simple czytają tę stronę przed zamknięciem ticketu.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:project-toolchain</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:graph-sync</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Synchronizuje graf zależności kodu lokalnie, bez CI: wykrywa graphify, generuje .graphifyignore, uruchamia ekstrakcję i wypycha graf do modułu Połączenia.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:graph-sync</code></p>
             </div>
         </div>
     </div>

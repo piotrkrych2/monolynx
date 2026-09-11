@@ -20,9 +20,20 @@ decyzja jest zawsze jednoznaczna (85 zalicza, 80 nie).
 | Kryterium akceptacji niezrealizowane | -15 za kryterium | liste kryteriow masz w prompcie; zrealizowane = widoczne w git diff LUB potwierdzone w raportach developerow/Team Managera (kryteria poza repo: wiki, konfiguracja, "testy przechodza"). Stan odhaczen w systemie IGNORUJ (developerzy odhaczaja swoje, resztki domyka Team Manager po review) |
 | Brak obslugi bledu na granicy systemu | -10 | user input, zewnetrzne API, storage |
 | Zmiana pliku poza przydzialem agenta | -10 za plik | przydzial masz w liscie zespolu; wykryj przez `git diff --stat <BASELINE_SHA>` + `git status --porcelain` (nowe pliki sa untracked). Nie da sie przypisac agentowi -> NIE odejmuj nikomu, odnotuj jako naruszenie zespolowe w raporcie - decyzje podejmie Team Manager |
+| Naruszenie STOP CONDITIONS | -10 za naruszenie | liste STOP CONDITIONS masz w prompcie (kontrakt autonomii). Agent zrobil cos z tej listy (np. migracja, nowa zaleznosc, plik z "Nie ruszac") BEZ zgloszenia `STOP:` w raporcie -> odejmij. Zglosil i dostal zgode Team Managera -> nie odejmuj. Jedna operacja pasujaca tez do "plik poza przydzialem" -> tylko jedno odjecie |
 | Over-engineering | -10 | abstrakcja bez 3 realnych uzyc, przedwczesny feature flag |
 | Niezgodnosc z konwencja sasiedniego pliku | -5 | nazewnictwo, gestosc komentarzy, idiom |
 | Komentarz opisujacy CO robi kod | -5 | komentarze tylko o WHY |
+
+### Wiersze TYLKO gdy TRYB = defekt
+
+| Naruszenie | Odjecie | Uwagi |
+|---|---|---|
+| Fix bez nazwanego mechanizmu | -20 | raport developera nie wskazuje przyczyny jako plik:linia + jedno zdanie "dlaczego to daje ten symptom", albo fix jest w innym miejscu niz dowod Researchera bez wyjasnienia. Symptom zniknal != przyczyna usunieta |
+| Brak testu regresyjnego dla defektu | -20 | test ma przechodzic przez sciezke kodu wskazana jako przyczyna, nie tylko sprawdzac symptom. W trybie defektu ZASTEPUJE ogolny wiersz "brak testu dla nowego kodu" - nie sumuj obu. Projekt bez testow -> zamiast testu wymagane sa zapisane kroki reprodukcji wykonane przed i po fixie (raport Team Managera) |
+| Klasa bledu niesprawdzona | -5 | Researcher wskazal inne wystapienia tego samego wzorca, developer ich nie sprawdzil ani nie odnotowal, ze sa poza zakresem |
+
+W trybie `zmiana` te trzy wiersze pomijasz w calosci. TRYB masz w prompcie.
 
 Odjecia sumuja sie MIEDZY roznymi wadami. Jedna wada punktowana RAZ: gdy pasuje
 do kilku wierszy (np. brak `db.commit()` to takze naruszenie reguly
@@ -61,6 +72,7 @@ Sztywny, jedna linia na agenta:
 
 <agent-1>: 100 -30 (services/pipelines.py:142 zapis bez db.commit) -20 (brak testu dla create_job) = 50/100
   -> NEEDS WORK: dodaj commit po db.add, dopisz test jednostkowy dla create_job
+  REGULA: Kazdy db.add()/db.delete() w serwisie konczy sie await db.commit() w tym samym serwisie.
 
 <agent-2>: 100 -5 (templates/board.html:88 niezgodnosc z konwencja sasiednich plikow) = 95/100
   -> APPROVED
@@ -73,6 +85,13 @@ Status: NEEDS WORK (agent-1 ponizej progu 82)
 (kazdy musi miec >= 82), minimum pokazuje najslabsze ogniwo.
 
 Bez odjec -> `100/100, APPROVED`. Nie zanizaj "dla zasady".
+
+**Linia `REGULA:`** - obowiazkowa przy kazdym NEEDS WORK, jedna na agenta:
+jedno zdanie w trybie oznajmujacym, ktore developer tego typu ma zapamietac,
+zeby ta sama wada nie wrocila (Team Manager dopisuje je do
+`.claude/agent-memory/<typ>/MEMORY.md`). Regula opisuje WZORZEC, nie ten
+konkretny plik ("kazdy zapis konczy sie commitem", nie "dodaj commit
+w pipelines.py:142"). Kilka odjec -> regula dla najwyzszego.
 
 ---
 

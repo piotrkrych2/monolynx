@@ -11,7 +11,12 @@ Sprawdza cztery rzeczy niezalezne od siebie:
   install_monolynx_skills, jest poprawna nazwa skilla do recznej instalacji -
   nie jest to komenda i nie jest zglaszane),
 - czy `version` w plugin.json zgadza sie z pierwszym wpisem `### X.Y.Z`
-  w sekcji "## Changelog" pliku README.md pluginu.
+  w sekcji "## Changelog" pliku README.md pluginu,
+- czy kazdy skill z katalogu plugin/skills/<nazwa>/ jest wymieniony jako
+  `/monolynx:<nazwa>` na kazdej stronie opisujacej skille (README pluginu,
+  /monolynx:help, mcp-guide po zalogowaniu, agent-bootstrap.md,
+  how-to-use-monolynx.md, teksty landingu w main.py) - nowy skill bez wpisu
+  na ktorejs z nich to naruszenie.
 
 Uzycie (bez argumentow - domyslnie skanuje plugin/ w korzeniu repo):
 
@@ -22,7 +27,12 @@ Uzycie z jawnymi sciezkami:
     python3 scripts/validate_plugin_consistency.py \\
         --plugin-json plugin/.claude-plugin/plugin.json \\
         --readme plugin/README.md \\
-        --skills-dir plugin
+        --skills-dir plugin \\
+        --skills-root plugin/skills \\
+        --page plugin/README.md --page src/monolynx/templates/dashboard/profile/mcp_guide.html
+
+Przy niestandardowym --skills-dir bez jawnych --page sprawdzenie pokrycia stron
+jest pomijane (testy walidatora pracuja na katalogach tymczasowych, nie na repo).
 
 Kod wyjscia: 0 (OK), 1 (znaleziono naruszenia), 2 (blad konfiguracji - brakujacy
 plik/katalog albo README.md bez sekcji "## Changelog").
@@ -40,6 +50,15 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PLUGIN_JSON = ROOT / "plugin" / ".claude-plugin" / "plugin.json"
 DEFAULT_README = ROOT / "plugin" / "README.md"
 DEFAULT_SKILLS_DIR = ROOT / "plugin"
+DEFAULT_SKILLS_ROOT = ROOT / "plugin" / "skills"
+DEFAULT_PAGES = (
+    ROOT / "plugin" / "README.md",
+    ROOT / "plugin" / "skills" / "help" / "SKILL.md",
+    ROOT / "src" / "monolynx" / "templates" / "dashboard" / "profile" / "mcp_guide.html",
+    ROOT / "src" / "monolynx" / "static" / "agent-bootstrap.md",
+    ROOT / "src" / "monolynx" / "static" / "how-to-use-monolynx.md",
+    ROOT / "src" / "monolynx" / "main.py",
+)
 
 _HEADING_KROK_FAZA_RE = re.compile(r"^#{1,6}\s*(KROK|FAZA)\s+(\d+)", re.IGNORECASE | re.MULTILINE)
 _REF_KROK_FAZA_RE = re.compile(r"\b(KROK|FAZA)\s+(\d+)", re.IGNORECASE)
@@ -150,6 +169,23 @@ def check_version_matches_changelog(plugin_json: str, readme: str) -> list[str]:
     return []
 
 
+def check_skill_coverage(skill_names: list[str], pages: dict[str, str]) -> list[str]:
+    """Kazdy skill musi wystapic jako `/monolynx:<nazwa>` na kazdej stronie ze skillami.
+
+    Dopasowanie po pelnej nazwie: `/monolynx:work` nie zalicza `work-simple`
+    i odwrotnie. Zapis bez slasha (`monolynx:work`, uzywany w dokumentacji
+    dla klientow czatowych) tez sie liczy. Strony to dowolny tekst (markdown,
+    HTML, Python z tekstami landingu) - liczy sie sama obecnosc komendy.
+    """
+    violations = []
+    for name in sorted(skill_names):
+        pattern = re.compile(r"/?monolynx:" + re.escape(name) + r"(?![A-Za-z0-9-])")
+        for page in sorted(pages):
+            if not pattern.search(pages[page]):
+                violations.append(f"{page}: brak skilla '/monolynx:{name}' - kazdy skill z plugin/skills/ ma tu byc opisany")
+    return violations
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Walidator spojnosci pluginu Monolynx (referencje krokow, em-dash, "
@@ -172,6 +208,20 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_SKILLS_DIR,
         help=f"katalog z plikami .md do przeskanowania (domyslnie {DEFAULT_SKILLS_DIR})",
+    )
+    parser.add_argument(
+        "--skills-root",
+        type=Path,
+        default=None,
+        help=f"katalog z podkatalogami skilli (domyslnie {DEFAULT_SKILLS_ROOT})",
+    )
+    parser.add_argument(
+        "--page",
+        type=Path,
+        action="append",
+        default=None,
+        help="strona opisujaca skille, do sprawdzenia pokrycia (powtarzalne; "
+        "domyslnie README, help, mcp_guide, agent-bootstrap, how-to, main.py)",
     )
     args = parser.parse_args(argv)
 
@@ -203,6 +253,26 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"BLAD KONFIGURACJI: {exc}", file=sys.stderr)
         return 2
+
+    # Pokrycie stron: domyslne strony maja sens tylko dla prawdziwego repo;
+    # walidator odpalony na katalogu tymczasowym bez --page pomija ten check.
+    pages_paths = args.page
+    if pages_paths is None and args.skills_dir == DEFAULT_SKILLS_DIR:
+        pages_paths = list(DEFAULT_PAGES)
+    if pages_paths:
+        skills_root = args.skills_root or (
+            DEFAULT_SKILLS_ROOT if args.skills_dir == DEFAULT_SKILLS_DIR else args.skills_dir / "skills"
+        )
+        if not skills_root.is_dir():
+            print(f"BLAD: brak katalogu skilli {skills_root}", file=sys.stderr)
+            return 2
+        missing_pages = [p for p in pages_paths if not p.is_file()]
+        if missing_pages:
+            print(f"BLAD: brak strony ze skillami {missing_pages[0]}", file=sys.stderr)
+            return 2
+        skill_names = sorted(d.name for d in skills_root.iterdir() if (d / "SKILL.md").is_file())
+        pages = {str(p.relative_to(ROOT) if p.is_relative_to(ROOT) else p): p.read_text(encoding="utf-8") for p in pages_paths}
+        violations.extend(check_skill_coverage(skill_names, pages))
 
     if violations:
         for violation in violations:

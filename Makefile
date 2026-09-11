@@ -10,7 +10,7 @@ help: ## Pokaz dostepne komendy
 
 # --- Docker ---
 dev: ## Uruchom srodowisko deweloperskie
-	docker compose --profile dev up --build -d
+	docker compose --profile dev up -d
 
 down: ## Zatrzymaj srodowisko
 	docker compose --profile dev --profile worker down
@@ -81,3 +81,6 @@ setup: ## Skonfiguruj lokalne srodowisko dev
 	python -m venv .venv
 	. .venv/bin/activate && pip install -e ".[dev]"
 	pre-commit install
+
+dev-build: ## Uruchom srodowisko dev z przebudowa obrazu
+	docker compose --profile dev up --build -d

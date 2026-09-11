@@ -251,6 +251,80 @@ class TestGitAddCommitMainSessionAllow:
         assert_allow(exit_code, decision)
 
 
+GLAB_MR_LIST_VIEW_CASES = [
+    pytest.param("glab mr list", id="mr_list"),
+    pytest.param("glab mr view 12", id="mr_view"),
+    pytest.param("glab mr create-nothing", id="mr_create_nothing_not_a_word_match"),
+]
+
+
+@pytest.mark.unit
+class TestGlabMrCreate:
+    """`glab mr create` ma wlasna galaz w hooku, PRZED galezia GIT_WRITE:
+    subagent -> deny, sesja glowna -> ask chyba ze MONOLYNX_AUTOMR=true.
+    Galaz glab nie konczy przetwarzania hooka przy AUTOMR=true -- komenda
+    zlozona idzie dalej do galezi GIT_WRITE, wiec `git push && glab mr create`
+    z samym AUTOMR=true bez AUTOPUSH nadal pyta (z powodu AUTOPUSH)."""
+
+    def test_subagent_glab_mr_create_denied(self):
+        payload = bash_payload("glab mr create --fill", **SUBAGENT)
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="subagent")
+
+    def test_subagent_glab_mr_create_denied_even_with_automr_true(self):
+        """MONOLYNX_AUTOMR nie znosi deny dla subagenta -- is_subagent jest
+        sprawdzany przed flaga."""
+        payload = bash_payload("glab mr create --fill", **SUBAGENT)
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOMR": "true"})
+        assert_deny(exit_code, decision, reason_substr="subagent")
+
+    def test_main_session_without_automr_flag_asks(self):
+        payload = bash_payload("glab mr create --fill")
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOMR")
+
+    def test_main_session_with_automr_true_allows(self):
+        payload = bash_payload("glab mr create --fill")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOMR": "true"})
+        assert_allow(exit_code, decision)
+
+    def test_main_session_with_automr_one_still_asks(self):
+        """flag() nie uznaje '1' za prawde -- zgodne z TestFlagHelperTrueFalsyValues."""
+        payload = bash_payload("glab mr create --fill")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOMR": "1"})
+        assert_ask(exit_code, decision, reason_substr="AUTOMR")
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [c.values[0] for c in GLAB_MR_LIST_VIEW_CASES],
+        ids=[c.id for c in GLAB_MR_LIST_VIEW_CASES],
+    )
+    def test_glab_mr_list_and_view_allow(self, cmd):
+        payload = bash_payload(cmd)
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_subagent_glab_mr_list_allows(self):
+        """Deny dotyczy tylko `mr create`, nie kazdej komendy glab mr."""
+        payload = bash_payload("glab mr list", **SUBAGENT)
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_compound_git_push_and_glab_mr_create_with_autopush_asks_on_automr(self):
+        """Regresja kolejnosci: galaz glab idzie PRZED GIT_WRITE, wiec nawet
+        przy AUTOPUSH=true komenda zlozona z `glab mr create` pyta o AUTOMR."""
+        payload = bash_payload("git push origin feature-x && glab mr create --fill")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOPUSH": "true"})
+        assert_ask(exit_code, decision, reason_substr="AUTOMR")
+
+    def test_compound_git_push_and_glab_mr_create_with_automr_asks_on_autopush(self):
+        """Dowod, ze galaz glab przy AUTOMR=true NIE konczy hooka -- komenda
+        zlozona idzie dalej do GIT_WRITE i pyta z powodu brakujacego AUTOPUSH."""
+        payload = bash_payload("git push origin feature-x && glab mr create --fill")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOMR": "true"})
+        assert_ask(exit_code, decision, reason_substr="AUTOPUSH")
+
+
 TEST_LINT_KEYWORDS = ["pytest", "ruff", "mypy", "eslint", "playwright", "makemessages"]
 
 

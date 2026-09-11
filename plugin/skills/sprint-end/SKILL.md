@@ -123,7 +123,25 @@ Po zakonczeniu: `append_job_log` (np. _"Usunieto N stron logow pipeline sprintu"
 
 ## KROK 4: Step `wrap-up` - zamkniecie sprintu i podsumowanie
 
-### 4a. Job `close-sprint` - REALNE zamkniecie sprintu
+### 4a. Job `retro` - korekty sprintu w reguly (opcjonalny, PRZED zamknieciem)
+
+Zapytaj uzytkownika (`AskUserQuestion`): _"Uruchomic retro korekt sprintu
+(`/monolynx:retro`)? Zbierze powtarzajace sie uwagi krytyka i zaproponuje
+reguly / wiersze rubryki."_ z opcjami **Tak** / **Nie, pomin**.
+
+**Tak** -> job `retro` w stepie `wrap-up` (instrumentacja best-effort,
+`agent_type="skill"`), uruchom skill `monolynx:retro` (przez narzedzie `Skill`)
+z nazwa zamykanego sprintu. Retro czyta komentarze ticketow i pamiec agentow,
+nie strony logow pipeline - dlatego moze isc po `wiki-clean` (3c). Musi jednak
+isc PRZED `close-sprint` (4b): `complete_sprint` wypisuje niedokonczone tickety
+ze sprintu (`sprint_id = null`, status `backlog`), a to wlasnie one nosza
+eskalacje, STOP i "ponizej progu" - po zamknieciu `list_tickets(sprint_id=...)`
+juz ich nie zwroci. Po zakonczeniu: `append_job_log` (ile korekt zebrano,
+ile regul zapisano) i `update_pipeline_job(status="success"|"failed")`.
+
+**Nie** -> pomin bez joba (albo job `skipped`).
+
+### 4b. Job `close-sprint` - REALNE zamkniecie sprintu
 
 > **UWAGA**: `complete_sprint` to nieodwracalne zamkniecie sprintu. **Niedokonczone tickety wracaja do backlogu.** Zanim wywolasz tool, ostrzez uzytkownika i poczekaj na potwierdzenie.
 
@@ -145,7 +163,7 @@ mcp__monolynx__complete_sprint(project_slug="<PROJECT_SLUG>", sprint_id="<sprint
 
 Po zakonczeniu: `append_job_log` (co domkniete, ile ticketow wrocilo do backlogu jesli wiesz), nastepnie `update_pipeline_job(status="success"|"failed")`.
 
-### 4b. Job `summary` - podsumowanie sprintu
+### 4c. Job `summary` - podsumowanie sprintu
 
 ```
 mcp__monolynx__create_pipeline_job(project_slug="<PROJECT_SLUG>", pipeline_id="<pipeline_id>", step="wrap-up", name="summary", agent_type="system")
@@ -157,7 +175,8 @@ Zbierz ladne podsumowanie tego, co zdzialo sie w sprincie:
 - co zostalo domkniete (sprint zamkniety),
 - wynik INGEST (ile stron wiki utworzono/zaktualizowano),
 - wynik LINT (ile problemow znaleziono/naprawiono, co pozostaje do rozstrzygniecia),
-- ile stron logow pipeline wyczyszczono (`N` z kroku 3c).
+- ile stron logow pipeline wyczyszczono (`N` z kroku 3c),
+- wynik RETRO, jesli uruchomione (ile korekt, ile regul zapisano, co zostalo do decyzji).
 
 Zapisz je przez `append_job_log`, nastepnie `update_pipeline_job(status="success")`.
 
@@ -181,6 +200,7 @@ Na koniec pokaz:
 
 - ktory sprint zamknieto,
 - wynik INGEST i LINT (krotko),
+- wynik RETRO (jesli uruchomione) - zapisane reguly i to, co czeka na decyzje,
 - ile stron logow pipeline wyczyszczono,
 - przypomnienie, ze niedokonczone tickety wrocily do backlogu,
 - (jesli pipeline raportowany) link/info, ze przebieg widac w zakladce "Pipelines".

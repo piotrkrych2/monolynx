@@ -39,7 +39,7 @@ So the full first-time sequence a developer runs is:
 4. Set `MONOLYNX_PROJECT_SLUG` in the repo's `.env` (or the plugin `project_slug`).
 5. Start using the `/monolynx:*` skills.
 
-After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all 118 MCP tools. This is full power.
+After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all 119 MCP tools. This is full power.
 
 If you are an agent asked to set this up inside a user's repository, follow the imperative checklist at <https://monolynx.com/agent-bootstrap.md> - it walks you through SETUP, NOTIFY, and COLLABORATE phases, including verifying the connection with `list_projects`.
 
@@ -70,7 +70,7 @@ Claude.ai and ChatGPT cannot install Claude Code plugins, so they cannot get the
 3. Connector URL: `https://your-instance/mcp` (replace `your-instance` with the actual host, e.g. `https://monolynx.com/mcp`).
 4. Authorize with your Monolynx Bearer token (`osk_...`).
 
-This gives you all 118 MCP tools (read/write tickets, sprints, wiki, dependency graph, pipelines) but **no `/monolynx:*` skills**. In this mode you must replicate the skill workflow manually - call the MCP tools in the same order the skills would (see Steps 3 and 4). It works, but the orchestrated, repeatable flow lives in the plugin. For serious development use Claude Code with the plugin.
+This gives you all 119 MCP tools (read/write tickets, sprints, wiki, dependency graph, pipelines) but **no `/monolynx:*` skills**. In this mode you must replicate the skill workflow manually - call the MCP tools in the same order the skills would (see Steps 3 and 4). It works, but the orchestrated, repeatable flow lives in the plugin. For serious development use Claude Code with the plugin.
 
 ---
 
@@ -116,11 +116,16 @@ To execute a ticket, use **`monolynx:work <ticket-id>`** (Claude Code). For smal
 1. Resolves the project slug and validates the git branch (working on `main`/`master` always asks first).
 2. Opens a pipeline (observability) of type `ticket_work` with steps research -> coding -> wrap-up.
 3. Runs a **Researcher** that reads the ticket, the spec page, the constitution, the `toolchain` page, the wiki, the code, and the dependency graph, then writes a report.
-4. Selects a minimal team of project agents plus a **mandatory code-reviewer** (quality gate) and assigns each agent **specific files**. Agents whose file sets overlap run sequentially; the rest run in parallel.
-5. The reviewer scores each agent against a fixed rubric (hard point deductions, pass mark 82). Below the mark, that agent iterates - up to 3 times.
-6. **Runs lint and tests before closing.** Red tests block the move to `in_review`.
-7. Each agent reports its own working time; comments, `log_time` and acceptance criteria are written back to the ticket.
-8. Verifies all acceptance criteria, finishes the pipeline, and moves the ticket to `in_review`.
+4. Proposes an **autonomy contract** in one question: what "done" looks like, which files stay untouched, and where the agent stops (a migration, a new dependency, a change outside the ticket scope). ENTER accepts it; the contract and the git baseline are written to the ticket as a plan comment, so a later `monolynx:resume` can pick the work up.
+5. Selects a minimal team of project agents plus a **mandatory code-reviewer** (quality gate) and assigns each agent **specific files**. Agents whose file sets overlap run sequentially; the rest run in parallel.
+6. **Defect mode:** for a bug ticket the reproducing test is written first and must be observed red before the fix goes in (the skill stashes the fix, runs the test, restores it).
+7. The reviewer scores each agent against a fixed rubric (hard point deductions, pass mark 82). Below the mark, that agent iterates - up to 3 times.
+8. **Reconciliation:** every acceptance criterion is matched against what was actually delivered; anything unmatched is listed as "to clarify" instead of being silently ticked.
+9. **Runs lint and tests before closing.** Red tests block the move to `in_review`.
+10. Each agent reports its own working time; comments, `log_time` and acceptance criteria are written back to the ticket.
+11. Finishes the pipeline and moves the ticket to `in_review`.
+
+Work that is not a ticket (configuration, an investigation, a small change) starts with **`monolynx:brief <what you want>`**: one question that pins down "done", what not to touch and where to stop, then ENTER and the work starts in the same turn. The plugin's `brief_guard` hook runs it for you when the first prompt of a session is a bare imperative such as "fix the build" (`MONOLYNX_BRIEF_GUARD=auto|block|off`). After `/clear`, a context compaction or the next day, **`monolynx:resume <ticket-id>`** rebuilds the state from the ticket comments, pipeline, acceptance criteria and git, and prints where you are, what is left and the next step.
 
 Lint and test commands come from the project's `toolchain` wiki page - create it once with **`monolynx:project-toolchain`**, which detects the stack (Makefile, Python, Node, Rust, Go, PHP, Ruby, Java) and asks you to confirm. Without that page the skills ask whether to continue unverified.
 
@@ -136,7 +141,7 @@ By default the skills **print commands instead of running them**. Environment va
 
 In a chat client without skills, you can still call the underlying MCP tools in the same order: `get_ticket`, `update_ticket(status="in_progress")`, `search_wiki`/`query_graph`, do the work, `add_comment`, `log_time`, `update_acceptance_criterion`, `update_ticket(status="in_review")`.
 
-**The two skills that matter most are `monolynx:ticket-create` and `monolynx:work`.** Everything else (`project-toolchain`, `search`, `ticket-review`, `wiki-ingest`, `wiki-lint`, `sprint-end`, `graph-sync`) supports that core loop.
+**The two skills that matter most are `monolynx:ticket-create` and `monolynx:work`.** Everything else (`brief`, `resume`, `project-toolchain`, `search`, `ticket-review`, `wiki-ingest`, `wiki-lint`, `sprint-end`, `retro`, `graph-sync`) supports that core loop.
 
 ---
 
@@ -171,8 +176,11 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Add a task | `monolynx:ticket-create` (or replicate its steps with MCP tools) |
 | Review a ticket before starting | `monolynx:ticket-review` |
 | Do a task | `monolynx:work <ticket-id>` (small, up to 3 SP: `monolynx:work-simple`) |
+| Do something that is not a ticket | `monolynx:brief <request>` - one question for the contract (done / do not touch / stop before), ENTER, work starts. The `brief_guard` hook runs it automatically for a bare first prompt |
+| Pick up work after `/clear` or the next day | `monolynx:resume <ticket-id>` (read-only: where we are, what is left, next step) |
 | Set up lint and test commands | `monolynx:project-toolchain` (run once per project) |
-| Close a sprint | `monolynx:sprint-end` (INGEST work logs, LINT, close the sprint) |
+| Close a sprint | `monolynx:sprint-end` (INGEST work logs, LINT, retro, close the sprint) |
+| Turn repeated corrections into rules | `monolynx:retro` (reviewer remarks, STOPs and escalations grouped per ticket, with a rule / rubric / constitution proposal for each) |
 | Define your team | `.claude/agents/*.md` (Claude Code) or `AGENTS.md` (Codex) - per project, not shipped by Monolynx |
 | Enable the LLM Wiki method | `monolynx:wiki-init` (run once per project) |
 | Grow the wiki | `monolynx:wiki-ingest`, `monolynx:wiki-sync-merge` (post-merge) |
@@ -180,7 +188,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Generate a code-graph CI script | `monolynx:create-graph-ci-script` |
 | See how the skills work | `monolynx:help` |
 
-Full set of 12 skills: `work`, `work-simple`, `ticket-create`, `ticket-review`, `sprint-end`, `search`, `wiki-init`, `wiki-ingest`, `wiki-lint`, `wiki-sync-merge`, `help`, `create-graph-ci-script`.
+Full set of 17 skills: `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
 
