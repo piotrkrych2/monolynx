@@ -324,7 +324,7 @@
         </div>
 
         <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">
-            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz 18 skilli i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code>, gotowy zdalny serwer MCP bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> oraz dwa hooki: <code class="text-indigo-300 font-mono text-sm">bash_guard</code> (subagenci nie odpalają testów ani operacji zapisu w git) i <code class="text-indigo-300 font-mono text-sm">brief_guard</code> (pierwszy goły imperatyw w sesji, np. „napraw build”, dostaje kontrakt ze skilla <code class="text-indigo-300 font-mono text-sm">/monolynx:brief</code>; tryby <code class="text-indigo-300 font-mono text-sm">MONOLYNX_BRIEF_GUARD=auto|block|off</code>).
+            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz 19 skilli i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code>, gotowy zdalny serwer MCP bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> oraz dwa hooki: <code class="text-indigo-300 font-mono text-sm">bash_guard</code> (subagenci nie odpalają testów ani operacji zapisu w git) i <code class="text-indigo-300 font-mono text-sm">brief_guard</code> (pierwszy goły imperatyw w sesji, np. „napraw build”, dostaje kontrakt ze skilla <code class="text-indigo-300 font-mono text-sm">/monolynx:brief</code>; tryby <code class="text-indigo-300 font-mono text-sm">MONOLYNX_BRIEF_GUARD=auto|block|off</code>).
         </p>
 
         <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-x-auto mb-4">
@@ -350,6 +350,7 @@
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:search</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:help</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:project-toolchain</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:mutation-check</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:create-graph-ci-script</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:graph-sync</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-init</code>
@@ -534,6 +535,11 @@ install_monolynx_skills(
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:project-toolchain</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Wykrywa komendy lint i testów projektu i zapisuje je jako stronę wiki toolchain. Raz per projekt - work i work-simple czytają tę stronę przed zamknięciem ticketu.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:project-toolchain</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:mutation-check</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Uruchamia testy mutacyjne narzędziem ze strony wiki toolchain, z twardym budżetem czasu - domyślnie tylko diff wobec baseline brancha, z podaną ścieżką modułu przebieg pełny. Przeżywających mutantów zamienia w śledzoną pracę: kryteria akceptacji przy wskazanym tickecie albo tickety w backlogu. Tryb diffowy podaje liczbę survivorów, nie procent; score nie jest bramką. Przebieg raportowany jako job w stepie wrap-up.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:mutation-check [ścieżka-modułu]</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:graph-sync</p>

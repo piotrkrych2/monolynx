@@ -1534,6 +1534,10 @@ def _feature_pipelines(lang: str) -> dict[str, Any]:
                     "title": "Integracja z wiki-log",
                     "desc": "Przy włączonym LLM Wiki, zakończenie pipeline'u dodaje wpis do wiki-log. Najlepszy wysiłek - błąd MCP pipeline'u nie zatrzymuje pracy agenta.",
                 },
+                {
+                    "title": "Skill mutation-check - survivor jako praca",
+                    "desc": "Skill /monolynx:mutation-check uruchamia przebieg testów mutacyjnych z twardym budżetem czasu i zamienia przeżywających mutantów w śledzoną pracę: kryteria akceptacji przy wskazanym tickecie albo tickety w backlogu. Przebieg raportowany jako job mutation-check w stepie wrap-up. Tryb diffowy podaje liczbę survivorów, nie procent - score nie jest bramką.",
+                },
             ],
             "steps": [
                 {
@@ -1642,6 +1646,10 @@ def _feature_pipelines(lang: str) -> dict[str, Any]:
             {
                 "title": "wiki-log integration",
                 "desc": "When LLM Wiki is enabled, finishing a pipeline appends an entry to wiki-log. Best-effort - a pipeline MCP error never blocks the agent's work.",
+            },
+            {
+                "title": "mutation-check skill - survivors as tracked work",
+                "desc": "The /monolynx:mutation-check skill runs a mutation testing pass under a hard time budget and turns surviving mutants into tracked work: acceptance criteria on a given ticket, or backlog tickets. The run is reported as a mutation-check job in the wrap-up step. Diff mode reports the survivor count, not a percentage - the score is never a gate.",
             },
         ],
         "steps": [

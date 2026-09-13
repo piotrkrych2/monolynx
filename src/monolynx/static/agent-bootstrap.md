@@ -65,13 +65,14 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 
 ---
 
-## Komplet 18 skilli `/monolynx:*`
+## Komplet 19 skilli `/monolynx:*`
 
 - **`/monolynx:brief`** - kontrakt epizodu bez ticketu: gotowe = obserwowalny stan, czego nie ruszac, przed czym sie zatrzymac; ENTER = start pracy.
 - **`/monolynx:work`** - podejmij ticket pelnym flow: research + kontrakt autonomii + zespol agentow + tryb defektu (najpierw czerwony test) + rekoncyliacja z kryteriami + obowiazkowy krytyk + lint i testy przed zamknieciem.
 - **`/monolynx:work-simple`** - uproszczony flow dla malych ticketow (do 3 SP): 1 dev + krytyk, bez Agent Teams; ten sam kontrakt i tryb defektu.
 - **`/monolynx:resume`** - wznow prace po /clear, kompakcji albo nastepnego dnia: stan ticketu z komentarzy, pipeline'u, kryteriow i gita; read-only.
 - **`/monolynx:project-toolchain`** - wykryj komendy lint/test projektu i zapisz jako strone wiki `toolchain` (raz per projekt).
+- **`/monolynx:mutation-check`** - uruchom testy mutacyjne narzędziem ze strony `toolchain` (domyślnie diff wobec baseline brancha, twardy budżet czasu) i zamień przeżywających mutantów w pracę: kryteria akceptacji przy tickecie albo tickety w backlogu. Score nie jest bramką.
 - **`/monolynx:ticket-create`** - utworz ticket z kontekstu wiki, grafu i kodu, w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci).
 - **`/monolynx:ticket-review`** - zrecenzuj ticket pod katem formy i zgodnosci z wiki oraz kodem.
 - **`/monolynx:sprint-run`** - dyspozytor sprintu: jeden idempotentny tick startuje brakujące sesje `work` w tle (jeden ticket = jedna nazwana sesja `<slug>-<KEY>` i własny worktree), zbiera zakończone, raportuje czekające na człowieka. Sam nie pracuje nad ticketem; pętla jest na zewnątrz (`/loop 15m` albo skrypt `sprint_run.sh` z pluginu).
