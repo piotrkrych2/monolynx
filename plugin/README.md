@@ -174,6 +174,8 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia |
 | `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): każde czekanie na odpowiedź użytkownika poza kontraktem kończy turę linią `SPRINT-RUN STOP: <powód>`; implikuje `MONOLYNX_CONTRACT=auto` |
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (działa TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
+| `MONOLYNX_SPRINT_RUN_MODE` | - | Tryb ticka dyspozytora. `batch` ustawia sam `sprint_run.sh`; skill `sprint-run` traktuje brak zmiennej (i każdą inną wartość) jako tryb interaktywny |
+| `MONOLYNX_SPRINT_PERMISSION_MODE` | wartość z komendy startu sesji w skillu `sprint-run` | Tryb uprawnień sesji roboczych `--bg` startowanych przez dyspozytora (patrz KROK 4 tego skilla) |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goły imperatyw dostaje skill `brief` z propozycją kontraktu; `block` - prompt odrzucony z odesłaniem do `/monolynx:brief`; `off` - wyłączony (patrz sekcja Hooki) |
 
 Domyślne wartości są zachowawcze: skille **wypisują komendy zamiast je wykonywać**.
@@ -281,7 +283,9 @@ Tryb `-p` nie odpowie na żadne pytanie, dlatego sesje w tle muszą mieć komple
 }
 ```
 
-`AUTOTEST`, `AUTOCOMMIT` i `AUTOPUSH` są wymagane - bez nich preflight dyspozytora zatrzymuje tick i nie startuje żadnej sesji. `AUTOMR` jest zalecane: bez niego branch jest wypchnięty, ale merge request tworzysz ręcznie. Skrypt `sprint_run.sh` ustawia te flagi sam dla procesów, które uruchamia; każdą można nadpisać w środowisku.
+`AUTOTEST`, `AUTOCOMMIT` i `AUTOPUSH` są wymagane - bez nich preflight dyspozytora zatrzymuje tick i nie startuje żadnej sesji. `AUTOMR` jest zalecane: bez niego branch jest wypchnięty, ale merge request tworzysz ręcznie. Skrypt `sprint_run.sh` ustawia te flagi sam dla procesów, które uruchamia; każdą można nadpisać w środowisku. Poza nimi eksportuje też `MONOLYNX_SPRINT_RUN_MODE=batch` (tick wie, że jego raportu nikt nie przeczyta) i `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (domyślnie `1`).
+
+Plik z flagami musi być **śledzony przez gita**. Sesja robocza dostaje worktree utworzony przez `claude --bg --worktree`, a w worktree trafia tylko to, co git zna: `.claude/settings.local.json` jest ignorowany, więc ani uprawnienia, ani flagi AUTO* z niego nie docierają do sesji w tle. Druga poprawna droga to środowisko procesu, który odpala tick - `sprint_run.sh` eksportuje flagi sam, a `claude --bg` dziedziczy środowisko.
 
 ### Uruchomienie w tmux i z crona
 
@@ -301,7 +305,7 @@ tmux new -d -s monolynx-sprint "/pelna/sciezka/z/echo/sprint_run.sh --slots 2"
 */15 * * * * cd /sciezka/projektu && "/pelna/sciezka/z/echo/sprint_run.sh" --once >> ~/sprint-run.log 2>&1
 ```
 
-Log pętli trafia do `.git/monolynx/sprint-run.log`, a plik PID w tym samym katalogu pilnuje, żeby dla jednego repozytorium działała tylko jedna pętla.
+Log pętli trafia do `.git/monolynx/sprint-run.log`, a plik PID w tym samym katalogu pilnuje, żeby dla jednego repozytorium działała tylko jedna pętla. Na stdout `sprint_run.sh --once` wypisuje wyłącznie linie logu pętli razem z linią statusu ticka; pełny raport dyspozytora zostaje w pliku logu, więc wpis w crontabie nie zalewa skrzynki.
 
 ## Migracja i kompatybilność
 
@@ -354,6 +358,17 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.8.1
+
+Poprawki z pierwszego realnego przebiegu dyspozytora (MON-172).
+
+- **Deadlista stanów sesji zamiast whitelisty**: literały `working` i `done` z realnego `claude agents --json --all` są rozpoznawane, a stan spoza listy liczy się jako sesja żywa i trafia do raportu z ostrzeżeniem. Wcześniej pracująca sesja w stanie `working` wypadała poza whitelistę, była uznawana za martwą i dostawała auto-wznowienie, czyli duplikat.
+- **ANSI i `\r` w ogonach logów**: `claude logs` zwraca render terminala, nie tekst. Skrypt stanu zdejmuje sekwencje sterujące przed dopasowaniem wzorca, a skill przepuszcza ogon przez `sed` i `tr`, żeby plik był czytelny dla człowieka.
+- **Korekta linii statusu o sesje wystartowane w ticku**: `remaining` i `running` w `SPRINT-RUN: ...` uwzględniają dispatch. Bez tego tick startujący ostatnie wolne tickety raportował `remaining=0 running=0`, a pętla kończyła się, zostawiając świeże sesje bez nadzoru.
+- **`MONOLYNX_SPRINT_RUN_MODE` zamiast wykrywania terminala**: `[ -t 0 ]` w narzędziu Bash jest fałszywe także w sesji z człowiekiem, więc tryb `batch` bierze się ze zmiennej ustawianej przez `sprint_run.sh`.
+- **`MONOLYNX_SPRINT_PERMISSION_MODE`**: tryb uprawnień sesji roboczych `--bg` da się nadpisać. Worktree sesji nie widzi `.claude/settings.local.json`, więc uprawnienia i flagi AUTO* muszą pochodzić ze śledzonego `.claude/settings.json` albo ze środowiska procesu odpalającego tick.
+- **Fixture z realnego przebiegu**: wyjście `claude` 2.1.270 zapisane w `tests/fixtures/claude/`, na nim pracują testy parsera. Nowa reguła projektu `external-tool-output` wymaga tego od każdego kodu parsującego wyjście zewnętrznego narzędzia.
 
 ### 1.8.0
 

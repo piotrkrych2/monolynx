@@ -53,7 +53,7 @@ echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-fal
 claude --version
 claude agents --json --all >/dev/null && echo "agents-ok"
 git rev-parse --show-toplevel
-[ -t 0 ] && echo "TTY=1" || echo "TTY=0"
+echo "MODE=${MONOLYNX_SPRINT_RUN_MODE:-interactive}"
 ```
 
 Wymagania twarde. Brak któregokolwiek zatrzymuje tick **przed** startem jakiejkolwiek sesji:
@@ -89,13 +89,17 @@ Wymagania twarde. Brak któregokolwiek zatrzymuje tick **przed** startem jakiejk
 
 Sesja w tle **dziedziczy środowisko**, ale nie dziedziczy Twojego shella. Flagi muszą być w `.claude/settings.json` projektu (pole `env`), nie tylko wyeksportowane w terminalu, z którego uruchamiasz tick.
 
-**Tryb nieinteraktywny** (`claude -p`, czyli `TTY=0`): nikt nie przeczyta instrukcji konfiguracyjnej, a pętla musi się dowiedzieć, że tick padł. W tym trybie po komunikacie o brakujących flagach zakończ odpowiedź dokładnie taką ostatnią linią:
+**Tryb `batch`**: zmienna `MONOLYNX_SPRINT_RUN_MODE` równa `batch` (ustawia ją sam `sprint_run.sh` dla procesów, które odpala). Nikt wtedy nie przeczyta instrukcji konfiguracyjnej, a pętla musi się dowiedzieć, że tick padł, więc po komunikacie o brakujących flagach zakończ odpowiedź dokładnie taką ostatnią linią:
 
 ```
 SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0
 ```
 
 `remaining=-1` nie pasuje do wzorca, którego szuka `sprint_run.sh`, więc pętla policzy tick jako nieudany i po trzech takich przebiegach zakończy się kodem 2. Tak ma być: pętla ma umrzeć głośno, a nie kręcić się bez efektu.
+
+**Brak zmiennej albo dowolna inna jej wartość** znaczy tryb interaktywny: instrukcję konfiguracyjną czyta człowiek, więc wypisz ją zwyczajnie i zakończ turę bez linii statusu.
+
+Tryb bierze się ze zmiennej, a nie z wykrycia terminala, bo `[ -t 0 ]` w narzędziu Bash Claude Code jest fałszywe także w sesji z człowiekiem (zweryfikowane na CLI 2.1.270), więc nie nadaje się na sygnał trybu.
 
 **Argument `[sloty]`**: liczba równoległych sesji roboczych. Weź `$ARGUMENTS`, gdy to liczba całkowita większa od zera. W przeciwnym razie użyj `${MONOLYNX_SPRINT_PARALLEL:-2}`. Argument, który nie jest dodatnią liczbą, zignoruj i odnotuj to jednym zdaniem w raporcie.
 
@@ -162,8 +166,12 @@ claude agents --json --all > "$AGENTS"
 Dla każdej sesji, której nazwa pasuje do `<PROJECT_SLUG>-<KEY>` (gdzie `<KEY>` to klucz ticketu ze sprintu), zrzuć ostatnie 20 linii logu do katalogu logów. Plik nazywa się `<id>.log`, bo tego pliku szuka skrypt stanu:
 
 ```bash
-claude logs "<session_id>" | tail -n 20 > "$LOGS/<session_id>.log"
+claude logs "<session_id>" | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' | tr '\r' '\n' | tail -n 20 > "$LOGS/<session_id>.log"
 ```
+
+`claude logs` zwraca **render terminala**, nie czysty tekst: kody ANSI, `\r` zamiast `\n` w roli separatora linii i przerysowania spinnera. Skrypt stanu zdejmuje sekwencje sterujące sam, ale `sed` i `tr` w potoku dają plik czytelny dla człowieka, który potem ogląda ten ogon w komentarzu ticketu.
+
+`claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching". Plik z takiej próby klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
 
 **Wylicz stan:**
 
@@ -298,7 +306,7 @@ mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY>")
 **Start sesji** dla każdego wybranego ticketu:
 
 ```bash
-claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>" --permission-mode acceptEdits "/monolynx:work <KEY>"
+claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>" --permission-mode "${MONOLYNX_SPRINT_PERMISSION_MODE:-bypassPermissions}" "/monolynx:work <KEY>"
 ```
 
 Odczytaj identyfikator sesji: weź go z wyjścia komendy, a gdy go tam nie ma, dociągnij po nazwie:
@@ -319,6 +327,10 @@ mcp__monolynx__add_comment(
 
 Komentarz z identyfikatorem sesji jest jedynym trwałym śladem, po którym człowiek trafi do właściwej sesji następnego dnia. Nie pomijaj go, nawet gdy sesja wystartowała bez problemów.
 
+**Zapamiętaj `S`**: liczbę sesji, które faktycznie wystartowały w tym kroku. Liczysz wyłącznie te potwierdzone wpisem o nazwie `<PROJECT_SLUG>-<KEY>` w `claude agents --json --all`, a nie liczbę prób startu. `S` wchodzi do korekty linii statusu w KROK 5.
+
+Sesja w tle startuje z trybem uprawnień wpisanym w komendę startu powyżej; `MONOLYNX_SPRINT_PERMISSION_MODE` nadpisuje tam wartość domyślną. WHY: worktree tworzony przez `claude --bg --worktree` zawiera wyłącznie pliki śledzone przez gita, a `.claude/settings.local.json` jest ignorowany, więc ani `permissions`, ani flagi AUTO* z niego nie docierają do sesji roboczej i sesja bez człowieka zawisłaby na pierwszym pytaniu o zgodę. Granicą jest wtedy hook `bash_guard.py` (deny na git write, lint, testy i `glab mr create` dla subagentów) oraz kontrakt autonomii skilla `work`, a nie dialog uprawnień. Flagi trybu w tle muszą leżeć w **śledzonym** `.claude/settings.json` (pole `env`) albo w środowisku procesu odpalającego tick: `sprint_run.sh` je eksportuje, a `claude --bg` dziedziczy środowisko.
+
 Po starcie sesji **nie czekaj** na jej wynik i nie zaglądaj do jej logu. Tick kończy się teraz, wynik zbierze następny.
 
 ---
@@ -335,9 +347,11 @@ Wypisz tabelę stanu po tym ticku:
 
 Potem sekcja **"Czekają na człowieka"** ze wszystkimi ticketami o werdykcie `waiting` oraz tymi `needs_human`, które wyczerpały auto-wznowienie. Dla każdego: klucz ticketu, powód jednym zdaniem i komenda `claude attach <session_id>`. Gdy lista jest pusta, napisz jedno zdanie, że nic nie czeka.
 
+Wiersz, którego `reason` mówi o nieznanym stanie sesji (`nieznany stan '<x>'`, czyli literał z CLI spoza listy znanej skryptowi stanu), wypisz w tabeli wprost, razem z tym powodem. Człowiek ma zobaczyć anomalię od razu, a nie domyślać się jej z zachowania pętli.
+
 ### Blok "Pętla z zewnątrz"
 
-Ten blok wypisuj **tylko interaktywnie** (`TTY=1` z KROK 1). W trybie `-p` go pomiń: pętla i tak go nie przeczyta, a zaśmieca log.
+Ten blok wypisuj wtedy, gdy `MODE` z KROK 1 **nie jest** `batch`, czyli w trybie interaktywnym. W trybie `batch` go pomiń: pętla i tak go nie przeczyta, a zaśmieca log.
 
 Najpierw rozwiń absolutną ścieżkę skryptu:
 
@@ -381,7 +395,11 @@ Powiedz wprost: **ten skill niczego nie kopiuje ani nie instaluje**. Ścieżka w
 SPRINT-RUN: remaining=<n> running=<m> waiting=<k> done=<d>
 ```
 
-Wartości bierzesz wprost z `summary` skryptu stanu: `remaining`, `running`, `waiting`, `done`. Nie przeliczaj ich samodzielnie i nie zaokrąglaj. Ta linia jest kontraktem z `sprint_run.sh`, który po niej decyduje, czy pętla ma biec dalej, czy sprint jest wykonany. W całej odpowiedzi ta linia ma wystąpić **dokładnie raz**.
+Wartości bierzesz z `summary` skryptu stanu i korygujesz **wyłącznie** o efekt KROK 4: `remaining = summary.remaining - S`, `running = summary.running + S`. `waiting` i `done` przepisujesz bez zmian. Gdy KROK 4 nic nie wystartował, `S = 0`. Żadnych innych przeliczeń i żadnego zaokrąglania.
+
+WHY: skrypt stanu policzył `summary` **przed** dispatchem. Bez tej korekty tick, który wystartował ostatnie wolne tickety, poda `remaining=0 running=0`, a pętla (`sprint_run.sh`, hub MON-169) uzna sprint za wykonany i zostawi świeże sesje bez nadzoru.
+
+Format samej linii jest bez zmian: to kontrakt z `sprint_run.sh`, który po niej decyduje, czy pętla ma biec dalej, czy sprint jest wykonany. W całej odpowiedzi ta linia ma wystąpić **dokładnie raz**.
 
 ---
 
