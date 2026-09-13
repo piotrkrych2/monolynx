@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_LIVE_SESSION_STATES = {"running", "blocked", "waiting", "busy", "idle", "starting"}
+_LIVE_SESSION_STATES = {"running", "working", "blocked", "waiting", "busy", "idle", "starting"}
 
 
 class _UsageError(Exception):

@@ -298,7 +298,7 @@ mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY>")
 **Start sesji** dla każdego wybranego ticketu:
 
 ```bash
-claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>" --permission-mode acceptEdits "/monolynx:work <KEY>"
+claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>" --permission-mode "${MONOLYNX_SPRINT_PERMISSION_MODE:-bypassPermissions}" "/monolynx:work <KEY>"
 ```
 
 Odczytaj identyfikator sesji: weź go z wyjścia komendy, a gdy go tam nie ma, dociągnij po nazwie:

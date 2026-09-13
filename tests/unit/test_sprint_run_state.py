@@ -128,7 +128,7 @@ class TestMatchSession:
 
 @pytest.mark.unit
 class TestSessionState:
-    @pytest.mark.parametrize("live_state", ["running", "blocked", "waiting", "busy", "idle", "starting"])
+    @pytest.mark.parametrize("live_state", ["running", "working", "blocked", "waiting", "busy", "idle", "starting"])
     def test_live_whitelist_states_are_running(self, live_state):
         session = bg_agent("x", agent_state=live_state)
         assert state.session_state(session) == "running"
