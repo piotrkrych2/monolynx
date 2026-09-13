@@ -1,0 +1,9 @@
+# captured: mutmut results | mutmut 3.8.0 | 2026-09-13 | docker run --rm -v <demo>:/work -w /work monolynx-app | real_run: true | note: ten sam projekt demo po dopisaniu testow pokrywajacych sub oraz is_positive(0) i is_positive(1) - wszystkie 4 mutanty killed. 'mutmut results' bez '--all' nie pokazuje zadnej linii, bo nie ma nic poza killed (pusty output oznacza 'wszystko zabite', NIE blad).
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.1
+[notice] To update, run: pip install --upgrade pip
+/usr/local/lib/python3.12/site-packages/mutmut/configuration.py:143: UserWarning: The config paths_to_mutate is deprecated. Please rename it to source_paths
+  warnings.warn("The config paths_to_mutate is deprecated. Please rename it to source_paths")
+/usr/local/lib/python3.12/site-packages/mutmut/configuration.py:152: UserWarning: The config tests_dir is deprecated. Please add the path to pytest_add_cli_args_test_selection instead
+  warnings.warn(

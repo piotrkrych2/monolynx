@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "command": "cat mutants/calc.py.meta (plik towarzyszacy kazdemu zmutowanemu plikowi zrodlowemu w katalogu roboczym mutmut, NIE jest to wynik jednej komendy CLI)",
+    "tool_version": "3.8.0",
+    "captured": "2026-09-13",
+    "environment": "docker run --rm -v <demo>:/work -w /work monolynx-app, wygenerowany przez 'mutmut run'",
+    "real_run": true,
+    "anonymized": false,
+    "note": "Jeden plik meta per plik zrodlowy (tu calc.py), NIE per mutant. Mapuje identyfikator mutanta (klucz 'calc.x_<funkcja>__mutmut_<N>', ten sam format co w 'mutmut results') na exit_code procesu testowego w exit_code_by_key: 0 = testy przeszly mimo mutacji = survived, kod niezerowy (tu 1) = test nie przeszedl = killed, kod 33 = brak testow pokrywajacych funkcje = 'no tests' (sentinel exit code specyficzny dla mutmut). hash_by_function_name to hash AST funkcji uzywany do cache'owania (jesli funkcja sie nie zmienia, mutmut moze uzyc starego wyniku nawet gdy zmienily sie testy - zaobserwowane empirycznie: zmiana samych testow bez usuniecia katalogu mutants/ NIE wymusza ponownego przebiegu mutacji, trzeba wyczyscic cache/zaczac od zera). durations_by_key/estimated_durations_by_key to czasy wykonania w sekundach."
+  },
+  "exit_code_by_key": {
+    "calc.x_add__mutmut_1": 1,
+    "calc.x_sub__mutmut_1": 33,
+    "calc.x_is_positive__mutmut_1": 0,
+    "calc.x_is_positive__mutmut_2": 0
+  },
+  "hash_by_function_name": {
+    "x_add": "0bb596aeee44",
+    "x_sub": "9e16cc3a9731",
+    "x_is_positive": "8828406e92af"
+  },
+  "type_check_error_by_key": {},
+  "durations_by_key": {
+    "calc.x_is_positive__mutmut_1": 0.051256,
+    "calc.x_is_positive__mutmut_2": 0.051211,
+    "calc.x_add__mutmut_1": 0.050807
+  },
+  "estimated_durations_by_key": {
+    "calc.x_sub__mutmut_1": 0,
+    "calc.x_is_positive__mutmut_1": 0.00015799999891896732,
+    "calc.x_is_positive__mutmut_2": 0.00015799999891896732,
+    "calc.x_add__mutmut_1": 0.0002765829995041713
+  }
+}

@@ -1,0 +1,9 @@
+# captured: mutmut results --all true | mutmut 3.8.0 | 2026-09-13 | docker run --rm -v <demo>:/work -w /work monolynx-app | real_run: true | note: wariant clean z flaga --all true - wszystkie 4 mutanty ze statusem 'killed', zero 'survived'/'no tests'.
+/usr/local/lib/python3.12/site-packages/mutmut/configuration.py:143: UserWarning: The config paths_to_mutate is deprecated. Please rename it to source_paths
+  warnings.warn("The config paths_to_mutate is deprecated. Please rename it to source_paths")
+/usr/local/lib/python3.12/site-packages/mutmut/configuration.py:152: UserWarning: The config tests_dir is deprecated. Please add the path to pytest_add_cli_args_test_selection instead
+  warnings.warn(
+    calc.x_add__mutmut_1: killed
+    calc.x_sub__mutmut_1: killed
+    calc.x_is_positive__mutmut_1: killed
+    calc.x_is_positive__mutmut_2: killed
