@@ -163,6 +163,11 @@ na żadne pytanie: `MONOLYNX_AUTOTEST=true`, `MONOLYNX_AUTOCOMMIT=true`,
 `MONOLYNX_CONTRACT=auto`, `MONOLYNX_SPRINT_RUN=1`). Bez nich preflight zatrzymuje tick
 i nie startuje żadnej sesji.
 
+Plik musi byc **sledzony przez gita**: worktree sesji roboczej nie widzi
+`.claude/settings.local.json`, wiec flagi z niego nie docieraja do sesji w tle.
+Tryb samego ticka bierze sie ze zmiennej `MONOLYNX_SPRINT_RUN_MODE` - `batch`
+ustawia sam `sprint_run.sh`, brak zmiennej znaczy tryb interaktywny.
+
 Pętla jest **na zewnątrz**. W tej sesji wystarczy:
 
 ```
@@ -248,6 +253,8 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia |
 | `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): kazde czekanie na odpowiedz uzytkownika poza kontraktem konczy ture linia `SPRINT-RUN STOP: <powod>`; implikuje `MONOLYNX_CONTRACT=auto` |
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
+| `MONOLYNX_SPRINT_RUN_MODE` | - | Tryb ticka `/monolynx:sprint-run`: `batch` ustawia sam `sprint_run.sh`, brak zmiennej (i kazda inna wartosc) znaczy tryb interaktywny |
+| `MONOLYNX_SPRINT_PERMISSION_MODE` | wartosc z komendy startu sesji w skillu `sprint-run` | Tryb uprawnien sesji roboczych `--bg` startowanych przez dyspozytora |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goly imperatyw dostaje skill `brief` z propozycja kontraktu; `block` - prompt odrzucony z odeslaniem do `/monolynx:brief`; `off` - wylaczony |
 
 Domyslne wartosci sa zachowawcze: skille **wypisuja komendy zamiast je wykonywac**.

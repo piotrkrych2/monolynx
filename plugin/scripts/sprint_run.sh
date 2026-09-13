@@ -25,6 +25,11 @@
 # MONOLYNX_PROJECT_SLUG), zalogowany `claude`, plugin monolynx >= 1.8.0.
 # Tryb -p nie odpowie na zadne pytanie, dlatego skrypt wymusza flagi AUTO*
 # i MONOLYNX_SPRINT_RUN=1 (MON-165). Kazda z nich mozna nadpisac w srodowisku.
+# Skrypt eksportuje tez MONOLYNX_SPRINT_RUN_MODE=batch (stala kontraktu, NIE do
+# nadpisania - skille po niej odrozniaja tryb -p od sesji interaktywnej, bo
+# `[ -t 0 ]` w narzedziu Bash Claude Code jest zawsze falszywe) oraz
+# CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 domyslnie (worktree nie widzi
+# settings.local.json, bez tej flagi sesje w tle traca Agent Teams) - MON-172.
 
 set -u
 
@@ -41,7 +46,7 @@ while [ $# -gt 0 ]; do
     --max-ticks) [ $# -ge 2 ] || { echo "sprint_run: --max-ticks wymaga wartosci" >&2; exit 64; }; MAX_TICKS="$2"; shift 2 ;;
     --close) CLOSE=1; shift ;;
     --once) ONCE=1; shift ;;
-    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "sprint_run: nieznany argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -77,6 +82,14 @@ export MONOLYNX_AUTOCOMMIT="${MONOLYNX_AUTOCOMMIT:-true}"
 export MONOLYNX_AUTOPUSH="${MONOLYNX_AUTOPUSH:-true}"
 export MONOLYNX_AUTOMR="${MONOLYNX_AUTOMR:-true}"
 export MONOLYNX_SPRINT_PARALLEL="$SLOTS"
+# Stala kontraktu (nie ${VAR:-default}) - skille po niej odrozniaja tryb -p
+# dyspozytora od sesji interaktywnej, bo `[ -t 0 ]` w narzedziu Bash Claude
+# Code jest zawsze falszywe niezaleznie od terminala wywolujacego (MON-172).
+export MONOLYNX_SPRINT_RUN_MODE=batch
+# Worktree (uzywany przez sesje --bg startowane per ticket) nie widzi
+# .claude/settings.local.json, wiec bez tej flagi `work` w sesji w tle traci
+# Agent Teams; domyslnie wlaczona, ale nadpisywalna z zewnatrz (MON-172).
+export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-1}"
 
 STATE_DIR="$GIT_DIR/monolynx"
 mkdir -p "$STATE_DIR"

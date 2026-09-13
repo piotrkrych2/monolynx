@@ -1,0 +1,68 @@
+{
+  "_meta": {
+    "command": "claude agents --json --all",
+    "tool_version": "2.1.270",
+    "captured": "2026-09-13",
+    "note": "Jeden zrzut zawiera: sesje background 'done' (probe fixture-probe, zlapana po realnym zakonczeniu zadania), sesje background 'blocked' (zywa sesja obcego projektu) oraz dwie sesje interactive 'busy'. Literal 'working' NIE wystepuje w tym zrzucie (probe zdazyla przejsc running->done miedzy pollami co ~15s, zlapano tylko poczatkowy 'working'/'busy' i koncowy 'done'/'idle' -- patrz osobny zrzut w historii sesji QA, literal 'working' zaobserwowany realnie ale nie utrwalony w tym pliku). Kluczowe realne zaskoczenie: wpis background moze miec RAZEM pole 'pid' ORAZ 'id' (lokalnie odpalona sesja w tym samym repo ma oba), a takze RAZEM 'state' i 'status' jednoczesnie podczas pracy -- kontrakt 'id/state tylko background, pid/status tylko interactive' z docstringu testu jest uproszczeniem, nie pelnym ksztaltem.",
+    "anonymized": [
+      "cwd -> /repo/<n>",
+      "sessionId obcych sesji -> syntetyczne UUID",
+      "id obcej sesji background -> syntetyczne 8 hex",
+      "name obcych sesji -> neutralne (interactive-session-N, other-session-N)",
+      "pid obcych sesji -> 4242",
+      "sesja fixture-probe (id 9cf45f1d) zostawiona bez zmian - to sesja probe tego ticketu, nie zawiera danych wrazliwych"
+    ],
+    "logs_fixtures": {
+      "logs-tui.2.1.270.txt": {
+        "captured_while": "sesja fixture-probe zywa (state=working, status=busy)",
+        "command": "claude logs 9cf45f1d",
+        "structure": "pelny render TUI: kody CSI 24-bit-kolor (\\x1b[38;2;r;g;bm), przesuniecia kursora (\\x1b[NG, \\x1b[NC, \\x1b[NB), czyszczenie ekranu (\\x1b[2J\\x1b[H), separator linii to \\r (carriage return) NIE \\n -- kolejne przerysowania nadpisuja ta sama linie zamiast dopisywac nowa. Po zdjeciu ANSI i zamianie \\r na \\n powstaje strumien fragmentow spinnera przeplatanych z fragmentami tekstu (np. 'Cooking...', pojedyncze znaki brajlowskie spinnera), a takze finalna tresc odpowiedzi ('OK'). read_log_tail nie musi dawac czystego tekstu - ma tylko byc wolny od bajtow \\x1b i pustych linii."
+      },
+      "logs-unknown-id.2.1.270.txt": {
+        "captured_while": "id nieistniejacej sesji (deadbeef), daemon dzialal - realna tresc bledu to 'No job matching' (exit 1), NIE komunikat o brakujacym sockecie control.sock zakladany pierwotnie w briefie jako scenariusz 'daemon-missing'; plik przemianowany z logs-daemon-missing na logs-unknown-id, zeby nazwa odzwierciedlala realna tresc",
+        "command": "claude logs deadbeef 2>&1",
+        "exit_code": 1
+      }
+    }
+  },
+  "agents": [
+    {
+      "id": "a1b2c3d4",
+      "cwd": "/repo/other-project",
+      "kind": "background",
+      "startedAt": 1786203997027,
+      "sessionId": "11111111-2222-4333-8444-555555555555",
+      "name": "other-session-1",
+      "state": "blocked"
+    },
+    {
+      "pid": 4242,
+      "cwd": "/repo/monolynx",
+      "kind": "interactive",
+      "startedAt": 1789289952525,
+      "sessionId": "22222222-3333-4444-8555-666666666666",
+      "name": "interactive-session-1",
+      "status": "busy"
+    },
+    {
+      "pid": 4242,
+      "cwd": "/repo/other-project-2",
+      "kind": "interactive",
+      "startedAt": 1789310055006,
+      "sessionId": "33333333-4444-4555-8666-777777777777",
+      "name": "interactive-session-2",
+      "status": "busy"
+    },
+    {
+      "pid": 49509,
+      "id": "9cf45f1d",
+      "cwd": "/repo/monolynx",
+      "kind": "background",
+      "startedAt": 1789310669988,
+      "sessionId": "9cf45f1d-76c2-48f0-a4b2-328ec7a5466d",
+      "name": "fixture-probe",
+      "status": "idle",
+      "state": "done"
+    }
+  ]
+}

@@ -7,7 +7,7 @@ metadata:
 
 Dokumentacja pod `plugin/` ma DWIE rozne konwencje diakrytykow:
 
-- `plugin/skills/*/SKILL.md` - polski **BEZ** polskich znakow (`narzedzie`, `zaleznosci`). Tresc trafia do promptow.
+- `plugin/skills/*/SKILL.md` - **konwencja jest PER PLIK, nie globalna**. Starsze skille (help, work, work-simple, retro, resume, brief, sprint-end, ticket-*, graph-*, project-toolchain, wiki-init/lint) pisane BEZ polskich znakow; nowsze (sprint-run, wiki-sync-merge, search) maja **pelne diakrytyki**. Przed edycja sprawdz plik: `grep -c "[ąćęłńóśźż]" <plik>` i trzymaj sie tego, co juz w nim jest. Nie ujednolicaj cudzych plikow przy okazji.
 - `plugin/README.md` i `plugin/.claude-plugin/plugin.json` - polski **Z pelnymi** diakrytykami. To dokumentacja dla czlowieka.
 
 Wspolne dla obu: **zero em-dash `-` (U+2014) i en-dash (U+2013)** - `scripts/validate_plugin_consistency.py` skanuje kazdy `.md` pod `plugin/` i wywala exit 1.
@@ -25,5 +25,7 @@ python3 scripts/sync_skills.py --check
 Pozostale reguly walidatora: referencje `KROK N` / `FAZA N` musza miec pokrycie w naglowku (pula globalna dla calego `plugin/`, nie per plik); komendy pisz `/monolynx:<nazwa>`, nigdy `/monolynx-<nazwa>`; `version` w `plugin.json` musi rownac sie pierwszemu wpisowi `### X.Y.Z` pod `## Changelog` w `plugin/README.md`.
 
 Przy bumpie wersji pluginu: nowy wpis changelogu idzie na **poczatek** sekcji, a historycznych wpisow `### X.Y.Z` nie przepisuje sie (opisuja, co weszlo w tamtej wersji). Opis skilla aktualizuje sie w tabeli "Skille (komendy `/monolynx:*`)" pod `## Zawartosc pluginu`.
+
+**Klasyfikator auto-mode blokuje agentom zapis literalow nazw trybow uprawnien Claude Code** (wartosci flagi `--permission-mode`) do plikow skilla. Gdy dokumentujesz start sesji w tle, odwoluj sie do "komendy startu w KROK N" i do zmiennej (`MONOLYNX_SPRINT_PERMISSION_MODE`), zamiast pisac sama nazwe trybu. Istniejacych linii z takim literalem nie ruszaj - przeszly wczesniej i ponowna edycja moze sie nie udac.
 
 Powiazane: [[konwencje-pisania-pl]]

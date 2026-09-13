@@ -11,8 +11,10 @@ katalogu `fakebin` dodanym na poczatku PATH. Fake `git` odpowiada na
 projektu; fake `claude` zapisuje otrzymane argumenty do pliku (FAKE_LOG),
 wypisuje zawartosc pliku statusu (FAKE_STATUS) na stdout (linia
 SPRINT-RUN: remaining=... running=... waiting=...) i zrzuca zmienne
-MONOLYNX_* ze srodowiska do pliku (FAKE_ENV_DUMP), zeby zweryfikowac
-eksport flag trybu w tle (MON-165/MON-167).
+MONOLYNX_* oraz CLAUDE_CODE_EXPERIMENTAL_* ze srodowiska do pliku
+(FAKE_ENV_DUMP), zeby zweryfikowac eksport flag trybu w tle
+(MON-165/MON-167/MON-172: MONOLYNX_SPRINT_RUN_MODE i
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).
 
 Kazde wywolanie skryptu dostaje `--interval 0`, zeby ewentualne `sleep`
 miedzy tickami nie spowalnialy testow (patrz `to_seconds` w sprint_run.sh:
@@ -47,7 +49,7 @@ if [ -n "${FAKE_LOG:-}" ]; then
   printf 'ARGS: %s\\n' "$*" >> "$FAKE_LOG"
 fi
 if [ -n "${FAKE_ENV_DUMP:-}" ]; then
-  env | grep '^MONOLYNX_' > "$FAKE_ENV_DUMP" || true
+  env | grep '^MONOLYNX_\\|^CLAUDE_CODE_EXPERIMENTAL' > "$FAKE_ENV_DUMP" || true
 fi
 exit 0
 """
@@ -270,6 +272,51 @@ class TestSprintRunSh:
         assert "/monolynx:sprint-run 3" in calls[0]
         dump = sandbox.fake_env_dump.read_text()
         assert "MONOLYNX_SPRINT_PARALLEL=3" in dump
+
+    def test_exports_sprint_run_mode_batch(self, sandbox):
+        """MON-172: MONOLYNX_SPRINT_RUN_MODE=batch to stala kontraktu (nie ${VAR:-default})
+        -- skille czytaja ja zeby wiedziec ze pracuja pod dyspozytorem w tle, nie w
+        sesji interaktywnej."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [])
+
+        assert result.returncode == 0
+        dump = sandbox.fake_env_dump.read_text()
+        assert "MONOLYNX_SPRINT_RUN_MODE=batch" in dump
+
+    def test_sprint_run_mode_is_not_overridable_from_environment(self, sandbox):
+        """MONOLYNX_SPRINT_RUN_MODE jest stala kontraktu -- w przeciwienstwie do innych
+        flag MONOLYNX_* (ktore uzywaja ${VAR:-default}) nie wolno jej nadpisac z
+        zewnatrz, zeby dyspozytor nie mogl przez pomylke uruchomic skilla w innym trybie."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [], env_overrides={"MONOLYNX_SPRINT_RUN_MODE": "custom"})
+
+        assert result.returncode == 0
+        dump = sandbox.fake_env_dump.read_text()
+        assert "MONOLYNX_SPRINT_RUN_MODE=batch" in dump
+
+    def test_exports_agent_teams_flag_enabled_by_default(self, sandbox):
+        """CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS domyslnie 1 -- sesje w tle dziedzicza
+        srodowisko procesu (nie shell), wiec bez tego skille zespolowe (Agent Teams)
+        nie wlaczylyby sie w sesjach startowanych przez sprint_run.sh (MON-172)."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [])
+
+        assert result.returncode == 0
+        dump = sandbox.fake_env_dump.read_text()
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in dump
+
+    def test_external_agent_teams_override_is_preserved(self, sandbox):
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [], env_overrides={"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "0"})
+
+        assert result.returncode == 0
+        dump = sandbox.fake_env_dump.read_text()
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0" in dump
 
     def test_close_flag_runs_sprint_end_and_retro_after_sprint_done(self, sandbox):
         write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=5")

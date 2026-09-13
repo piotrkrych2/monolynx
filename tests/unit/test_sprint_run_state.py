@@ -5,11 +5,22 @@ Te testy SA specyfikacja jego kontraktu dla backend-developera (MON-167):
 
     match_session(agents, slug, key) -> dict | None
     session_state(session) -> "running" | "exited"
+    session_state_reason(session) -> str | None
     read_log_tail(logs_dir, session_id, n=5) -> list[str]
     classify(ticket_status, session_state, log_tail) -> tuple[str, str]
     build_report(slug, tickets, agents, logs_dir) -> dict
     summarize(rows) -> dict
     main(argv: list[str]) -> int
+
+MON-172 (pierwszy realny przebieg dyspozytora) zmienia kontrakt session_state: zamiast
+bialej listy stanow zywych (kazdy nieznany literal -> "exited", co mapowalo pracujaca
+sesje "working" na martwa i powodowalo auto-wznowienie/duplikat), lista MARTWYCH stanow
+jest teraz zamknieta (_DEAD_SESSION_STATES) i kazdy inny literal - w tym nieznany z
+przyszlej wersji `claude` - jest traktowany jako zywy (wariant odwracalny, patrz
+.claude/rules/external-tool-output.md pkt 3). Nowa funkcja session_state_reason zwraca
+czytelne ostrzezenie dla literalu spoza znanej listy zywych/martwych, dopisywane do
+"reason" wiersza w build_report. Zbiory literalow sa wyprowadzone z realnego zrzutu
+`claude agents --json --all` w tests/fixtures/claude/agents-json-all.2.1.270.json.
 
 Dopoki modul nie istnieje, cala klasa testow jest skipowana (pytest.skip na
 poziomie modulu) -- czerwone/skipniete do czasu implementacji, potem zielone.
@@ -21,22 +32,28 @@ Exit: 0 OK; 2 blad wejscia (niepoprawny JSON, brak pliku, tickets nie-lista);
 64 blad uzycia (brak wymaganych argumentow) -- main() ZWRACA 64, nie rzuca
 SystemExit (argparse domyslnie rzucalby, wiec implementacja MUSI to przechwycic).
 
-Ksztalt agents-file: sesje tla maja klucze
-{"id","cwd","kind":"background","startedAt","sessionId","name","state"};
-sesje interaktywne maja {"pid","cwd","kind":"interactive","startedAt",
-"sessionId","name","status","waitingFor"}. "id" tylko w background,
-"state" tylko background, "status" tylko interactive.
+Ksztalt agents-file (patrz realny zrzut w tests/fixtures/claude/agents-json-all.2.1.270.json,
+klucz "_meta.note"): pola wspolne obu rodzajow to "cwd", "kind", "startedAt", "sessionId",
+"name". Background ma ZAWSZE "id" i "state"; interactive ma ZAWSZE "pid" i "status". Pola
+NIE sa rozlaczne miedzy rodzajami: fixture pokazuje wpis background lokalnie odpalonej
+sesji (probe pracujacej w tym samym repo) z RAZEM "pid" i "id" oraz RAZEM "state" i
+"status" naraz -- dlatego session_state() czyta `state or status` defensywnie, a nie
+zaklada ktore pole jest obecne. "id" wystepuje tylko przy background (interactive go nie
+ma). "waitingFor" NIE jest gwarantowane -- fixture interactive go nie zawiera, helper
+interactive_agent() w tym pliku dodaje je tylko dla wygody parametryzacji testow.
 """
 
 import importlib.util
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
 import pytest
 
 STATE_PATH = Path(__file__).resolve().parents[2] / "plugin" / "scripts" / "sprint_run_state.py"
+FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "claude"
 
 if not STATE_PATH.exists():
     pytest.skip("sprint_run_state.py jeszcze nie zaimplementowany (TDD)", allow_module_level=True)
@@ -128,12 +145,29 @@ class TestMatchSession:
 
 @pytest.mark.unit
 class TestSessionState:
-    @pytest.mark.parametrize("live_state", ["running", "working", "blocked", "waiting", "busy", "idle", "starting"])
-    def test_live_whitelist_states_are_running(self, live_state):
-        session = bg_agent("x", agent_state=live_state)
+    # Deadlista jest zamknieta (MON-172) - wszystko poza nia, w tym stany nieznane
+    # jeszcze `claude` (np. "compacting", literal z przyszlej wersji), jest "running".
+    # "working" i "blocked" pochodza z realnego zrzutu w
+    # tests/fixtures/claude/agents-json-all.2.1.270.json.
+    @pytest.mark.parametrize(
+        "live_or_unknown_state",
+        [
+            "running",
+            "working",
+            "blocked",
+            "waiting",
+            "busy",
+            "idle",
+            "starting",
+            "compacting",
+            "jakis-nowy-stan-z-przyszlosci",
+        ],
+    )
+    def test_live_and_unknown_states_are_running(self, live_or_unknown_state):
+        session = bg_agent("x", agent_state=live_or_unknown_state)
         assert state.session_state(session) == "running"
 
-    @pytest.mark.parametrize("dead_state", ["exited", "completed", "failed", "stopped", "killed", "unknown"])
+    @pytest.mark.parametrize("dead_state", ["exited", "completed", "failed", "stopped", "killed", "done", "error"])
     def test_dead_states_are_exited(self, dead_state):
         session = bg_agent("x", agent_state=dead_state)
         assert state.session_state(session) == "exited"
@@ -143,14 +177,102 @@ class TestSessionState:
         del session["state"]
         assert state.session_state(session) == "exited"
 
+    def test_empty_string_state_is_exited(self):
+        session = bg_agent("x", agent_state="")
+        assert state.session_state(session) == "exited"
+
     def test_interactive_session_uses_status_field_defensively(self):
-        """Defensywnie: state or status -- sesja interaktywna z 'idle' liczy sie jako running."""
-        session = interactive_agent("x", status="idle")
+        """Defensywnie: state or status -- sesja interaktywna z 'busy' liczy sie jako running."""
+        session = interactive_agent("x", status="busy")
         assert state.session_state(session) == "running"
 
     def test_interactive_session_dead_status_is_exited(self):
         session = interactive_agent("x", status="exited")
         assert state.session_state(session) == "exited"
+
+
+@pytest.mark.unit
+class TestSessionStateReason:
+    """session_state_reason: ostrzezenie tylko dla literalu spoza znanej listy zywych/martwych."""
+
+    @pytest.mark.parametrize("unknown_state", ["compacting", "jakis-nowy-stan-z-przyszlosci"])
+    def test_unknown_state_reason_names_the_literal(self, unknown_state):
+        session = bg_agent("x", agent_state=unknown_state)
+        reason = state.session_state_reason(session)
+        assert reason is not None
+        assert "nieznany stan" in reason
+        assert unknown_state in reason
+
+    @pytest.mark.parametrize("known_live_state", ["running", "working", "blocked", "waiting", "busy", "idle", "starting"])
+    def test_known_live_state_has_no_reason(self, known_live_state):
+        session = bg_agent("x", agent_state=known_live_state)
+        assert state.session_state_reason(session) is None
+
+    @pytest.mark.parametrize("dead_state", ["exited", "completed", "failed", "stopped", "killed", "done", "error"])
+    def test_dead_state_has_no_reason(self, dead_state):
+        session = bg_agent("x", agent_state=dead_state)
+        assert state.session_state_reason(session) is None
+
+    def test_missing_state_field_has_no_reason(self):
+        session = bg_agent("x")
+        del session["state"]
+        assert state.session_state_reason(session) is None
+
+
+@pytest.mark.unit
+class TestAgentsFixture:
+    """Utrwala ksztalt realnego wyjscia `claude agents --json --all` (MON-172).
+
+    Patrz .claude/rules/external-tool-output.md: fixture z przechwycenia realnego
+    przebiegu, nie z wyobrazenia autora. Fixture w
+    tests/fixtures/claude/agents-json-all.2.1.270.json zawiera sesje background
+    "done" (probe fixture-probe) i "blocked" (sesja obcego projektu) oraz dwie
+    sesje interactive "busy" -- wszystkie literaly sa juz na znanej liscie
+    (zywej albo martwej), zaden nie powinien wywolywac sciezki "nieznany stan".
+    """
+
+    @staticmethod
+    def _load():
+        path = FIXTURES_DIR / "agents-json-all.2.1.270.json"
+        return json.loads(path.read_text())
+
+    def test_meta_has_command_version_and_capture_date(self):
+        meta = self._load()["_meta"]
+        assert meta["command"] == "claude agents --json --all"
+        assert meta["tool_version"] == "2.1.270"
+        assert meta["captured"]
+
+    def test_every_background_entry_has_8_hex_id_and_state(self):
+        fixture = self._load()
+        background_entries = [a for a in fixture["agents"] if a["kind"] == "background"]
+        assert background_entries
+        for agent in background_entries:
+            assert re.fullmatch(r"[0-9a-f]{8}", agent["id"]), agent
+            assert "state" in agent
+
+    def test_every_interactive_entry_has_status_and_pid(self):
+        fixture = self._load()
+        interactive_entries = [a for a in fixture["agents"] if a["kind"] == "interactive"]
+        assert interactive_entries
+        for agent in interactive_entries:
+            assert "status" in agent
+            assert "pid" in agent
+
+    def test_match_session_finds_probe_by_name(self):
+        fixture = self._load()
+        result = state.match_session(fixture["agents"], "fixture", "probe")
+        assert result is not None
+        assert result["name"] == "fixture-probe"
+
+    def test_no_entry_in_fixture_has_unknown_state_reason(self):
+        fixture = self._load()
+        for agent in fixture["agents"]:
+            assert state.session_state_reason(agent) is None, agent
+
+    def test_every_entry_classifies_as_running_or_exited(self):
+        fixture = self._load()
+        for agent in fixture["agents"]:
+            assert state.session_state(agent) in ("running", "exited")
 
 
 # ---------------------------------------------------------------------------
@@ -180,11 +302,63 @@ class TestReadLogTail:
         tail = state.read_log_tail(tmp_path, "sid-2", n=5)
         assert tail == ["tylko jedna linia"]
 
-    def test_empty_lines_are_preserved_in_tail(self, tmp_path):
+    def test_empty_lines_are_dropped_from_tail(self, tmp_path):
+        """MON-172: ogon z realnego renderu TUI (`claude logs`) ma przerysowania i puste
+        linie po zdjeciu ANSI/\\r (patrz tests/fixtures/claude/logs-tui.2.1.270.txt) --
+        okno n linii ma byc oknem n NIEPUSTYCH linii, inaczej marker STOP albo pytanie
+        moze wypasc poza okno mimo ze logicznie jest ostatnia sensowna linia."""
         log_file = tmp_path / "sid-3.log"
         log_file.write_text("a\n\nb\n\n\n")
         tail = state.read_log_tail(tmp_path, "sid-3", n=5)
-        assert tail[-1] == ""
+        assert tail == ["a", "b"]
+
+    def test_returns_last_n_nonempty_lines_skipping_blanks(self, tmp_path):
+        log_file = tmp_path / "sid-4.log"
+        log_file.write_text("l1\n\nl2\nl3\n\nl4\nl5\nl6\n")
+        tail = state.read_log_tail(tmp_path, "sid-4", n=3)
+        assert tail == ["l4", "l5", "l6"]
+
+    def test_ansi_codes_are_stripped_and_stop_marker_is_found(self, tmp_path):
+        """Sekwencje CSI (kolor, czyszczenie ekranu) syntetyczne, na wzor realnego
+        renderu -- po zdjeciu ANSI marker SPRINT-RUN STOP jest widoczny i klasyfikacja
+        rozpoznaje oczekiwanie na czlowieka."""
+        log_file = tmp_path / "sid-ansi.log"
+        log_file.write_bytes(b"\x1b[2J\x1b[HSPRINT-RUN \x1b[32mSTOP:\x1b[0m brak toolchain\n")
+        tail = state.read_log_tail(tmp_path, "sid-ansi", n=5)
+        assert any("SPRINT-RUN STOP:" in line for line in tail)
+        assert all("\x1b" not in line for line in tail)
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "waiting"
+
+    def test_carriage_return_is_treated_as_line_separator(self, tmp_path):
+        """Render TUI nadpisuje linie przez \\r zamiast dopisywac \\n -- patrz
+        struktura realnego pliku tests/fixtures/claude/logs-tui.2.1.270.txt."""
+        log_file = tmp_path / "sid-cr.log"
+        log_file.write_text("linia1\rlinia2\rlinia3")
+        tail = state.read_log_tail(tmp_path, "sid-cr", n=5)
+        assert tail == ["linia1", "linia2", "linia3"]
+
+    def test_real_logs_tui_fixture_tail_has_no_ansi_bytes(self, tmp_path):
+        """Fixture realna z `claude logs` (MON-172): po przetworzeniu zaden element
+        ogona nie zawiera bajtu ESC ani nie jest pusty, mimo ANSI i przerysowan
+        w oryginale (patrz logs_fixtures._meta w agents-json-all.2.1.270.json)."""
+        fixture_path = FIXTURES_DIR / "logs-tui.2.1.270.txt"
+        copy_path = tmp_path / "sid-fixture.log"
+        copy_path.write_bytes(fixture_path.read_bytes())
+        tail = state.read_log_tail(tmp_path, "sid-fixture", n=5)
+        assert tail
+        assert all("\x1b" not in line for line in tail)
+        assert all(line for line in tail)
+
+    def test_unknown_id_fixture_classifies_as_running_not_waiting(self, tmp_path):
+        """Fixture realna `claude logs <nieistniejacy-id>` (MON-172): tresc bledu nie
+        zawiera markera STOP ani pytania, wiec sesja "running" zostaje "running"."""
+        fixture_path = FIXTURES_DIR / "logs-unknown-id.2.1.270.txt"
+        copy_path = tmp_path / "sid-unknown.log"
+        copy_path.write_bytes(fixture_path.read_bytes())
+        tail = state.read_log_tail(tmp_path, "sid-unknown", n=5)
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "running"
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +562,21 @@ class TestBuildReport:
         row = report["tickets"][0]
         assert row["session_id"] == "a4444444"
         assert row["verdict"] == "running"
+
+    def test_unknown_session_state_reason_is_appended_to_row_reason(self, tmp_path):
+        """MON-172: literal stanu spoza znanej listy (np. 'compacting' w przyszlej
+        wersji `claude`) nie zmienia werdyktu (running), ale dokleja ostrzezenie do
+        reason, zeby dyspozytor/czlowiek widzial ze stan byl nierozpoznany."""
+        tickets = [{"key": "MON-7", "status": "in_progress", "assignee": None}]
+        agents = [bg_agent("monolynx-MON-7", agent_id="a7777777", agent_state="compacting")]
+
+        report = state.build_report("monolynx", tickets, agents, tmp_path)
+
+        row = report["tickets"][0]
+        assert row["session_state"] == "running"
+        assert row["verdict"] == "running"
+        assert "nieznany stan" in row["reason"]
+        assert "compacting" in row["reason"]
 
 
 # ---------------------------------------------------------------------------
