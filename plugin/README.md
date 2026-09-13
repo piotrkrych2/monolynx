@@ -359,6 +359,13 @@ Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkc
 
 ## Changelog
 
+### 1.8.2
+
+Hotfix po pierwszym przebiegu dyspozytora na realnym sprincie (MON-173).
+
+- **Hook `bash_guard.py` nie zwraca `ask` w trybie sesji w tle** (`MONOLYNX_SPRINT_RUN=1`): sesja startowana przez dyspozytor nie ma nikogo, kto kliknie potwierdzenie, a tryb uprawnien sesji nie znosi decyzji `ask` z hooka. Zamiast tego `deny` z instrukcja: uzyj wariantu nieniszczacego (`rm` bez `-f`/`-r` na wlasnym pliku, `docker stop` + `docker rm` bez `-f`) albo zakoncz ture linia `SPRINT-RUN STOP: <powod>`. Poza trybem w tle hook pyta jak dotad.
+- **`sprint_run_state.py` rozpoznaje sesje stojaca na promptcie o zgode** (`waitingFor: "permission prompt"` w `claude agents --json --all`, pole wystepuje takze na wpisach background) jako `waiting` z komenda `claude attach`, zamiast liczyc ja jako `running` w nieskonczonosc.
+
 ### 1.8.1
 
 Poprawki z pierwszego realnego przebiegu dyspozytora (MON-172).

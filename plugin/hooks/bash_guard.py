@@ -27,6 +27,19 @@ import sys
 
 
 def decide(decision: str, reason: str) -> None:
+    # Tryb sesji w tle (MONOLYNX_SPRINT_RUN=1): "ask" nie ma adresata - sesja
+    # bez czlowieka zawisla by na promptcie na zawsze (MON-173, pierwszy
+    # przebieg dyspozytora). Deny z instrukcja: agent wybiera wariant
+    # nieniszczacy albo konczy ture linia SPRINT-RUN STOP (work, regula 10).
+    if decision == "ask" and os.environ.get("MONOLYNX_SPRINT_RUN", "").strip() == "1":
+        decision = "deny"
+        reason = (
+            "Tryb sesji w tle (MONOLYNX_SPRINT_RUN=1): nikt nie potwierdzi tej "
+            "operacji. Uzyj wariantu nieniszczacego (rm bez -f/-r na pliku, ktory "
+            "sam utworzyles; docker stop + docker rm bez -f) albo, jesli operacja "
+            "jest niezbedna, zakoncz ture linia 'SPRINT-RUN STOP: <powod>'. "
+            "Pierwotny powod: " + reason
+        )
     print(
         json.dumps(
             {

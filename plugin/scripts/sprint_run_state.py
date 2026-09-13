@@ -183,6 +183,16 @@ def read_log_tail(logs_dir: Path | str, session_id: str, n: int = 5) -> list[str
     return nonempty[-n:] if n > 0 else []
 
 
+def waits_for_permission(session: dict[str, Any]) -> bool:
+    """Czy wpis z `claude agents --json` mowi, ze sesja stoi na promptcie o zgode.
+
+    Pola `status`/`waitingFor` wystepuja takze na wpisach background (fixture
+    MON-172); "permission prompt" to jedyny zaobserwowany literal blokady.
+    """
+    waiting_for = str(session.get("waitingFor") or "").strip().lower()
+    return waiting_for == "permission prompt"
+
+
 def classify(ticket_status: str, session_state_value: str, log_tail: list[str]) -> tuple[str, str]:
     """Wyznacz (werdykt, uzasadnienie) na podstawie stanu ticketu i sesji.
 
@@ -254,6 +264,12 @@ def build_report(slug: str, tickets: list[dict[str, Any]], agents: list[Any], lo
             log_tail = read_log_tail(logs_dir, session_id) if session_id else []
 
         verdict, reason = classify(ticket_status, sess_state, log_tail)
+        if session is not None and sess_state == "running" and waits_for_permission(session):
+            # Prompt o zgode (hook "ask" albo zwykle uprawnienie) w sesji bez
+            # czlowieka: to jest "waiting", nie "running" - inaczej petla
+            # kreci sie w nieskonczonosc (MON-173). Zaobserwowane realnie:
+            # {"state": "blocked", "status": "waiting", "waitingFor": "permission prompt"}.
+            verdict, reason = "waiting", "sesja czeka na potwierdzenie uprawnien (claude attach)"
         if state_reason:
             reason = f"{reason}; {state_reason}"
         rows.append(

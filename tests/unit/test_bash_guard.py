@@ -208,6 +208,41 @@ class TestDestructivePatternsMainSessionAsk:
         assert_ask(exit_code, decision)
 
 
+@pytest.mark.unit
+class TestSprintRunModeNoAsk:
+    """MONOLYNX_SPRINT_RUN=1 (sesja w tle bez czlowieka): "ask" zamienia sie w deny z instrukcja (MON-173).
+
+    Pierwszy realny przebieg dyspozytora zawisl na promptach hooka (rm -f, docker rm -f),
+    bo tryb uprawnien sesji nie znosi decyzji ask z hooka, a nikt nie mogl jej potwierdzic.
+    """
+
+    def test_destructive_rm_f_in_sprint_run_is_deny_with_stop_hint(self):
+        payload = bash_payload("rm -f tests/unit/_worktree_marker.txt")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_SPRINT_RUN": "1"})
+        assert_deny(exit_code, decision, reason_substr="SPRINT-RUN STOP")
+        assert "Pierwotny powod" in decision["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def test_destructive_rm_f_without_sprint_run_still_asks(self):
+        payload = bash_payload("rm -f tests/unit/_worktree_marker.txt")
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    def test_git_push_in_sprint_run_without_autopush_is_deny(self):
+        payload = bash_payload("git push origin main")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_SPRINT_RUN": "1"})
+        assert_deny(exit_code, decision, reason_substr="MONOLYNX_SPRINT_RUN=1")
+
+    def test_git_push_in_sprint_run_with_autopush_is_allowed(self):
+        payload = bash_payload("git push origin main")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_SPRINT_RUN": "1", "MONOLYNX_AUTOPUSH": "true"})
+        assert_allow(exit_code, decision)
+
+    def test_subagent_deny_is_unchanged_in_sprint_run(self):
+        payload = bash_payload("git commit -m 'x'", **SUBAGENT)
+        exit_code, decision = run_hook(payload, env_extra={"MONOLYNX_SPRINT_RUN": "1"})
+        assert_deny(exit_code, decision)
+
+
 GIT_WRITE_OPS = [
     pytest.param("git push origin main", id="push"),
     pytest.param("git commit -m 'msg'", id="commit"),
