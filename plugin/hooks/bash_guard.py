@@ -7,7 +7,10 @@ Zasady:
   i uzytkownika. Dotad byla to tylko prosba w prompcie; hook ja egzekwuje.
 - Operacje destrukcyjne (rm -rf, force-push, curl|sh, zapis do ~/.ssh,
   DROP/TRUNCATE w SQL, mkfs/dd na urzadzenie): subagent -> deny,
-  glowna sesja -> ask.
+  glowna sesja -> ask. Wyjatek `rm -rf` (MON-174): cel pod /tmp, pod
+  katalogiem projektu albo pod katalogiem .claude przechodzi bez pytania
+  (takze subagent); cel poza nimi to deny dla wszystkich; cel nie do
+  zweryfikowania (ekspansja, glob, komenda zlozona) -> jak dotad.
 - `glab mr create`: subagent -> deny; glowna sesja -> ask, chyba ze
   MONOLYNX_AUTOMR=true.
 - Glowna sesja nie jest blokowana na twardo: git push / reset --hard / rebase /
@@ -23,6 +26,7 @@ deny/ask = zablokuj / zapytaj uzytkownika.
 import json
 import os
 import re
+import subprocess
 import sys
 
 
@@ -182,6 +186,75 @@ def _is_destructive_rm(cmd: str) -> bool:
     return False
 
 
+_RM_ALLOWED_TMP = ("/tmp", "/private/tmp")
+_RM_UNSAFE_ARG = re.compile("[$~*?\\[\"']")
+
+
+def _project_root(cwd: str) -> str:
+    """Korzen repo dla cwd (worktree dyspozytora ma wlasny korzen); brak gita -> cwd."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return cwd
+    root = out.stdout.strip()
+    return root if out.returncode == 0 and root else cwd
+
+
+def _under(path: str, root: str) -> bool:
+    """path lezy POD root (sam root nie liczy sie - skasowanie korzenia to nie sprzatanie)."""
+    root = root.rstrip("/")
+    return path != root and path.startswith(root + "/")
+
+
+def rm_target_policy(cmd: str, cwd: str, project_root: str) -> str:
+    """Polityka celow `rm`: "allowed" | "forbidden" | "unknown" (MON-174).
+
+    Sesja (takze w tle, bez czlowieka) ma prawo sprzatac WYLACZNIE pod /tmp,
+    pod katalogiem projektu (korzen repo, wiec takze worktree
+    .claude/worktrees/<KEY>) i pod dowolnym katalogiem `.claude`. Kazdy inny
+    cel to "forbidden" -> twarde deny, bez pytania: sesja bez czlowieka nie
+    powinna moc kasowac poza tymi katalogami, a czlowiek i tak nie powinien
+    tego robic przez agenta. "unknown" (komenda zlozona, `sudo`, ekspansja
+    `$`/`~`, glob, brak celu) zostawia dotychczasowy przebieg DESTRUCTIVE
+    (fail-closed): hook widzi tekst PRZED ekspansja powloki, wiec nie ma
+    jak zweryfikowac faktycznej sciezki. Sam korzen dozwolonego katalogu
+    (`rm -rf /tmp`, `rm -rf <repo>`, `rm -rf ~/.claude`) nigdy nie jest
+    dozwolony - tylko jego zawartosc.
+    """
+    stripped = cmd.strip()
+    if not stripped or TMP_CLEANUP_COMPOUND.search(stripped):
+        return "unknown"
+    tokens = stripped.split()
+    if tokens[0] != "rm":
+        return "unknown"
+    targets: list[str] = []
+    flags_done = False
+    for arg in tokens[1:]:
+        if not flags_done and arg == "--":
+            flags_done = True
+            continue
+        if not flags_done and arg.startswith("-"):
+            continue
+        if _RM_UNSAFE_ARG.search(arg):
+            return "unknown"
+        targets.append(arg)
+    if not targets:
+        return "unknown"
+    for target in targets:
+        path = os.path.normpath(target if os.path.isabs(target) else os.path.join(cwd, target))
+        in_tmp = any(_under(path, tmp) for tmp in _RM_ALLOWED_TMP)
+        in_project = _under(path, project_root)
+        in_claude_dir = ".claude" in path.split("/")[:-1]
+        if not (in_tmp or in_project or in_claude_dir):
+            return "forbidden"
+    return "allowed"
+
+
 DESTRUCTIVE = [
     (
         _is_destructive_rm,
@@ -203,8 +276,22 @@ DESTRUCTIVE = [
     ),
 ]
 
+hook_cwd = (data.get("cwd") or "").strip() or os.getcwd()
+
 for matcher, label in DESTRUCTIVE:
     if matcher(cmd):
+        if matcher is _is_destructive_rm:
+            policy = rm_target_policy(cmd, hook_cwd, _project_root(hook_cwd))
+            if policy == "allowed":
+                continue
+            if policy == "forbidden":
+                decide(
+                    "deny",
+                    "rm z flaga recursive/force/dir poza dozwolonymi katalogami. "
+                    "Kasowac wolno tylko pod /tmp, pod katalogiem projektu (korzen "
+                    "repo albo worktree) i pod katalogami .claude - nigdy sam korzen "
+                    "tych katalogow. [MON-174]",
+                )
         if is_subagent:
             decide(
                 "deny",

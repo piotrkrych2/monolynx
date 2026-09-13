@@ -121,40 +121,40 @@ class TestIsSubagentComputation:
     """is_subagent = bool(agent_id) AND agent_type not in ('', 'main')."""
 
     def test_no_agent_fields_is_main_session(self):
-        payload = bash_payload("rm -rf /tmp/foo")
+        payload = bash_payload("git push --force origin main")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_ask(exit_code, decision)  # main + destrukcyjne = ask, nie deny
 
     def test_empty_agent_id_is_main_session(self):
-        payload = bash_payload("rm -rf /tmp/foo", agent_id="", agent_type="qa-tester")
+        payload = bash_payload("git push --force origin main", agent_id="", agent_type="qa-tester")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_ask(exit_code, decision)
 
     def test_agent_type_empty_string_is_main_session(self):
-        payload = bash_payload("rm -rf /tmp/foo", agent_id="agent-1", agent_type="")
+        payload = bash_payload("git push --force origin main", agent_id="agent-1", agent_type="")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_ask(exit_code, decision)
 
     def test_agent_type_main_is_main_session(self):
-        payload = bash_payload("rm -rf /tmp/foo", agent_id="agent-1", agent_type="main")
+        payload = bash_payload("git push --force origin main", agent_id="agent-1", agent_type="main")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_ask(exit_code, decision)
 
     def test_agent_type_case_sensitive_uppercase_main_is_subagent(self):
         """Porownanie agent_type jest case-sensitive: 'MAIN' != 'main' -> subagent."""
-        payload = bash_payload("rm -rf /tmp/foo", agent_id="agent-1", agent_type="MAIN")
+        payload = bash_payload("git push --force origin main", agent_id="agent-1", agent_type="MAIN")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_deny(exit_code, decision)
 
     def test_agent_id_and_real_agent_type_is_subagent(self):
-        payload = bash_payload("rm -rf /tmp/foo", agent_id="agent-1", agent_type="qa-tester")
+        payload = bash_payload("git push --force origin main", agent_id="agent-1", agent_type="qa-tester")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_deny(exit_code, decision)
 
 
 DESTRUCTIVE_CASES = [
-    pytest.param("rm -rf /tmp/foo", "rm", id="rm_rf"),
-    pytest.param("rm -fr /tmp/foo", "rm", id="rm_fr_flag_order"),
+    pytest.param("rm -rf /home/user/foo", "rm", id="rm_rf"),
+    pytest.param("rm -fr /home/user/foo", "rm", id="rm_fr_flag_order"),
     pytest.param("rm --recursive --force /home/user", "rm", id="rm_long_recursive_force"),
     pytest.param("rm --force /etc/passwd", "rm", id="rm_long_force"),
     pytest.param("git push --force origin main", "force", id="git_push_dash_dash_force"),
@@ -194,7 +194,11 @@ class TestDestructivePatternsMainSessionAsk:
     def test_destructive_main_session_asks(self, cmd, reason_substr):
         payload = bash_payload(cmd)
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
-        assert_ask(exit_code, decision)
+        if cmd.startswith("rm "):
+            # MON-174: cel poza /tmp, projektem i .claude to twarde deny, nie ask.
+            assert_deny(exit_code, decision, reason_substr="MON-174")
+        else:
+            assert_ask(exit_code, decision)
 
     def test_destructive_main_session_asks_even_with_autopush_true(self):
         """DESTRUCTIVE zawsze pyta glowna sesje, MONOLYNX_AUTOPUSH nie omija tej galezi."""
@@ -203,7 +207,7 @@ class TestDestructivePatternsMainSessionAsk:
         assert_ask(exit_code, decision)
 
     def test_destructive_main_session_asks_even_with_autotest_true(self):
-        payload = bash_payload("rm -rf /tmp/foo")
+        payload = bash_payload("git push --force origin main")
         exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOTEST": "true"})
         assert_ask(exit_code, decision)
 
@@ -216,14 +220,14 @@ class TestSprintRunModeNoAsk:
     bo tryb uprawnien sesji nie znosi decyzji ask z hooka, a nikt nie mogl jej potwierdzic.
     """
 
-    def test_destructive_rm_f_in_sprint_run_is_deny_with_stop_hint(self):
-        payload = bash_payload("rm -f tests/unit/_worktree_marker.txt")
+    def test_destructive_op_in_sprint_run_is_deny_with_stop_hint(self):
+        payload = bash_payload("git push --force origin main")
         exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_SPRINT_RUN": "1"})
         assert_deny(exit_code, decision, reason_substr="SPRINT-RUN STOP")
         assert "Pierwotny powod" in decision["hookSpecificOutput"]["permissionDecisionReason"]
 
-    def test_destructive_rm_f_without_sprint_run_still_asks(self):
-        payload = bash_payload("rm -f tests/unit/_worktree_marker.txt")
+    def test_destructive_op_without_sprint_run_still_asks(self):
+        payload = bash_payload("git push --force origin main")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_ask(exit_code, decision)
 
@@ -241,6 +245,80 @@ class TestSprintRunModeNoAsk:
         payload = bash_payload("git commit -m 'x'", **SUBAGENT)
         exit_code, decision = run_hook(payload, env_extra={"MONOLYNX_SPRINT_RUN": "1"})
         assert_deny(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestRmTargetPolicy:
+    """`rm -rf` wolno tylko pod /tmp, katalogiem projektu i katalogami .claude (MON-174).
+
+    cwd to syntetyczny katalog bez repozytorium git -> korzen projektu = cwd
+    (fallback w _project_root). Nie uzywamy tmp_path: jego sciezka zawiera
+    slowo "pytest", ktore lapie wzorzec TEST_LINT.
+    """
+
+    PROJ = "/srv/proj"
+
+    def _payload(self, cmd, cwd=PROJ, **agent):
+        payload = bash_payload(cmd, **agent)
+        payload["cwd"] = cwd
+        return payload
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf /tmp/claude-501/x",
+            "rm -rf /private/tmp/foo/bar",
+            "rm -rf build",
+            "rm -r -f ./dist",
+            "rm -rf .claude/worktrees/MON-1",
+            "rm -rf /Users/someone/.claude/jobs/abc",
+            "rm -rf -- build",
+            "rm -rf /srv/proj/node_modules",
+            "rm -f tests/unit/_worktree_marker.txt",
+        ],
+    )
+    def test_allowed_targets_pass_for_main_session(self, cmd):
+        exit_code, decision = run_hook(self._payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_allowed_target_passes_for_subagent_too(self):
+        exit_code, decision = run_hook(self._payload("rm -rf build", **SUBAGENT))
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf /Users/someone/Documents",
+            "rm -rf /",
+            "rm -rf /etc/foo",
+            "rm -rf ../inny-projekt",
+            "rm -rf /tmp",
+            "rm -rf /private/tmp",
+            "rm -rf build /Users/someone/b",
+            "rm -rf /Users/someone/.claude",
+            "rm -rf /srv/proj",
+        ],
+    )
+    def test_forbidden_targets_are_denied_for_main_session(self, cmd):
+        exit_code, decision = run_hook(self._payload(cmd), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="MON-174")
+
+    def test_forbidden_target_is_denied_for_subagent(self):
+        exit_code, decision = run_hook(self._payload("rm -rf /etc/foo", **SUBAGENT))
+        assert_deny(exit_code, decision, reason_substr="MON-174")
+
+    @pytest.mark.parametrize("cmd", ["rm -rf ~/x", "rm -rf $DIR", "rm -rf build/*", "rm -rf build && ls", "sudo rm -rf build"])
+    def test_unverifiable_targets_keep_old_ask_for_main_session(self, cmd):
+        exit_code, decision = run_hook(self._payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    def test_unverifiable_target_in_sprint_run_is_deny(self):
+        exit_code, decision = run_hook(self._payload("rm -rf $DIR"), env_extra={**MAIN_SESSION, "MONOLYNX_SPRINT_RUN": "1"})
+        assert_deny(exit_code, decision, reason_substr="SPRINT-RUN STOP")
+
+    def test_missing_cwd_falls_back_to_process_cwd(self):
+        exit_code, decision = run_hook(bash_payload("rm -rf /etc/foo"), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="MON-174")
 
 
 GIT_WRITE_OPS = [
@@ -431,53 +509,69 @@ class TestTmpCleanupAllowListAllows:
         assert_allow(exit_code, decision)
 
 
-TMP_CLEANUP_BLOCKED_CASES = [
-    pytest.param("rm -rf /tmp/foo", id="recursive_flag_blocked"),
-    pytest.param("rm -f /tmp/../etc/passwd", id="dotdot_blocked"),
-    pytest.param("rm -f /tmp/*", id="bare_glob_no_extension_blocked"),
-    pytest.param("rm -f /var/log/x.log", id="outside_tmp_blocked"),
-    pytest.param("rm -f /tmp/a.log && rm -rf /", id="compound_command_blocked"),
-    pytest.param("rm -f /tmp/a.sh", id="disallowed_extension_blocked"),
-    pytest.param("rm -rf /", id="rm_rf_root_blocked"),
+# MON-174 zmienia los dawnych przypadkow "blocked" z MON-147: to, co lezy pod /tmp,
+# jest teraz dozwolone (takze rekurencyjnie), cel poza dozwolonymi katalogami to deny
+# dla wszystkich, a cel nie do zweryfikowania zachowuje stare fail-closed (ask/deny).
+TMP_NOW_ALLOWED_CASES = [
+    pytest.param("rm -rf /tmp/foo", id="recursive_under_tmp_allowed"),
+    pytest.param("rm --recursive /tmp/a.log", id="long_recursive_under_tmp_allowed"),
+    pytest.param("rm -f /tmp/a.sh", id="any_extension_under_tmp_allowed"),
+    pytest.param("rm -f /tmp/sub/dir", id="nested_directory_under_tmp_allowed"),
+    pytest.param("rm -f /tmp/sub/dir/", id="nested_trailing_slash_under_tmp_allowed"),
+    pytest.param("rm -rf /private/tmp/claude-501/abc/scratchpad", id="scratchpad_recursive_allowed"),
+]
+
+TMP_FORBIDDEN_CASES = [
+    pytest.param("rm -f /tmp/../etc/passwd", id="dotdot_escapes_tmp_forbidden"),
+    pytest.param("rm -f /var/log/x.log", id="outside_tmp_forbidden"),
+    pytest.param("rm -rf /", id="rm_rf_root_forbidden"),
+    pytest.param("rm -f /var/tmp/a.log", id="var_tmp_not_tmp_forbidden"),
+    pytest.param("rm -f /tmp/sub/../../etc/passwd.log", id="nested_dotdot_escapes_forbidden"),
+    pytest.param("rm -rf /tmp", id="tmp_root_itself_forbidden"),
+]
+
+TMP_UNVERIFIABLE_CASES = [
+    pytest.param("rm -f /tmp/*", id="bare_glob_unverifiable"),
+    pytest.param("rm -f /tmp/a.log && rm -rf /", id="compound_command_unverifiable"),
     # MON-147 followup: krytyk zweryfikowal empirycznie dwa realne obejscia.
-    pytest.param("rm -f /tmp/a.log\nrm -rf /home/user", id="newline_compound_blocked"),
-    pytest.param("rm -f /tmp/a.log\r\nrm -rf /home/user", id="crlf_compound_blocked"),
-    pytest.param("rm -f /tmp/$X.log", id="dollar_var_expansion_blocked"),
-    pytest.param("rm -f /tmp/${X}.log", id="dollar_brace_expansion_blocked"),
-    pytest.param("rm -f ~/x.log", id="tilde_home_expansion_blocked"),
-    pytest.param("rm -f /tmp/$(whoami).log", id="dollar_paren_command_substitution_blocked"),
-    # Luki w pokryciu wskazane przez krytyka.
-    pytest.param("rm -f /tmp/a.log ; rm -rf /home/user", id="semicolon_separator_blocked"),
-    pytest.param("rm -f /tmp/a.log | cat", id="pipe_separator_blocked"),
-    pytest.param("rm -f /tmp/a.log & rm -rf /home/user", id="ampersand_separator_blocked"),
-    pytest.param("rm -f `echo /tmp/a.log`", id="backtick_substitution_blocked"),
-    pytest.param("rm --recursive /tmp/a.log", id="long_recursive_flag_blocked"),
-    pytest.param("rm -f /var/tmp/a.log", id="var_tmp_not_tmp_blocked"),
-    pytest.param('rm -f "/tmp/a.log"', id="quoted_path_blocked_fail_closed"),
-    # Podkatalogi sa dozwolone, ale sam katalog nadal nie -- musi byc plik
-    # o dozwolonym rozszerzeniu.
-    pytest.param("rm -f /tmp/sub/dir", id="nested_bare_directory_blocked"),
-    pytest.param("rm -f /tmp/sub/dir/", id="nested_trailing_slash_blocked"),
-    pytest.param("rm -f /tmp/sub/../../etc/passwd.log", id="nested_dotdot_blocked"),
-    pytest.param("rm -rf /private/tmp/claude-501/abc/scratchpad", id="nested_recursive_blocked"),
+    pytest.param("rm -f /tmp/a.log\nrm -rf /home/user", id="newline_compound_unverifiable"),
+    pytest.param("rm -f /tmp/a.log\r\nrm -rf /home/user", id="crlf_compound_unverifiable"),
+    pytest.param("rm -f /tmp/$X.log", id="dollar_var_expansion_unverifiable"),
+    pytest.param("rm -f /tmp/${X}.log", id="dollar_brace_expansion_unverifiable"),
+    pytest.param("rm -f ~/x.log", id="tilde_home_expansion_unverifiable"),
+    pytest.param("rm -f /tmp/$(whoami).log", id="dollar_paren_command_substitution_unverifiable"),
+    pytest.param("rm -f /tmp/a.log ; rm -rf /home/user", id="semicolon_separator_unverifiable"),
+    pytest.param("rm -f /tmp/a.log | cat", id="pipe_separator_unverifiable"),
+    pytest.param("rm -f /tmp/a.log & rm -rf /home/user", id="ampersand_separator_unverifiable"),
+    pytest.param("rm -f `echo /tmp/a.log`", id="backtick_substitution_unverifiable"),
+    pytest.param('rm -f "/tmp/a.log"', id="quoted_path_unverifiable"),
 ]
 
 
 @pytest.mark.unit
-class TestTmpCleanupAllowListStillBlocksNonMatching:
-    """Warianty spoza allow-listy spadaja normalnie do reguly DESTRUCTIVE
-    (fail-closed): subagent -> deny, glowna sesja -> ask."""
+class TestTmpCleanupAfterRmTargetPolicy:
+    """Dawne przypadki "blocked" z MON-147 pod polityka celow rm z MON-174."""
 
-    @pytest.mark.parametrize("cmd", [c.values[0] for c in TMP_CLEANUP_BLOCKED_CASES], ids=[c.id for c in TMP_CLEANUP_BLOCKED_CASES])
-    def test_subagent_denied(self, cmd):
-        payload = bash_payload(cmd, **SUBAGENT)
-        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+    @pytest.mark.parametrize("cmd", [c.values[0] for c in TMP_NOW_ALLOWED_CASES], ids=[c.id for c in TMP_NOW_ALLOWED_CASES])
+    def test_under_tmp_allowed_for_main_and_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", [c.values[0] for c in TMP_FORBIDDEN_CASES], ids=[c.id for c in TMP_FORBIDDEN_CASES])
+    def test_outside_allowed_dirs_denied_for_main_and_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="MON-174")
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="MON-174")
+
+    @pytest.mark.parametrize("cmd", [c.values[0] for c in TMP_UNVERIFIABLE_CASES], ids=[c.id for c in TMP_UNVERIFIABLE_CASES])
+    def test_unverifiable_keeps_fail_closed(self, cmd):
+        """Subagent -> deny, glowna sesja -> ask (jak przed MON-174)."""
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
         assert_deny(exit_code, decision)
-
-    @pytest.mark.parametrize("cmd", [c.values[0] for c in TMP_CLEANUP_BLOCKED_CASES], ids=[c.id for c in TMP_CLEANUP_BLOCKED_CASES])
-    def test_main_session_asks(self, cmd):
-        payload = bash_payload(cmd)
-        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
         assert_ask(exit_code, decision)
 
 
