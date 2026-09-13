@@ -95,3 +95,20 @@
 - ActivityLog model: services/activity.py has log_activity (flush, no commit) + get_activity_log (read-only). log_activity designed to be called within existing transactions.
 - MCP tools sometimes open multiple async_session_factory() sessions in one tool — wasteful, should consolidate
 - Ticket.updated_at has `onupdate=func.now()` — any edit resets it, unreliable for tracking status change dates. Burndown actual line uses this (approximation). Proper fix requires activity log (MON-41) integration.
+
+## Pulapka: dwa identyfikatory sesji `claude` (MON-167)
+`claude agents --json --all` zwraca DWA identyfikatory na wpis: `id` (8 znakow, tylko `kind=background`) i `sessionId` (UUID, zawsze). Komendy `claude logs|attach|stop|rm` przyjmuja WYLACZNIE `id`. Kod raportujacy `sessionId` jako "session_id" albo nazywajacy nim pliki posrednie (`<id>.log`) rozjezdza sie z tym, co tworzy skill. Objaw jest CICHY: plik logu nigdy nie zostaje znaleziony, werdykt zalezny od logu nigdy nie pada, `attach`/`rm` dostaja UUID. Przy review kodu sterujacego sesjami w tle sprawdz, czy pole uzyte w kodzie to to samo, ktorym wola sie CLI.
+
+## Pulapka: `${CLAUDE_PLUGIN_ROOT}` w komendach dla uzytkownika
+Zmienna istnieje tylko w kontekscie Claude Code. Komenda tmux/cron z literalem `${CLAUDE_PLUGIN_ROOT}` wklejona do zwyklego terminala rozwinie sie do pustego stringu i po cichu wskaze zla sciezke. W dokumentacji: najpierw `echo` rozwijajacy sciezke, potem komenda z juz podstawiona sciezka absolutna. Ten sam wzorzec co `${user_config.X}` w bashu (MON-72).
+
+## Granica systemu w skryptach CLI (stdlib)
+Waliduj nie tylko top-level ksztalt JSON (`isinstance(list)`), ale i elementy: `row["key"]` na liscie ze zlym elementem daje traceback i exit 1 zamiast zadeklarowanego exit 2. Kontrakt "zly ksztalt -> exit N" obejmuje elementy, nie tylko korzen.
+
+## Konwencje plugin/skills potwierdzone (MON-167)
+- ToolSearch per krok NIE jest wymagany, gdy krok uzywa tooli zaladowanych wczesniej: `work-simple` laduje hurtem na starcie, `sprint-end` nie ma ToolSearch wcale. Regula `.claude/rules/skill-mcp-calls.md` (max_results=10 + termin na kazde narzedzie) dotyczy krokow, ktore ToolSearch faktycznie wolaja.
+- Regula landing-page-features wyzwala sie na toolu MCP / module dashboardu / widocznym feature. Nowy SKILL pluginu to ANI tool MCP ANI modul - wystarcza i18n w `main.py` + mcp_guide/how-to/agent-bootstrap/llms.txt. Nie odejmuj -25 za brak wpisu w `features.py`.
+- `src/monolynx/static/skills/<nazwa>/SKILL.md` rozni sie od zrodla o transformacje sync_skills.py: dodane `name:` w frontmatterze i `<PROJECT_SLUG>` -> `<PROJECT-SLUG>`. Roznica w diffie NIE oznacza nieaktualnej kopii.
+
+## MON-167 (review): 3 agentow, iteracja 2 -> 100/100
+Backend 75 -> 100 (sessionId zamiast id + KeyError na zlym ksztalcie tickets), qa 100, writer 100. Pelna historia w [review_history.md](review_history.md).

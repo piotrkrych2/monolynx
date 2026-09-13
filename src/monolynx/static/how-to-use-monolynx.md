@@ -179,6 +179,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Do something that is not a ticket | `monolynx:brief <request>` - one question for the contract (done / do not touch / stop before), ENTER, work starts. The `brief_guard` hook runs it automatically for a bare first prompt |
 | Pick up work after `/clear` or the next day | `monolynx:resume <ticket-id>` (read-only: where we are, what is left, next step) |
 | Set up lint and test commands | `monolynx:project-toolchain` (run once per project) |
+| Run a whole sprint in background sessions | `monolynx:sprint-run [slots]` - one idempotent tick: starts a named background `monolynx:work` session per ticket (own worktree), collects finished ones, reports those waiting for a human. Loop it with `/loop 15m /monolynx:sprint-run` or the plugin script `sprint_run.sh`. Requires `MONOLYNX_AUTOTEST`, `MONOLYNX_AUTOCOMMIT` and `MONOLYNX_AUTOPUSH` |
 | Close a sprint | `monolynx:sprint-end` (INGEST work logs, LINT, retro, close the sprint) |
 | Turn repeated corrections into rules | `monolynx:retro` (reviewer remarks, STOPs and escalations grouped per ticket, with a rule / rubric / constitution proposal for each) |
 | Define your team | `.claude/agents/*.md` (Claude Code) or `AGENTS.md` (Codex) - per project, not shipped by Monolynx |
@@ -188,7 +189,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Generate a code-graph CI script | `monolynx:create-graph-ci-script` |
 | See how the skills work | `monolynx:help` |
 
-Full set of 17 skills: `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`.
+Full set of 18 skills: `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
 

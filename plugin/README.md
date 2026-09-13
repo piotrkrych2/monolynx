@@ -2,7 +2,7 @@
 
 Plugin Monolynx pakuje w jeden, instalowalny zestaw to, czego potrzebujesz, żeby pracować z platformą Monolynx bezpośrednio z Claude Code:
 
-- **17 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu),
+- **18 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, dyspozytor sprintu w sesjach w tle, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu),
 - **7 agentów** wyspecjalizowanych w rolach zespołu (backend, frontend, baza danych, DevOps, QA, code review, dokumentacja),
 - **zdalny serwer MCP** Monolynx (HTTP, autoryzacja Bearer), który udostępnia narzędzia do Scrum, 500ki, Monitoringu, Wiki, Połączeń i Planu pracy.
 
@@ -107,6 +107,7 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 | `/monolynx:ticket-create` | Utwórz nowy ticket: zbiera kontekst z wiki, kodu i grafu zależności, generuje opis w ustalonej formie (cel, kontekst, zakres, nie ruszać, odwracalność, zależności, kryteria akceptacji). |
 | `/monolynx:ticket-review` | Zrecenzuj ticket ze sprintu: sprawdza formę (8 kryteriów, w tym granice "Nie ruszać" i "Odwracalność"), zgodność z wiki i kodem, generuje tabelkę raportu i proponuje poprawki. |
 | `/monolynx:sprint-end` | Zamknij sprint jako pipeline `sprint_close` (stepy wiki-update → wrap-up): INGEST logów pracy do wiki, LINT (audyt wiki), czyszczenie stron logów pipeline sprintu, opcjonalne `retro` (przed zamknięciem, bo `complete_sprint` wypisuje niedokończone tickety ze sprintu) i realne `complete_sprint` (niedokończone tickety wracają do backlogu, z potwierdzeniem). Raportowanie do Pipelines best-effort. |
+| `/monolynx:sprint-run` | Dyspozytor sprintu: jeden idempotentny tick czyta stan sprintu i sesji w tle, startuje brakujące sesje `claude --bg --worktree <KEY> --name <slug>-<KEY>` z komendą `/monolynx:work <KEY>`, zbiera zakończone (komentarz z identyfikatorem sesji i `claude rm`), raportuje czekające na człowieka i kończy linią `SPRINT-RUN: remaining=... running=... waiting=... done=...`. Sam nigdy nie pracuje nad ticketem. Pętla jest na zewnątrz: `/loop 15m /monolynx:sprint-run` albo `plugin/scripts/sprint_run.sh`. |
 | `/monolynx:search` | Szukaj informacji w wiki projektu (architektura, API, integracje, standardy kodu) przez wyszukiwanie semantyczne; przy włączonej metodzie LLM Wiki proponuje zapis odpowiedzi jako stronę syntezy. |
 | `/monolynx:wiki-init` | Włącz metodę LLM Wiki dla projektu: tworzy strony systemowe (regulamin `wiki-schema`, katalog `wiki-index`, dziennik `wiki-log`) i włącza flagę. Idempotentny bootstrap. |
 | `/monolynx:wiki-ingest` | Zintegruj nowe źródło (plik, URL, wklejona treść) z wiki: strona źródła, aktualizacja powiązanych stron encji/konceptów, wikilinki, odświeżenie katalogu i wpis do dziennika. |
@@ -203,6 +204,102 @@ Przykład - sesja w tle, odpalana przez dyspozytor `/monolynx:sprint-run`:
 }
 ```
 
+## Sprint bez sesji interaktywnej
+
+Sprint da się przerobić bez człowieka siedzącego przy terminalu. Robią to dwa elementy, które można używać osobno.
+
+**Dyspozytor `/monolynx:sprint-run [sloty]`** to jeden tick: czyta aktywny sprint i stan sesji w tle, startuje brakujące sesje `/monolynx:work` (każdą w osobnym worktree, pod nazwą `<slug>-<KEY>`), zbiera zakończone, raportuje te, które czekają na człowieka, i kończy ostatnią linią:
+
+```
+SPRINT-RUN: remaining=<n> running=<m> waiting=<k> done=<d>
+```
+
+Dyspozytor **nigdy sam nie pracuje nad ticketem**. Jest cienki z premedytacją: każdy ticket dostaje świeży proces, więc jeden zablokowany ticket nie zatrzymuje reszty, a konteksty się nie mieszają. Tick jest idempotentny - uruchomiony dwa razy pod rząd nie zdubluje sesji ani komentarzy.
+
+**Pętla jest na zewnątrz.** Dwa sposoby:
+
+1. **W sesji interaktywnej** - wbudowany `/loop`:
+
+   ```
+   /loop 15m /monolynx:sprint-run
+   ```
+
+2. **Bez sesji interaktywnej** - skrypt `plugin/scripts/sprint_run.sh`, który odpala każdy tick w świeżym procesie `claude -p`:
+
+   ```bash
+   plugin/scripts/sprint_run.sh --interval 15m --slots 2
+   ```
+
+Skrypt uruchamiasz z katalogu projektu (repo git ze slugiem w `.claude/settings.json`). Po instalacji pluginu leży on w katalogu cache pluginu, nie w Twoim repozytorium. Absolutną ścieżkę wypisuje sam dyspozytor na końcu raportu; można ją też rozwinąć ręcznie:
+
+```bash
+echo "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run.sh"
+```
+
+Ścieżka zawiera numer wersji pluginu, więc po aktualizacji rozwiń ją ponownie zamiast trzymać starą na stałe w crontabie.
+
+### Flagi skryptu
+
+| Flaga | Domyślnie | Znaczenie |
+|---|---|---|
+| `--interval` | `15m` | Odstęp między tickami (`15m`, `900`, `1h`) |
+| `--slots` | `$MONOLYNX_SPRINT_PARALLEL` albo `2` | Liczba równoległych sesji roboczych |
+| `--max-ticks` | `96` | Bezpiecznik: po tylu tickach pętla kończy się kodem 3 |
+| `--close` | wyłączone | Po wyczerpaniu sprintu odpala `/monolynx:sprint-end` i `/monolynx:retro`. Domyślnie pętla zatrzymuje się przed zamknięciem, bo merge requesty przegląda człowiek |
+| `--once` | wyłączone | Jeden tick i koniec (do crona, który sam jest pętlą) |
+| `--help` | - | Wypisuje nagłówek skryptu z pełnym opisem |
+
+### Kody wyjścia
+
+| Kod | Znaczenie |
+|---|---|
+| `0` | Sprint wykonany: `remaining=0 running=0`, nic nie czeka na człowieka |
+| `2` | Trzy ticki pod rząd bez poprawnej linii statusu - dyspozytor nie działa, pętla umiera głośno zamiast kręcić się bez efektu |
+| `3` | Osiągnięto `--max-ticks` |
+| `4` | Zostały wyłącznie sesje czekające na człowieka - dokończ je ręcznie (`claude agents`, `claude attach <id>`) |
+
+Kody `64`, `65`, `69`, `75` i `78` to błędy startu (nieznany argument lub flaga `--interval`, `--slots`, `--max-ticks` bez wartości; uruchomienie spoza repozytorium git; brak `claude` w `PATH`; pętla już działa dla tego repozytorium; brak sluga projektu).
+
+### Wymagane flagi trybu w tle
+
+Tryb `-p` nie odpowie na żadne pytanie, dlatego sesje w tle muszą mieć komplet flag w `.claude/settings.json` projektu (pole `env`, nie tylko eksport w shellu - sesja dziedziczy środowisko, ale nie Twój terminal):
+
+```json
+{
+  "env": {
+    "MONOLYNX_PROJECT_SLUG": "twoj-projekt",
+    "MONOLYNX_CONTRACT": "auto",
+    "MONOLYNX_SPRINT_RUN": "1",
+    "MONOLYNX_AUTOTEST": "true",
+    "MONOLYNX_AUTOCOMMIT": "true",
+    "MONOLYNX_AUTOPUSH": "true",
+    "MONOLYNX_AUTOMR": "true"
+  }
+}
+```
+
+`AUTOTEST`, `AUTOCOMMIT` i `AUTOPUSH` są wymagane - bez nich preflight dyspozytora zatrzymuje tick i nie startuje żadnej sesji. `AUTOMR` jest zalecane: bez niego branch jest wypchnięty, ale merge request tworzysz ręcznie. Skrypt `sprint_run.sh` ustawia te flagi sam dla procesów, które uruchamia; każdą można nadpisać w środowisku.
+
+### Uruchomienie w tmux i z crona
+
+`${CLAUDE_PLUGIN_ROOT}` istnieje **tylko wewnątrz sesji Claude Code**. W zwykłym terminalu rozwinie się do pustego stringu, więc najpierw rozwiń ścieżkę w Claude Code (dyspozytor wypisuje ją sam na końcu raportu):
+
+```bash
+echo "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run.sh"
+```
+
+Rozwiniętą ścieżkę podstaw do komend w terminalu:
+
+```bash
+tmux new -d -s monolynx-sprint "/pelna/sciezka/z/echo/sprint_run.sh --slots 2"
+```
+
+```
+*/15 * * * * cd /sciezka/projektu && "/pelna/sciezka/z/echo/sprint_run.sh" --once >> ~/sprint-run.log 2>&1
+```
+
+Log pętli trafia do `.git/monolynx/sprint-run.log`, a plik PID w tym samym katalogu pilnuje, żeby dla jednego repozytorium działała tylko jedna pętla.
+
 ## Migracja i kompatybilność
 
 Plugin to **preferowana ścieżka** dla użytkowników Claude Code CLI. Nie zastępuje jednak dotychczasowego mechanizmu instalacji skilli, oba istnieją równolegle.
@@ -254,6 +351,13 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.8.0
+
+- **Nowy skill `/monolynx:sprint-run`**: cienki dyspozytor nazwanych sesji w tle. Jeden idempotentny tick czyta aktywny sprint i stan sesji, startuje brakujące sesje `claude --bg --worktree <KEY> --name <slug>-<KEY>` z komendą `/monolynx:work <KEY>`, zbiera zakończone (komentarz z identyfikatorem sesji, potem `claude rm`), raportuje czekające na człowieka i kończy linią `SPRINT-RUN: remaining=... running=... waiting=... done=...`. Nigdy sam nie pracuje nad ticketem. Preflight wymaga `AUTOTEST`, `AUTOCOMMIT` i `AUTOPUSH`; bez nich tick kończy się bez startowania sesji. Tickety migracyjne startują solo, jedno auto-wznowienie na ticket.
+- **Pętla zewnętrzna `plugin/scripts/sprint_run.sh`**: świeży `claude -p` per tick, flagi `--interval`, `--slots`, `--max-ticks`, `--close`, `--once`, kody wyjścia 0/2/3/4, blokada drugiej pętli na tym samym repozytorium, log w `.git/monolynx/`. Działa tak samo lokalnie, w tmux na VPS i z crona.
+- **`plugin/scripts/sprint_run_state.py`**: wyliczanie werdyktu per ticket (`done`, `needs_human`, `waiting`, `free`, `running`) z listy sesji, statusów ticketów i ogonów logów; dyspozytor nie zgaduje stanu na podstawie tekstu, tylko czyta policzony JSON. Testy jednostkowe skryptu pętli i skryptu stanu.
+- **Tryb sesji w tle (MON-165)** wykorzystany przez dyspozytora: `MONOLYNX_SPRINT_RUN=1` sprawia, że `work` / `work-simple` nie czekają na odpowiedzi, tylko kończą turę linią `SPRINT-RUN STOP: <powód>`, a `MONOLYNX_CONTRACT=auto` przepuszcza kontrakt autonomii bez potwierdzenia.
 
 ### 1.7.0
 

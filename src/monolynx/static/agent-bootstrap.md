@@ -65,7 +65,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 
 ---
 
-## Komplet 17 skilli `/monolynx:*`
+## Komplet 18 skilli `/monolynx:*`
 
 - **`/monolynx:brief`** - kontrakt epizodu bez ticketu: gotowe = obserwowalny stan, czego nie ruszac, przed czym sie zatrzymac; ENTER = start pracy.
 - **`/monolynx:work`** - podejmij ticket pelnym flow: research + kontrakt autonomii + zespol agentow + tryb defektu (najpierw czerwony test) + rekoncyliacja z kryteriami + obowiazkowy krytyk + lint i testy przed zamknieciem.
@@ -74,6 +74,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 - **`/monolynx:project-toolchain`** - wykryj komendy lint/test projektu i zapisz jako strone wiki `toolchain` (raz per projekt).
 - **`/monolynx:ticket-create`** - utworz ticket z kontekstu wiki, grafu i kodu, w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci).
 - **`/monolynx:ticket-review`** - zrecenzuj ticket pod katem formy i zgodnosci z wiki oraz kodem.
+- **`/monolynx:sprint-run`** - dyspozytor sprintu: jeden idempotentny tick startuje brakujące sesje `work` w tle (jeden ticket = jedna nazwana sesja `<slug>-<KEY>` i własny worktree), zbiera zakończone, raportuje czekające na człowieka. Sam nie pracuje nad ticketem; pętla jest na zewnątrz (`/loop 15m` albo skrypt `sprint_run.sh` z pluginu).
 - **`/monolynx:sprint-end`** - zamknij sprint jako pipeline `sprint_close`: INGEST logow pracy do wiki + LINT + retro korekt + domkniecie sprintu.
 - **`/monolynx:retro`** - retro korekt sprintu: uwagi krytyka, NEEDS WORK, STOP-y i eskalacje z ticketow oraz pamieci agentow, pogrupowane per ticket, z propozycja trwalej maszynerii (regula, rubryka, constitution).
 - **`/monolynx:search`** - semantyczne wyszukiwanie RAG w wiki projektu.

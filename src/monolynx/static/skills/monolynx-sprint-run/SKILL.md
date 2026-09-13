@@ -1,0 +1,396 @@
+---
+name: monolynx-sprint-run
+description: "Dyspozytor sprintu: jeden idempotentny tick, który czyta stan sprintu i sesji w tle, startuje brakujące sesje /monolynx:work w worktree, zbiera zakończone i raportuje. Sam nigdy nie pracuje nad ticketem. Użyj gdy chcesz przerobić sprint sesjami w tle, w pętli /loop albo ze skryptu sprint_run.sh."
+user-invocable: true
+argument-hint: "[sloty]"
+allowed-tools: mcp__monolynx__list_sprints, mcp__monolynx__list_tickets, mcp__monolynx__get_board, mcp__monolynx__get_ticket, mcp__monolynx__list_comments, mcp__monolynx__add_comment, Bash, Read, ToolSearch
+---
+
+# SPRINT-RUN - dyspozytor nazwanych sesji w tle
+
+Jesteś **dyspozytorem sprintu**. Jedno uruchomienie tego skilla to jeden **tick**: czytasz stan sprintu i stan sesji w tle, startujesz brakujące sesje, zbierasz zakończone, raportujesz i kończysz turę.
+
+Dyspozytor jest **cienki**. Trzy zasady, które go definiują:
+
+1. **Nigdy nie pracujesz nad ticketem sam.** Nie czytasz kodu ticketu, nie edytujesz plików, nie commitujesz. Od pracy jest `/monolynx:work` w osobnej sesji.
+2. **Świeży proces per ticket.** Każdy ticket dostaje własną nazwaną sesję w tle z własnym worktree, więc konteksty się nie mieszają, a jeden zablokowany ticket nie zatrzymuje reszty.
+3. **Tick jest idempotentny.** Uruchomiony dwa razy pod rząd nie zdubluje sesji ani komentarzy: stan wynika z tego, co faktycznie żyje w `claude agents` i jaki status ma ticket, nie z pamięci poprzedniego przebiegu.
+
+Sesje w tle działają bez człowieka dzięki flagom trybu w tle z MON-165 (`MONOLYNX_SPRINT_RUN=1` i `MONOLYNX_CONTRACT=auto`): `/monolynx:work` nie czeka na odpowiedzi, tylko kończy turę linią `SPRINT-RUN STOP: <powód>`, którą ten skill wykrywa jako werdykt `waiting`.
+
+Pętla jest **na zewnątrz** tego skilla. Ty robisz jeden tick, pętlę robi `/loop 15m /monolynx:sprint-run` albo skrypt `sprint_run.sh` (patrz KROK 5).
+
+---
+
+## Ustalenie slug projektu
+
+Slug projektu pochodzi ze zmiennej środowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdź ją:
+
+```bash
+echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
+```
+
+- **Zmienna ustawiona** - użyj jej wartości jako `project_slug` we wszystkich wywołaniach narzędzi MCP poniżej. Slug podany wprost przez użytkownika ma pierwszeństwo.
+- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE startuj żadnej sesji. Poproś użytkownika, by skonfigurował slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomił skill ponownie:
+
+  ```json
+  {
+    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
+  }
+  ```
+
+  Zakończ bez dalszych akcji, dopóki slug nie jest znany.
+
+Slug jest częścią kontraktu nazw: sesja robocza ticketu nazywa się `<PROJECT-SLUG>-<KEY>` (np. `monolynx-MON-167`), a sesja samego dyspozytora `<PROJECT-SLUG>-sprint-run`. Te nazwy są **zamrożone** - inne narzędzia po nich rozpoznają sesje sprintu. Nie zmieniaj ich i nie dodawaj sufiksów.
+
+---
+
+## KROK 1: Preflight
+
+Sprawdź środowisko jednym przebiegiem. Bez tego tick w tle utknie na pierwszym pytaniu, na które nikt nie odpowie.
+
+```bash
+echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} AUTOMR=${MONOLYNX_AUTOMR:-false} CONTRACT=${MONOLYNX_CONTRACT:-ask} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0}"
+claude --version
+claude agents --json --all >/dev/null && echo "agents-ok"
+git rev-parse --show-toplevel
+[ -t 0 ] && echo "TTY=1" || echo "TTY=0"
+```
+
+Wymagania twarde. Brak któregokolwiek zatrzymuje tick **przed** startem jakiejkolwiek sesji:
+
+| Warunek | Dlaczego wymagany |
+|---|---|
+| `claude --version` odpowiada | bez CLI nie ma czym startować sesji |
+| `claude agents --json --all` działa | to jedyne źródło stanu sesji w tle |
+| katalog jest repozytorium git | worktree per ticket wymaga repo |
+| `MONOLYNX_AUTOTEST=true` | sesja w tle sama odpala lint i testy; przy `false` czeka na wklejony wynik |
+| `MONOLYNX_AUTOCOMMIT=true` | bez commitu praca sesji nie przetrwa jej zamknięcia |
+| `MONOLYNX_AUTOPUSH=true` | bez pusha nie ma czego przeglądać po tickecie |
+
+`MONOLYNX_AUTOMR=true` jest **zalecane**, nie wymagane: bez niego sesja pushuje branch, ale merge request tworzysz ręcznie. Brak `AUTOMR` odnotuj w raporcie jako ostrzeżenie i pracuj dalej.
+
+`MONOLYNX_CONTRACT` i `MONOLYNX_SPRINT_RUN` ustawia sobie sam skrypt `sprint_run.sh`. Gdy odpalasz tick ręcznie albo przez `/loop`, dopilnuj, żeby były w `.claude/settings.json`, inaczej sesje w tle będą czekać na kontrakt.
+
+**Gdy brakuje wymaganej flagi albo narzędzia**: wypisz, czego brakuje, i pokaż gotową konfigurację do wklejenia. Potem zakończ turę **bez startowania sesji**.
+
+```json
+{
+  "env": {
+    "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu",
+    "MONOLYNX_CONTRACT": "auto",
+    "MONOLYNX_SPRINT_RUN": "1",
+    "MONOLYNX_AUTOTEST": "true",
+    "MONOLYNX_AUTOCOMMIT": "true",
+    "MONOLYNX_AUTOPUSH": "true",
+    "MONOLYNX_AUTOMR": "true"
+  }
+}
+```
+
+Sesja w tle **dziedziczy środowisko**, ale nie dziedziczy Twojego shella. Flagi muszą być w `.claude/settings.json` projektu (pole `env`), nie tylko wyeksportowane w terminalu, z którego uruchamiasz tick.
+
+**Tryb nieinteraktywny** (`claude -p`, czyli `TTY=0`): nikt nie przeczyta instrukcji konfiguracyjnej, a pętla musi się dowiedzieć, że tick padł. W tym trybie po komunikacie o brakujących flagach zakończ odpowiedź dokładnie taką ostatnią linią:
+
+```
+SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0
+```
+
+`remaining=-1` nie pasuje do wzorca, którego szuka `sprint_run.sh`, więc pętla policzy tick jako nieudany i po trzech takich przebiegach zakończy się kodem 2. Tak ma być: pętla ma umrzeć głośno, a nie kręcić się bez efektu.
+
+**Argument `[sloty]`**: liczba równoległych sesji roboczych. Weź `$ARGUMENTS`, gdy to liczba całkowita większa od zera. W przeciwnym razie użyj `${MONOLYNX_SPRINT_PARALLEL:-2}`. Argument, który nie jest dodatnią liczbą, zignoruj i odnotuj to jednym zdaniem w raporcie.
+
+---
+
+## KROK 2: Stan sprintu i sesji
+
+Załaduj narzędzia MCP tego kroku:
+
+```
+ToolSearch(query="+monolynx sprint list tickets board ticket", max_results=10)
+```
+
+**Aktywny sprint:**
+
+```
+mcp__monolynx__list_sprints(project_slug="<PROJECT-SLUG>", status="active")
+```
+
+- **Dokładnie jeden** - użyj jego `id` jako `sprint_id`.
+- **Zero aktywnych sprintów** - to nie jest błąd, tylko pusty sprint. Wypisz _"Brak aktywnego sprintu - nie ma czego dyspozytorować."_ i zakończ turę linią statusu:
+
+  ```
+  SPRINT-RUN: remaining=0 running=0 waiting=0 done=0
+  ```
+
+  Pętla zobaczy `remaining=0 running=0` i zakończy się czysto.
+- **Więcej niż jeden aktywny sprint** - stan niemożliwy przy poprawnym module Scrum, więc nie zgaduj. Wypisz komunikat z nazwami sprintów i zakończ tak samo jak przy brakujących flagach z KROK 1 (bez startowania sesji).
+
+**Tickety sprintu:**
+
+```
+mcp__monolynx__list_tickets(project_slug="<PROJECT-SLUG>", sprint_id="<sprint_id>")
+```
+
+Lista jest paginowana po 20. Gdy pierwsza linia mówi o więcej niż jednej stronie, dociągnij kolejne przez `page=2`, `page=3` i tak dalej, aż zbierzesz komplet. Alternatywa, gdy interesuje Cię tylko obraz tablicy: `mcp__monolynx__get_board(project_slug="<PROJECT-SLUG>")` - ale `list_tickets` jest źródłem pierwszego wyboru, bo daje pełny wiersz z priorytetem i etykietami.
+
+Zapisz tickety do pliku tymczasowego w formacie, którego oczekuje skrypt stanu:
+
+```bash
+STATE_TMP="$(mktemp -d)"
+TICKETS="$STATE_TMP/tickets.json"
+AGENTS="$STATE_TMP/agents.json"
+LOGS="$STATE_TMP/logs"
+mkdir -p "$LOGS"
+cat > "$TICKETS" <<'JSON'
+[
+  {"key": "MON-167", "status": "in_progress", "assignee": "piotr@example.com"},
+  {"key": "MON-168", "status": "todo", "assignee": null}
+]
+JSON
+```
+
+Nie kasuj katalogu tymczasowego po ticku. System sam sprząta `/tmp`, a zostawione pliki bywają jedynym śladem, gdy trzeba odtworzyć, co widział dyspozytor.
+
+**Sesje w tle i ogony logów:**
+
+```bash
+claude agents --json --all > "$AGENTS"
+```
+
+**Identyfikator sesji to pole `id`, nie `sessionId`.** W wyjściu `claude agents --json --all` każdy wpis ma oba. `id` jest krótki (8 znaków) i występuje wyłącznie dla wpisów o `kind` równym `background`; `sessionId` to UUID wątku i żadna komenda go nie przyjmuje. `claude logs`, `claude attach` i `claude rm` działają **tylko** na `id`. Wszędzie dalej w tym skillu `<session_id>` oznacza właśnie to krótkie `id`: tak nazywasz plik ogona logu, tak wpisujesz identyfikator do komentarza ticketu i taki podajesz człowiekowi w komendzie `claude attach`. Pole `session_id` w JSON-ie ze skryptu stanu niesie tę samą wartość.
+
+Dla każdej sesji, której nazwa pasuje do `<PROJECT-SLUG>-<KEY>` (gdzie `<KEY>` to klucz ticketu ze sprintu), zrzuć ostatnie 20 linii logu do katalogu logów. Plik nazywa się `<id>.log`, bo tego pliku szuka skrypt stanu:
+
+```bash
+claude logs "<session_id>" | tail -n 20 > "$LOGS/<session_id>.log"
+```
+
+**Wylicz stan:**
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run_state.py" \
+  --slug "<PROJECT-SLUG>" \
+  --agents-file - \
+  --tickets-file "$TICKETS" \
+  --logs-dir "$LOGS" < "$AGENTS"
+```
+
+Skrypt zwraca na stdout JSON:
+
+```json
+{
+  "slug": "<PROJECT-SLUG>",
+  "tickets": [
+    {"key": "MON-167", "session_id": "abc123", "session_name": "<PROJECT-SLUG>-MON-167",
+     "session_state": "running", "ticket_status": "in_progress",
+     "verdict": "running", "reason": "sesja zyje, brak sygnalu stopu"}
+  ],
+  "summary": {"remaining": 3, "running": 1, "waiting": 0, "done": 2, "needs_human": 0}
+}
+```
+
+Kody wyjścia: `0` (stan policzony), `2` (błąd wejścia, np. niepoprawny JSON), `64` (złe argumenty). Kod inny niż `0` traktuj jak awarię ticka: wypisz stderr skryptu, nie startuj żadnej sesji i zakończ turę linią `SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0`.
+
+Werdykty i to, co z nimi robisz:
+
+| Werdykt | Co znaczy | Twoje działanie |
+|---|---|---|
+| `free` | brak sesji, ticket w `todo` | kandydat do startu (KROK 4) |
+| `running` | sesja żyje i pracuje | nic nie rób, zajmuje slot |
+| `waiting` | sesja żyje, ale czeka na człowieka (`SPRINT-RUN STOP:` w ostatnich 5 liniach albo ostatnia linia z pytajnikiem) | nic nie rusz, zaraportuj (KROK 3) |
+| `done` | ticket w `in_review` albo `done` | komentarz i sprzątnięcie sesji (KROK 3) |
+| `needs_human` | sesja padła bez domknięcia ticketu albo ticket wisi w `in_progress` bez sesji | ogon logu do komentarza, jedno auto-wznowienie (KROK 3) |
+
+---
+
+## KROK 3: Zbiór zakończonych i zablokowanych
+
+Załaduj narzędzia MCP tego kroku:
+
+```
+ToolSearch(query="+monolynx comment list add ticket", max_results=10)
+```
+
+Przejdź po ticketach z werdyktem innym niż `free` i `running`.
+
+### Werdykt `done`
+
+1. Dopisz komentarz do ticketu:
+
+   ```
+   mcp__monolynx__add_comment(
+     project_slug="<PROJECT-SLUG>",
+     ticket_id="<KEY>",
+     content="**Sprint-run** - sesja `<session_id>` zakończona, branch `<nazwa brancha z ogona logu>`, MR: <URL z ogona logu albo 'brak'>"
+   )
+   ```
+
+   Branch i URL merge requestu weź z ogona logu sesji. Gdy ich tam nie ma, wpisz `brak` - nie zgaduj i nie buduj URL-a z szablonu.
+
+2. Sprzątnij sesję:
+
+   ```bash
+   claude rm "<session_id>"
+   ```
+
+   **Bez** `--discard-unpushed` i **bez** `--force-remove-worktree`. Te flagi kasują pracę, której nikt jeszcze nie widział. Gdy `claude rm` odmówi (najczęściej: niewypchnięte zmiany w worktree), zostaw sesję w spokoju i odnotuj to w raporcie jako pozycję do ręcznego sprzątnięcia.
+
+### Werdykt `needs_human`
+
+1. Wklej ostatnie 20 linii logu do komentarza ticketu, żeby ślad przetrwał zamknięcie sesji:
+
+   ```
+   mcp__monolynx__add_comment(
+     project_slug="<PROJECT-SLUG>",
+     ticket_id="<KEY>",
+     content="**Sprint-run** - sesja `<session_id>` zakończyła się bez domknięcia ticketu. Ogon logu:\n\n```\n<ostatnie 20 linii>\n```"
+   )
+   ```
+
+2. Sprawdź, czy ten ticket dostał już auto-wznowienie:
+
+   ```
+   mcp__monolynx__list_comments(project_slug="<PROJECT-SLUG>", ticket_id="<KEY>")
+   ```
+
+   - **Brak komentarza zawierającego "Sprint-run - auto-wznowienie"** - wznów raz, tą samą komendą co przy dispatchu (KROK 4), i dopisz komentarz:
+
+     ```
+     mcp__monolynx__add_comment(
+       project_slug="<PROJECT-SLUG>",
+       ticket_id="<KEY>",
+       content="**Sprint-run** - auto-wznowienie: uruchomiono sesję `<session_id>` (`<PROJECT-SLUG>-<KEY>`), worktree `<KEY>`"
+     )
+     ```
+
+   - **Komentarz już jest** - to drugie podejście, więc nie wznawiaj. Ticket zostaje dla człowieka; wymień go w raporcie w sekcji "Czekają na człowieka".
+
+   Jedno auto-wznowienie na ticket to celowy limit: druga porażka pod rząd prawie zawsze znaczy, że problem jest w tickecie albo w projekcie, a nie w sesji, i kolejne restarty tylko palą czas.
+
+### Werdykt `waiting`
+
+Nie rusz sesji. Nie wznawiaj jej, nie kasuj i nie odpowiadaj za człowieka na pytanie z logu. Wypisz w raporcie ticket, powód z pola `reason` i gotową komendę:
+
+```bash
+claude attach "<session_id>"
+```
+
+---
+
+## KROK 4: Dispatch wolnych slotów
+
+Policz wolne sloty:
+
+```
+wolne = sloty - (running + waiting)
+```
+
+Sesje `waiting` żyją i trzymają worktree, więc liczą się do zajętości tak samo jak `running`. Gdy `wolne <= 0`, pomiń ten krok i przejdź do raportu.
+
+**Kolejność kandydatów** (tylko werdykt `free`): priorytet malejąco `high` > `medium` > `low`, a w ramach tego samego priorytetu rosnąco po kluczu ticketu. Deterministyczna kolejność sprawia, że dwa ticki pod rząd wybierają to samo i nie ma wyścigu o ten sam ticket.
+
+**Tickety migracyjne idą solo.** Ticket z etykietą `migration` albo z opisem mówiącym o migracji bazy danych startuj wyłącznie wtedy, gdy `running = 0`, i nie startuj w tym samym ticku niczego więcej. Dwie równoległe sesje generujące migracje Alembica robią rozjechany łańcuch rewizji, którego nikt potem nie chce prostować. Gdy potrzebujesz sprawdzić opis ticketu, dociągnij go:
+
+```
+mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<KEY>")
+```
+
+**Start sesji** dla każdego wybranego ticketu:
+
+```bash
+claude --bg --worktree "<KEY>" --name "<PROJECT-SLUG>-<KEY>" --permission-mode acceptEdits "/monolynx:work <KEY>"
+```
+
+Odczytaj identyfikator sesji: weź go z wyjścia komendy, a gdy go tam nie ma, dociągnij po nazwie:
+
+```bash
+claude agents --json --all
+```
+
+Wpis o nazwie `<PROJECT-SLUG>-<KEY>` niesie identyfikator w polu `id` (krótkie, 8 znaków, `kind` równe `background`) - to jest `<session_id>`, którego używasz dalej. Nie bierz `sessionId`. Dopisz komentarz do ticketu:
+
+```
+mcp__monolynx__add_comment(
+  project_slug="<PROJECT-SLUG>",
+  ticket_id="<KEY>",
+  content="**Sprint-run** - uruchomiono sesję `<session_id>` (`<PROJECT-SLUG>-<KEY>`), worktree `<KEY>`"
+)
+```
+
+Komentarz z identyfikatorem sesji jest jedynym trwałym śladem, po którym człowiek trafi do właściwej sesji następnego dnia. Nie pomijaj go, nawet gdy sesja wystartowała bez problemów.
+
+Po starcie sesji **nie czekaj** na jej wynik i nie zaglądaj do jej logu. Tick kończy się teraz, wynik zbierze następny.
+
+---
+
+## KROK 5: Raport i linia statusu
+
+Wypisz tabelę stanu po tym ticku:
+
+| Ticket | Sesja | Werdykt | Działanie |
+|---|---|---|---|
+| MON-167 | `abc123` | done | komentarz + `claude rm` |
+| MON-168 | `def456` | running | bez zmian |
+| MON-169 | - | free -> uruchomiona | start sesji `ghi789` |
+
+Potem sekcja **"Czekają na człowieka"** ze wszystkimi ticketami o werdykcie `waiting` oraz tymi `needs_human`, które wyczerpały auto-wznowienie. Dla każdego: klucz ticketu, powód jednym zdaniem i komenda `claude attach <session_id>`. Gdy lista jest pusta, napisz jedno zdanie, że nic nie czeka.
+
+### Blok "Pętla z zewnątrz"
+
+Ten blok wypisuj **tylko interaktywnie** (`TTY=1` z KROK 1). W trybie `-p` go pomiń: pętla i tak go nie przeczyta, a zaśmieca log.
+
+Najpierw rozwiń absolutną ścieżkę skryptu:
+
+```bash
+echo "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run.sh"
+```
+
+Wypisz tę ścieżkę, a potem trzy sposoby uruchomienia pętli. W komendach **podstaw rozwiniętą ścieżkę** w miejsce `<ścieżka>` - użytkownik ma dostać wiersz gotowy do wklejenia w terminalu. Nie zostawiaj w nich literału `${CLAUDE_PLUGIN_ROOT}`: ta zmienna istnieje tylko wewnątrz sesji Claude Code, a w zwykłym shellu rozwinie się do pustego stringu i komenda po cichu wskaże złą ścieżkę.
+
+- **W tej sesji**, bez żadnego skryptu:
+
+  ```
+  /loop 15m /monolynx:sprint-run
+  ```
+
+- **W tmux** (VPS, sesja przeżywa rozłączenie):
+
+  ```bash
+  tmux new -d -s "<PROJECT-SLUG>-sprint" "<ścieżka>/sprint_run.sh --slots 2"
+  ```
+
+- **Z crona** (cron sam jest pętlą, więc jeden tick na wywołanie):
+
+  ```
+  */15 * * * * cd /sciezka/projektu && "<ścieżka>/sprint_run.sh" --once >> ~/sprint-run.log 2>&1
+  ```
+
+- **Pełna lista flag**:
+
+  ```bash
+  "<ścieżka>/sprint_run.sh" --help
+  ```
+
+Powiedz wprost: **ten skill niczego nie kopiuje ani nie instaluje**. Ścieżka wskazuje katalog cache zainstalowanego pluginu, a nie plik w repozytorium projektu. Po aktualizacji pluginu zmienia się numer wersji w tej ścieżce, więc rozwiń ją ponownie, zamiast trzymać starą w notatkach albo w crontabie na stałe.
+
+### Ostatnia linia
+
+**Ostatnią linią odpowiedzi** musi być dokładnie taka linia, bez wcięcia, bez backticków, bez bloku kodu i bez jakiegokolwiek tekstu po niej:
+
+```
+SPRINT-RUN: remaining=<n> running=<m> waiting=<k> done=<d>
+```
+
+Wartości bierzesz wprost z `summary` skryptu stanu: `remaining`, `running`, `waiting`, `done`. Nie przeliczaj ich samodzielnie i nie zaokrąglaj. Ta linia jest kontraktem z `sprint_run.sh`, który po niej decyduje, czy pętla ma biec dalej, czy sprint jest wykonany. W całej odpowiedzi ta linia ma wystąpić **dokładnie raz**.
+
+---
+
+## Ważne zasady
+
+1. **Nigdy nie pracujesz nad ticketem sam.** Żadnej edycji plików, żadnego commita, żadnego lintu. Widzisz coś do naprawienia w kodzie - to materiał na ticket, nie na Twoją turę.
+2. **Tick jest idempotentny.** Przed startem sesji sprawdzasz, czy taka nazwa już nie żyje; przed auto-wznowieniem sprawdzasz komentarze. Dwa ticki pod rząd nie mogą zdublować sesji ani komentarza.
+3. **Nie kasujesz sesji bez werdyktu `done`.** `claude rm` tylko po tym, jak ticket jest w `in_review` albo `done`. Sesja `waiting` czeka na człowieka i musi go doczekać.
+4. **Nie zmieniasz statusów ticketów.** Statusy przestawia `/monolynx:work` w swojej sesji. Ty tylko czytasz je i komentujesz.
+5. **Nazwy sesji są zamrożone**: `<PROJECT-SLUG>-<KEY>` dla pracy, `<PROJECT-SLUG>-sprint-run` dla ticka. Inne narzędzia po nich rozpoznają sesje sprintu.
+6. **Język raportu: polski.** Komentarze w ticketach też.
