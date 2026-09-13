@@ -1,5 +1,5 @@
 ---
-description: "Wykryj komendy lint i testow biezacego projektu i zapisz je jako strone wiki 'toolchain' w Monolynx. Jednorazowa konfiguracja per projekt - skille work i work-simple czytaja te strone, zeby uruchomic lint i testy przed zamknieciem ticketu. Uzyj przy pierwszym setupie projektu albo gdy zmienil sie stack."
+description: "Wykryj komendy lint i testow biezacego projektu, opcjonalnie narzedzie do testow mutacyjnych, i zapisz je jako strone wiki 'toolchain' w Monolynx. Jednorazowa konfiguracja per projekt - skille work i work-simple czytaja te strone, zeby uruchomic lint i testy przed zamknieciem ticketu. Uzyj przy pierwszym setupie projektu albo gdy zmienil sie stack."
 user-invocable: true
 argument-hint: (bez argumentow)
 ---
@@ -37,14 +37,20 @@ echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
 ## KROK 1: Zaladuj narzedzia i sprawdz stan
 
 ```
-ToolSearch(query="+monolynx wiki page create update search")
+ToolSearch(query="+monolynx wiki page list get create update", max_results=10)
 ```
 
-Sprawdz, czy strona juz istnieje:
+Sprawdz, czy strona juz istnieje - po slugu, nie semantycznie:
 
 ```
-mcp__monolynx__search_wiki(project_slug="<PROJECT_SLUG>", query="toolchain lint test", limit=3)
+mcp__monolynx__list_wiki_pages(project_slug="<PROJECT_SLUG>")
 ```
+
+Z wyniku wez strone, ktorej `slug` rowna sie dokladnie `toolchain`. Nie uzywaj tu
+`search_wiki`: wykrywanie i odczyt musza isc ta sama droga, ktora czytaja `work`
+i `work-simple` (`list_wiki_pages` + dopasowanie slugu). Przy wyszukiwaniu
+semantycznym slabe trafienie kazaloby skillowi uznac, ze strony nie ma, i
+utworzyc jej duplikat.
 
 **Strona `toolchain` istnieje** - pobierz jej tresc przez `get_wiki_page`, pokaz
 uzytkownikowi i zapytaj:
@@ -105,20 +111,86 @@ Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik 
 
 Poczekaj na odpowiedzi. Przy braku testow w repo pytanie o TDD pomin (wpisz `nie`).
 
-## KROK 4: Zapisz strone wiki
+## KROK 4: Wykryj narzedzie mutacyjne (opcjonalnie)
+
+Testy mutacyjne sprawdzaja, czy testy faktycznie lapia zmiany w kodzie. Ten krok
+jest **opcjonalny** - jego pominiecie nie blokuje zapisu strony ani reszty skilla.
+
+Ekosystem wynika z tych samych plikow markerowych co w KROK 2. Narzedzie jest
+per-jezyk i per-runner, wiec kazdy wiersz ma wlasny sposob sprawdzenia obecnosci:
+
+| Marker | Ekosystem | Narzedzie | Sprawdzenie obecnosci | Instalacja |
+|---|---|---|---|---|
+| `pyproject.toml` / `setup.cfg` | Python | mutmut 3 | `command -v mutmut` | `pip install mutmut` |
+| `package.json` | JS/TS | Stryker + plugin runnera | `npx stryker --version` | `npm i -D @stryker-mutator/core` |
+| `pom.xml` / `build.gradle` | Java/Kotlin | PIT | wpis `pitest` w pliku builda | plugin maven/gradle + `pitest-junit5-plugin` |
+| `*.csproj` | C# / .NET | Stryker.NET | `dotnet tool list -g` | `dotnet tool install -g dotnet-stryker` |
+| `go.mod` | Go | gremlins | `command -v gremlins` | `go install github.com/go-gremlins/gremlins/cmd/gremlins@latest` |
+| `composer.json` | PHP | Infection | `vendor/bin/infection --version` | `composer require --dev infection/infection` |
+| `Cargo.toml` | Rust | cargo-mutants | `cargo mutants --version` | `cargo install cargo-mutants` |
+| `build.sbt` | Scala | Stryker4s | wpis w `project/plugins.sbt` | plugin sbt |
+| `Gemfile` | Ruby | mutant | `bundle exec mutant --version` | `gem install mutant` |
+
+**Ruby / mutant - licencja**: mutant jest darmowy dla kodu otwartego, ale dla
+kodu zamknietego wymaga **licencji KOMERCYJNEJ**. Wykryles projekt Ruby -
+powiedz o tym uzytkownikowi ZANIM podasz mu komende instalacji, i dopiero potem
+prowadz reszte kroku. Zaden inny wiersz tabeli nie ma tego zastrzezenia.
+
+Uzyj dokladnie tego sprawdzenia, ktore stoi w kolumnie "Sprawdzenie obecnosci".
+`command -v` znajdzie tylko samodzielna binarke w PATH, a PIT jest pluginem
+Mavena, Stryker.NET narzedziem `dotnet tool`, cargo-mutants podkomenda `cargo`,
+Stryker JS pakietem node - dla nich `command -v` zawsze zwroci "brak".
+
+**Ekosystem nierozpoznany albo kilka naraz** (np. `package.json` obok
+`pyproject.toml`) - NIE zgaduj. Zapytaj uzytkownika (AskUserQuestion), ktory
+ekosystem jest rdzeniem projektu, i dla niego prowadz reszte kroku. Mutacja
+konfigurowana jest dla jednego runnera.
+
+**Brak narzedzia**: pokaz instrukcje instalacji z tabeli dla wykrytego ekosystemu
+i **zakoncz krok**. Nie instaluj niczego sam - to jednorazowy setup wlasciciela
+repo (ten sam precedens co graphify w `/monolynx:graph-sync`). Uzytkownik nie
+chce instalowac -> w sekcji `## Mutacje` wpisz `narzedzie: brak` oraz
+`powod: nie zainstalowane` albo `powod: uzytkownik zrezygnowal` i przejdz do
+KROK 5. Sekcja `## Mutacje` powstaje **zawsze**, takze pusta - stala struktura
+strony jest stabilniejsza do odczytu przez kolejne skille niz sekcja pojawiajaca
+sie warunkowo.
+
+**Flagi diffowe**: gdy narzedzie JEST, uruchom `<narzedzie> --help` i ODCZYTAJ z
+wyjscia faktyczna flage trybu diffowego (przebieg ograniczony do zmiany, nie do
+calego repo). Spotykane warianty to `--since`, `--in-diff`, `--git-diff-lines`,
+cel `scmMutationCoverage`, ale NIE zakladaj zadnego z nich z pamieci - roznia sie
+miedzy narzedziami i miedzy wersjami tego samego narzedzia. Do strony zapisz
+komende, ktorej postac faktycznie potwierdziles w `--help`. Ta wersja nie ma
+trybu diffowego -> wpisz `komenda diffowa: brak`.
+
+**Moduly rdzenia**: zapytaj uzytkownika, na ktorych sciezkach ma isc pelny
+przebieg mutacji (ten drozszy, uruchamiany przy zamykaniu sprintu). Nie zgaduj -
+deweloper wie, ktory kod jest krytyczny. Przy okazji dopytaj, kto odpala mutacje
+(`user` czy `agent`) - domyslnie `user`, tak jak dla lintu i testow.
+
+**Baseline zostaw pusty**. Pierwszy realny przebieg zapisze faktyczny wynik jako
+punkt odniesienia. Nie wpisuj tu progu z glowy - mutation score to trend, nie
+bramka.
+
+## KROK 5: Zapisz strone wiki
 
 ```
 mcp__monolynx__create_wiki_page(
   project_slug="<PROJECT_SLUG>",
-  slug="toolchain",
-  title="Toolchain projektu",
+  title="Toolchain",
   content="<tresc ponizej>"
 )
 ```
 
-Strona istniala -> `update_wiki_page` z tym samym `page_id`.
+`create_wiki_page` nie ma parametru `slug` - slug powstaje z tytulu. Dlatego
+tytul musi brzmiec dokladnie `Toolchain`, zeby strona dostala slug `toolchain`.
+Kazdy inny tytul da inny slug i `work` oraz `work-simple` nie znajda strony.
 
-Format tresci - sztywny, skille parsuja go wzrokowo:
+Strona istniala -> `update_wiki_page` z tym samym `page_id`. Tytulu wtedy nie
+zmieniaj - podmieniasz tylko `content`.
+
+Format tresci - sztywny, skille parsuja go wzrokowo. Naglowek `#` w tresci jest
+opisowy i nie ma wplywu na slug - ten wynika wylacznie z tytulu strony:
 
 ```markdown
 # Toolchain projektu
@@ -142,6 +214,18 @@ framework: [pytest | vitest | go test | ...]
 
 stosowac: [tak | nie]
 
+## Mutacje
+
+narzedzie: [nazwa + wersja, albo "brak"]
+powod: [tylko gdy narzedzie: brak - "nie zainstalowane" albo "uzytkownik zrezygnowal"]
+komenda pelna: [przebieg na wskazanym module]
+komenda diffowa: [przebieg ograniczony do zmiany, flaga zweryfikowana przez --help]
+raport: [sciezka pliku] (format: mte-json | pit-xml | mutmut | cargo-mutants)
+moduly rdzenia: [lista sciezek na pelny przebieg]
+baseline: [score + data pomiaru, puste przy pierwszym zapisie]
+cel: [orientacyjny, nie bramka]
+kto odpala: [user | agent]
+
 ## Uwagi
 
 [np. "Wszystko przez docker compose exec app - nigdy lokalnie" albo "Brak"]
@@ -149,13 +233,14 @@ stosowac: [tak | nie]
 
 Trzymaj sie tych naglowkow i etykiet. Zmiana formatu psuje odczyt w `work`.
 
-## KROK 5: Podsumowanie
+## KROK 6: Podsumowanie
 
 Wyswietl uzytkownikowi:
 
 - Zapisana komende lint i test
 - Kto je odpala
 - Czy TDD wlaczone
+- Narzedzie mutacyjne i jego komende diffowa (albo `brak` wraz z powodem)
 - Link do strony wiki
 
 Jesli uzytkownik wybral **agent** jako uruchamiajacego, przypomnij o fladze:
@@ -171,7 +256,9 @@ Jesli uzytkownik wybral **agent** jako uruchamiajacego, przypomnij o fladze:
 ## WAZNE ZASADY
 
 1. **Nie zgaduj komend** - tabela w KROK 2 to punkt wyjscia, nie odpowiedz. Zawsze potwierdz z uzytkownikiem
-2. **Nie uruchamiaj wykrytych komend** zeby je zweryfikowac - to konfiguracja, nie test. Lint na brudnym drzewie roboczym zwroci mylacy wynik
+2. **Nie uruchamiaj wykrytych komend** zeby je zweryfikowac - to konfiguracja, nie test. Lint na brudnym drzewie roboczym zwroci mylacy wynik. **Wyjatek**: `--help` i `--version` wolno uruchomic. To odpytanie narzedzia o wlasny interfejs, nie przebieg testow ani mutacji - KROK 4 tego wprost wymaga
 3. **Format strony jest kontraktem** - `work` i `work-simple` czytaja naglowki i etykiety doslownie
 4. **Respektuj reguly repo** - jesli `CLAUDE.md` mowi "tylko przez docker" albo "Claude nigdy nie odpala testow", zapisz to w sekcji Uwagi i domyslnie ustaw `kto odpala: user`
-5. **Jedna strona per projekt** - slug zawsze `toolchain`, bez wariantow
+5. **Jedna strona per projekt** - slug zawsze `toolchain`, bez wariantow. Slug wynika z tytulu strony, wiec tytul musi brzmiec dokladnie `Toolchain` - zmiana tytulu zrywa odczyt w `work` i `work-simple`, ktore szukaja strony po slugu `toolchain`
+6. **Nie instaluj narzedzia mutacyjnego** - to jednorazowy setup wlasciciela repo, per jezyk i per runner. Skill je wykrywa i podaje instrukcje, nie sciaga (precedens: graphify)
+7. **Krok mutacji jest opcjonalny** - jego pominiecie nie blokuje zapisu strony ani reszty skilla. Sekcja `## Mutacje` powstaje zawsze, chocby z samym `narzedzie: brak`

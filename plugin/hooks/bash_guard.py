@@ -68,23 +68,130 @@ TEST_LINT = re.compile(
     r"\b(pytest|ruff|mypy|black|isort|flake8|eslint|prettier|vitest|playwright"
     r"|makemessages|compilemessages)\b"
 )
+TMP_CLEANUP_COMPOUND = re.compile(r"[|;&`\n\r]|\$\(")
+TMP_CLEANUP_PATH = re.compile(r"^/(private/)?tmp/(?:[^/]+/)*[^/]*\.(log|txt|md)$")
+
+
+def is_tmp_cleanup(cmd: str) -> bool:
+    """Allow-lista: `rm -f` na plikach *.log/*.txt/*.md pod /tmp lub /private/tmp.
+
+    Wyjatek od reguly DESTRUCTIVE, zeby agent mogl posprzatac wlasne pliki
+    robocze bez pytania uzytkownika. Celowo BEZ -r/-R/--recursive - glob
+    z rozszerzeniem (np. /tmp/*.md) moze trafic w katalog o takiej nazwie
+    i skasowac go rekurencyjnie. Nowa linia/CR w komendzie liczy sie jak
+    separator instrukcji (shell wykona kazda linie osobno), wiec konczy
+    sie False tak samo jak `;`/`|`/`&`. Argument zawierajacy `$` lub `~`
+    (ekspansja zmiennej/home shella) tez konczy sie False - hook widzi
+    literalny tekst PRZED ekspansja, wiec nie ma jak bezpiecznie sprawdzic
+    faktycznej sciezki. Podkatalogi sa dozwolone (scratchpad sesji lezy
+    w /private/tmp/claude-<uid>/<projekt>/<sesja>/scratchpad/), ale sciezka
+    nadal musi konczyc sie plikiem o dozwolonym rozszerzeniu - sam katalog
+    nigdy nie przechodzi. Kazda watpliwosc (nieznana flaga, zlozona komenda,
+    sciezka spoza /tmp, ekspansja shella) konczy sie False i normalnym
+    przebiegiem do DESTRUCTIVE (fail-closed). Patrz wiki spec MON-147.
+    """
+    stripped = cmd.strip()
+    if not stripped or TMP_CLEANUP_COMPOUND.search(stripped):
+        return False
+
+    tokens = stripped.split()
+    if tokens[0] != "rm":
+        return False
+
+    paths = []
+    for arg in tokens[1:]:
+        if arg.startswith("-"):
+            if arg not in ("-f", "--force"):
+                return False
+            continue
+        if "$" in arg or "~" in arg:
+            return False
+        paths.append(arg)
+
+    if not paths:
+        return False
+
+    for path in paths:
+        if ".." in path or not TMP_CLEANUP_PATH.match(path):
+            return False
+
+    return True
+
+
+if is_tmp_cleanup(cmd):
+    sys.exit(0)
+
+_RM_LONG_FLAG_NAMES = ("recursive", "force", "dir")
+_RM_SEGMENT_SPLIT = re.compile(r"[;&|`\n\r]+|\$\(")
+
+
+def _rm_short_cluster_is_destructive(token: str) -> bool:
+    """Klaster krotkich flag (`-rf`, `-Rf`, `-iRf`, `-d`...) - kazda litera osobno,
+    niezaleznie od wielkosci i pozycji w klastrze."""
+    return any(ch.lower() in ("r", "f", "d") for ch in token[1:])
+
+
+def _rm_long_flag_is_destructive(token: str) -> bool:
+    """Forma dluga i jej jednoznaczny prefiks getopt_long (`--r`, `--rec`,
+    `--recursive`, opcjonalnie `--recursive=wartosc`)."""
+    name = token[2:].split("=", 1)[0]
+    if not name:
+        return False
+    return any(long_name.startswith(name) for long_name in _RM_LONG_FLAG_NAMES)
+
+
+def _is_destructive_rm(cmd: str) -> bool:
+    """True, jesli jakies wywolanie `rm` w komendzie ma flage recursive/force/dir.
+
+    Parsuje tokeny zamiast wyliczac pisownie flag (regresja MON-147: staly
+    wzorzec z klasa `[rf]` gubil `-R` samo w sobie, prefiksy dlugich opcji
+    typu `--rec` i krotka forme `-d`, a takze flage nie na pierwszej pozycji
+    jak w `rm -i -rf /`). Komenda jest najpierw dzielona na proste polecenia
+    po separatorach powloki (`;`, `&`, `|`, `` ` ``, `$(`, nowa linia/CR), zeby
+    flaga z sasiedniego polecenia (np. `rm plik && npm i --force`) nie zostala
+    przypisana do `rm`. Slowo `rm` musi byc osobnym tokenem (whitespace-split) -
+    `charm -rf x` czy `confirm --force` nie zawieraja tokenu `rm`. To NIE jest
+    pelny parser powloki - swiadomy kompromis na rzecz prostoty i czytelnosci.
+    """
+    for segment in _RM_SEGMENT_SPLIT.split(cmd):
+        tokens = segment.split()
+        if "rm" not in tokens:
+            continue
+        for token in tokens:
+            if token == "rm":
+                continue
+            if token.startswith("--"):
+                if _rm_long_flag_is_destructive(token):
+                    return True
+            elif token.startswith("-") and len(token) > 1:
+                if _rm_short_cluster_is_destructive(token):
+                    return True
+    return False
+
+
 DESTRUCTIVE = [
-    (re.compile(r"\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+"), "rm z flagami -r/-f"),
-    (re.compile(r"\bgit\s+push\b[^|;&]*?(--force\b|\s-f\b)"), "git push --force"),
     (
-        re.compile(r"\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z)?sh\b"),
+        _is_destructive_rm,
+        "rm z flaga recursive/force/dir (krotka, dluga lub jednoznaczny prefiks)",
+    ),
+    (lambda c: bool(re.search(r"\bgit\s+push\b[^|;&]*?(--force\b|\s-f\b)", c)), "git push --force"),
+    (
+        lambda c: bool(re.search(r"\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z)?sh\b", c)),
         "pobranie skryptu z sieci i wykonanie (curl | sh)",
     ),
-    (re.compile(r"(>>?|\btee\b)\s*\S*\.(ssh|aws)/"), "zapis do ~/.ssh lub ~/.aws"),
+    (lambda c: bool(re.search(r"(>>?|\btee\b)\s*\S*\.(ssh|aws)/", c)), "zapis do ~/.ssh lub ~/.aws"),
     (
-        re.compile(r"\b(DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE(\s+TABLE)?\s)\b", re.I),
+        lambda c: bool(re.search(r"\b(DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE(\s+TABLE)?\s)\b", c, re.I)),
         "destrukcyjny SQL (DROP/TRUNCATE)",
     ),
-    (re.compile(r"\bmkfs\b|\bdd\b[^|;&]*\bof=/dev/"), "operacja niszczaca na urzadzeniu"),
+    (
+        lambda c: bool(re.search(r"\bmkfs\b|\bdd\b[^|;&]*\bof=/dev/", c)),
+        "operacja niszczaca na urzadzeniu",
+    ),
 ]
 
-for pattern, label in DESTRUCTIVE:
-    if pattern.search(cmd):
+for matcher, label in DESTRUCTIVE:
+    if matcher(cmd):
         if is_subagent:
             decide(
                 "deny",

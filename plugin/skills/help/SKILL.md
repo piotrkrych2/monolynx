@@ -41,6 +41,10 @@ potwierdza je z Toba i zapisuje jako strone wiki `toolchain`.
 oraz testy PRZED zmiana statusu ticketu na `in_review`. Bez tej strony skille zapytaja,
 czy kontynuowac bez weryfikacji. Uruchom raz per projekt.
 
+Opcjonalnie wykrywa tez narzedzie do testow mutacyjnych (mutmut, Stryker, PIT, Stryker.NET,
+gremlins, Infection, cargo-mutants, Stryker4s, mutant) i zapisuje jego konfiguracje w sekcji
+`## Mutacje` tej samej strony - sam niczego nie instaluje.
+
 ### 3. `/monolynx:wiki-init` (opcjonalnie)
 
 Wlacza metode LLM Wiki (wg Karpathy'ego): tworzy strony systemowe `wiki-index`,
