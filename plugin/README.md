@@ -359,6 +359,17 @@ Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkc
 
 ## Changelog
 
+### 1.9.0
+
+Parser raportów mutacyjnych do wspólnego modelu survivora (MON-149) - fundament serii MON-150..152.
+
+- **Nowy skrypt `plugin/scripts/mutation_report.py`**: czyta raport narzędzia mutacyjnego i wypisuje na stdout znormalizowany JSON `{"score", "total", "killed", "survived", "survivors": [{file, line, mutator, original, replacement, status, description}]}`. Cztery formaty: `mte-json` (Mutation Testing Elements - Stryker, Stryker.NET, Infection), `pit-xml`, `mutmut` (wyjście `mutmut results --all true`), `cargo-mutants` (`outcomes.json`). Wywołanie: `python3 mutation_report.py --report <plik> --format <format>`. Wyłącznie biblioteka standardowa, bez nowych zależności.
+- **Jedna semantyka statusów dla wszystkich narzędzi**: killed to mutant wykryty, razem z timeoutem; survived to mutant, który przeżył albo nie był pokryty testem (dosłowny literał statusu zostaje w wyniku); mutanty nieważne (`CompileError`, `Ignored`, `NON_VIABLE`, `Unviable`, `skipped`) wypadają poza `total`. Nieznany status liczy się jako survivor - lepiej pokazać za dużo niż przemilczeć mutanta.
+- **Nigdy cicha pusta lista**: kody wyjścia to 0 (OK), 2 (błąd wejścia: brak pliku, niepoprawny JSON/XML, raport pusty albo niezgodny ze schematem) i 64 (błąd użycia: nieznany format, brak argumentu). `score` jest `null` wyłącznie wtedy, gdy `total == 0`.
+- **Fixture'y z realnych przebiegów** w `tests/fixtures/{stryker,pitest,mutmut,cargo-mutants}/`: Stryker 10.0.0, PIT 1.30.0, mutmut 3.8.0, cargo-mutants 27.1.0. Zgodnie z regułą projektu `external-tool-output` parser nie powstaje na wymyślonym wyjściu narzędzia.
+- **Ograniczenie mutmut**: wymagane jest wyjście `mutmut results --all true`. Domyślne `mutmut results` pomija killed, więc score byłby zaniżony, a pusty wynik nieodróżnialny od złego pliku - skrypt zwraca wtedy błąd zamiast zera.
+- **Skrypt sam nie uruchamia narzędzia, nie bramkuje i nie zapisuje plików**, i nie jest jeszcze wołany przez żaden skill. Jest wejściem dla kolejnych ticketów serii: skill `mutation-check` (MON-150), krok CI (MON-151), wpięcie w `work` i `sprint-end` (MON-152).
+
 ### 1.8.1
 
 Poprawki z pierwszego realnego przebiegu dyspozytora (MON-172).

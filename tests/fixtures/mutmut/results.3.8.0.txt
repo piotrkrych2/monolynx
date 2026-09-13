@@ -1,0 +1,8 @@
+# captured: mutmut results | mutmut 3.8.0 | 2026-09-13 | docker run --rm -v <demo>:/work -w /work monolynx-app (obraz monolynx-app, Python 3.12.14, root) | real_run: true | note: projekt demo calc.py (add, sub, is_positive), tests/test_calc.py pokrywajacy tylko add i is_positive(5). Domyslnie 'mutmut results' pokazuje TYLKO mutanty inne niz killed (brak linii dla calc.x_add__mutmut_1, ktory zostal zabity). Statusy literalne: 'no tests' (sub bez zadnego testu) i 'survived' (is_positive bez przypadkow granicznych 0 i 1). Zawiera oryginalne ostrzezenia narzedzia (deprecacja opcji konfiguracyjnych w pyproject.toml) - NIETKNIETE.
+/usr/local/lib/python3.12/site-packages/mutmut/configuration.py:143: UserWarning: The config paths_to_mutate is deprecated. Please rename it to source_paths
+  warnings.warn("The config paths_to_mutate is deprecated. Please rename it to source_paths")
+/usr/local/lib/python3.12/site-packages/mutmut/configuration.py:152: UserWarning: The config tests_dir is deprecated. Please add the path to pytest_add_cli_args_test_selection instead
+  warnings.warn(
+    calc.x_sub__mutmut_1: no tests
+    calc.x_is_positive__mutmut_1: survived
+    calc.x_is_positive__mutmut_2: survived
