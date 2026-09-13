@@ -270,6 +270,14 @@ Two separate packages in one repo:
 - **CI**: `.gitlab-ci.yml` — lint → test (coverage goal 50%) → build (main only) → deploy (manual)
 - **Pre-commit**: ruff (check + format) and mypy with pydantic plugin
 
+## Merge requests: pipeline must be green
+
+Every MR is followed to the end, never fire-and-forget. After `glab mr create` (or any push to an MR branch):
+1. Monitor the branch pipeline until it reaches a terminal state (`glab ci status --branch <branch>` / `glab ci get --pipeline-id <id> -F json`; poll in the background, roughly every 60s; a full `clean-code` round takes 15-20 min).
+2. Merge only when the pipeline is `success`. Red pipeline: read the failing job trace (`glab ci trace <job_id>`), fix the cause on the branch, push, monitor again. `exit status 137` in `clean-code` with no failed test means the runner killed the container (usually two heavy jobs at once) - retry the job (`glab ci retry <job_id>`), it is not a code failure.
+3. After merge, monitor the pipeline on `main` the same way. `deploy-staging` is a manual job and stays `manual`; every other job must be `success`. Retry on 137, fix forward on a real failure.
+4. Report the outcome with pipeline ids and job statuses. A ticket goes to `done` only after the `main` pipeline is green.
+
 ## Project language
 
 Planning docs, comments, and UI text are in Polish.
