@@ -111,5 +111,12 @@ Waliduj nie tylko top-level ksztalt JSON (`isinstance(list)`), ale i elementy: `
 - Regula landing-page-features wyzwala sie na toolu MCP / module dashboardu / widocznym feature. Nowy SKILL pluginu to ANI tool MCP ANI modul - wystarcza i18n w `main.py` + mcp_guide/how-to/agent-bootstrap/llms.txt. Nie odejmuj -25 za brak wpisu w `features.py`.
 - `src/monolynx/static/skills/<nazwa>/SKILL.md` rozni sie od zrodla o transformacje sync_skills.py: dodane `name:` w frontmatterze i `<PROJECT_SLUG>` -> `<PROJECT-SLUG>`. Roznica w diffie NIE oznacza nieaktualnej kopii.
 
+## Pulapka: tekst landingu plynie z main.py, nie tylko z szablonu (MON-170)
+Asercja `"<fraza>" in response.text` na renderze `/` moze byc ZIELONA na baseline, bo teksty marketingowe zyja w `TRANSLATIONS` w `main.py` (np. `skills_what_1`, `skills_sub`) i trafiaja do HTML obok szablonu. Test na obecnosc elementu UI musi celowac w markup (`">/monolynx:sprint-run</code>"`), nie w gola fraze. Weryfikujac czerwonosc TDD na baseline: `git show <baseline>:<plik> | grep -c "<dokladny markup z asercji>"`, nie grep po samym szablonie. Licznik skilli tez siedzi w `main.py`, nie w `landing.html`.
+Chipy komend: KOLEJNOSC bierz z `mcp_guide.html`, ale KLASY zawsze od sasiadow w tym samym pliku - landing ma `bg-white dark:bg-gray-950 border-gray-200/800`, mcp_guide `bg-gray-50 dark:bg-gray-900 border-gray-700`.
+
+## Adresowanie Team Managera w SendMessage
+Adres podany w prompcie jako "ADRES TEAM MANAGERA" (np. `monolynx-MON-170`) bywa nazwa WLASNEJ sesji, nie skrzynki TM - SendMessage zwraca wtedy blad "also addresses this session". Team Manager jest osiagalny jako `team-lead`. Przy bledzie adresowania nie zgaduj wariantow nazwy ticketa, uzyj `team-lead`.
+
 ## MON-167 (review): 3 agentow, iteracja 2 -> 100/100
 Backend 75 -> 100 (sessionId zamiast id + KeyError na zlym ksztalcie tickets), qa 100, writer 100. Pelna historia w [review_history.md](review_history.md).
