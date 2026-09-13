@@ -1,7 +1,7 @@
 # Technical Writer — pamięć projektu Monolynx
 
 ## Konwencje pisania
-- Dokumenty PL: pełne diakrytyki (ą ć ę ł ń ó ś ź ż), ZERO em-dash `—` (sprawdź `grep -c "—" <plik>` = 0). Zamiana em-dash na hyphen `-` (NIE kasuj myślnika, NIE zamieniaj na przecinek). Bulk: `LC_ALL=en_US.UTF-8 perl -CSD -i -pe 's/\x{2014}/-/g' <plik>`.
+- Dokumenty PL: pełne diakrytyki (ą ć ę ł ń ó ś ź ż), ZERO em-dash `—` (sprawdź `grep -c "—" <plik>` = 0). Zamiana em-dash na hyphen `-` (NIE kasuj myślnika, NIE zamieniaj na przecinek). Bulk: `LC_ALL=en_US.UTF-8 perl -CSD -i -pe 's/\x{2014}/-/g' <plik>`. UWAGA: `grep -c $'\u2014'` daje FALSZYWE ZERO - bash 3.2 na macOS nie zna `$'\uXXXX'`. Licz Pythonem: `python3 -c "import pathlib;print(pathlib.Path('f.md').read_text().count(chr(8212)))"` albo wklej znak dosłownie do grepa. To samo dla podmiany perlem - weryfikuj wynik, cichy no-op jest łatwy.
 - CLAUDE.md jest w angielskim i używa strzałki `→` jako separatora sekwencji (już występuje w pliku, spójne). UWAGA: CLAUDE.md ma ~100 istniejących em-dash jako separator bulletów `nazwa.py — opis` (cudze, poza zakresem - NIE ruszać). Targetowane edycje: liczy się tylko czy MOJE dodane/nowe linie mają 0 em-dash. Check: `grep -c "—"` przed i po musi być równe (zero netto). Nowe bullety w sekcji Services pisz z hyphenem `-` jako separator, nie kopiuj em-dash z sąsiednich.
 - Wszystkie komendy Pythona przez `docker compose exec app`, nigdy lokalnie.
 - [Konwencje docs pluginu](plugin_docs_conventions.md) — SKILL.md BEZ diakrytyk, README pluginu Z nimi; zero em/en-dash (walidator); static/skills generowane przez sync_skills.py.
