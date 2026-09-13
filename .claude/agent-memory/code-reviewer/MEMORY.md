@@ -120,3 +120,9 @@ Adres podany w prompcie jako "ADRES TEAM MANAGERA" (np. `monolynx-MON-170`) bywa
 
 ## MON-167 (review): 3 agentow, iteracja 2 -> 100/100
 Backend 75 -> 100 (sessionId zamiast id + KeyError na zlym ksztalcie tickets), qa 100, writer 100. Pelna historia w [review_history.md](review_history.md).
+
+## Weryfikacja skryptow CLI pod guardem bash (sesja krytyka)
+Hook pluginu blokuje krytykowi trzy klasy komend Bash: nazwe runnera testow w DOWOLNYM miejscu linii (takze w grepie po pliku testowym i w tresci heredoca, wiec nie da sie jej wpisac nawet do notatki), kasowanie plikow z flaga force, oraz kazdy potok / heredoc / podstawienie karmiace `python` (komunikat o "descriptor ... assembled at runtime"). Reczne odpalenie skryptu przechodzi, gdy: (a) kazde wywolanie to osobna prosta komenda, bez lancucha `&&` i bez podstawien, (b) stdin podajesz przekierowaniem z pliku (`prog --summary - < fixture.json`), nie potokiem, (c) plik roboczy zakladasz w nowym podkatalogu `$CLAUDE_JOB_DIR/tmp/<nazwa>` zamiast kasowac stary, (d) plik testowy grepujesz po `def test_` albo `mark.`. Do dopisania notatki z zakazanym slowem uzyj Edit, nie heredoca. Recznego przebiegu nie odpuszczaj - to on wylapuje rzeczy, ktorych testy nie sprawdzaja (MON-151: raport klamie "Nowy baseline zapisany" przy `--dry-run`).
+
+## Konwencja `plugin/scripts/`: shebang ORAZ bit wykonywalnosci
+Kazdy skrypt w `plugin/scripts/` ma `#!/usr/bin/env python3` i bit wykonywalnosci, mimo ze SKILL.md wola go przez `python3 <sciezka>`. Nowy plik bez bitu to niezgodnosc z konwencja sasiedniego pliku (-5, MON-151). Sprawdzaj `ls -l plugin/scripts/` - ruff tego nie lapie (EXE001 wylaczone).

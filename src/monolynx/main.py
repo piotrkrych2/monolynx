@@ -136,7 +136,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Claude Code skills - one prompt, zero setup",
         "skills_sub": (
-            "The flagship AI tool install_monolynx_skills drops all 18 ticket and wiki"
+            "The flagship AI tool install_monolynx_skills drops all 19 ticket and wiki"
             " skills into any project connected to Monolynx - Claude Code, Codex or Cursor."
             " No ZIPs, no manual placeholder replacement."
         ),
@@ -152,7 +152,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG"
         ),
         "skills_what_3": (
-            "/monolynx:project-toolchain, /monolynx:create-graph-ci-script, /monolynx:graph-sync,"
+            "/monolynx:project-toolchain, /monolynx:create-graph-ci-script, /monolynx:create-mutation-ci-script, /monolynx:graph-sync,"
             " /monolynx:help - setup and code graph;"
             " placeholders replaced with your project slug automatically"
         ),
@@ -198,7 +198,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Skille Claude Code - jeden prompt, zero konfiguracji",
         "skills_sub": (
-            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 18 skilli"
+            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 19 skilli"
             " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - w Claude Code,"
             " Codeksie lub Cursorze. Bez ZIP-ów i ręcznego podmieniania placeholderów."
         ),
@@ -214,7 +214,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG"
         ),
         "skills_what_3": (
-            "/monolynx:project-toolchain, /monolynx:create-graph-ci-script, /monolynx:graph-sync,"
+            "/monolynx:project-toolchain, /monolynx:create-graph-ci-script, /monolynx:create-mutation-ci-script, /monolynx:graph-sync,"
             " /monolynx:help - setup i graf kodu;"
             " placeholdery automatycznie podmieniane na slug Twojego projektu"
         ),
@@ -408,7 +408,7 @@ def _landing_markdown(lang: str) -> str:
             "W konfiguracji pluginu ustaw token (`mcp_token`, format `osk_...`), opcjonalnie `mcp_endpoint` "
             "(domyślnie `https://monolynx.com/mcp`) i `project_slug`. Po instalacji dostępne są komendy: "
             "`/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
-            "`/monolynx:help`, `/monolynx:create-graph-ci-script`.",
+            "`/monolynx:help`, `/monolynx:create-graph-ci-script`, `/monolynx:create-mutation-ci-script`.",
             "",
         ]
     else:
@@ -423,7 +423,7 @@ def _landing_markdown(lang: str) -> str:
             "In the plugin config set your token (`mcp_token`, `osk_...` format), optionally `mcp_endpoint` "
             "(defaults to `https://monolynx.com/mcp`) and `project_slug`. After install the commands are: "
             "`/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
-            "`/monolynx:help`, `/monolynx:create-graph-ci-script`.",
+            "`/monolynx:help`, `/monolynx:create-graph-ci-script`, `/monolynx:create-mutation-ci-script`.",
             "",
         ]
 

@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "command": "python3 mutation_report.py --report <kopia mutation-report.10.0.0.json z pustym \"files\": {}> --format mte-json",
+    "tool_version": "1.9.0",
+    "captured": "2026-09-13",
+    "python": "3.10.13",
+    "real_run": true,
+    "note": "mutation_report.py wyciagniety z origin/worktree-MON-149 (ba5593c, plugin 1.9.0) przez Team Managera; plik nie istnieje jeszcze w tym branchu (MON-151); raport MTE z pustym files, total 0"
+  },
+  "score": null,
+  "total": 0,
+  "killed": 0,
+  "survived": 0,
+  "survivors": []
+}
