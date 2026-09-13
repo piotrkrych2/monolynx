@@ -89,6 +89,43 @@ sie w kontenerze, komendy musza miec prefiks (np. `docker compose exec app ...`)
 Sprawdz tez `CLAUDE.md` / `AGENTS.md` - moga zawierac jawna regule "nigdy nie
 uruchamiaj lokalnie".
 
+**Wariant worktree**: wykryty prefiks `docker compose exec <service>` (wprost albo
+opakowany w target Makefile) wymaga DODATKOWEJ komendy. `exec` wchodzi do
+dzialajacego kontenera, a ten ma zamontowany glowny checkout - ta sama komenda
+uruchomiona z kopii repo (git worktree) sprawdzilaby cudzy kod, nie ten, nad
+ktorym pracujesz. Wariant worktree montuje biezacy katalog do jednorazowego
+kontenera. Wyprowadz go tak:
+
+1. Rozpakuj target Makefile do komendy wykonywanej WEWNATRZ kontenera (bez
+   prefiksu). Target o kilku krokach sklej w `sh -c "a && b && c"`.
+2. Zbuduj prefiks:
+
+   ```bash
+   docker compose -p <nazwa-projektu-compose> [--profile <profil>] run --rm --no-deps -v "$PWD":<workdir> <service> <komenda>
+   ```
+
+Jak dobrac czesci:
+
+- `-p <nazwa-projektu-compose>` - **wymagane**. Nazwa projektu compose glownego
+  checkoutu: z `docker compose ls` przy dzialajacym stacku, z pola `name:` pliku
+  compose, albo z nazwy katalogu checkoutu w postaci, w jakiej normalizuje ja
+  compose. Bez tego compose w worktree wezmie nazwe katalogu worktree i postawi
+  DRUGI komplet kontenerow razem z druga baza.
+- `--no-deps` - **wymagane**. Bez tego `run` podnosi zaleznosci serwisu.
+- `<workdir>` - WORKDIR serwisu odczytany z Dockerfile. Nie zakladaj `/app`.
+- `--profile <profil>` - ten sam, ktorego uzywa Makefile.
+
+Nie dokladaj `--env-file`. Worktree nie ma wlasnego `.env` (plik bywa
+gitignorowany), a wariant opiera sie na wartosciach domyslnych pliku compose
+i aplikacji. Projekt, ktory bez konkretnych zmiennych nie wstanie - uzytkownik
+dopisze przy potwierdzeniu w KROK 3 `--env-file <absolutna sciezka>` LITERALNIE,
+bez podstawien. Komenda zapisana na stronie nie moze zawierac `$(...)`: sesja
+pracujaca w worktree odrzuca komendy z podstawieniem obliczanym w locie.
+
+Wariant dziala tylko przy podniesionym stacku glownego checkoutu - siec, obraz
+i baza pochodza z projektu wskazanego przez `-p`. Projekt bez Dockera nie
+potrzebuje osobnego wariantu: w sekcji `## Worktree` wpisz wtedy `jak wyzej`.
+
 **Czy sa testy**: policz pliki testowe (`tests/`, `test/`, `*_test.go`,
 `*.test.ts`, `spec/`). Zero plikow -> projekt nie ma testow.
 
@@ -102,6 +139,7 @@ Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik 
 > |---|---|
 > | Lint | `[wykryta komenda]` |
 > | Test | `[wykryta komenda]` |
+> | Worktree | `[wariant worktree lint i test, albo "jak wyzej"]` |
 >
 > Testy w repo: **[znaleziono N plikow / brak]**
 >
@@ -111,6 +149,13 @@ Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik 
 > 3. Stosowac TDD - testy pisane przed implementacja? (tak / nie)
 
 Poczekaj na odpowiedzi. Przy braku testow w repo pytanie o TDD pomin (wpisz `nie`).
+
+Wiersz `Worktree` wypelniasz wariantem wyprowadzonym w KROK 2. Powiedz przy nim
+jednym zdaniem, ze wariant worktree dziala tylko przy podniesionym stacku
+glownego checkoutu - uzytkownik ma to wiedziec, zanim komenda trafi na strone.
+Zapytaj przy tym, czy projekt wstanie na wartosciach domyslnych; jesli nie,
+uzytkownik podaje `--env-file <absolutna sciezka>` do dopisania LITERALNIE
+(zadnych `$(...)` w komendzie, ktora trafia na strone).
 
 ## KROK 4: Wykryj narzedzie mutacyjne (opcjonalnie)
 
@@ -211,6 +256,11 @@ kto odpala: [user | agent]
 testy istnieja: [tak | nie]
 framework: [pytest | vitest | go test | ...]
 
+## Worktree
+
+lint: [komenda lint dla kopii repo, albo "jak wyzej"]
+test: [komenda test dla kopii repo, albo "jak wyzej"]
+
 ## TDD
 
 stosowac: [tak | nie]
@@ -234,11 +284,16 @@ kto odpala: [user | agent]
 
 Trzymaj sie tych naglowkow i etykiet. Zmiana formatu psuje odczyt w `work`.
 
+Sekcja `## Worktree` powstaje zawsze, tak jak `## Mutacje`. Projekt bez Dockera
+dostaje w obu polach `jak wyzej` - to odeslanie do `## Lint` i `## Test`, nie
+brak danych.
+
 ## KROK 6: Podsumowanie
 
 Wyswietl uzytkownikowi:
 
 - Zapisana komende lint i test
+- Wariant worktree obu komend (albo `jak wyzej`)
 - Kto je odpala
 - Czy TDD wlaczone
 - Narzedzie mutacyjne i jego komende diffowa (albo `brak` wraz z powodem)
@@ -258,7 +313,7 @@ Jesli uzytkownik wybral **agent** jako uruchamiajacego, przypomnij o fladze:
 
 1. **Nie zgaduj komend** - tabela w KROK 2 to punkt wyjscia, nie odpowiedz. Zawsze potwierdz z uzytkownikiem
 2. **Nie uruchamiaj wykrytych komend** zeby je zweryfikowac - to konfiguracja, nie test. Lint na brudnym drzewie roboczym zwroci mylacy wynik. **Wyjatek**: `--help` i `--version` wolno uruchomic. To odpytanie narzedzia o wlasny interfejs, nie przebieg testow ani mutacji - KROK 4 tego wprost wymaga
-3. **Format strony jest kontraktem** - `work` i `work-simple` czytaja naglowki i etykiety doslownie
+3. **Format strony jest kontraktem** - `work` i `work-simple` czytaja naglowki i etykiety doslownie. Dotyczy to takze sekcji `## Worktree`: pracujac w git worktree oba skille biora komendy z jej pol `lint:` i `test:`, a wartosc `jak wyzej` odsyla je do `## Lint` i `## Test`
 4. **Respektuj reguly repo** - jesli `CLAUDE.md` mowi "tylko przez docker" albo "Claude nigdy nie odpala testow", zapisz to w sekcji Uwagi i domyslnie ustaw `kto odpala: user`
 5. **Jedna strona per projekt** - slug zawsze `toolchain`, bez wariantow. Slug wynika z tytulu strony, wiec tytul musi brzmiec dokladnie `Toolchain` - zmiana tytulu zrywa odczyt w `work` i `work-simple`, ktore szukaja strony po slugu `toolchain`
 6. **Nie instaluj narzedzia mutacyjnego** - to jednorazowy setup wlasciciela repo, per jezyk i per runner. Skill je wykrywa i podaje instrukcje, nie sciaga (precedens: graphify)
