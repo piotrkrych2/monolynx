@@ -251,6 +251,16 @@ class TestLandingAndContactPages:
 
         assert response.status_code == 200
 
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_landing_page_lists_sprint_run_skill_chip(self, client, monkeypatch, lang):
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        response = await client.get("/", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert ">/monolynx:sprint-run</code>" in response.text
+        assert ">/monolynx:sprint-end</code>" in response.text
+
     async def test_contact_page_redirects_when_skip_landing_page_enabled(self, client, monkeypatch):
         monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", True)
 
