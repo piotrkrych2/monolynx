@@ -1,0 +1,12 @@
+# captured: mutmut show calc.x_is_positive__mutmut_1 | mutmut 3.8.0 | 2026-09-13 | docker run --rm -v <demo>:/work -w /work monolynx-app | real_run: true | note: 'mutmut show <mutant_name>' dla mutanta ze statusem survived (wariant survived) - drukuje naglowek '# <mutant_name>: <status>' i unified diff (---/+++/@@) miedzy oryginalnym a zmutowanym zrodlem. Identyfikator mutanta to '<modul>.x_<nazwa_funkcji>__mutmut_<numer>' (prefiks x_ jest czescia wewnetrznego schematu mutmut 3 - kazda funkcja dostaje w skompilowanym drzewie warianty x_<nazwa>__mutmut_N).
+/usr/local/lib/python3.12/site-packages/mutmut/configuration.py:143: UserWarning: The config paths_to_mutate is deprecated. Please rename it to source_paths
+  warnings.warn("The config paths_to_mutate is deprecated. Please rename it to source_paths")
+/usr/local/lib/python3.12/site-packages/mutmut/configuration.py:152: UserWarning: The config tests_dir is deprecated. Please add the path to pytest_add_cli_args_test_selection instead
+  warnings.warn(
+# calc.x_is_positive__mutmut_1: survived
+--- calc.py
++++ calc.py
+@@ -1,2 +1,2 @@
+ def is_positive(n):
+-    return n > 0
++    return n >= 0

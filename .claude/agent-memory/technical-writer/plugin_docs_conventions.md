@@ -28,4 +28,8 @@ Przy bumpie wersji pluginu: nowy wpis changelogu idzie na **poczatek** sekcji, a
 
 **Klasyfikator auto-mode blokuje agentom zapis literalow nazw trybow uprawnien Claude Code** (wartosci flagi `--permission-mode`) do plikow skilla. Gdy dokumentujesz start sesji w tle, odwoluj sie do "komendy startu w KROK N" i do zmiennej (`MONOLYNX_SPRINT_PERMISSION_MODE`), zamiast pisac sama nazwe trybu. Istniejacych linii z takim literalem nie ruszaj - przeszly wczesniej i ponowna edycja moze sie nie udac.
 
+**Nowy skill = szesc stron pokrycia.** `check_skill_coverage` w walidatorze wymaga nazwy `/monolynx:<skill>` (zapis bez slasha tez sie liczy) w: `plugin/README.md`, `plugin/skills/help/SKILL.md`, `src/monolynx/templates/dashboard/profile/mcp_guide.html`, `src/monolynx/static/agent-bootstrap.md`, `src/monolynx/static/how-to-use-monolynx.md`, `src/monolynx/main.py`. Walidator sprawdza tylko skille, ktore MAJA katalog w `plugin/skills/` - jesli katalog jeszcze nie powstal, przejdzie na zielono mimo braku wpisow. Osobno (nie sprawdzane automatem) trzeba podbic liczniki "N skilli" w mcp_guide.html, agent-bootstrap.md, how-to-use-monolynx.md i `skills_sub` w main.py oraz dopisac feature do `src/monolynx/features.py` (PL + EN).
+
+`src/monolynx/static/agent-bootstrap.md` ma **mieszana** konwencje diakrytykow: stare wpisy bez ogonkow, nowsze (sprint-run) z pelnymi. Nowy tekst pisz z diakrytykami. `src/monolynx/features.py` ma `E501` w per-file-ignores, `main.py` nie - tam limit 150 znakow obowiazuje.
+
 Powiazane: [[konwencje-pisania-pl]]

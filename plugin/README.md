@@ -2,7 +2,7 @@
 
 Plugin Monolynx pakuje w jeden, instalowalny zestaw to, czego potrzebujesz, żeby pracować z platformą Monolynx bezpośrednio z Claude Code:
 
-- **18 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, dyspozytor sprintu w sesjach w tle, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu),
+- **19 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, dyspozytor sprintu w sesjach w tle, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, testy mutacyjne zamieniane na pracę, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu),
 - **7 agentów** wyspecjalizowanych w rolach zespołu (backend, frontend, baza danych, DevOps, QA, code review, dokumentacja),
 - **zdalny serwer MCP** Monolynx (HTTP, autoryzacja Bearer), który udostępnia narzędzia do Scrum, 500ki, Monitoringu, Wiki, Połączeń i Planu pracy.
 
@@ -115,6 +115,7 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 | `/monolynx:wiki-sync-merge` | Post-merge INGEST do wiki metodą LLM Wiki. Odpala człowiek po merge ticketów/PR do main - pobiera dane ticketów, integruje wiedzę z zamkniętych zadań, aktualizuje powiązane strony i odświeża katalog. |
 | `/monolynx:help` | Wyświetl instrukcję użycia skilli Monolynx: flow pracy z ticketami oraz skille dodatkowe. |
 | `/monolynx:project-toolchain` | Jednorazowo wykryj komendy lint i testów projektu (Makefile, Python, Node, Rust, Go, PHP, Ruby, Java) i zapisz je jako stronę wiki `toolchain`, którą czytają `/monolynx:work` i `/monolynx:work-simple`. Opcjonalnie wykrywa też narzędzie do testów mutacyjnych dla 9 ekosystemów i zapisuje sekcję `## Mutacje` (komenda pełna i diffowa, moduły rdzenia, baseline). Narzędzi nie instaluje. |
+| `/monolynx:mutation-check` | Przebieg testów mutacyjnych i survivorzy jako śledzona praca. Komendę i format raportu czyta z sekcji `## Mutacje` strony wiki `toolchain` (brak sekcji - odesłanie do `/monolynx:project-toolchain`, zero zgadywania i zero instalacji). Bez argumentu tryb diffowy względem `git merge-base` z gałęzią główną, raportujący liczbę survivorów, nie procent; argument ze ścieżką modułu daje pełny przebieg ze `score`, `baseline` i deltą. Parsowanie przez `plugin/scripts/mutation_report.py`. Survivorów zapisuje jako kryteria akceptacji przy tickecie albo tickety w backlogu, treścią opisującą brakujący przypadek testowy. Twardy budżet czasu (`MONOLYNX_MUTATION_BUDGET`, domyślnie 600 s) kończy się raportem częściowym, nigdy wiszącym terminalem. Job `mutation-check` w stepie `wrap-up` bieżącego pipeline'u, best-effort. Score nie jest bramką. |
 | `/monolynx:create-graph-ci-script` | Skonfiguruj graphify jako ekstraktor grafu zależności (dowolny język, offline): `.graphifyignore`, `cicd/sync_graph.py` (`replace_graph`) i non-blocking step CI (GitLab/GitHub/Bitbucket/Jenkins). Graphify instaluje właściciel runnera. |
 | `/monolynx:graph-sync` | Lokalna synchronizacja grafu za rękę: wykrywa/pomaga zainstalować graphify (macOS/Linux/Windows), ekstrakcja offline i push przez `cicd/sync_graph.py` (`replace_graph`). |
 
@@ -360,6 +361,30 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.10.0
+
+Skill `/monolynx:mutation-check` (MON-150) - drugi krok serii po parserze z 1.9.0.
+
+- **Nowy skill `/monolynx:mutation-check [ścieżka modułu]`**: uruchamia przebieg mutacyjny, parsuje raport przez `plugin/scripts/mutation_report.py` i pokazuje tabelę przeżywających mutantów (plik:linia, mutator, oryginał -> mutant). Puste pola raportu (PIT bez `original`/`replacement`, mutmut bez `line`) pokazywane są jako `description` albo `?`, nigdy jako literalne `None`.
+- **Komenda pochodzi wyłącznie z wiki**: skill czyta sekcję `## Mutacje` strony `toolchain` deterministycznie (`list_wiki_pages` + slug, nie `search_wiki`). Brak strony albo sekcji kończy się instrukcją uruchomienia `/monolynx:project-toolchain`; `narzedzie: brak` pokazuje powód i też kończy skill. Zero zgadywania komendy, zero instalacji narzędzia, zero poprawiania cudzych flag.
+- **Tryb diffowy jako domyślny**: bez argumentu przebieg ograniczony do zmiany względem `git merge-base` z gałęzią główną, raportowany **liczbą survivorów, nie procentem** - przy kilku mutantach procent skacze o dziesiątki punktów i nie niesie informacji. Argument ze ścieżką modułu daje pełny przebieg ze `score`, `baseline` i deltą; `komenda diffowa: brak` nie przechodzi cicho na pełny przebieg, tylko proponuje tryb modułowy.
+- **Survivorzy jako śledzona praca**: kryteria akceptacji przy wskazanym tickecie (`add_acceptance_criterion`), ticket na survivora albo jeden zbiorczy z listą w `acceptance_criteria`. Treść opisuje brakujący przypadek testowy wyprowadzony z kodu wokół linii mutanta.
+- **Blok anty-gamingowy**: survivor to brakujący przypadek testowy, mutant równoważny semantycznie jest uzasadniany i odpuszczany (poprawna odpowiedź, nie porażka), asercje pinujące szczegóły implementacji dla podniesienia score są zabronione, a słowa "zabij mutanta" nie wolno użyć w generowanych treściach. Mutation score nie jest bramką merge'a ani ticketu.
+- **Budżet czasu zamiast wiszącego terminala**: `MONOLYNX_MUTATION_BUDGET` (sekundy, domyślnie i maksymalnie 600, egzekwowane parametrem `timeout` narzędzia Bash). Po przekroczeniu: raport częściowy, jeśli plik raportu istnieje, inaczej jawne "brak raportu" z komendą do ręcznego dokończenia.
+- **Instrumentacja Pipelines best-effort**: job `mutation-check` w stepie `wrap-up` bieżącego pipeline'u, gdy skill działa w kontekście pracy nad ticketem; w trybie samodzielnym pipeline nie powstaje. Survivorzy nie ustawiają statusu `failed` - `failed` zostaje dla awarii przebiegu. Błąd toola pipeline nigdy nie przerywa skilla.
+- **Dalej w serii**: krok CI (MON-151) i wpięcie w `work` oraz `sprint-end` (MON-152).
+
+### 1.9.0
+
+Parser raportów mutacyjnych do wspólnego modelu survivora (MON-149) - fundament serii MON-150..152.
+
+- **Nowy skrypt `plugin/scripts/mutation_report.py`**: czyta raport narzędzia mutacyjnego i wypisuje na stdout znormalizowany JSON `{"score", "total", "killed", "survived", "survivors": [{file, line, mutator, original, replacement, status, description}]}`. Cztery formaty: `mte-json` (Mutation Testing Elements - Stryker, Stryker.NET, Infection), `pit-xml`, `mutmut` (wyjście `mutmut results --all true`), `cargo-mutants` (`outcomes.json`). Wywołanie: `python3 mutation_report.py --report <plik> --format <format>`. Wyłącznie biblioteka standardowa, bez nowych zależności.
+- **Jedna semantyka statusów dla wszystkich narzędzi**: killed to mutant wykryty, razem z timeoutem; survived to mutant, który przeżył albo nie był pokryty testem (dosłowny literał statusu zostaje w wyniku); mutanty nieważne (`CompileError`, `Ignored`, `NON_VIABLE`, `Unviable`, `skipped`) wypadają poza `total`. Nieznany status liczy się jako survivor - lepiej pokazać za dużo niż przemilczeć mutanta.
+- **Nigdy cicha pusta lista**: kody wyjścia to 0 (OK), 2 (błąd wejścia: brak pliku, niepoprawny JSON/XML, raport pusty albo niezgodny ze schematem) i 64 (błąd użycia: nieznany format, brak argumentu). `score` jest `null` wyłącznie wtedy, gdy `total == 0`.
+- **Fixture'y z realnych przebiegów** w `tests/fixtures/{stryker,pitest,mutmut,cargo-mutants}/`: Stryker 10.0.0, PIT 1.30.0, mutmut 3.8.0, cargo-mutants 27.1.0. Zgodnie z regułą projektu `external-tool-output` parser nie powstaje na wymyślonym wyjściu narzędzia.
+- **Ograniczenie mutmut**: wymagane jest wyjście `mutmut results --all true`. Domyślne `mutmut results` pomija killed, więc score byłby zaniżony, a pusty wynik nieodróżnialny od złego pliku - skrypt zwraca wtedy błąd zamiast zera.
+- **Skrypt sam nie uruchamia narzędzia, nie bramkuje i nie zapisuje plików**, i nie jest jeszcze wołany przez żaden skill. Jest wejściem dla kolejnych ticketów serii: skill `mutation-check` (MON-150), krok CI (MON-151), wpięcie w `work` i `sprint-end` (MON-152).
 
 ### 1.8.2
 
