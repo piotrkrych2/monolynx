@@ -1,0 +1,316 @@
+{
+  "_meta": {
+    "command": "npx stryker run",
+    "tool_version": "10.0.0",
+    "captured": "2026-09-13",
+    "environment": "macOS arm64, node v24.3.0, npm 11.16.0, @stryker-mutator/core ^10.0.0, testRunner=command (node --test)",
+    "real_run": true,
+    "anonymized": true,
+    "note": "Projekt demo: src/calc.js (add, sub, isPositive), test/calc.test.js na node:test pokrywajacy tylko add i isPositive (bez negatywnego przypadku isPositive i bez sub w ogole). testRunner=command uruchamiajacy 'node --test' (default reporter niedostepny bez --test jako argumentu; katalogowy 'node --test test/' jest traktowany jako require i sie wywala - trzeba uzyc bezargumentowego 'node --test', ktory sam znajduje pliki *.test.js). coverageAnalysis wymuszone na 'off' przez command runner niezaleznie od configu (probowano 'all' - stryker akceptuje ustawienie, ale command runner nie zwraca danych o pokryciu do procesu glownego, wiec status 'noCoverage' nigdy sie nie pojawia dla tego test runnera - potwierdzone empirycznie, nie z dokumentacji). Statusy obecne w tym raporcie: Killed (6), Survived (4, w tym mutant EqualityOperator n>0 -> n>=0 w isPositive i BlockStatement/ConditionalExpression w sub, ktory nie mial zadnego testu). Sciezki host zanonimizowane na /work/demo-stryker w polu projectRoot jesli obecne."
+  },
+  "files": {
+    "src/calc.js": {
+      "language": "javascript",
+      "mutants": [
+        {
+          "id": "4",
+          "mutatorName": "BlockStatement",
+          "replacement": "{}",
+          "statusReason": "\u001b[32m\u2714 add sums two numbers \u001b[90m(0.44725ms)\u001b[39m\u001b[39m\n\u001b[31m\u2716 isPositive detects positive numbers \u001b[90m(0.528667ms)\u001b[39m\u001b[39m\n\n\u001b[34m\u2139 tests 2\u001b[39m\n\u001b[34m\u2139 suites 0\u001b[39m\n\u001b[34m\u2139 pass 1\u001b[39m\n\u001b[34m\u2139 fail 1\u001b[39m\n\u001b[34m\u2139 cancelled 0\u001b[39m\n\u001b[34m\u2139 skipped 0\u001b[39m\n\u001b[34m\u2139 todo 0\u001b[39m\n\u001b[34m\u2139 duration_ms 95.747917\u001b[39m\n\n\u001b[31m\u2716 failing tests:\u001b[39m\n\ntest at test/calc.test.js:10:1\n\u001b[31m\u2716 isPositive detects positive numbers \u001b[90m(0.528667ms)\u001b[39m\u001b[39m\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \u001b[32m+ actual\u001b[39m \u001b[31m- expected\u001b[39m\n  \n  \u001b[32m+\u001b[39m undefined\n  \u001b[31m- \u001b[39mtrue\n  \n      at TestContext.<anonymous> \u001b[90m(/work/demo-stryker/.stryker-tmp/sandbox-XXXXXX/\u001b[39mtest/calc.test.js:11:10\u001b[90m)\u001b[39m\n  \u001b[90m    at Test.runInAsyncScope (node:async_hooks:214:14)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1062:25)\u001b[39m\n  \u001b[90m    at Test.processPendingSubtests (node:internal/test_runner/test:752:18)\u001b[39m\n  \u001b[90m    at Test.postRun (node:internal/test_runner/test:1191:19)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1119:12)\u001b[39m\n  \u001b[90m    at async startSubtestAfterBootstrap (node:internal/test_runner/harness:332:3)\u001b[39m {\n    generatedMessage: \u001b[33mtrue\u001b[39m,\n    code: \u001b[32m'ERR_ASSERTION'\u001b[39m,\n    actual: \u001b[90mundefined\u001b[39m,\n    expected: \u001b[33mtrue\u001b[39m,\n    operator: \u001b[32m'strictEqual'\u001b[39m\n  }\n",
+          "status": "Killed",
+          "testsCompleted": 1,
+          "killedBy": [
+            "0"
+          ],
+          "location": {
+            "end": {
+              "column": 2,
+              "line": 11
+            },
+            "start": {
+              "column": 24,
+              "line": 9
+            }
+          }
+        },
+        {
+          "id": "3",
+          "mutatorName": "ArithmeticOperator",
+          "replacement": "a + b",
+          "status": "Survived",
+          "testsCompleted": 1,
+          "location": {
+            "end": {
+              "column": 15,
+              "line": 6
+            },
+            "start": {
+              "column": 10,
+              "line": 6
+            }
+          }
+        },
+        {
+          "id": "0",
+          "mutatorName": "BlockStatement",
+          "replacement": "{}",
+          "statusReason": "\u001b[31m\u2716 add sums two numbers \u001b[90m(2.400375ms)\u001b[39m\u001b[39m\n\u001b[32m\u2714 isPositive detects positive numbers \u001b[90m(0.150666ms)\u001b[39m\u001b[39m\n\n\u001b[34m\u2139 tests 2\u001b[39m\n\u001b[34m\u2139 suites 0\u001b[39m\n\u001b[34m\u2139 pass 1\u001b[39m\n\u001b[34m\u2139 fail 1\u001b[39m\n\u001b[34m\u2139 cancelled 0\u001b[39m\n\u001b[34m\u2139 skipped 0\u001b[39m\n\u001b[34m\u2139 todo 0\u001b[39m\n\u001b[34m\u2139 duration_ms 100.524625\u001b[39m\n\n\u001b[31m\u2716 failing tests:\u001b[39m\n\ntest at test/calc.test.js:6:1\n\u001b[31m\u2716 add sums two numbers \u001b[90m(2.400375ms)\u001b[39m\u001b[39m\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  undefined !== 5\n  \n      at TestContext.<anonymous> \u001b[90m(/work/demo-stryker/.stryker-tmp/sandbox-XXXXXX/\u001b[39mtest/calc.test.js:7:10\u001b[90m)\u001b[39m\n  \u001b[90m    at Test.runInAsyncScope (node:async_hooks:214:14)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1062:25)\u001b[39m\n  \u001b[90m    at Test.start (node:internal/test_runner/test:959:17)\u001b[39m\n  \u001b[90m    at startSubtestAfterBootstrap (node:internal/test_runner/harness:332:17)\u001b[39m {\n    generatedMessage: \u001b[33mtrue\u001b[39m,\n    code: \u001b[32m'ERR_ASSERTION'\u001b[39m,\n    actual: \u001b[90mundefined\u001b[39m,\n    expected: \u001b[33m5\u001b[39m,\n    operator: \u001b[32m'strictEqual'\u001b[39m\n  }\n",
+          "status": "Killed",
+          "testsCompleted": 1,
+          "killedBy": [
+            "0"
+          ],
+          "location": {
+            "end": {
+              "column": 2,
+              "line": 3
+            },
+            "start": {
+              "column": 20,
+              "line": 1
+            }
+          }
+        },
+        {
+          "id": "1",
+          "mutatorName": "ArithmeticOperator",
+          "replacement": "a - b",
+          "statusReason": "\u001b[31m\u2716 add sums two numbers \u001b[90m(0.831458ms)\u001b[39m\u001b[39m\n\u001b[32m\u2714 isPositive detects positive numbers \u001b[90m(0.109292ms)\u001b[39m\u001b[39m\n\n\u001b[34m\u2139 tests 2\u001b[39m\n\u001b[34m\u2139 suites 0\u001b[39m\n\u001b[34m\u2139 pass 1\u001b[39m\n\u001b[34m\u2139 fail 1\u001b[39m\n\u001b[34m\u2139 cancelled 0\u001b[39m\n\u001b[34m\u2139 skipped 0\u001b[39m\n\u001b[34m\u2139 todo 0\u001b[39m\n\u001b[34m\u2139 duration_ms 105.377083\u001b[39m\n\n\u001b[31m\u2716 failing tests:\u001b[39m\n\ntest at test/calc.test.js:6:1\n\u001b[31m\u2716 add sums two numbers \u001b[90m(0.831458ms)\u001b[39m\u001b[39m\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  -1 !== 5\n  \n      at TestContext.<anonymous> \u001b[90m(/work/demo-stryker/.stryker-tmp/sandbox-XXXXXX/\u001b[39mtest/calc.test.js:7:10\u001b[90m)\u001b[39m\n  \u001b[90m    at Test.runInAsyncScope (node:async_hooks:214:14)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1062:25)\u001b[39m\n  \u001b[90m    at Test.start (node:internal/test_runner/test:959:17)\u001b[39m\n  \u001b[90m    at startSubtestAfterBootstrap (node:internal/test_runner/harness:332:17)\u001b[39m {\n    generatedMessage: \u001b[33mtrue\u001b[39m,\n    code: \u001b[32m'ERR_ASSERTION'\u001b[39m,\n    actual: \u001b[33m-1\u001b[39m,\n    expected: \u001b[33m5\u001b[39m,\n    operator: \u001b[32m'strictEqual'\u001b[39m\n  }\n",
+          "status": "Killed",
+          "testsCompleted": 1,
+          "killedBy": [
+            "0"
+          ],
+          "location": {
+            "end": {
+              "column": 15,
+              "line": 2
+            },
+            "start": {
+              "column": 10,
+              "line": 2
+            }
+          }
+        },
+        {
+          "id": "2",
+          "mutatorName": "BlockStatement",
+          "replacement": "{}",
+          "status": "Survived",
+          "testsCompleted": 1,
+          "location": {
+            "end": {
+              "column": 2,
+              "line": 7
+            },
+            "start": {
+              "column": 20,
+              "line": 5
+            }
+          }
+        },
+        {
+          "id": "6",
+          "mutatorName": "ConditionalExpression",
+          "replacement": "false",
+          "statusReason": "\u001b[32m\u2714 add sums two numbers \u001b[90m(0.44525ms)\u001b[39m\u001b[39m\n\n\u001b[31m\u2716 isPositive detects positive numbers \u001b[90m(0.524291ms)\u001b[39m\u001b[39m\n\n\u001b[34m\u2139 tests 2\u001b[39m\n\u001b[34m\u2139 suites 0\u001b[39m\n\u001b[34m\u2139 pass 1\u001b[39m\n\u001b[34m\u2139 fail 1\u001b[39m\n\u001b[34m\u2139 cancelled 0\u001b[39m\n\u001b[34m\u2139 skipped 0\u001b[39m\n\u001b[34m\u2139 todo 0\u001b[39m\n\u001b[34m\u2139 duration_ms 109.198333\u001b[39m\n\n\u001b[31m\u2716 failing tests:\u001b[39m\n\ntest at test/calc.test.js:10:1\n\u001b[31m\u2716 isPositive detects positive numbers \u001b[90m(0.524291ms)\u001b[39m\u001b[39m\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> \u001b[90m(/work/demo-stryker/.stryker-tmp/sandbox-XXXXXX/\u001b[39mtest/calc.test.js:11:10\u001b[90m)\u001b[39m\n  \u001b[90m    at Test.runInAsyncScope (node:async_hooks:214:14)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1062:25)\u001b[39m\n  \u001b[90m    at Test.processPendingSubtests (node:internal/test_runner/test:752:18)\u001b[39m\n  \u001b[90m    at Test.postRun (node:internal/test_runner/test:1191:19)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1119:12)\u001b[39m\n  \u001b[90m    at async startSubtestAfterBootstrap (node:internal/test_runner/harness:332:3)\u001b[39m {\n    generatedMessage: \u001b[33mtrue\u001b[39m,\n    code: \u001b[32m'ERR_ASSERTION'\u001b[39m,\n    actual: \u001b[33mfalse\u001b[39m,\n    expected: \u001b[33mtrue\u001b[39m,\n    operator: \u001b[32m'strictEqual'\u001b[39m\n  }\n",
+          "status": "Killed",
+          "testsCompleted": 1,
+          "killedBy": [
+            "0"
+          ],
+          "location": {
+            "end": {
+              "column": 15,
+              "line": 10
+            },
+            "start": {
+              "column": 10,
+              "line": 10
+            }
+          }
+        },
+        {
+          "id": "5",
+          "mutatorName": "ConditionalExpression",
+          "replacement": "true",
+          "status": "Survived",
+          "testsCompleted": 1,
+          "location": {
+            "end": {
+              "column": 15,
+              "line": 10
+            },
+            "start": {
+              "column": 10,
+              "line": 10
+            }
+          }
+        },
+        {
+          "id": "7",
+          "mutatorName": "EqualityOperator",
+          "replacement": "n >= 0",
+          "status": "Survived",
+          "testsCompleted": 1,
+          "location": {
+            "end": {
+              "column": 15,
+              "line": 10
+            },
+            "start": {
+              "column": 10,
+              "line": 10
+            }
+          }
+        },
+        {
+          "id": "8",
+          "mutatorName": "EqualityOperator",
+          "replacement": "n <= 0",
+          "statusReason": "\u001b[32m\u2714 add sums two numbers \u001b[90m(0.427167ms)\u001b[39m\u001b[39m\n\n\u001b[31m\u2716 isPositive detects positive numbers \u001b[90m(0.52275ms)\u001b[39m\u001b[39m\n\n\u001b[34m\u2139 tests 2\u001b[39m\n\u001b[34m\u2139 suites 0\u001b[39m\n\u001b[34m\u2139 pass 1\u001b[39m\n\u001b[34m\u2139 fail 1\u001b[39m\n\u001b[34m\u2139 cancelled 0\u001b[39m\n\u001b[34m\u2139 skipped 0\u001b[39m\n\u001b[34m\u2139 todo 0\u001b[39m\n\u001b[34m\u2139 duration_ms 59.534792\u001b[39m\n\n\u001b[31m\u2716 failing tests:\u001b[39m\n\ntest at test/calc.test.js:10:1\n\u001b[31m\u2716 isPositive detects positive numbers \u001b[90m(0.52275ms)\u001b[39m\u001b[39m\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> \u001b[90m(/work/demo-stryker/.stryker-tmp/sandbox-XXXXXX/\u001b[39mtest/calc.test.js:11:10\u001b[90m)\u001b[39m\n  \u001b[90m    at Test.runInAsyncScope (node:async_hooks:214:14)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1062:25)\u001b[39m\n  \u001b[90m    at Test.processPendingSubtests (node:internal/test_runner/test:752:18)\u001b[39m\n  \u001b[90m    at Test.postRun (node:internal/test_runner/test:1191:19)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1119:12)\u001b[39m\n  \u001b[90m    at async startSubtestAfterBootstrap (node:internal/test_runner/harness:332:3)\u001b[39m {\n    generatedMessage: \u001b[33mtrue\u001b[39m,\n    code: \u001b[32m'ERR_ASSERTION'\u001b[39m,\n    actual: \u001b[33mfalse\u001b[39m,\n    expected: \u001b[33mtrue\u001b[39m,\n    operator: \u001b[32m'strictEqual'\u001b[39m\n  }\n",
+          "status": "Killed",
+          "testsCompleted": 1,
+          "killedBy": [
+            "0"
+          ],
+          "location": {
+            "end": {
+              "column": 15,
+              "line": 10
+            },
+            "start": {
+              "column": 10,
+              "line": 10
+            }
+          }
+        },
+        {
+          "id": "9",
+          "mutatorName": "ObjectLiteral",
+          "replacement": "{}",
+          "statusReason": "\u001b[31m\u2716 add sums two numbers \u001b[90m(0.399791ms)\u001b[39m\u001b[39m\n\n\u001b[31m\u2716 isPositive detects positive numbers \u001b[90m(0.062ms)\u001b[39m\u001b[39m\n\n\u001b[34m\u2139 tests 2\u001b[39m\n\u001b[34m\u2139 suites 0\u001b[39m\n\u001b[34m\u2139 pass 0\u001b[39m\n\u001b[34m\u2139 fail 2\u001b[39m\n\u001b[34m\u2139 cancelled 0\u001b[39m\n\u001b[34m\u2139 skipped 0\u001b[39m\n\u001b[34m\u2139 todo 0\u001b[39m\n\u001b[34m\u2139 duration_ms 59.590791\u001b[39m\n\n\u001b[31m\u2716 failing tests:\u001b[39m\n\ntest at test/calc.test.js:6:1\n\u001b[31m\u2716 add sums two numbers \u001b[90m(0.399791ms)\u001b[39m\u001b[39m\n  TypeError [Error]: add is not a function\n      at TestContext.<anonymous> \u001b[90m(/work/demo-stryker/.stryker-tmp/sandbox-XXXXXX/\u001b[39mtest/calc.test.js:7:22\u001b[90m)\u001b[39m\n  \u001b[90m    at Test.runInAsyncScope (node:async_hooks:214:14)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1062:25)\u001b[39m\n  \u001b[90m    at Test.start (node:internal/test_runner/test:959:17)\u001b[39m\n  \u001b[90m    at startSubtestAfterBootstrap (node:internal/test_runner/harness:332:17)\u001b[39m\n\ntest at test/calc.test.js:10:1\n\u001b[31m\u2716 isPositive detects positive numbers \u001b[90m(0.062ms)\u001b[39m\u001b[39m\n  TypeError [Error]: isPositive is not a function\n      at TestContext.<anonymous> \u001b[90m(/work/demo-stryker/.stryker-tmp/sandbox-XXXXXX/\u001b[39mtest/calc.test.js:11:22\u001b[90m)\u001b[39m\n  \u001b[90m    at Test.runInAsyncScope (node:async_hooks:214:14)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1062:25)\u001b[39m\n  \u001b[90m    at Test.processPendingSubtests (node:internal/test_runner/test:752:18)\u001b[39m\n  \u001b[90m    at Test.postRun (node:internal/test_runner/test:1191:19)\u001b[39m\n  \u001b[90m    at Test.run (node:internal/test_runner/test:1119:12)\u001b[39m\n  \u001b[90m    at async startSubtestAfterBootstrap (node:internal/test_runner/harness:332:3)\u001b[39m\n",
+          "status": "Killed",
+          "testsCompleted": 1,
+          "killedBy": [
+            "0"
+          ],
+          "location": {
+            "end": {
+              "column": 42,
+              "line": 13
+            },
+            "start": {
+              "column": 18,
+              "line": 13
+            }
+          }
+        }
+      ],
+      "source": "function add(a, b) {\n  return a + b;\n}\n\nfunction sub(a, b) {\n  return a - b;\n}\n\nfunction isPositive(n) {\n  return n > 0;\n}\n\nmodule.exports = { add, sub, isPositive };\n"
+    }
+  },
+  "schemaVersion": "1.0",
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": null
+  },
+  "testFiles": {
+    "": {
+      "tests": [
+        {
+          "id": "0",
+          "name": "All tests"
+        }
+      ]
+    }
+  },
+  "projectRoot": "/work/demo-stryker",
+  "config": {
+    "testRunner": "command",
+    "commandRunner": {
+      "command": "node --test"
+    },
+    "mutate": [
+      "src/**/*.js"
+    ],
+    "reporters": [
+      "json"
+    ],
+    "jsonReporter": {
+      "fileName": "reports/mutation/mutation.json"
+    },
+    "coverageAnalysis": "off",
+    "allowConsoleColors": true,
+    "checkers": [],
+    "checkerNodeArgs": [],
+    "clearTextReporter": {
+      "allowColor": true,
+      "allowEmojis": false,
+      "logTests": true,
+      "maxTestsToLog": 3,
+      "reportTests": true,
+      "reportMutants": true,
+      "reportScoreTable": true,
+      "skipFull": false
+    },
+    "dashboard": {
+      "baseUrl": "https://dashboard.stryker-mutator.io/api/reports",
+      "reportType": "full"
+    },
+    "dryRunOnly": false,
+    "eventReporter": {
+      "baseDir": "reports/mutation/events"
+    },
+    "ignorePatterns": [],
+    "ignoreStatic": false,
+    "incremental": false,
+    "incrementalFile": "reports/stryker-incremental.json",
+    "force": false,
+    "fileLogLevel": "off",
+    "inPlace": false,
+    "logLevel": "info",
+    "maxConcurrentTestRunners": 9007199254740991,
+    "maxTestRunnerReuse": 0,
+    "mutator": {
+      "plugins": null,
+      "excludedMutations": []
+    },
+    "plugins": [
+      "@stryker-mutator/*"
+    ],
+    "appendPlugins": [],
+    "htmlReporter": {
+      "fileName": "reports/mutation/mutation.html"
+    },
+    "disableTypeChecks": true,
+    "symlinkNodeModules": true,
+    "tempDirName": ".stryker-tmp",
+    "cleanTempDir": true,
+    "testRunnerNodeArgs": [],
+    "thresholds": {
+      "high": 80,
+      "low": 60,
+      "break": null
+    },
+    "timeoutFactor": 1.5,
+    "timeoutMS": 5000,
+    "dryRunTimeoutMinutes": 5,
+    "tsconfigFile": "tsconfig.json",
+    "warnings": true,
+    "disableBail": false,
+    "allowEmpty": false,
+    "ignorers": [],
+    "testFiles": []
+  },
+  "framework": {
+    "name": "StrykerJS",
+    "version": "10.0.0",
+    "branding": {
+      "homepageUrl": "https://stryker-mutator.io",
+      "imageUrl": "data:image/svg+xml;utf8,%3Csvg viewBox='0 0 1458 1458' xmlns='http://www.w3.org/2000/svg' fill-rule='evenodd' clip-rule='evenodd' stroke-linejoin='round' stroke-miterlimit='2'%3E%3Cpath fill='none' d='M0 0h1458v1458H0z'/%3E%3CclipPath id='a'%3E%3Cpath d='M0 0h1458v1458H0z'/%3E%3C/clipPath%3E%3Cg clip-path='url(%23a)'%3E%3Cpath d='M1458 729c0 402.655-326.345 729-729 729S0 1131.655 0 729C0 326.445 326.345 0 729 0s729 326.345 729 729' fill='%23e74c3c' fill-rule='nonzero'/%3E%3Cpath d='M778.349 1456.15L576.6 1254.401l233-105 85-78.668v-64.332l-257-257-44-187-50-208 251.806-82.793L1076.6 389.401l380.14 379.15c-19.681 367.728-311.914 663.049-678.391 687.599z' fill-opacity='.3'/%3E%3Cpath d='M753.4 329.503c41.79 0 74.579 7.83 97.925 25.444 23.571 18.015 41.69 43.956 55.167 77.097l11.662 28.679 165.733-58.183-14.137-32.13c-26.688-60.655-64.896-108.61-114.191-144.011-49.329-35.423-117.458-54.302-204.859-54.302-50.78 0-95.646 7.376-134.767 21.542-40.093 14.671-74.09 34.79-102.239 60.259-28.84 26.207-50.646 57.06-65.496 92.701-14.718 35.052-22.101 72.538-22.101 112.401 0 72.536 20.667 133.294 61.165 182.704 38.624 47.255 98.346 88.037 179.861 121.291 42.257 17.475 78.715 33.125 109.227 46.994 27.193 12.361 49.294 26.124 66.157 41.751 15.309 14.186 26.497 30.584 33.63 49.258 7.721 20.214 11.16 45.69 11.16 76.402 0 28.021-4.251 51.787-13.591 71.219-8.832 18.374-20.171 33.178-34.523 44.219-14.787 11.374-31.193 19.591-49.393 24.466-19.68 5.359-39.14 7.993-58.69 7.993-29.359 0-54.387-3.407-75.182-10.747-20.112-7.013-37.144-16.144-51.259-27.486-13.618-11.009-24.971-23.766-33.744-38.279-9.64-15.8-17.272-31.924-23.032-48.408l-10.965-31.376-161.669 60.585 10.734 30.124c10.191 28.601 24.197 56.228 42.059 82.748 18.208 27.144 41.322 51.369 69.525 72.745 27.695 21.075 60.904 38.218 99.481 51.041 37.777 12.664 82.004 19.159 132.552 19.159 49.998 0 95.818-8.321 137.611-24.622 42.228-16.471 78.436-38.992 108.835-67.291 30.719-28.597 54.631-62.103 71.834-100.642 17.263-38.56 25.923-79.392 25.923-122.248 0-54.339-8.368-100.37-24.208-138.32-16.29-38.759-38.252-71.661-65.948-98.797-26.965-26.418-58.269-48.835-93.858-67.175-33.655-17.241-69.196-33.11-106.593-47.533-35.934-13.429-65.822-26.601-89.948-39.525-22.153-11.868-40.009-24.21-53.547-37.309-11.429-11.13-19.83-23.678-24.718-37.664-5.413-15.49-7.98-33.423-7.98-53.577 0-40.883 11.293-71.522 37.086-90.539 28.443-20.825 64.985-30.658 109.311-30.658z' fill='%23f1c40f' fill-rule='nonzero'/%3E%3Cpath d='M720 0h18v113h-18zM1458 738v-18h-113v18h113zM720 1345h18v113h-18zM113 738v-18H0v18h113z'/%3E%3C/g%3E%3C/svg%3E"
+    },
+    "dependencies": {}
+  }
+}

@@ -1,0 +1,1014 @@
+{
+  "_meta": {
+    "command": "cargo mutants (raport w mutants.out/outcomes.json)",
+    "tool_version": "27.1.0",
+    "captured": "2026-09-13",
+    "environment": "docker run --rm -v <demo>:/work -w /work rust:1-slim (arm64/aarch64, Apple Silicon; brak prebuilt binarki dla aarch64-unknown-linux-gnu w wydaniu, zainstalowane przez 'cargo install cargo-mutants --locked')",
+    "real_run": true,
+    "anonymized": false,
+    "note": "Projekt demo: crate 'demo' src/lib.rs (add, sub, is_positive), testy w #[cfg(test)] pokrywajace tylko add i is_positive(5). 15 mutantow wygenerowanych (FnValue - zamiana calego ciala funkcji na stala/literal, BinaryOperator - zamiana operatora). Statusy w polu 'outcomes[].summary': 'CaughtMutant' (killed) i 'MissedMutant' (survived) - cargo-mutants NIE rozroznia oddzielnego stanu 'brak pokrycia': funkcja sub bez zadnego testu daje po prostu MissedMutant tak samo jak funkcja czesciowo pokryta, bo narzedzie zawsze uruchamia caly zestaw testow na kazdym mutancie i sprawdza czy cokolwiek nie przejdzie (nie ma per-test coverage jak Stryker/PIT). Pierwszy element outcomes to zawsze 'Baseline' -> 'Success' (przebieg bez mutacji, must-pass). Pola najwyzszego poziomu: outcomes, total_mutants, missed, caught, timeout, unviable, success, start_time, end_time, cargo_mutants_version. Kazdy element outcomes[].scenario dla nie-baseline to obiekt {'Mutant': {...}} z polami name (czytelny opis 'plik:linia:kolumna: replace <fn> -> <typ> with <wartosc>'), package, file, function {function_name, return_type, span}, span (lokalizacja samej mutacji), replacement, genre ('FnValue' lub 'BinaryOperator' w tym przebiegu). Brak sciezek hosta w JSON - nic do anonimizacji."
+  },
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.312446334,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.052723792,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:5: replace add -> i32 with 0",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 5
+            },
+            "end": {
+              "line": 2,
+              "column": 10
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.154809209,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.053914458,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:5: replace add -> i32 with 1",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 5
+            },
+            "end": {
+              "line": 2,
+              "column": 10
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.156954125,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.052751584,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:5: replace add -> i32 with -1",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 5
+            },
+            "end": {
+              "line": 2,
+              "column": 10
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.1595155,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.057822125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:7: replace + with - in add",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 7
+            },
+            "end": {
+              "line": 2,
+              "column": 8
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_7.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_7.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.154113209,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.053681458,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:7: replace + with * in add",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 7
+            },
+            "end": {
+              "line": 2,
+              "column": 8
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_7_001.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_7_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.157558334,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.052508792,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:5: replace sub -> i32 with 0",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "sub",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 7,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 5
+            },
+            "end": {
+              "line": 6,
+              "column": 10
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.15513275,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.052749459,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:5: replace sub -> i32 with 1",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "sub",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 7,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 5
+            },
+            "end": {
+              "line": 6,
+              "column": 10
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.159089208,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.054070958,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:5: replace sub -> i32 with -1",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "sub",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 7,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 5
+            },
+            "end": {
+              "line": 6,
+              "column": 10
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.153538917,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.052708583,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:7: replace - with + in sub",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "sub",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 7,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 7
+            },
+            "end": {
+              "line": 6,
+              "column": 8
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_7.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_7.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.156981167,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.053776709,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:7: replace - with / in sub",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "sub",
+            "return_type": "-> i32",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 7,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 7
+            },
+            "end": {
+              "line": 6,
+              "column": 8
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_7_001.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_7_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.154886583,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.051750333,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:10:5: replace is_positive -> bool with true",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "is_positive",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 9,
+                "column": 1
+              },
+              "end": {
+                "line": 11,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 10,
+              "column": 5
+            },
+            "end": {
+              "line": 10,
+              "column": 10
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_10_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_10_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.154413417,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.052256041,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:10:5: replace is_positive -> bool with false",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "is_positive",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 9,
+                "column": 1
+              },
+              "end": {
+                "line": 11,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 10,
+              "column": 5
+            },
+            "end": {
+              "line": 10,
+              "column": 10
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_10_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_10_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.157850458,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.055441125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:10:7: replace > with == in is_positive",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "is_positive",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 9,
+                "column": 1
+              },
+              "end": {
+                "line": 11,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 10,
+              "column": 7
+            },
+            "end": {
+              "line": 10,
+              "column": 8
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_10_col_7.log",
+      "diff_path": "diff/src__lib.rs_line_10_col_7.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.156566626,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.059808208,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:10:7: replace > with < in is_positive",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "is_positive",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 9,
+                "column": 1
+              },
+              "end": {
+                "line": 11,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 10,
+              "column": 7
+            },
+            "end": {
+              "line": 10,
+              "column": 8
+            }
+          },
+          "replacement": "<",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_10_col_7_001.log",
+      "diff_path": "diff/src__lib.rs_line_10_col_7_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.158948084,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.058057792,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:10:7: replace > with >= in is_positive",
+          "package": "demo",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "is_positive",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 9,
+                "column": 1
+              },
+              "end": {
+                "line": 11,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 10,
+              "column": 7
+            },
+            "end": {
+              "line": 10,
+              "column": 8
+            }
+          },
+          "replacement": ">=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_10_col_7_002.log",
+      "diff_path": "diff/src__lib.rs_line_10_col_7_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.154776333,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.053064125,
+          "process_status": "Success",
+          "argv": [
+            "/usr/local/rustup/toolchains/1.98.1-aarch64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=demo@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 15,
+  "missed": 7,
+  "caught": 8,
+  "timeout": 0,
+  "unviable": 0,
+  "success": 0,
+  "start_time": "2026-09-13T17:40:09.743029879Z",
+  "end_time": "2026-09-13T17:40:13.333962172Z",
+  "cargo_mutants_version": "27.1.0"
+}

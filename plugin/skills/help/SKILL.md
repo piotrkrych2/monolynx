@@ -43,7 +43,8 @@ czy kontynuowac bez weryfikacji. Uruchom raz per projekt.
 
 Opcjonalnie wykrywa tez narzedzie do testow mutacyjnych (mutmut, Stryker, PIT, Stryker.NET,
 gremlins, Infection, cargo-mutants, Stryker4s, mutant) i zapisuje jego konfiguracje w sekcji
-`## Mutacje` tej samej strony - sam niczego nie instaluje.
+`## Mutacje` tej samej strony - sam niczego nie instaluje. Te sekcje czyta
+`/monolynx:mutation-check`.
 
 ### 3. `/monolynx:wiki-init` (opcjonalnie)
 
@@ -241,6 +242,31 @@ odswiezenia ad hoc bez CI.
 
 ## Testy mutacyjne
 
+### `/monolynx:mutation-check [ścieżka modułu (opcjonalnie)]`
+
+Sprawdza, czy testy faktycznie łapią zmiany w kodzie, i zamienia wynik w pracę, która
+zostaje w systemie. Komendę przebiegu i format raportu bierze z sekcji `## Mutacje` strony
+wiki `toolchain` - niczego nie zgaduje i niczego nie instaluje. Brak tej sekcji kończy się
+odesłaniem do `/monolynx:project-toolchain`.
+
+Bez argumentu idzie **tryb diffowy**: przebieg ograniczony do zmiany względem punktu
+rozejścia z gałęzią główną (`git merge-base`). Raportuje wtedy **liczbę** przeżywających
+mutantów, nie procent - przy kilku mutantach procent skacze i nic nie znaczy. Argument ze
+ścieżką modułu daje pełny przebieg ze `score`, `baseline` i deltą.
+
+Po tabeli survivorów pyta, co z nimi zrobić: kryteria akceptacji przy wskazanym tickecie,
+ticket na każdego survivora, jeden ticket zbiorczy albo sam raport. Treść opisuje
+**brakujący przypadek testowy**, nie "mutanta do zabicia" - mutant równoważny semantycznie
+jest uzasadniany i odpuszczany, a dopisywanie asercji pinujących implementację tylko po to,
+żeby podnieść score, jest wprost zabronione. Mutation score nie jest bramką: nic nie
+blokuje ticketu ani merge'a.
+
+Przebieg ma twardy budżet czasu (`MONOLYNX_MUTATION_BUDGET`, domyślnie 600 s, maksimum
+600 s). Po jego wyczerpaniu dostajesz raport częściowy albo jawne "brak raportu" wraz z
+komendą do ręcznego dokończenia - nigdy wiszący terminal. Wywołany w trakcie pracy nad
+ticketem dokłada job `mutation-check` w stepie `wrap-up` bieżącego pipeline'u (best-effort,
+w trybie samodzielnym pipeline nie powstaje).
+
 ### `/monolynx:create-mutation-ci-script`
 
 Generuje nieblokujacy krok CI z testami mutacyjnymi: wykrywa system CI
@@ -275,6 +301,7 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
 | `MONOLYNX_SPRINT_RUN_MODE` | - | Tryb ticka `/monolynx:sprint-run`: `batch` ustawia sam `sprint_run.sh`, brak zmiennej (i kazda inna wartosc) znaczy tryb interaktywny |
 | `MONOLYNX_SPRINT_PERMISSION_MODE` | wartosc z komendy startu sesji w skillu `sprint-run` | Tryb uprawnien sesji roboczych `--bg` startowanych przez dyspozytora |
+| `MONOLYNX_MUTATION_BUDGET` | `600` | Budżet czasu przebiegu `/monolynx:mutation-check` w sekundach. Maksimum 600 (limit narzędzia Bash); większa wartość jest skracana do 600 |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goly imperatyw dostaje skill `brief` z propozycja kontraktu; `block` - prompt odrzucony z odeslaniem do `/monolynx:brief`; `off` - wylaczony |
 
 Domyslne wartosci sa zachowawcze: skille **wypisuja komendy zamiast je wykonywac**.
