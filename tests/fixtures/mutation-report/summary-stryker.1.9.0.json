@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "command": "python3 mutation_report.py --report tests/fixtures/stryker/mutation-report.10.0.0.json --format mte-json",
+    "tool_version": "1.9.0",
+    "captured": "2026-09-13",
+    "python": "3.10.13",
+    "real_run": true,
+    "note": "mutation_report.py wyciagniety z origin/worktree-MON-149 (ba5593c, plugin 1.9.0) przez Team Managera; plik nie istnieje jeszcze w tym branchu (MON-151)"
+  },
+  "score": 60.0,
+  "total": 10,
+  "killed": 6,
+  "survived": 4,
+  "survivors": [
+    {"file": "src/calc.js", "line": 6, "mutator": "ArithmeticOperator", "original": "a - b", "replacement": "a + b", "status": "Survived", "description": null},
+    {"file": "src/calc.js", "line": 5, "mutator": "BlockStatement", "original": null, "replacement": "{}", "status": "Survived", "description": null},
+    {"file": "src/calc.js", "line": 10, "mutator": "ConditionalExpression", "original": "n > 0", "replacement": "true", "status": "Survived", "description": null},
+    {"file": "src/calc.js", "line": 10, "mutator": "EqualityOperator", "original": "n > 0", "replacement": "n >= 0", "status": "Survived", "description": null}
+  ]
+}

@@ -2,7 +2,7 @@
 
 Plugin Monolynx pakuje w jeden, instalowalny zestaw to, czego potrzebujesz, żeby pracować z platformą Monolynx bezpośrednio z Claude Code:
 
-- **19 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, dyspozytor sprintu w sesjach w tle, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, testy mutacyjne zamieniane na pracę, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu),
+- **20 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, dyspozytor sprintu w sesjach w tle, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, testy mutacyjne zamieniane na pracę, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, pomoc, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu, generowanie nieblokującego kroku CI z testami mutacyjnymi),
 - **7 agentów** wyspecjalizowanych w rolach zespołu (backend, frontend, baza danych, DevOps, QA, code review, dokumentacja),
 - **zdalny serwer MCP** Monolynx (HTTP, autoryzacja Bearer), który udostępnia narzędzia do Scrum, 500ki, Monitoringu, Wiki, Połączeń i Planu pracy.
 
@@ -118,6 +118,7 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 | `/monolynx:mutation-check` | Przebieg testów mutacyjnych i survivorzy jako śledzona praca. Komendę i format raportu czyta z sekcji `## Mutacje` strony wiki `toolchain` (brak sekcji - odesłanie do `/monolynx:project-toolchain`, zero zgadywania i zero instalacji). Bez argumentu tryb diffowy względem `git merge-base` z gałęzią główną, raportujący liczbę survivorów, nie procent; argument ze ścieżką modułu daje pełny przebieg ze `score`, `baseline` i deltą. Parsowanie przez `plugin/scripts/mutation_report.py`. Survivorów zapisuje jako kryteria akceptacji przy tickecie albo tickety w backlogu, treścią opisującą brakujący przypadek testowy. Twardy budżet czasu (`MONOLYNX_MUTATION_BUDGET`, domyślnie 600 s) kończy się raportem częściowym, nigdy wiszącym terminalem. Job `mutation-check` w stepie `wrap-up` bieżącego pipeline'u, best-effort. Score nie jest bramką. |
 | `/monolynx:create-graph-ci-script` | Skonfiguruj graphify jako ekstraktor grafu zależności (dowolny język, offline): `.graphifyignore`, `cicd/sync_graph.py` (`replace_graph`) i non-blocking step CI (GitLab/GitHub/Bitbucket/Jenkins). Graphify instaluje właściciel runnera. |
 | `/monolynx:graph-sync` | Lokalna synchronizacja grafu za rękę: wykrywa/pomaga zainstalować graphify (macOS/Linux/Windows), ekstrakcja offline i push przez `cicd/sync_graph.py` (`replace_graph`). |
+| `/monolynx:create-mutation-ci-script` | Wygeneruj nieblokujący krok CI z testami mutacyjnymi (GitLab/GitHub/Bitbucket/Jenkins): komenda diffowa i format raportu ze strony wiki `toolchain`, kopie `cicd/mutation_report.py` i `cicd/mutation_baseline.py`, osobny etap `mutation` tylko na MR/PR, raport jako artefakt i zapadka baseline (`score / baseline / delta` plus liczba survivorów). Narzędzia mutacyjnego nie instaluje, spadek wyniku nie oblewa builda. |
 
 ### Agenci
 
@@ -361,6 +362,15 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.11.0
+
+Testy mutacyjne jako nieblokujący sygnał w CI (MON-151).
+
+- **Nowy skill `/monolynx:create-mutation-ci-script`**: wykrywa system CI (GitLab, GitHub Actions, Bitbucket Pipelines, Jenkins) i generuje osobny, nieblokujący etap `mutation` uruchamiany tylko na MR/PR. Komenda diffowa, ścieżka i format raportu pochodzą z sekcji `## Mutacje` strony wiki `toolchain` - skill nie wpisuje komend z pamięci i tej strony nie zmienia. Brak strony albo `komenda diffowa: brak` kończy skill odesłaniem do `/monolynx:project-toolchain`.
+- **Krok CI nie instaluje narzędzia mutacyjnego** (precedens: graphify): guard obecności dobierany per ekosystem (`command -v` nie znajdzie pluginu Mavena, `dotnet tool` ani podkomendy `cargo`), a jego brak kończy krok czytelnym komunikatem i sukcesem. Raport trafia do artefaktów zawsze.
+- **Zapadka baseline `plugin/scripts/mutation_baseline.py`** (kopiowana do `cicd/`): pierwszy przebieg zapisuje wynik, kolejne raportują liczbę survivorów oraz `score / baseline / delta`. Baseline może tylko rosnąć, plik `cicd/mutation-baseline.json` commituje człowiek z artefaktu - CI nie pushuje do repozytorium. Spadek wyniku to widoczna `UWAGA` w logu, nigdy czerwony build: mutation score jest trendem, nie bramką, a bramka na nim kończy się wyłączeniem checka.
+- **Statusy zapadki**: `first`, `up`, `same`, `down`, `no-mutants` (diff bez mutantów) i `scope-mismatch` (baseline z pełnego przebiegu przy pomiarze diffowym - delta orientacyjna, bez zapisu). Każdy status kończy się kodem wyjścia `0`; ostatnia linia `MUTATION-BASELINE: ...` jest zamrożonym kontraktem do odczytu maszynowego.
 
 ### 1.10.0
 
