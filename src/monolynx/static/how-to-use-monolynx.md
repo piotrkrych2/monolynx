@@ -127,7 +127,7 @@ To execute a ticket, use **`monolynx:work <ticket-id>`** (Claude Code). For smal
 
 Work that is not a ticket (configuration, an investigation, a small change) starts with **`monolynx:brief <what you want>`**: one question that pins down "done", what not to touch and where to stop, then ENTER and the work starts in the same turn. The plugin's `brief_guard` hook runs it for you when the first prompt of a session is a bare imperative such as "fix the build" (`MONOLYNX_BRIEF_GUARD=auto|block|off`). After `/clear`, a context compaction or the next day, **`monolynx:resume <ticket-id>`** rebuilds the state from the ticket comments, pipeline, acceptance criteria and git, and prints where you are, what is left and the next step.
 
-Lint and test commands come from the project's `toolchain` wiki page - create it once with **`monolynx:project-toolchain`**, which detects the stack (Makefile, Python, Node, Rust, Go, PHP, Ruby, Java) and asks you to confirm. Without that page the skills ask whether to continue unverified.
+Lint and test commands come from the project's `toolchain` wiki page - create it once with **`monolynx:project-toolchain`**, which detects the stack (Makefile, Python, Node, Rust, Go, PHP, Ruby, Java) and asks you to confirm. Without that page the skills ask whether to continue unverified. The same page carries an optional `## Mutacje` section with a mutation testing tool, which **`monolynx:mutation-check`** reads.
 
 By default the skills **print commands instead of running them**. Environment variables in `.claude/settings.json` change that deliberately:
 
@@ -141,7 +141,7 @@ By default the skills **print commands instead of running them**. Environment va
 
 In a chat client without skills, you can still call the underlying MCP tools in the same order: `get_ticket`, `update_ticket(status="in_progress")`, `search_wiki`/`query_graph`, do the work, `add_comment`, `log_time`, `update_acceptance_criterion`, `update_ticket(status="in_review")`.
 
-**The two skills that matter most are `monolynx:ticket-create` and `monolynx:work`.** Everything else (`brief`, `resume`, `project-toolchain`, `search`, `ticket-review`, `wiki-ingest`, `wiki-lint`, `sprint-end`, `retro`, `graph-sync`) supports that core loop.
+**The two skills that matter most are `monolynx:ticket-create` and `monolynx:work`.** Everything else (`brief`, `resume`, `project-toolchain`, `mutation-check`, `search`, `ticket-review`, `wiki-ingest`, `wiki-lint`, `sprint-end`, `retro`, `graph-sync`) supports that core loop.
 
 ---
 
@@ -179,6 +179,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Do something that is not a ticket | `monolynx:brief <request>` - one question for the contract (done / do not touch / stop before), ENTER, work starts. The `brief_guard` hook runs it automatically for a bare first prompt |
 | Pick up work after `/clear` or the next day | `monolynx:resume <ticket-id>` (read-only: where we are, what is left, next step) |
 | Set up lint and test commands | `monolynx:project-toolchain` (run once per project) |
+| Find the test cases your suite is missing | `monolynx:mutation-check [module]` - runs the mutation tool from the `toolchain` wiki page under a hard time budget (by default only the diff against the baseline branch), then turns surviving mutants into acceptance criteria on a ticket or into backlog tickets. Diff mode reports the survivor count, not a percentage; the score is never a gate |
 | Run a whole sprint in background sessions | `monolynx:sprint-run [slots]` - one idempotent tick: starts a named background `monolynx:work` session per ticket (own worktree), collects finished ones, reports those waiting for a human. Loop it with `/loop 15m /monolynx:sprint-run` or the plugin script `sprint_run.sh`. Requires `MONOLYNX_AUTOTEST`, `MONOLYNX_AUTOCOMMIT` and `MONOLYNX_AUTOPUSH` |
 | Close a sprint | `monolynx:sprint-end` (INGEST work logs, LINT, retro, close the sprint) |
 | Turn repeated corrections into rules | `monolynx:retro` (reviewer remarks, STOPs and escalations grouped per ticket, with a rule / rubric / constitution proposal for each) |
@@ -189,7 +190,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Generate a code-graph CI script | `monolynx:create-graph-ci-script` |
 | See how the skills work | `monolynx:help` |
 
-Full set of 18 skills: `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`.
+Full set of 19 skills: `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
 
