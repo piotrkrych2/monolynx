@@ -143,6 +143,8 @@ Plugin dostarcza hook PreToolUse na narzędziu Bash (`hooks/hooks.json` → `hoo
 | Subagent | `glab mr create` | **deny** - "Subagent nie tworzy merge requestów - MR zakłada Team Manager (główna sesja) po pushu, wg MONOLYNX_AUTOMR. Zgłoś gotowość w raporcie końcowym." |
 | Sesja główna | `glab mr create` | **ask** - "glab mr create wymaga potwierdzenia użytkownika (MONOLYNX_AUTOMR != true).", chyba że `MONOLYNX_AUTOMR=true` |
 | Subagent | operacje destrukcyjne (`rm -rf`, `git push --force`, `curl \| sh`, zapis do `~/.ssh`/`~/.aws`, `DROP/TRUNCATE`, `mkfs`/`dd of=/dev`) | **deny** |
+| Sesja glowna i subagent | `rm -rf` z celem pod `/tmp`, katalogiem projektu (korzen repo, takze worktree) albo katalogiem `.claude` - nigdy sam korzen | **allow** (MON-174) |
+| Sesja glowna i subagent | `rm -rf` z celem poza tymi katalogami | **deny** (MON-174) |
 | Sesja główna | operacje destrukcyjne (jw.) oraz `git reset --hard` / `rebase` / `clean -f` | **ask** - zawsze, niezależnie od flag |
 | Sesja główna | `git add` / `git commit` | przechodzi normalnie (zwykły system uprawnień) |
 
@@ -358,6 +360,14 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.8.2
+
+Hotfix po pierwszym przebiegu dyspozytora na realnym sprincie (MON-173).
+
+- **Hook `bash_guard.py` nie zwraca `ask` w trybie sesji w tle** (`MONOLYNX_SPRINT_RUN=1`): sesja startowana przez dyspozytor nie ma nikogo, kto kliknie potwierdzenie, a tryb uprawnien sesji nie znosi decyzji `ask` z hooka. Zamiast tego `deny` z instrukcja: uzyj wariantu nieniszczacego (`rm` bez `-f`/`-r` na wlasnym pliku, `docker stop` + `docker rm` bez `-f`) albo zakoncz ture linia `SPRINT-RUN STOP: <powod>`. Poza trybem w tle hook pyta jak dotad.
+- **`sprint_run_state.py` rozpoznaje sesje stojaca na promptcie o zgode** (`waitingFor: "permission prompt"` w `claude agents --json --all`, pole wystepuje takze na wpisach background) jako `waiting` z komenda `claude attach`, zamiast liczyc ja jako `running` w nieskonczonosc.
+- **`rm -rf` tylko pod /tmp, katalogiem projektu i katalogami `.claude`** (MON-174): cel pod tymi katalogami (nigdy sam korzen) przechodzi bez pytania, takze u subagenta; cel poza nimi to twarde `deny` dla wszystkich; cel nie do zweryfikowania (ekspansja `$`/`~`, glob, komenda zlozona) zachowuje dotychczasowe `ask`/`deny`. Korzen projektu to `git rev-parse --show-toplevel` z `cwd` hooka, wiec worktree dyspozytora liczy sie jako projekt.
 
 ### 1.8.1
 

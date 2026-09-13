@@ -476,6 +476,36 @@ class TestSummarize:
 
 
 @pytest.mark.unit
+class TestWaitsForPermission:
+    """Sesja na promptcie o zgode to `waiting`, nie `running` (MON-173).
+
+    Zaobserwowane realnie (2026-09-13, claude 2.1.270, sesje monolynx-MON-149 i MON-166):
+    {"state": "blocked", "status": "waiting", "waitingFor": "permission prompt"} na wpisie background.
+    """
+
+    def test_permission_prompt_is_detected(self):
+        session = bg_agent("monolynx-MON-1", agent_state="blocked")
+        session.update({"status": "waiting", "waitingFor": "permission prompt"})
+        assert state.waits_for_permission(session) is True
+
+    def test_missing_or_other_waiting_for_is_not_detected(self):
+        assert state.waits_for_permission(bg_agent("monolynx-MON-1")) is False
+        session = bg_agent("monolynx-MON-1")
+        session["waitingFor"] = "input needed"
+        assert state.waits_for_permission(session) is False
+
+    def test_build_report_marks_permission_prompt_session_as_waiting(self, tmp_path):
+        tickets = [{"key": "MON-1", "status": "in_progress", "assignee": None}]
+        session = bg_agent("monolynx-MON-1", agent_id="a1111111", agent_state="blocked")
+        session.update({"status": "waiting", "waitingFor": "permission prompt"})
+        report = state.build_report("monolynx", tickets, [session], tmp_path)
+        row = report["tickets"][0]
+        assert row["session_state"] == "running"
+        assert row["verdict"] == "waiting"
+        assert "claude attach" in row["reason"]
+        assert report["summary"]["waiting"] == 1
+
+
 class TestBuildReport:
     def test_three_tickets_full_scenario(self, tmp_path):
         tickets = [
