@@ -114,7 +114,7 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 | `/monolynx:wiki-lint` | Audyt zdrowia wiki: wykrywa sieroty, martwe linki, sprzeczności i luki, prezentuje raport i proponuje naprawy. |
 | `/monolynx:wiki-sync-merge` | Post-merge INGEST do wiki metodą LLM Wiki. Odpala człowiek po merge ticketów/PR do main - pobiera dane ticketów, integruje wiedzę z zamkniętych zadań, aktualizuje powiązane strony i odświeża katalog. |
 | `/monolynx:help` | Wyświetl instrukcję użycia skilli Monolynx: flow pracy z ticketami oraz skille dodatkowe. |
-| `/monolynx:project-toolchain` | Jednorazowo wykryj komendy lint i testów projektu (Makefile, Python, Node, Rust, Go, PHP, Ruby, Java) i zapisz je jako stronę wiki `toolchain`, którą czytają `/monolynx:work` i `/monolynx:work-simple`. Opcjonalnie wykrywa też narzędzie do testów mutacyjnych dla 9 ekosystemów i zapisuje sekcję `## Mutacje` (komenda pełna i diffowa, moduły rdzenia, baseline). Narzędzi nie instaluje. |
+| `/monolynx:project-toolchain` | Jednorazowo wykryj komendy lint i testów projektu (Makefile, Python, Node, Rust, Go, PHP, Ruby, Java) i zapisz je jako stronę wiki `toolchain`, którą czytają `/monolynx:work` i `/monolynx:work-simple`. Opcjonalnie wykrywa też narzędzie do testów mutacyjnych dla 9 ekosystemów i zapisuje sekcję `## Mutacje` (komenda pełna i diffowa, moduły rdzenia, baseline). Narzędzi nie instaluje. Przy stacku Dockera zapisuje dodatkowo sekcję `## Worktree` z wariantem komend dla kopii repo, który `work` i `work-simple` wybierają automatycznie. |
 | `/monolynx:create-graph-ci-script` | Skonfiguruj graphify jako ekstraktor grafu zależności (dowolny język, offline): `.graphifyignore`, `cicd/sync_graph.py` (`replace_graph`) i non-blocking step CI (GitLab/GitHub/Bitbucket/Jenkins). Graphify instaluje właściciel runnera. |
 | `/monolynx:graph-sync` | Lokalna synchronizacja grafu za rękę: wykrywa/pomaga zainstalować graphify (macOS/Linux/Windows), ekstrakcja offline i push przez `cicd/sync_graph.py` (`replace_graph`). |
 
@@ -360,6 +360,16 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.8.3
+
+Wariant komend lint i testów dla git worktree (MON-166).
+
+- **Nowa sekcja `## Worktree` na stronie `toolchain`**: `/monolynx:project-toolchain` zapisuje w niej pola `lint:` i `test:`. Przy stacku Dockera wyprowadza wariant `docker compose -p <projekt> [--profile <p>] run --rm --no-deps -v "$PWD":<workdir> <service> <komenda>` i pokazuje go do potwierdzenia. `-p` stoi przed `run`, bo to flaga globalna (`--project-name`); po `run` ten sam skrót znaczy `--publish`. Projekt bez Dockera dostaje w obu polach `jak wyzej`, czyli odesłanie do `## Lint` i `## Test`.
+- **Automatyczny wybór wariantu w `/monolynx:work` i `/monolynx:work-simple`**: przed uruchomieniem lintu i testów skille sprawdzają na hoście, czy pracują w kopii repo. Detekcja to dwie osobne komendy, `git rev-parse --git-dir` i `git rev-parse --git-common-dir`, których wyniki skill porównuje sam. W worktree bierze komendy z `## Worktree`, poza nim z `## Lint` i `## Test`, jak dotąd.
+- **Bez podstawień w komendzie uruchamianej z worktree**: strona zapisuje formę przenośną z `"$PWD"`, ale przed uruchomieniem skill podstawia dosłowną ścieżkę z `pwd`. Guard izolacji worktree odrzuca komendę `docker`, w której została zmienna albo `$(...)`, i z tego samego powodu wariant nie używa `--env-file` ze ścieżką liczoną w locie. Projekt, który nie wstaje na wartościach domyślnych, dostaje `--env-file <absolutna ścieżka>` wpisany literalnie przy potwierdzeniu.
+- **Dlaczego**: `docker compose exec` wchodzi do działającego kontenera, a ten ma zamontowany główny checkout. Sesja `claude --bg --worktree <KEY>` z `MONOLYNX_AUTOTEST=true` lintowała i testowała cudzy kod. Flagi `-p <projekt>` i `--no-deps` są obowiązkowe: bez nich compose bierze nazwę katalogu worktree i stawia drugi komplet kontenerów razem z drugą bazą.
+- **Brak sekcji przy pracy w worktree** zatrzymuje skill pytaniem i odsyła do `/monolynx:project-toolchain`; w sesji w tle (`MONOLYNX_SPRINT_RUN=1`) kończy się jako `SPRINT-RUN STOP`. Poza worktree brak sekcji nic nie zmienia, więc zachowanie stron zapisanych przed tą wersją zostaje takie jak w 1.7.0.
 
 ### 1.8.2
 
