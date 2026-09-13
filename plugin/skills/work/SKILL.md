@@ -308,7 +308,9 @@ Wykonaj nastepujace kroki:
      zaladuj jako project-level context. Nie istnieje -> kontynuuj bez bledu.
    - strona ze slug=`toolchain` istnieje -> pobierz pelna tresc przez `get_wiki_page`.
      Zawiera komendy lint/test, informacje czy projekt ma testy i czy stosowac TDD.
-     Przepisz ja DOSLOWNIE do sekcji \"Toolchain\" raportu - Team Manager jej potrzebuje.
+     Przepisz ja DOSLOWNIE do sekcji \"Toolchain\" raportu - Team Manager jej potrzebuje,
+     razem z sekcja `## Mutacje`, z ktorej korzysta krok mutacji w KROK 6.5. Nie skracaj
+     strony do wymienionych pozycji - przenosisz jej cala tresc.
      Nie istnieje -> w raporcie napisz 'Brak strony toolchain'.
 
 3. **Zbadaj kod** - znajdz pliki, klasy i funkcje powiazane z zadaniem. Uzyj Glob i Grep do przeszukania kodu.
@@ -352,7 +354,7 @@ Na koniec wygeneruj RAPORT w dokladnie tym formacie:
 [TYLKO TRYB = defekt: reprodukcja (komenda + wynik doslownie), hipoteza, dowod plik:linia, klasa bledu - albo 'reprodukcja nieudana: brakuje <czego>'. W TRYB = zmiana wpisz 'n/d']
 
 ### Toolchain
-[Doslowna tresc strony wiki 'toolchain' - komendy lint/test, czy sa testy, czy TDD. Lub 'Brak strony toolchain']
+[Doslowna tresc strony wiki 'toolchain' - komendy lint/test, czy sa testy, czy TDD, sekcja ## Mutacje w calosci. Lub 'Brak strony toolchain']
 
 ### Kontekst z Wiki
 [Wyciag z powiazanych stron wiki - lub 'Brak powiazanych stron']
@@ -949,6 +951,82 @@ bezposrednio wywolala blad (czytaj traceback/komunikat); niejednoznaczne ->
 agent z wiekszym udzialem w diffie wadliwego obszaru. Runda konsumuje licznik
 TYLKO poprawianego agenta.
 
+### Mutacje - propozycja przebiegu diffowego (opcjonalna)
+
+Zielony lint i testy mowia, ze testy przechodza. Nie mowia, czy cokolwiek
+lapia. Ten krok PROPONUJE tani przebieg mutacyjny ograniczony do diffu -
+jeszcze przed review krytyka, bo sygnal jest tani, a review drogie.
+
+Skill **proponuje, nigdy nie odpala sam** i **nie jest bramka**: cokolwiek sie
+tu wydarzy, nie blokuje ani ticketu, ani przejscia do KROK 6.6.
+
+Sprawdzenia ida po kolei. KAZDE "nie" konczy krok - dalszych juz nie robisz:
+
+1. **Prog** - krok pojawia sie TYLKO gdy zachodzi co najmniej jedno:
+   - story points ticketu **>= 5** (odczytane w KROK 4), albo
+   - **>= 4 zmienione pliki z kodem**.
+
+   **Plik z kodem** = plik zrodlowy poza katalogami testow i fixture'ow. NIE
+   licza sie: `.md`, `.json`, `.yml`, `.yaml`, `.toml`, `.lock`, szablony
+   `.html` i `.css` oraz pliki testow. Liczysz z wyniku komendy rekoncyliacji
+   6e: `diff --stat <BASELINE_SHA>` daje pliki zmienione, `status --porcelain`
+   z tej samej komendy daje nowe (untracked).
+
+   Ponizej progu krok **sie nie pojawia**: nie pytasz, nie odpalasz i nie
+   piszesz o nim ani slowa w 7b ani w 7f. Cisza jest tu celowa - linia
+   "mutacje pominiete" przy kazdym malym tickecie zamienia krok w szum.
+2. **`MONOLYNX_SPRINT_RUN=1`** -> pomijasz krok po cichu. Nie pytasz nikogo
+   i NIE konczysz tury - to jawny wyjatek od reguly 10 WAZNYCH ZASAD, bo
+   mutacja jest opcjonalna, wiec brak odpowiedzi nie jest blokada. W 7b i 7f
+   jedna linia: `Mutacje: pominiete - sesja w tle`.
+3. **Sekcja `## Mutacje`** strony wiki `toolchain` - masz ja doslownie
+   w sekcji "Toolchain" raportu Researchera z KROK 3. Brak sekcji albo
+   `narzedzie: brak` -> pomijasz, BEZ pytania uzytkownika: nie proponuje sie
+   czegos, co nie moze sie wykonac. W 7b i 7f jedna linia:
+   `Mutacje: pominiete - brak sekcji ## Mutacje w toolchain` albo
+   `Mutacje: pominiete - narzedzie: brak (<wartosc pola powod>)`.
+4. **Propozycja** - AskUserQuestion, opcje `Tak` / `Nie`:
+
+   > Diff tego ticketu obejmuje <N> plikow z kodem (<SP> SP). Uruchomic
+   > przebieg mutacyjny ograniczony do diffu? Pokaze, ktore zmiany przechodza
+   > przez testy niezauwazone. Budzet domyslnie 600 s, wynik nie blokuje
+   > ticketu.
+
+   **Nie** -> jedna linia w 7b i 7f: `Mutacje: zaproponowane, uzytkownik
+   odmowil`, i przechodzisz do KROK 6.6.
+5. **Tak** -> uruchom skill w trybie DIFFOWYM, czyli BEZ argumentu:
+
+   ```
+   Skill(skill="monolynx:mutation-check")
+   ```
+
+   W kontekscie wywolania przekaz dwie rzeczy, ktorych skill sam nie odgadnie:
+   - **klucz biezacego ticketu** - survivorzy maja trafic jako kryteria
+     akceptacji przy NIM (opcja 1 z KROKU 7 skilla `mutation-check`), nie jako
+     nowe tickety;
+   - **`pipeline_id`** biezacego pipeline'u - `mutation-check` sam zalozy sobie
+     job `mutation-check` w stepie `wrap-up` (jego KROK 8). Ty drugiego joba
+     NIE tworzysz.
+
+Wynik do 7b i 7f, jedna linia:
+
+```
+Mutacje (diff): <N> survivorow / <M> mutantow -> <K> kryteriow dopisanych do <KEY>
+```
+
+Przebieg przerwany budzetem, degradacja wewnatrz `mutation-check` (np.
+`komenda diffowa: brak`) albo blad narzedzia -> `Mutacje: przebieg
+czesciowy/nieudany - <powod podany przez mutation-check>`. Zadna z tych
+sytuacji NIE jest porazka ticketu i nie uruchamia iteracji poprawkowej: jedna
+linia i idziesz do KROK 6.6.
+
+`mutation-check` nie modyfikuje kodu, wiec 6.6c (pelny przebieg lint+test po
+ostatniej zmianie) pozostaje spelniony. Gdyby jednak ktokolwiek zmienil w tym
+kroku plik w repo, 6.6c obowiazuje normalnie i pelny przebieg trzeba powtorzyc.
+
+Kryteria dopisane przez `mutation-check` to NOWA praca, nie zakres tego
+ticketu - patrz 6.7b i 7f.
+
 ## KROK 6.6: Krytyk - review i iteracje
 
 ### 6.6a. Start review
@@ -1103,6 +1181,10 @@ czas zalogowano w 3d i osobnego komentarza nie dostaje.
    - **Niewykonana, nieodhaczona** -> zapisz jako niezrealizowane (raport w KROK 7f)
    - **Niewykonana, a odhaczona** (developer odhaczyl na wyrost) -> cofnij:
      `update_acceptance_criterion(..., is_completed=false)` i zglos w raporcie
+3. **Kryteria dopisane przez `mutation-check`** (krok mutacji w KROK 6.5) to
+   NOWA praca, nie zakres tego ticketu: NIE odhaczasz ich i NIE liczysz jako
+   "niezrealizowane". Wymieniasz je osobno w 7f jako "nowe kryteria z mutacji
+   (do realizacji)"
 
 ## KROK 7: Podsumowanie Team Managera
 
@@ -1133,7 +1215,7 @@ wpis Researchera. Brakuje ktoregos pomiaru -> przyjmij wall-clock i dopisz
 mcp__monolynx__add_comment(
   project_slug="<PROJECT_SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager - Podsumowanie zadania**\n\nZrealizowane:\n- [podsumowanie co zostalo zrobione]\n\nRaport Researchera: [1-2 zdania podsumowania] ([X] min)\n[TRYB = defekt: Mechanizm: [jedno zdanie - przyczyna, plik:linia fixu, test regresyjny]]\n\nZespol i oceny:\n- [agent 1]: [score]/100 - [1 zdanie] ([X] min)\n- [agent 2]: [score]/100 - [1 zdanie] ([X] min)\n\nRekoncyliacja raportow: [akceptowane N / odrzucone M -> re-run / rozstrzygniete przez TM: ktore czytanie przyjeto i dlaczego]\n\nLint i testy: [zielone / czerwone -> ile iteracji / pominiete]; ostatni przebieg: [pelny / czesciowy - nie powinno sie zdarzyc]\n\nMerge request: [MR_URL lub brak: powod]\n\nReguly krytyka zapisane do pamieci agentow: [lista lub brak; powtorzone -> zaznacz]\n\nLaczny czas pracy zespolu: [suma minut wszystkich agentow + Researcher + TM] min\n\nCzas pracy Team Managera: [X] min\n[Jedno zdanie podsumowujace calosc zadania]"
+  content="**Team Manager - Podsumowanie zadania**\n\nZrealizowane:\n- [podsumowanie co zostalo zrobione]\n\nRaport Researchera: [1-2 zdania podsumowania] ([X] min)\n[TRYB = defekt: Mechanizm: [jedno zdanie - przyczyna, plik:linia fixu, test regresyjny]]\n\nZespol i oceny:\n- [agent 1]: [score]/100 - [1 zdanie] ([X] min)\n- [agent 2]: [score]/100 - [1 zdanie] ([X] min)\n\nRekoncyliacja raportow: [akceptowane N / odrzucone M -> re-run / rozstrzygniete przez TM: ktore czytanie przyjeto i dlaczego]\n\nLint i testy: [zielone / czerwone -> ile iteracji / pominiete]; ostatni przebieg: [pelny / czesciowy - nie powinno sie zdarzyc]\n\nMutacje: [linia z kroku mutacji (KROK 6.5) - TYLKO jesli krok sie pojawil; ponizej progu pomijasz ta linie calkowicie]\n\nMerge request: [MR_URL lub brak: powod]\n\nReguly krytyka zapisane do pamieci agentow: [lista lub brak; powtorzone -> zaznacz]\n\nLaczny czas pracy zespolu: [suma minut wszystkich agentow + Researcher + TM] min\n\nCzas pracy Team Managera: [X] min\n[Jedno zdanie podsumowujace calosc zadania]"
 )
 ```
 
@@ -1219,12 +1301,17 @@ pipeline `finish_pipeline` - nie zostawiaj go w `running`.
 - Co zostalo zrobione
 - Oceny krytyka dla kazdego agenta
 - **Wynik lintu i testow** - i czy ostatni przebieg byl pelny (6.6c)
+- **Mutacje** - linia z kroku mutacji (KROK 6.5); ponizej progu krok sie nie
+  pojawia i tej linii nie ma w ogole
 - Rekoncyliacja: ile raportow odrzucono / rozstrzygnieto przez TM
 - Reguly zapisane do pamieci agentow (powtorzone oznacz - materia dla `/monolynx:retro`)
 - TRYB = defekt: nazwany mechanizm, test regresyjny, czy sprawdzono klase bledu
 - Laczny czas pracy (Researcher + agenci + TM)
 - Status ticketa
 - **Kryteria akceptacji** - ile odhaczonych / ile lacznie. Niezrealizowane wylistuj z powodem
+- **Nowe kryteria z mutacji (do realizacji)** - kryteria dopisane przez
+  `mutation-check`, wylistowane OSOBNO; to nie sa niezrealizowane kryteria
+  tego ticketu (6.7b)
 - Komenda commita, jesli `AUTOCOMMIT=false`
 - **Merge request** - `MR_URL` albo powod, dla ktorego go nie ma
 - Ostatnia linia, zawsze:
@@ -1293,4 +1380,8 @@ ich tutaj. Dodatkowo:
     (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi
     i zakoncz ture. Nie zgaduj odpowiedzi za uzytkownika ani nie wybieraj za
     niego wariantu domyslnego; statusu ticketu nie przestawiaj na
-    `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego
+    `in_review`. **Wyjatek: propozycja przebiegu mutacyjnego** (KROK 6.5) nie
+    jest blokada - przy `SPRINT_RUN=1` pomijasz ja po cichu, z jedna linia
+    w 7b i 7f, BEZ `SPRINT-RUN STOP`. Linia pojawia sie tylko wtedy, gdy krok
+    przeszedl prog; ponizej progu nie ma ani kroku, ani linii.
+    `SPRINT_RUN=0` (domyslnie) nie zmienia niczego

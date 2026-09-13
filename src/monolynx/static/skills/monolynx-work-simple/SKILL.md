@@ -547,6 +547,61 @@ Instrumentacja (best-effort): job `lint-test` w stepie `wrap-up`, status
 log z komendami i wynikiem. Przy powtorkach NIE tworz nowego joba - doklejaj
 wynik do istniejacego i aktualizuj status.
 
+### Mutacje - tylko po eskalacji zakresu
+
+`work-simple` ma sufit 3 SP, wiec progowe kryterium story points z `work`
+(>= 5 SP) nigdy tu nie zapali. Przebieg mutacyjny proponujesz **wylacznie**
+wtedy, gdy praca faktycznie wyszla poza zalozone ramy.
+
+Sprawdzenia po kolei, kazde "nie" konczy krok po cichu:
+
+1. **`SCOPE_GREW=1`?** Flage ustawiasz wylacznie na sciezce (c) "kontynuuj
+   simple mimo to" z sekcji ESKALACJA. Brak flagi -> krok **sie nie pojawia**:
+   nie pytasz i nie piszesz o nim ani slowa w 4.3 ani w 4.8.
+   Przy `MONOLYNX_SPRINT_RUN=1` ta sciezka jest nieosiagalna - `SCOPE GREW`
+   konczy ture linia `SPRINT-RUN STOP: scope grew` (regula 21), wiec do tego
+   kroku nigdy nie dochodzisz.
+2. **Sekcja `## Mutacje`** strony wiki `toolchain` (pobranej w 0.45). Brak
+   sekcji albo `narzedzie: brak` -> pomijasz BEZ pytania usera: nie proponuje
+   sie czegos, co nie moze sie wykonac. W 4.3 i 4.8 jedna linia:
+   `Mutacje: pominiete - brak sekcji ## Mutacje w toolchain` albo
+   `Mutacje: pominiete - narzedzie: brak (<wartosc pola powod>)`.
+3. **Propozycja** - AskUserQuestion, opcje `Tak` / `Nie`:
+
+   > Zakres tego ticketu urosl poza simple. Uruchomic przebieg mutacyjny
+   > ograniczony do diffu? Pokaze, ktore zmiany przechodza przez testy
+   > niezauwazone. Wynik nie blokuje ticketu.
+
+   **Nie** -> jedna linia `Mutacje: zaproponowane, user odmowil` i idziesz do
+   FAZA 3.5.
+4. **Tak** -> tryb DIFFOWY, czyli wywolanie BEZ argumentu:
+
+   ```
+   Skill(skill="monolynx:mutation-check")
+   ```
+
+   W kontekscie przekaz **klucz biezacego ticketu** - survivorzy ida jako
+   kryteria akceptacji przy NIM (opcja 1 z KROKU 7 skilla `mutation-check`) -
+   oraz **`pipeline_id`** biezacego pipeline'u. Job `mutation-check` w stepie
+   `wrap-up` zaklada sam skill mutacyjny; Ty drugiego nie tworzysz.
+
+Wynik do 4.3 i 4.8, jedna linia:
+
+```
+Mutacje (diff): <N> survivorow / <M> mutantow -> <K> kryteriow dopisanych do <KEY>
+```
+
+Przebieg czesciowy, degradacja wewnatrz `mutation-check` (np. `komenda diffowa:
+brak`) albo blad narzedzia -> `Mutacje: przebieg czesciowy/nieudany - <powod>`.
+To nie jest porazka ticketu, nie uruchamia iteracji poprawkowej i nie blokuje
+zamkniecia: jedna linia i dalej do FAZA 3.5.
+
+Kryteria dopisane przez `mutation-check` to NOWA praca, nie zakres tego
+ticketu: w 4.0 ich nie odhaczasz i nie liczysz jako niezrealizowane, tylko
+wymieniasz osobno w 4.8. `mutation-check` nie modyfikuje kodu, wiec regula 20
+(ostatni przebieg lint+test jest pelny) pozostaje spelniona - gdyby jednak ktos
+zmienil tu plik w repo, pelny przebieg powtarzasz.
+
 ---
 
 ## FAZA 3.5: Krytyk - review i iteracje
@@ -733,7 +788,7 @@ date +%s
 mcp__monolynx__add_comment(
   project_slug="<PROJECT-SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager Lite - Podsumowanie**\n\nZrealizowane: [1-2 zdania]\n[TRYB = defekt: Mechanizm: [przyczyna, plik:linia fixu, test regresyjny]]\n\nDev: [nazwa]: [X]/100\nKrytyk: [werdykt]\nRekoncyliacja: [akceptowane / odrzucone -> re-run: powod]\nLint i testy: ostatni przebieg [pelny]\nMerge request: [MR_URL lub brak: powod]\nReguly do pamieci agenta: [lista lub brak; powtorzone oznacz]\n\nCzas TM: [Y] min\nStatus: simple flow zakonczony w [N] iteracjach."
+  content="**Team Manager Lite - Podsumowanie**\n\nZrealizowane: [1-2 zdania]\n[TRYB = defekt: Mechanizm: [przyczyna, plik:linia fixu, test regresyjny]]\n\nDev: [nazwa]: [X]/100\nKrytyk: [werdykt]\nRekoncyliacja: [akceptowane / odrzucone -> re-run: powod]\nLint i testy: ostatni przebieg [pelny]\nMutacje: [linia z kroku mutacji - TYLKO jesli krok sie pojawil; bez SCOPE GREW pomijasz ta linie calkowicie]\nMerge request: [MR_URL lub brak: powod]\nReguly do pamieci agenta: [lista lub brak; powtorzone oznacz]\n\nCzas TM: [Y] min\nStatus: simple flow zakonczony w [N] iteracjach."
 )
 ```
 
@@ -813,6 +868,9 @@ Wyswietl zwiezle:
 - Ocena critica
 - Wynik lintu i testow (lub informacja, ze pominiete / zamkniete ponizej progu
   na zadanie uzytkownika) - i czy ostatni przebieg byl pelny (3.5.3)
+- Mutacje: linia z kroku mutacji na koncu FAZA 3 - TYLKO jesli krok sie
+  pojawil (czyli po `SCOPE GREW`); dopisane przez `mutation-check` kryteria
+  wymien OSOBNO jako nowa prace, nie jako niezrealizowany zakres ticketu
 - Rekoncyliacja i reguly zapisane do pamieci agenta (powtorzone oznacz)
 - TRYB = defekt: mechanizm, test regresyjny, klasa bledu
 - Kryteria akceptacji: ile odhaczonych / ile lacznie; niezrealizowane z powodem
@@ -831,7 +889,8 @@ Wyswietl zwiezle:
 
 Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 
-1. **NIE kontynuuj** spawnowania critica.
+1. **NIE spawnuj critica teraz** - najpierw rozstrzygnij eskalacje. Na sciezce
+   (c) krytyk przyjdzie normalnie w FAZA 3.5, po lincie i testach.
 2. Komentarz do ticketa:
    ```
    mcp__monolynx__add_comment(
@@ -840,8 +899,9 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
      content="**Team Manager Lite - Eskalacja**\n\nDev agent wykryl ze scope ticketa jest wiekszy niz zakladalismy.\nPowod: [powod z dev agenta]\n\nRekomendacja: zmien flow na `/monolynx:work [ticket-id]` (Agent Teams - pelen research + wiele subagentow + tasks)."
    )
    ```
-3. Cofnij status: `mcp__monolynx__update_ticket(..., status="todo")`. Instrumentacja (best-effort): domknij otwarte joby (`running` -> `failed`, `pending` -> `skipped`, summary: "eskalacja do full flow") i zamknij pipeline `mcp__monolynx__finish_pipeline(project_slug="<PROJECT-SLUG>", pipeline_id="<pipeline_id>", status="failed")`.
-4. Zapytaj usera:
+3. Zapytaj usera - **najpierw decyzja, potem skutki**. Statusu ticketu ani
+   pipeline'u na tym etapie NIE ruszasz: dla sciezki (c) cofanie ich byloby
+   bez sensu.
    ```
    Dev odkryl ze scope > simple. Wykonane dotad zmiany zostawic czy revertowac?
    (a) zostaw zmiany, przejdz do /monolynx:work (TM full dokonczy)
@@ -850,7 +910,17 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
    ```
    Przy `MONOLYNX_SPRINT_RUN=1` tego pytania nie zadawaj - zakoncz ture linia
    `SPRINT-RUN STOP: scope grew` (regula 21).
-5. Po decyzji usera - skill konczy sie. Jesli (a) lub (b) - user sam uruchamia `/monolynx:work <ticket-id>`.
+4. **Sciezki (a) i (b) - TYLKO one koncza epizod**: cofnij status
+   `mcp__monolynx__update_ticket(..., status="todo")`, a w instrumentacji
+   (best-effort) domknij otwarte joby (`running` -> `failed`,
+   `pending` -> `skipped`, summary: "eskalacja do full flow") i zamknij
+   pipeline `mcp__monolynx__finish_pipeline(project_slug="<PROJECT-SLUG>", pipeline_id="<pipeline_id>", status="failed")`.
+   Skill konczy sie - user sam uruchamia `/monolynx:work <ticket-id>`.
+5. **Sciezka (c) "kontynuuj simple mimo to"**: statusu NIE cofasz (zostaje
+   `in_progress`), pipeline'u NIE zamykasz. Ustaw flage `SCOPE_GREW=1`, wroc
+   do 2.4 (rekoncyliacja raportu z gitem) i idz normalnie dalej do FAZA 3.
+   Flaga zostaje do konca epizodu - odczytuje ja krok mutacji na koncu FAZA 3,
+   jedyne miejsce, w ktorym proponujesz przebieg mutacyjny w tym skillu.
 
 ---
 
@@ -865,7 +935,7 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 7. **Lint i testy sa gate'em PRZED krytykiem** - FAZA 3, komendy ze strony wiki `toolchain`; tani gate przed drogim review i przed `in_review`. Domyslnie uruchamia je user (skill wypisuje komendy); `MONOLYNX_AUTOTEST=true` zmienia to swiadomie. Pominiecie tylko za jawna zgoda, odnotowane w podsumowaniu.
 8. **Commit i push tylko za zgoda** - domyslnie skill wypisuje komendy, nie wykonuje. Flagi `MONOLYNX_AUTOCOMMIT` / `MONOLYNX_AUTOPUSH` zmieniaja to swiadomie (AUTOPUSH tylko z AUTOCOMMIT). Twardy gate na `main`/`master` przy starcie (0.45).
 9. **Jezyk komentarzy**: polski, z PELNYMI diakrytykami (ą, ć, ę, ł, ń, ó, ś, ź, ż) - szablony w tym pliku sa technicznie ASCII, generowane tresci maja miec poprawna ortografie.
-10. **Gdy dev sygnalizuje SCOPE GREW** - NIE ignoruj, eskaluj. Celem simple jest szybkie dowozenie malych zmian, nie rozkladanie sie dla duzych.
+10. **Gdy dev sygnalizuje SCOPE GREW** - NIE ignoruj, eskaluj. Celem simple jest szybkie dowozenie malych zmian, nie rozkladanie sie dla duzych. Na sciezce (c) ("kontynuuj simple mimo to") praca leci dalej z flaga `SCOPE_GREW=1` i to jedyny przypadek, w ktorym na koncu FAZA 3 proponujesz przebieg mutacyjny - propozycja, nie automat, i nigdy bramka.
 11. **Wspolny limit 3 poprawek** - czerwony lint/test (FAZA 3) i NEEDS WORK (3.5.2) licza sie do JEDNEGO licznika; dalej user decyduje.
 12. **Agentow zawsze dobieramy dynamicznie** - skill nie narzuca konkretnych typow agentow; wybor zalezy od tego, co dostepne w projekcie i czego wymaga ticket.
 13. **Pipeline jest best-effort, nie gate** - instrumentacja pipeline (create_pipeline, joby, append_job_log, finish_pipeline) to warstwa obserwowalnosci. Blad ktoregokolwiek toola pipeline NIGDY nie przerywa pracy nad ticketem - odnotuj i kontynuuj. Jesli toole niedostepne (starszy serwer MCP) - pomin instrumentacje.

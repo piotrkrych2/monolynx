@@ -99,6 +99,7 @@ w formie i "ZGODNE" w zalozeniach. Dobrze zrecenzowany ticket = szybsza realizac
 | Research | obowiazkowy (agent Explore) | opt-in (wybierasz zrodla) |
 | Agent Teams | tak, gdy dostepne | nie, zwykle subagenty |
 | Typowe uzycie | nowy modul, cross-warstwowa zmiana | hotfix, cleanup, weryfikacja |
+| Testy mutacyjne | propozycja przy >= 5 SP lub >= 4 plikach z kodem | tylko po eskalacji `SCOPE GREW` |
 
 Oba maja pelna ceremonie: komentarze do ticketu, `log_time`, zmiane statusu, gate lint/test.
 `work-simple` eskaluje do `work`, jesli dev wykryje, ze zakres urosl (sygnal `SCOPE GREW`).
@@ -260,6 +261,17 @@ ticket na każdego survivora, jeden ticket zbiorczy albo sam raport. Treść opi
 jest uzasadniany i odpuszczany, a dopisywanie asercji pinujących implementację tylko po to,
 żeby podnieść score, jest wprost zabronione. Mutation score nie jest bramką: nic nie
 blokuje ticketu ani merge'a.
+
+Skill jest też **wpięty w przebiegi pracy**, zawsze jako propozycja, nigdy jako automat.
+W `/monolynx:work` krok pojawia się po zielonym lincie i testach, a przed krytykiem, i tylko
+wtedy, gdy ticket ma **5 SP lub więcej** albo diff obejmuje **4 lub więcej plików z kodem**
+(plik źródłowy poza testami i fixture'ami). Poniżej progu kroku nie ma w ogóle; odmowa
+zostaje odnotowana w podsumowaniu, a wynik nigdy nie blokuje zamknięcia ticketu.
+W `/monolynx:work-simple` (sufit 3 SP) próg punktowy nigdy nie zapali, więc krok
+materializuje się **wyłącznie po eskalacji zakresu** (sygnał `SCOPE GREW`), gdy praca
+faktycznie wyszła poza założone ramy. `/monolynx:sprint-end` idzie dalej: uruchamia pełny
+przebieg na **modułach rdzenia** i zapisuje wynik jako trend na stronie wiki
+"Trend mutacji", gdzie baseline działa jak zapadka - może tylko rosnąć.
 
 Przebieg ma twardy budżet czasu (`MONOLYNX_MUTATION_BUDGET`, domyślnie 600 s, maksimum
 600 s). Po jego wyczerpaniu dostajesz raport częściowy albo jawne "brak raportu" wraz z
