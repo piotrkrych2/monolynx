@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "command": "mutmut export-cicd-stats (zapisuje mutants/mutmut-cicd-stats.json, tresc pliku ponizej)",
+    "tool_version": "3.8.0",
+    "captured": "2026-09-13",
+    "environment": "docker run --rm -v <demo>:/work -w /work monolynx-app (obraz monolynx-app, Python 3.12.14 root)",
+    "real_run": true,
+    "anonymized": false,
+    "note": "Zbiorczy licznik statusow z wariantu survived: killed=1 (add), no_tests=1 (sub bez testow), survived=2 (is_positive bez przypadkow granicznych), total=4. Klucze liczbowe: killed, survived, total, no_tests, skipped, suspicious, timeout, check_was_interrupted_by_user, segfault - te 3 ostatnie zawsze 0 w tym przebiegu, dokumentuja pelny zestaw pol schematu."
+  },
+  "killed": 1,
+  "survived": 2,
+  "total": 4,
+  "no_tests": 1,
+  "skipped": 0,
+  "suspicious": 0,
+  "timeout": 0,
+  "check_was_interrupted_by_user": 0,
+  "segfault": 0
+}
