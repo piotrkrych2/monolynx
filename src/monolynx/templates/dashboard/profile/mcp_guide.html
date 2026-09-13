@@ -324,7 +324,7 @@
         </div>
 
         <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">
-            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz 17 skilli i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code>, gotowy zdalny serwer MCP bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> oraz dwa hooki: <code class="text-indigo-300 font-mono text-sm">bash_guard</code> (subagenci nie odpalają testów ani operacji zapisu w git) i <code class="text-indigo-300 font-mono text-sm">brief_guard</code> (pierwszy goły imperatyw w sesji, np. „napraw build”, dostaje kontrakt ze skilla <code class="text-indigo-300 font-mono text-sm">/monolynx:brief</code>; tryby <code class="text-indigo-300 font-mono text-sm">MONOLYNX_BRIEF_GUARD=auto|block|off</code>).
+            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz 18 skilli i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code>, gotowy zdalny serwer MCP bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> oraz dwa hooki: <code class="text-indigo-300 font-mono text-sm">bash_guard</code> (subagenci nie odpalają testów ani operacji zapisu w git) i <code class="text-indigo-300 font-mono text-sm">brief_guard</code> (pierwszy goły imperatyw w sesji, np. „napraw build”, dostaje kontrakt ze skilla <code class="text-indigo-300 font-mono text-sm">/monolynx:brief</code>; tryby <code class="text-indigo-300 font-mono text-sm">MONOLYNX_BRIEF_GUARD=auto|block|off</code>).
         </p>
 
         <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-x-auto mb-4">
@@ -345,6 +345,7 @@
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:ticket-create</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:ticket-review</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:sprint-end</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:sprint-run</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:retro</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:search</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:help</code>
@@ -498,6 +499,11 @@ install_monolynx_skills(
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:sprint-end</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Zamknij sprint jako pipeline sprint_close: INGEST logów pracy do wiki, LINT wiki, czyszczenie logów pipeline'ów sprintu, retro korekt (przed domknięciem, żeby objąć też niedokończone tickety) i domknięcie sprintu.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:sprint-end [nazwa-sprintu]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:sprint-run</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Dyspozytor sprintu: jeden idempotentny tick startuje brakujące sesje work w tle (jeden ticket = jedna nazwana sesja i własny worktree), zbiera zakończone, raportuje czekające na człowieka. Sam nie pracuje nad ticketem. Pętla jest na zewnątrz: /loop 15m albo skrypt sprint_run.sh z pluginu. Wymaga flag AUTOTEST, AUTOCOMMIT i AUTOPUSH.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:sprint-run [sloty]</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:wiki-init</p>

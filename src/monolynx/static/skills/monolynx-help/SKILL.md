@@ -144,6 +144,50 @@ wiki (LINT), czysci strony logow pipeline'ow sprintu, opcjonalnie uruchamia `ret
 zamyka sprint (`complete_sprint` - niedokonczone tickety wracaja do backlogu,
 dlatego skill prosi o potwierdzenie). Bez argumentu bierze aktywny sprint.
 
+### 8. `/monolynx:sprint-run [sloty]`
+
+**Sprint z dyspozytora** - jeden tick, nie cała pętla. Czyta aktywny sprint i stan sesji
+w tle, startuje brakujące sesje `/monolynx:work` (każda w osobnym worktree, pod nazwą
+`<slug>-<KEY>`), zbiera zakończone (komentarz z identyfikatorem sesji, potem `claude rm`),
+wypisuje te, które czekają na człowieka, i kończy linią
+`SPRINT-RUN: remaining=... running=... waiting=... done=...`.
+Sam **nigdy nie pracuje nad ticketem** - od pracy jest `work` w osobnej sesji.
+Domyślnie 2 sloty; argument nadpisuje.
+
+Wymagane flagi w `.claude/settings.json` (pole `env`), bo sesja w tle nie odpowie
+na żadne pytanie: `MONOLYNX_AUTOTEST=true`, `MONOLYNX_AUTOCOMMIT=true`,
+`MONOLYNX_AUTOPUSH=true` (zalecane też `MONOLYNX_AUTOMR=true`,
+`MONOLYNX_CONTRACT=auto`, `MONOLYNX_SPRINT_RUN=1`). Bez nich preflight zatrzymuje tick
+i nie startuje żadnej sesji.
+
+Pętla jest **na zewnątrz**. W tej sesji wystarczy:
+
+```
+/loop 15m /monolynx:sprint-run
+```
+
+Bez sesji interaktywnej (tmux na VPS, cron) użyj skryptu z pluginu. Absolutną ścieżkę
+rozwiń **tutaj, w Claude Code** - `${CLAUDE_PLUGIN_ROOT}` nie istnieje w zwykłym terminalu
+i wklejona tam rozwinie się do pustego stringu:
+
+```bash
+echo "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run.sh"
+```
+
+Wynik podstaw do komend w terminalu:
+
+```bash
+tmux new -d -s monolynx-sprint "/pelna/sciezka/z/echo/sprint_run.sh --slots 2"
+```
+
+```
+*/15 * * * * cd /sciezka/projektu && "/pelna/sciezka/z/echo/sprint_run.sh" --once >> ~/sprint-run.log 2>&1
+```
+
+Skrypt leży w katalogu cache pluginu, nie w Twoim repozytorium, a jego ścieżka zawiera
+numer wersji pluginu - po aktualizacji rozwiń ją ponownie. Pełna lista flag:
+`sprint_run.sh --help`.
+
 ---
 
 ## Wiki
