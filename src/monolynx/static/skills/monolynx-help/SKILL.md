@@ -280,6 +280,22 @@ komendą do ręcznego dokończenia - nigdy wiszący terminal. Wywołany w trakci
 ticketem dokłada job `mutation-check` w stepie `wrap-up` bieżącego pipeline'u (best-effort,
 w trybie samodzielnym pipeline nie powstaje).
 
+### `/monolynx:create-mutation-ci-script`
+
+Generuje nieblokujacy krok CI z testami mutacyjnymi: wykrywa system CI
+(GitLab/GitHub/Bitbucket/Jenkins), bierze komende diffowa i format raportu z sekcji
+`## Mutacje` strony wiki `toolchain`, kopiuje do `cicd/` skrypty `mutation_report.py`
+(normalizacja raportu) i `mutation_baseline.py` (zapadka), dodaje osobny etap `mutation`
+uruchamiany tylko na MR/PR i publikuje raport jako artefakt.
+
+**WYMOG**: narzedzie mutacyjne instaluje na runnerze wlasciciel projektu (obraz albo agent) -
+krok CI go tylko uzywa. Brak narzedzia konczy krok komunikatem i sukcesem.
+
+Zapadka: pierwszy przebieg zapisuje baseline (plik `cicd/mutation-baseline.json` commituje
+czlowiek z artefaktu), kolejne raportuja liczbe survivorow oraz `score / baseline / delta`.
+Baseline moze tylko rosnac, spadek jest widoczny w logu, ale **nigdy nie oblewa builda** -
+mutation score to trend, nie bramka. Wymaga wczesniejszego `/monolynx:project-toolchain`.
+
 ---
 
 ## Zmienne konfiguracyjne

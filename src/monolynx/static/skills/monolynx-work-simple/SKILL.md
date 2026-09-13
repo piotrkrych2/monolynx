@@ -197,8 +197,26 @@ mcp__monolynx__list_wiki_pages(project_slug="<PROJECT-SLUG>")
 ```
 
 Strona ze slugiem `toolchain` istnieje -> pobierz pelna tresc przez `get_wiki_page`
-i zapamietaj komendy lint/test oraz flage TDD. Brak strony -> zapamietaj
-`toolchain_missing = true` (obsluzone w FAZA 3).
+i zapamietaj OBA komplety komend: z sekcji `## Lint` i `## Test` oraz z sekcji
+`## Worktree` (pola `lint:` i `test:`), jesli strona ja ma. Zapamietaj tez flage
+TDD. Brak strony -> zapamietaj `toolchain_missing = true` (obsluzone w FAZA 3).
+Strona bez sekcji `## Worktree` -> zapamietaj `worktree_commands_missing = true`.
+
+Sprawdz NA HOSCIE, gdzie pracujesz (kontener nie ma binarki `git`, a `.git`
+w worktree to plik ze sciezka hosta). Uruchom DWIE zwykle komendy i porownaj
+wyniki sam - jednolinijkowiec z `[ "$(...)" != "$(...)" ]` zostanie odrzucony
+przez guard izolacji worktree:
+
+```bash
+git rev-parse --git-dir
+```
+
+```bash
+git rev-parse --git-common-dir
+```
+
+Wyniki rozne (np. `.../.git/worktrees/MON-166` wobec `.../.git`) -> zapamietaj
+`srodowisko = worktree`. Wyniki identyczne -> `srodowisko = main`.
 
 Jesli strona mowi `TDD: tak` - w prompcie dev agenta (2.3) dodaj polecenie napisania
 failing testu przed implementacja.
@@ -504,15 +522,46 @@ Komendy pochodza ze strony wiki `toolchain` (pobranej w 0.45).
 
 Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu.
 
+**Wybor wariantu** (wg `srodowisko` z 0.45):
+
+- **`main`** - komendy z sekcji `## Lint` i `## Test`, jak dotad.
+- **`worktree`** - komendy z sekcji `## Worktree`, pola `lint:` i `test:`.
+  Wartosc `jak wyzej` w ktorymkolwiek polu odsyla do `## Lint` / `## Test`.
+
+**Podstawienia w komendzie worktree**: sekcja `## Worktree` zapisuje komende
+w formie przenosnej, z `"$PWD"`. Przed uruchomieniem podstaw za nia DOSLOWNY
+wynik `pwd` (sciezka absolutna). W komendzie `docker`, ktora faktycznie
+uruchamiasz, nie moze zostac zaden `$VAR` ani `$(...)` - sesja pracujaca
+w worktree odrzuca komendy z wartoscia obliczana w locie. Forma
+`sh -c "a && b && c"` z literalna sciezka przechodzi.
+
+**`srodowisko = worktree` przy `worktree_commands_missing = true`** - poinformuj
+uzytkownika:
+
+> Strona `toolchain` nie ma sekcji `## Worktree`, a praca idzie w git worktree.
+> Komendy z `## Lint` i `## Test` (`make`, `docker compose exec`) sprawdzilyby
+> glowny checkout, nie ten kod.
+> Uruchom `/monolynx:project-toolchain`, zeby ta sekcje dodac.
+>
+> Kontynuowac bez lintu i testow? (tak / podam komendy recznie)
+
+Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu. Brak
+sekcji `## Worktree` POZA worktree to stan normalny - zadnego komunikatu.
+
 **`MONOLYNX_AUTOTEST=false`** (domyslnie) - wypisz komendy i poczekaj na wynik:
 
 > Uruchom i wklej wynik:
 > ```
-> [komenda lint]
-> [komenda test]
+> [komenda lint wybranego wariantu]
+> [komenda test wybranego wariantu]
 > ```
 
 **`MONOLYNX_AUTOTEST=true`** - odpal komendy sam.
+
+Wariant worktree wymaga podniesionego stacku glownego checkoutu - siec, obraz
+i baza pochodza stamtad. Stack nie stoi -> to brakujace srodowisko, nie blad
+kodu: podnies go albo powiedz o tym uzytkownikowi zamiast raportowac czerwony
+wynik.
 
 **TRYB = defekt** - najpierw czerwony, potem zielony. Dev nie mogl uruchomic
 testu (hook), wiec test regresyjny nigdy nie byl czerwony. Przed pelnym
@@ -751,7 +800,9 @@ Format zwrotu do TM: `NEEDS WORK [score] | REGULA: [zdanie] | UWAGI: [lista]`."
 ### 3.5.3. Pelny przebieg lint+test po OSTATNIEJ zmianie
 
 Zielony wynik z iteracji zawezonej do dotknietego obszaru NIE otwiera FAZY 4.
-Jesli od ostatniego PELNEGO przebiegu toolchain zmienil sie choc jeden plik -
+Pelny przebieg to wszystkie komendy lint i test WYBRANEGO wariantu (worktree
+albo glowny checkout), bez zawezania. Jesli od ostatniego PELNEGO przebiegu
+toolchain zmienil sie choc jeden plik -
 powtorz pelny przebieg (mechanika FAZA 3; AUTOTEST=false -> user uruchamia
 i wkleja). Czerwony -> jak kazda poprawka (limit obowiazuje). Brak iteracji
 i pelny przebieg z FAZA 3 jest ostatnim zdarzeniem -> krok spelniony. Zapisz
@@ -946,4 +997,4 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 18. **Prawa decyzyjne ustalane RAZ, na starcie** (2.2) - kontrakt autonomii i STOP CONDITIONS zastepuja sterowanie przez przerywanie. Przerwanie usera w trakcie = kontrakt byl niekompletny; brakujaca pozycje odnotuj w 4.8. Przy `SPRINT_RUN=1` patrz regula 21.
 19. **Tryb defektu** (0.2) - research kodu obowiazkowy, test regresyjny przed fixem, krytyk ocenia nazwany mechanizm, nie znikniecie symptomu.
 20. **Ostatni przebieg lint+test jest pelny** (3.5.3) - iteracja moze testowac obszar, zamkniecie testuje calosc.
-21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, praca na `main`/`master`, branch bez numeru ticketu, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
+21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, praca na `main`/`master`, branch bez numeru ticketu, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.

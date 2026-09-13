@@ -309,8 +309,11 @@ Wykonaj nastepujace kroki:
      zaladuj jako project-level context. Nie istnieje -> kontynuuj bez bledu.
    - strona ze slug=`toolchain` istnieje -> pobierz pelna tresc przez `get_wiki_page`.
      Zawiera komendy lint/test, informacje czy projekt ma testy i czy stosowac TDD.
-     Przepisz ja DOSLOWNIE do sekcji \"Toolchain\" raportu - Team Manager jej potrzebuje,
-     razem z sekcja `## Mutacje`, z ktorej korzysta krok mutacji w KROK 6.5. Nie skracaj
+     Przepisz ja DOSLOWNIE do sekcji \"Toolchain\" raportu - Team Manager jej potrzebuje.
+     Przepisujesz CALA strone: sekcje \"## Lint\" i \"## Test\" ORAZ \"## Worktree\",
+     jesli strona ja ma, razem z sekcja `## Mutacje`, z ktorej korzysta krok mutacji
+     w KROK 6.5. Team Manager wybiera wariant komend wedlug srodowiska, w ktorym
+     pracuje, wiec pominiecie ktorejkolwiek sekcji zabiera mu ten wybor. Nie skracaj
      strony do wymienionych pozycji - przenosisz jej cala tresc.
      Nie istnieje -> w raporcie napisz 'Brak strony toolchain'.
 
@@ -355,7 +358,7 @@ Na koniec wygeneruj RAPORT w dokladnie tym formacie:
 [TYLKO TRYB = defekt: reprodukcja (komenda + wynik doslownie), hipoteza, dowod plik:linia, klasa bledu - albo 'reprodukcja nieudana: brakuje <czego>'. W TRYB = zmiana wpisz 'n/d']
 
 ### Toolchain
-[Doslowna tresc strony wiki 'toolchain' - komendy lint/test, czy sa testy, czy TDD, sekcja ## Mutacje w calosci. Lub 'Brak strony toolchain']
+[Doslowna tresc strony wiki 'toolchain' - komendy lint/test, sekcja '## Worktree' jesli strona ja ma, czy sa testy, czy TDD, sekcja ## Mutacje w calosci. Lub 'Brak strony toolchain']
 
 ### Kontekst z Wiki
 [Wyciag z powiazanych stron wiki - lub 'Brak powiazanych stron']
@@ -897,17 +900,67 @@ Z sekcji "Toolchain" raportu Researchera (strona wiki `toolchain`).
 
 Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu.
 
+### Wybor wariantu: worktree czy glowny checkout
+
+Strona `toolchain` moze miec dwa komplety komend. Zanim cokolwiek uruchomisz,
+sprawdz NA HOSCIE, gdzie pracujesz (kontener nie ma binarki `git`, a `.git`
+w worktree to plik ze sciezka hosta). Uruchom DWIE zwykle komendy i porownaj
+wyniki sam - jednolinijkowiec z `[ "$(...)" != "$(...)" ]` zostanie odrzucony
+przez guard izolacji worktree:
+
+```bash
+git rev-parse --git-dir
+```
+
+```bash
+git rev-parse --git-common-dir
+```
+
+- **Wyniki rozne** (np. `.../.git/worktrees/MON-166` wobec `.../.git`) - pracujesz
+  w git worktree: komendy z sekcji `## Worktree`, pola `lint:` i `test:`.
+  Wartosc `jak wyzej` w ktorymkolwiek polu odsyla do `## Lint` / `## Test`.
+- **Wyniki identyczne** - glowny checkout: komendy z `## Lint` i `## Test`,
+  jak dotad.
+
+**Podstawienia w komendzie worktree**: sekcja `## Worktree` zapisuje komende
+w formie przenosnej, z `"$PWD"`. Przed uruchomieniem podstaw za nia DOSLOWNY
+wynik `pwd` (sciezka absolutna). W komendzie `docker`, ktora faktycznie
+uruchamiasz, nie moze zostac zaden `$VAR` ani `$(...)` - sesja pracujaca
+w worktree odrzuca komendy z wartoscia obliczana w locie. Forma
+`sh -c "a && b && c"` z literalna sciezka przechodzi.
+
+**Wynik `worktree`, a strona nie ma sekcji `## Worktree`** - poinformuj
+uzytkownika:
+
+> Strona `toolchain` nie ma sekcji `## Worktree`, a praca idzie w git worktree.
+> Komendy z `## Lint` i `## Test` (`make`, `docker compose exec`) sprawdzilyby
+> glowny checkout, nie ten kod.
+> Uruchom `/monolynx:project-toolchain`, zeby ta sekcje dodac.
+>
+> Kontynuowac bez lintu i testow? (tak / podam komendy recznie)
+
+Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu. Brak
+sekcji `## Worktree` POZA worktree to stan normalny - zadnego komunikatu,
+pracujesz komendami z `## Lint` i `## Test`.
+
 ### Wykonanie
+
+Uruchamiasz komendy WYBRANEGO wariantu.
 
 **`MONOLYNX_AUTOTEST=false`** (domyslnie) - wypisz komendy i poczekaj:
 
 > Uruchom i wklej wynik:
 > ```
-> [komenda lint z toolchain]
-> [komenda test z toolchain]
+> [komenda lint wybranego wariantu]
+> [komenda test wybranego wariantu]
 > ```
 
 **`MONOLYNX_AUTOTEST=true`** - odpal komendy sam.
+
+Wariant worktree wymaga podniesionego stacku glownego checkoutu - siec, obraz
+i baza pochodza stamtad. Stack nie stoi -> to brakujace srodowisko, nie blad
+kodu: podnies go albo powiedz o tym uzytkownikowi zamiast raportowac czerwony
+wynik.
 
 ### TRYB = defekt - najpierw czerwony, potem zielony
 
@@ -1116,7 +1169,7 @@ ticketu - patrz 6.7b i 7f.
 
 Zielony wynik z iteracji, ktora testowala "tylko dotkniety obszar", NIE jest
 podstawa do `in_review`. Jesli od ostatniego PELNEGO przebiegu toolchain
-(wszystkie komendy lint i test ze strony `toolchain`, bez zawezania) w repo
+(wszystkie komendy lint i test WYBRANEGO wariantu, bez zawezania) w repo
 zmienil sie choc jeden plik - powtorz pelny przebieg teraz, wg mechaniki
 KROK 6.5 (AUTOTEST=false -> uzytkownik uruchamia i wkleja). Czerwony ->
 wracasz do 6.6b jak przy kazdej poprawce (limit obowiazuje). Dopiero zielony
@@ -1372,7 +1425,8 @@ ich tutaj. Dodatkowo:
     miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz uzytkownika
     POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego
     ticketu, praca na `main`/`master`, branch bez numeru ticketu, brudne
-    drzewo, brak strony `toolchain`, `AUTOTEST=false` czekajacy na wklejony
+    drzewo, brak strony `toolchain`, brak sekcji `## Worktree` na stronie
+    `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony
     wynik, wyczerpany limit poprawek, `STOP:` od developera, ktorego nie
     rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu
     `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [krok skilla]\nCo odblokuje: [jedno zdanie]`;

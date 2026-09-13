@@ -1,0 +1,11 @@
+# captured: python3 mutation_report.py --help, mutation_report.py 1.9.0 (origin/worktree-MON-149 ba5593c), Python 3.10.13, 2026-09-13
+usage: mutation_report.py [-h] --report REPORT --format
+                          {mte-json,pit-xml,mutmut,cargo-mutants}
+
+Sparsuj raport narzedzia mutacyjnego do wspolnego modelu survivora.
+
+options:
+  -h, --help            show this help message and exit
+  --report REPORT       sciezka do pliku raportu
+  --format {mte-json,pit-xml,mutmut,cargo-mutants}
+                        format raportu

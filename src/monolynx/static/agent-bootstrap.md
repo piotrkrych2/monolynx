@@ -57,6 +57,7 @@ Zaproponuj uzytkownikowi konkretny start. Zasugeruj skille dobrane do typowych p
 
 - **`/monolynx:project-toolchain`** - wykryj komendy lint i testow projektu i zapisz je jako strone wiki `toolchain`; bez tego `work` nie zweryfikuje kodu przed zamknieciem ticketu.
 - **`/monolynx:create-graph-ci-script`** - wygeneruj skrypt CI, ktory synchronizuje graf zaleznosci kodu z Monolynx (dobry pierwszy krok w repo bez grafu).
+- **`/monolynx:create-mutation-ci-script`** - wygeneruj nieblokujacy krok CI z testami mutacyjnymi w trybie diffowym na MR/PR, z raportem jako artefaktem i zapadka baseline (narzedzia mutacyjnego nie instaluje).
 - **`/monolynx:wiki-init`** - wlacz metode LLM Wiki dla projektu (strony systemowe: regulamin, katalog, dziennik); fundament dla wiki jako zrodla prawdy.
 - **`/monolynx:ticket-create`** - utworz pierwszy porzadny ticket z kontekstem z wiki, grafu i kodu.
 - **`/monolynx:brief`** - dla pracy bez ticketu (konfiguracja, investigation, drobna zmiana): jedno pytanie o kontrakt (gotowe / nie ruszac / stop przed), ENTER i start. Hook `brief_guard` pluginu odpala go sam, gdy pierwszy prompt sesji to goly imperatyw.
@@ -65,7 +66,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 
 ---
 
-## Komplet 19 skilli `/monolynx:*`
+## Komplet 20 skilli `/monolynx:*`
 
 - **`/monolynx:brief`** - kontrakt epizodu bez ticketu: gotowe = obserwowalny stan, czego nie ruszac, przed czym sie zatrzymac; ENTER = start pracy.
 - **`/monolynx:work`** - podejmij ticket pelnym flow: research + kontrakt autonomii + zespol agentow + tryb defektu (najpierw czerwony test) + rekoncyliacja z kryteriami + obowiazkowy krytyk + lint i testy przed zamknieciem.
@@ -85,6 +86,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 - **`/monolynx:wiki-sync-merge`** - post-merge INGEST do wiki, uruchamiany po merge ticketow/PR do main.
 - **`/monolynx:help`** - przewodnik po skillach Monolynx i flow pracy z ticketami.
 - **`/monolynx:create-graph-ci-script`** - wygeneruj skrypt CI synchronizujacy graf zaleznosci kodu z Monolynx.
+- **`/monolynx:create-mutation-ci-script`** - wygeneruj nieblokujacy krok CI z testami mutacyjnymi: tryb diffowy na MR/PR, raport jako artefakt, zapadka baseline (score / baseline / delta).
 - **`/monolynx:graph-sync`** - zsynchronizuj graf zaleznosci lokalnie, bez CI (pierwsze zasilenie albo odswiezenie ad hoc).
 
 Pelna dokumentacja modulow i narzedzi: <https://monolynx.com/llms.txt>.
