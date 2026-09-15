@@ -357,5 +357,5 @@ class TestSprintRunSh:
         calls = arg_lines(sandbox)
         assert len(calls) == 3
         assert "--name testslug-sprint-run-opus" in calls[0]
-        assert "--name testslug-sprint-end" in calls[1]
-        assert "--name testslug-retro" in calls[2]
+        assert "--name testslug-sprint-end-opus" in calls[1]
+        assert "--name testslug-retro-opus" in calls[2]

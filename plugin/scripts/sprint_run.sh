@@ -118,9 +118,10 @@ trap cleanup EXIT
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 
 run_claude() {
-  # $1 = nazwa sesji, $2 = prompt. Swiezy proces per wywolanie; wynik na stdout i do logu.
+  # $1 = nazwa sesji bez modelu, $2 = prompt. Swiezy proces per wywolanie; wynik na stdout i do logu.
+  # Model dopisywany tu, w jednym miejscu: kazda nazwa sesji konczy sie modelem, na ktorym dziala.
   claude -p "$2" \
-    --name "$1" \
+    --name "$1-$TICK_MODEL" \
     --model "$TICK_MODEL" \
     --permission-mode acceptEdits \
     --max-turns "${MONOLYNX_SPRINT_RUN_MAX_TURNS:-80}" \
@@ -134,7 +135,7 @@ errors=0
 while :; do
   tick=$((tick + 1))
   log "tick $tick"
-  out="$(run_claude "$SLUG-sprint-run-$TICK_MODEL" "/monolynx:sprint-run $SLOTS")"
+  out="$(run_claude "$SLUG-sprint-run" "/monolynx:sprint-run $SLOTS")"
   status_line="$(printf '%s\n' "$out" | grep -E '^SPRINT-RUN: remaining=[0-9]+ running=[0-9]+ waiting=[0-9]+' | tail -1)"
 
   if [ -z "$status_line" ]; then

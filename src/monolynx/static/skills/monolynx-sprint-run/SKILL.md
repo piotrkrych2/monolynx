@@ -41,7 +41,7 @@ echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
 
   Zakończ bez dalszych akcji, dopóki slug nie jest znany.
 
-Slug jest częścią kontraktu nazw: sesja robocza ticketu nazywa się `<PROJECT-SLUG>-<KEY>-<MODEL>` (np. `monolynx-MON-167-opus`), gdzie `<MODEL>` to wartość `${MONOLYNX_SPRINT_MODEL:-opus}` z chwili startu, a sesja samego dyspozytora w `sprint_run.sh` `<PROJECT-SLUG>-sprint-run-<MODEL>`, gdzie `<MODEL>` to `${MONOLYNX_SPRINT_TICK_MODEL:-opus}`. Te nazwy są **zamrożone** - inne narzędzia po nich rozpoznają sesje sprintu. Nie zmieniaj ich i nie dodawaj innych sufiksów.
+Slug jest częścią kontraktu nazw: sesja robocza ticketu nazywa się `<PROJECT-SLUG>-<KEY>-<MODEL>` (np. `monolynx-MON-167-opus`), gdzie `<MODEL>` to wartość `${MONOLYNX_SPRINT_MODEL:-opus}` z chwili startu, a sesja samego dyspozytora w `sprint_run.sh` `<PROJECT-SLUG>-sprint-run-<MODEL>`, gdzie `<MODEL>` to `${MONOLYNX_SPRINT_TICK_MODEL:-opus}` (tak samo `<PROJECT-SLUG>-sprint-end-<MODEL>` i `<PROJECT-SLUG>-retro-<MODEL>` przy `--close`). Każda nazwa sesji kończy się modelem, na którym sesja działa. Te nazwy są **zamrożone** - inne narzędzia po nich rozpoznają sesje sprintu. Nie zmieniaj ich i nie dodawaj innych sufiksów.
 
 Sesję ticketu rozpoznajesz po nazwie równej `<PROJECT-SLUG>-<KEY>` albo zaczynającej się od `<PROJECT-SLUG>-<KEY>-`, z dowolnym modelem na końcu. WHY: po zmianie `MONOLYNX_SPRINT_MODEL` między tickami (i dla sesji nazwanych przed dodaniem modelu do nazwy) żywa sesja musi nadal zajmować ticket, inaczej tick wystartuje drugą. Myślnik po kluczu jest obowiązkowy: `monolynx-MON-1-` nie łapie `monolynx-MON-10-opus`.
 
