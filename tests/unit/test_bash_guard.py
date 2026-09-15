@@ -519,7 +519,7 @@ class TestMrMergeAndApprove:
         assert_ask(exit_code, decision, reason_substr="AUTOPUSH")
 
 
-TEST_LINT_KEYWORDS =["pytest", "ruff", "mypy", "eslint", "playwright", "makemessages"]
+TEST_LINT_KEYWORDS = ["pytest", "ruff", "mypy", "eslint", "playwright", "makemessages"]
 
 
 @pytest.mark.unit

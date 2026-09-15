@@ -301,7 +301,7 @@ class TestQueueFile:
         state.queue_set(queue_file, ["!70", "!72"])
         state.queue_update(queue_file, "!70", None, "abc", True, None)
         result = state.queue_set(queue_file, ["!72", "!70"])
-        item = [i for i in result["items"] if i["ref"] == "!70"][0]
+        item = next(i for i in result["items"] if i["ref"] == "!70")
         assert item["fix_rounds"] == 1
         assert item["user_approved_sha"] == "abc"
 
