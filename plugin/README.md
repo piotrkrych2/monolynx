@@ -107,7 +107,7 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 | `/monolynx:ticket-create` | Utwórz nowy ticket: zbiera kontekst z wiki, kodu i grafu zależności, generuje opis w ustalonej formie (cel, kontekst, zakres, nie ruszać, odwracalność, zależności, kryteria akceptacji). |
 | `/monolynx:ticket-review` | Zrecenzuj ticket ze sprintu: sprawdza formę (8 kryteriów, w tym granice "Nie ruszać" i "Odwracalność"), zgodność z wiki i kodem, generuje tabelkę raportu i proponuje poprawki. |
 | `/monolynx:sprint-end` | Zamknij sprint jako pipeline `sprint_close` (stepy wiki-update → wrap-up): INGEST logów pracy do wiki, LINT (audyt wiki), czyszczenie stron logów pipeline sprintu, opcjonalne `retro` (przed zamknięciem, bo `complete_sprint` wypisuje niedokończone tickety ze sprintu) i realne `complete_sprint` (niedokończone tickety wracają do backlogu, z potwierdzeniem). Raportowanie do Pipelines best-effort. Pierwszym jobem stepu `wrap-up` jest `mutation-run`: pełny przebieg mutacyjny na modułach rdzenia, wiersze na stronie wiki `Trend mutacji` (data, moduł, score, baseline, delta) i zapadka jednego pola `baseline` w `toolchain` - tylko w górę. Krok jest nieblokujący: odmowa albo brak narzędzia nie wstrzymuje zamknięcia sprintu. |
-| `/monolynx:sprint-run` | Dyspozytor sprintu: jeden idempotentny tick czyta stan sprintu i sesji w tle, startuje brakujące sesje `claude --bg --worktree <KEY> --name <slug>-<KEY>` z komendą `/monolynx:work <KEY>`, zbiera zakończone (komentarz z identyfikatorem sesji i `claude rm`), raportuje czekające na człowieka i kończy linią `SPRINT-RUN: remaining=... running=... waiting=... done=...`. Sam nigdy nie pracuje nad ticketem. Pętla jest na zewnątrz: `/loop 15m /monolynx:sprint-run` albo `plugin/scripts/sprint_run.sh`. |
+| `/monolynx:sprint-run` | Dyspozytor sprintu: jeden idempotentny tick czyta stan sprintu i sesji w tle, startuje brakujące sesje `claude --bg --worktree <KEY> --name <slug>-<KEY>-<model>` z komendą `/monolynx:work <KEY>`, zbiera zakończone (komentarz z identyfikatorem sesji i `claude rm`), raportuje czekające na człowieka i kończy linią `SPRINT-RUN: remaining=... running=... waiting=... done=...`. Sam nigdy nie pracuje nad ticketem. Pętla jest na zewnątrz: `/loop 15m /monolynx:sprint-run` albo `plugin/scripts/sprint_run.sh`. |
 | `/monolynx:search` | Szukaj informacji w wiki projektu (architektura, API, integracje, standardy kodu) przez wyszukiwanie semantyczne; przy włączonej metodzie LLM Wiki proponuje zapis odpowiedzi jako stronę syntezy. |
 | `/monolynx:wiki-init` | Włącz metodę LLM Wiki dla projektu: tworzy strony systemowe (regulamin `wiki-schema`, katalog `wiki-index`, dziennik `wiki-log`) i włącza flagę. Idempotentny bootstrap. |
 | `/monolynx:wiki-ingest` | Zintegruj nowe źródło (plik, URL, wklejona treść) z wiki: strona źródła, aktualizacja powiązanych stron encji/konceptów, wikilinki, odświeżenie katalogu i wpis do dziennika. |
@@ -180,6 +180,8 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (działa TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
 | `MONOLYNX_SPRINT_RUN_MODE` | - | Tryb ticka dyspozytora. `batch` ustawia sam `sprint_run.sh`; skill `sprint-run` traktuje brak zmiennej (i każdą inną wartość) jako tryb interaktywny |
 | `MONOLYNX_SPRINT_PERMISSION_MODE` | wartość z komendy startu sesji w skillu `sprint-run` | Tryb uprawnień sesji roboczych `--bg` startowanych przez dyspozytora (patrz KROK 4 tego skilla) |
+| `MONOLYNX_SPRINT_MODEL` | `opus` | Model sesji roboczych `--bg` (`/monolynx:work <KEY>`) startowanych przez dyspozytora (patrz sekcja Modele) |
+| `MONOLYNX_SPRINT_TICK_MODEL` | `opus` | Model procesu `claude -p`, w którym `sprint_run.sh` odpala tick dyspozytora oraz `--close` (`sprint-end`, `retro`) |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goły imperatyw dostaje skill `brief` z propozycją kontraktu; `block` - prompt odrzucony z odesłaniem do `/monolynx:brief`; `off` - wyłączony (patrz sekcja Hooki) |
 
 Domyślne wartości są zachowawcze: skille **wypisują komendy zamiast je wykonywać**.
@@ -213,11 +215,27 @@ Przykład - sesja w tle, odpalana przez dyspozytor `/monolynx:sprint-run`:
 }
 ```
 
+## Modele
+
+Proces bez jawnego modelu bierze domyślny model konta, a subagent bez modelu dziedziczy model sesji, która go powołała. Oba domyślne zachowania prowadzą do tego samego: cały sprint idzie na najdroższym modelu. Plugin ustawia więc model jawnie dla każdej roli. Zasada: droższy model tylko tam, gdzie zapadają decyzje, i tylko po świadomym włączeniu; wykonanie na Opusie albo Sonnecie.
+
+| Rola | Model domyślny | Jak zmienić |
+|---|---|---|
+| Tick dyspozytora w `sprint_run.sh` (także `--close`) | `opus` | `MONOLYNX_SPRINT_TICK_MODEL` |
+| Tick dyspozytora w `/loop 15m /monolynx:sprint-run` | model Twojej sesji interaktywnej | `/model` w tej sesji |
+| Sesja robocza `--bg` (Team Manager ticketu) | `opus` | `MONOLYNX_SPRINT_MODEL`, np. `fable` dla koordynatora |
+| Sesja `/monolynx:work` odpalona ręcznie | model Twojej sesji | `/model` albo `claude --model` |
+| Researcher (`Explore`) w `work` | `sonnet` | treść skilla `work` (KROK 3b) |
+| Developer i agent testowy | `model:` z frontmatter agenta; brak pola -> `sonnet` | frontmatter agenta w `.claude/agents/` albo `plugin/agents/` |
+| Krytyk | `opus` | treść skilla `work` / `work-simple` (sekcja „Model subagentów”) |
+
+Zmienne `MONOLYNX_SPRINT_*MODEL` ustaw w środowisku procesu odpalającego pętlę albo w śledzonym `.claude/settings.json`: sesja w tle dziedziczy środowisko, a worktree nie widzi `.claude/settings.local.json`. Wartość to alias (`opus`, `sonnet`, `fable`) albo pełna nazwa modelu, tak jak przyjmuje ją `claude --model`.
+
 ## Sprint bez sesji interaktywnej
 
 Sprint da się przerobić bez człowieka siedzącego przy terminalu. Robią to dwa elementy, które można używać osobno.
 
-**Dyspozytor `/monolynx:sprint-run [sloty]`** to jeden tick: czyta aktywny sprint i stan sesji w tle, startuje brakujące sesje `/monolynx:work` (każdą w osobnym worktree, pod nazwą `<slug>-<KEY>`), zbiera zakończone, raportuje te, które czekają na człowieka, i kończy ostatnią linią:
+**Dyspozytor `/monolynx:sprint-run [sloty]`** to jeden tick: czyta aktywny sprint i stan sesji w tle, startuje brakujące sesje `/monolynx:work` (każdą w osobnym worktree, pod nazwą `<slug>-<KEY>-<model>`, np. `monolynx-MON-12-opus`), zbiera zakończone, raportuje te, które czekają na człowieka, i kończy ostatnią linią:
 
 ```
 SPRINT-RUN: remaining=<n> running=<m> waiting=<k> done=<d>
@@ -362,6 +380,16 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.13.0
+
+Jawny model dla każdej roli sprintu (bez ticketu, epizod `brief`). Sprint odpalony przez `sprint_run.sh` szedł na domyślnym modelu konta, którym był najdroższy Fable, a subagenci dziedziczyli go po sesji koordynatora.
+
+- **`sprint_run.sh`: `claude -p --model`.** Tick dyspozytora i przebiegi `--close` idą na `MONOLYNX_SPRINT_TICK_MODEL` (domyślnie `opus`). Skrypt eksportuje też `MONOLYNX_SPRINT_MODEL` (domyślnie `opus`) i loguje oba modele w linii `start:`.
+- **`/monolynx:sprint-run`: `--model "${MONOLYNX_SPRINT_MODEL:-opus}"` w komendzie startu sesji `--bg`.** Fable dla koordynatora ticketu włącza się wyłącznie przez `MONOLYNX_SPRINT_MODEL=fable`. Linia `SPRINT-RUN:` bez zmian.
+- **Nazwa sesji roboczej niesie model: `<slug>-<KEY>-<model>`** (np. `monolynx-MON-12-opus`), więc w `claude agents` od razu widać, na czym pracuje ticket. Sesja ticka w `sprint_run.sh` nazywa się analogicznie `<slug>-sprint-run-<model>` (model z `MONOLYNX_SPRINT_TICK_MODEL`). `sprint_run_state.py` rozpoznaje sesję ticketu po nazwie `<slug>-<KEY>` z dowolnym sufiksem modelu albo bez niego: zmiana `MONOLYNX_SPRINT_MODEL` między tickami i sesje nazwane przed tą zmianą nie powodują startu drugiej sesji na tym samym tickecie.
+- **`/monolynx:work` i `/monolynx:work-simple`: sekcja „Model subagentów”.** Każde powołanie subagenta (także re-run i nowy krytyk po śmierci poprzedniego) ma jawny model: Researcher `sonnet`, developer według `model:` z frontmatter agenta (brak pola -> `sonnet`), krytyk `opus`. Subagent nie dziedziczy już modelu sesji Team Managera.
+- **README: sekcja „Modele”** z tabelą rola -> model domyślny -> sposób zmiany.
 
 ### 1.12.0
 

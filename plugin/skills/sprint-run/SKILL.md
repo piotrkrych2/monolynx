@@ -40,7 +40,9 @@ echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
 
   Zakończ bez dalszych akcji, dopóki slug nie jest znany.
 
-Slug jest częścią kontraktu nazw: sesja robocza ticketu nazywa się `<PROJECT_SLUG>-<KEY>` (np. `monolynx-MON-167`), a sesja samego dyspozytora `<PROJECT_SLUG>-sprint-run`. Te nazwy są **zamrożone** - inne narzędzia po nich rozpoznają sesje sprintu. Nie zmieniaj ich i nie dodawaj sufiksów.
+Slug jest częścią kontraktu nazw: sesja robocza ticketu nazywa się `<PROJECT_SLUG>-<KEY>-<MODEL>` (np. `monolynx-MON-167-opus`), gdzie `<MODEL>` to wartość `${MONOLYNX_SPRINT_MODEL:-opus}` z chwili startu, a sesja samego dyspozytora w `sprint_run.sh` `<PROJECT_SLUG>-sprint-run-<MODEL>`, gdzie `<MODEL>` to `${MONOLYNX_SPRINT_TICK_MODEL:-opus}`. Te nazwy są **zamrożone** - inne narzędzia po nich rozpoznają sesje sprintu. Nie zmieniaj ich i nie dodawaj innych sufiksów.
+
+Sesję ticketu rozpoznajesz po nazwie równej `<PROJECT_SLUG>-<KEY>` albo zaczynającej się od `<PROJECT_SLUG>-<KEY>-`, z dowolnym modelem na końcu. WHY: po zmianie `MONOLYNX_SPRINT_MODEL` między tickami (i dla sesji nazwanych przed dodaniem modelu do nazwy) żywa sesja musi nadal zajmować ticket, inaczej tick wystartuje drugą. Myślnik po kluczu jest obowiązkowy: `monolynx-MON-1-` nie łapie `monolynx-MON-10-opus`.
 
 ---
 
@@ -163,7 +165,7 @@ claude agents --json --all > "$AGENTS"
 
 **Identyfikator sesji to pole `id`, nie `sessionId`.** W wyjściu `claude agents --json --all` każdy wpis ma oba. `id` jest krótki (8 znaków) i występuje wyłącznie dla wpisów o `kind` równym `background`; `sessionId` to UUID wątku i żadna komenda go nie przyjmuje. `claude logs`, `claude attach` i `claude rm` działają **tylko** na `id`. Wszędzie dalej w tym skillu `<session_id>` oznacza właśnie to krótkie `id`: tak nazywasz plik ogona logu, tak wpisujesz identyfikator do komentarza ticketu i taki podajesz człowiekowi w komendzie `claude attach`. Pole `session_id` w JSON-ie ze skryptu stanu niesie tę samą wartość.
 
-Dla każdej sesji, której nazwa pasuje do `<PROJECT_SLUG>-<KEY>` (gdzie `<KEY>` to klucz ticketu ze sprintu), zrzuć ostatnie 20 linii logu do katalogu logów. Plik nazywa się `<id>.log`, bo tego pliku szuka skrypt stanu:
+Dla każdej sesji, której nazwa pasuje do `<PROJECT_SLUG>-<KEY>` z dowolnym sufiksem modelu (gdzie `<KEY>` to klucz ticketu ze sprintu; reguła dopasowania pod kontraktem nazw), zrzuć ostatnie 20 linii logu do katalogu logów. Plik nazywa się `<id>.log`, bo tego pliku szuka skrypt stanu:
 
 ```bash
 claude logs "<session_id>" | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' | tr '\r' '\n' | tail -n 20 > "$LOGS/<session_id>.log"
@@ -189,7 +191,7 @@ Skrypt zwraca na stdout JSON:
 {
   "slug": "<PROJECT_SLUG>",
   "tickets": [
-    {"key": "MON-167", "session_id": "abc123", "session_name": "<PROJECT_SLUG>-MON-167",
+    {"key": "MON-167", "session_id": "abc123", "session_name": "<PROJECT_SLUG>-MON-167-opus",
      "session_state": "running", "ticket_status": "in_progress",
      "verdict": "running", "reason": "sesja zyje, brak sygnalu stopu"}
   ],
@@ -267,7 +269,7 @@ Przejdź po ticketach z werdyktem innym niż `free` i `running`.
      mcp__monolynx__add_comment(
        project_slug="<PROJECT_SLUG>",
        ticket_id="<KEY>",
-       content="**Sprint-run** - auto-wznowienie: uruchomiono sesję `<session_id>` (`<PROJECT_SLUG>-<KEY>`), worktree `<KEY>`"
+       content="**Sprint-run** - auto-wznowienie: uruchomiono sesję `<session_id>` (`<PROJECT_SLUG>-<KEY>-<MODEL>`), worktree `<KEY>`"
      )
      ```
 
@@ -306,7 +308,7 @@ mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY>")
 **Start sesji** dla każdego wybranego ticketu:
 
 ```bash
-claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>" --permission-mode "${MONOLYNX_SPRINT_PERMISSION_MODE:-bypassPermissions}" "/monolynx:work <KEY>"
+claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>-${MONOLYNX_SPRINT_MODEL:-opus}" --model "${MONOLYNX_SPRINT_MODEL:-opus}" --permission-mode "${MONOLYNX_SPRINT_PERMISSION_MODE:-bypassPermissions}" "/monolynx:work <KEY>"
 ```
 
 Odczytaj identyfikator sesji: weź go z wyjścia komendy, a gdy go tam nie ma, dociągnij po nazwie:
@@ -315,21 +317,23 @@ Odczytaj identyfikator sesji: weź go z wyjścia komendy, a gdy go tam nie ma, d
 claude agents --json --all
 ```
 
-Wpis o nazwie `<PROJECT_SLUG>-<KEY>` niesie identyfikator w polu `id` (krótkie, 8 znaków, `kind` równe `background`) - to jest `<session_id>`, którego używasz dalej. Nie bierz `sessionId`. Dopisz komentarz do ticketu:
+Wpis o nazwie `<PROJECT_SLUG>-<KEY>-<MODEL>` niesie identyfikator w polu `id` (krótkie, 8 znaków, `kind` równe `background`) - to jest `<session_id>`, którego używasz dalej. Nie bierz `sessionId`. Dopisz komentarz do ticketu:
 
 ```
 mcp__monolynx__add_comment(
   project_slug="<PROJECT_SLUG>",
   ticket_id="<KEY>",
-  content="**Sprint-run** - uruchomiono sesję `<session_id>` (`<PROJECT_SLUG>-<KEY>`), worktree `<KEY>`"
+  content="**Sprint-run** - uruchomiono sesję `<session_id>` (`<PROJECT_SLUG>-<KEY>-<MODEL>`), worktree `<KEY>`"
 )
 ```
 
 Komentarz z identyfikatorem sesji jest jedynym trwałym śladem, po którym człowiek trafi do właściwej sesji następnego dnia. Nie pomijaj go, nawet gdy sesja wystartowała bez problemów.
 
-**Zapamiętaj `S`**: liczbę sesji, które faktycznie wystartowały w tym kroku. Liczysz wyłącznie te potwierdzone wpisem o nazwie `<PROJECT_SLUG>-<KEY>` w `claude agents --json --all`, a nie liczbę prób startu. `S` wchodzi do korekty linii statusu w KROK 5.
+**Zapamiętaj `S`**: liczbę sesji, które faktycznie wystartowały w tym kroku. Liczysz wyłącznie te potwierdzone wpisem o nazwie `<PROJECT_SLUG>-<KEY>-<MODEL>` w `claude agents --json --all`, a nie liczbę prób startu. `S` wchodzi do korekty linii statusu w KROK 5.
 
 Sesja w tle startuje z trybem uprawnień wpisanym w komendę startu powyżej; `MONOLYNX_SPRINT_PERMISSION_MODE` nadpisuje tam wartość domyślną. WHY: worktree tworzony przez `claude --bg --worktree` zawiera wyłącznie pliki śledzone przez gita, a `.claude/settings.local.json` jest ignorowany, więc ani `permissions`, ani flagi AUTO* z niego nie docierają do sesji roboczej i sesja bez człowieka zawisłaby na pierwszym pytaniu o zgodę. Granicą jest wtedy hook `bash_guard.py` (deny na git write, lint, testy i `glab mr create` dla subagentów) oraz kontrakt autonomii skilla `work`, a nie dialog uprawnień. Flagi trybu w tle muszą leżeć w **śledzonym** `.claude/settings.json` (pole `env`) albo w środowisku procesu odpalającego tick: `sprint_run.sh` je eksportuje, a `claude --bg` dziedziczy środowisko.
+
+Model sesji roboczej też jest wpisany w komendę startu: `${MONOLYNX_SPRINT_MODEL:-opus}`. Nie usuwaj `--model` i nie zastępuj go modelem tej sesji dyspozytora. WHY: sesja w tle bez `--model` bierze domyślny model konta, a ten bywa najdroższy (Fable); jeden sprint na nim kosztuje wielokrotność przebiegu na Opusie. Droższy model dla koordynatora ticketu włącza się świadomie, ustawiając `MONOLYNX_SPRINT_MODEL` w środowisku procesu odpalającego tick albo w śledzonym `.claude/settings.json`. Subagenci sesji `work` dostają model według sekcji „Model subagentów” skilla `work` (i `work-simple`), niezależnie od modelu koordynatora.
 
 Po starcie sesji **nie czekaj** na jej wynik i nie zaglądaj do jej logu. Tick kończy się teraz, wynik zbierze następny.
 
@@ -409,5 +413,5 @@ Format samej linii jest bez zmian: to kontrakt z `sprint_run.sh`, który po niej
 2. **Tick jest idempotentny.** Przed startem sesji sprawdzasz, czy taka nazwa już nie żyje; przed auto-wznowieniem sprawdzasz komentarze. Dwa ticki pod rząd nie mogą zdublować sesji ani komentarza.
 3. **Nie kasujesz sesji bez werdyktu `done`.** `claude rm` tylko po tym, jak ticket jest w `in_review` albo `done`. Sesja `waiting` czeka na człowieka i musi go doczekać.
 4. **Nie zmieniasz statusów ticketów.** Statusy przestawia `/monolynx:work` w swojej sesji. Ty tylko czytasz je i komentujesz.
-5. **Nazwy sesji są zamrożone**: `<PROJECT_SLUG>-<KEY>` dla pracy, `<PROJECT_SLUG>-sprint-run` dla ticka. Inne narzędzia po nich rozpoznają sesje sprintu.
+5. **Nazwy sesji są zamrożone**: `<PROJECT_SLUG>-<KEY>-<MODEL>` dla pracy (rozpoznawana także bez sufiksu modelu), `<PROJECT_SLUG>-sprint-run-<MODEL>` dla ticka. Inne narzędzia po nich rozpoznają sesje sprintu.
 6. **Język raportu: polski.** Komentarze w ticketach też.

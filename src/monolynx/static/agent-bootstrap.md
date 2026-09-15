@@ -76,7 +76,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 - **`/monolynx:mutation-check`** - uruchom testy mutacyjne narzędziem ze strony `toolchain` (domyślnie diff wobec baseline brancha, twardy budżet czasu) i zamień przeżywających mutantów w pracę: kryteria akceptacji przy tickecie albo tickety w backlogu. Score nie jest bramką.
 - **`/monolynx:ticket-create`** - utworz ticket z kontekstu wiki, grafu i kodu, w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci).
 - **`/monolynx:ticket-review`** - zrecenzuj ticket pod katem formy i zgodnosci z wiki oraz kodem.
-- **`/monolynx:sprint-run`** - dyspozytor sprintu: jeden idempotentny tick startuje brakujące sesje `work` w tle (jeden ticket = jedna nazwana sesja `<slug>-<KEY>` i własny worktree), zbiera zakończone, raportuje czekające na człowieka. Sam nie pracuje nad ticketem; pętla jest na zewnątrz (`/loop 15m` albo skrypt `sprint_run.sh` z pluginu).
+- **`/monolynx:sprint-run`** - dyspozytor sprintu: jeden idempotentny tick startuje brakujące sesje `work` w tle (jeden ticket = jedna nazwana sesja `<slug>-<KEY>-<model>` i własny worktree), zbiera zakończone, raportuje czekające na człowieka. Sam nie pracuje nad ticketem; pętla jest na zewnątrz (`/loop 15m` albo skrypt `sprint_run.sh` z pluginu).
 - **`/monolynx:sprint-end`** - zamknij sprint jako pipeline `sprint_close`: INGEST logow pracy do wiki + LINT + retro korekt + domkniecie sprintu.
 - **`/monolynx:retro`** - retro korekt sprintu: uwagi krytyka, NEEDS WORK, STOP-y i eskalacje z ticketow oraz pamieci agentow, pogrupowane per ticket, z propozycja trwalej maszynerii (regula, rubryka, constitution).
 - **`/monolynx:search`** - semantyczne wyszukiwanie RAG w wiki projektu.

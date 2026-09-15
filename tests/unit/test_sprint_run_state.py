@@ -132,6 +132,28 @@ class TestMatchSession:
     def test_empty_agent_list_returns_none(self):
         assert state.match_session([], "monolynx", "MON-1") is None
 
+    def test_name_with_model_suffix_matches(self):
+        agents = [bg_agent("monolynx-MON-1-opus")]
+        result = state.match_session(agents, "monolynx", "MON-1")
+        assert result is not None
+        assert result["sessionId"] == "sid-1"
+
+    def test_model_suffix_does_not_match_mon10_for_mon1(self):
+        agents = [bg_agent("monolynx-MON-10-opus")]
+        result = state.match_session(agents, "monolynx", "MON-1")
+        assert result is None
+
+    def test_any_model_suffix_matches_and_newest_wins(self):
+        """Zmiana MONOLYNX_SPRINT_MODEL miedzy tickami nie moze ukryc zywej sesji
+        z innym modelem w nazwie - inaczej tick startuje duplikat."""
+        agents = [
+            bg_agent("monolynx-MON-1-fable", session_id="sid-old", started_at=100),
+            bg_agent("monolynx-MON-1-claude-opus-5", session_id="sid-new", started_at=500),
+        ]
+        result = state.match_session(agents, "monolynx", "MON-1")
+        assert result is not None
+        assert result["sessionId"] == "sid-new"
+
     def test_different_slug_does_not_match(self):
         agents = [bg_agent("inny-projekt-MON-1")]
         result = state.match_session(agents, "monolynx", "MON-1")

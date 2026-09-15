@@ -153,7 +153,7 @@ dlatego skill prosi o potwierdzenie). Bez argumentu bierze aktywny sprint.
 
 **Sprint z dyspozytora** - jeden tick, nie cała pętla. Czyta aktywny sprint i stan sesji
 w tle, startuje brakujące sesje `/monolynx:work` (każda w osobnym worktree, pod nazwą
-`<slug>-<KEY>`), zbiera zakończone (komentarz z identyfikatorem sesji, potem `claude rm`),
+`<slug>-<KEY>-<model>`, np. `monolynx-MON-12-opus`), zbiera zakończone (komentarz z identyfikatorem sesji, potem `claude rm`),
 wypisuje te, które czekają na człowieka, i kończy linią
 `SPRINT-RUN: remaining=... running=... waiting=... done=...`.
 Sam **nigdy nie pracuje nad ticketem** - od pracy jest `work` w osobnej sesji.
@@ -313,6 +313,8 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
 | `MONOLYNX_SPRINT_RUN_MODE` | - | Tryb ticka `/monolynx:sprint-run`: `batch` ustawia sam `sprint_run.sh`, brak zmiennej (i kazda inna wartosc) znaczy tryb interaktywny |
 | `MONOLYNX_SPRINT_PERMISSION_MODE` | wartosc z komendy startu sesji w skillu `sprint-run` | Tryb uprawnien sesji roboczych `--bg` startowanych przez dyspozytora |
+| `MONOLYNX_SPRINT_MODEL` | `opus` | Model sesji roboczych `--bg` (`/monolynx:work <KEY>`) startowanych przez dyspozytora; `fable` tylko swiadomie, dla koordynatora ticketu |
+| `MONOLYNX_SPRINT_TICK_MODEL` | `opus` | Model procesu `claude -p`, w ktorym `sprint_run.sh` odpala tick dyspozytora oraz `--close` (`sprint-end`, `retro`) |
 | `MONOLYNX_MUTATION_BUDGET` | `600` | Budżet czasu przebiegu `/monolynx:mutation-check` w sekundach. Maksimum 600 (limit narzędzia Bash); większa wartość jest skracana do 600 |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goly imperatyw dostaje skill `brief` z propozycja kontraktu; `block` - prompt odrzucony z odeslaniem do `/monolynx:brief`; `off` - wylaczony |
 
