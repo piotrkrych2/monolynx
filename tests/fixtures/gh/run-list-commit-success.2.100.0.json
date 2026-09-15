@@ -1,0 +1,100 @@
+{
+  "_meta": {
+    "command": "gh run list -R cli/cli --commit 9909db87c400abf1e5f01215ee8cae8d69d65045 --json databaseId,status,conclusion,name,headBranch,headSha,event,workflowName -L 20",
+    "tool_version": "2.100.0",
+    "captured": "2026-09-15",
+    "note": "Runy dla commita merge PR 14442: wszystkie completed/success (eventy push, dynamic, schedule)."
+  },
+  "output": [
+    {
+      "conclusion": "success",
+      "databaseId": 34855305263,
+      "event": "schedule",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "Triage Scheduled Tasks",
+      "status": "completed",
+      "workflowName": "Triage Scheduled Tasks"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 34852954210,
+      "event": "dynamic",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "github_actions in /. - Update #1575694766",
+      "status": "completed",
+      "workflowName": "Dependabot Updates"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 34852953937,
+      "event": "dynamic",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "go_modules in /. - Update #1575694762",
+      "status": "completed",
+      "workflowName": "Dependabot Updates"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 34851197070,
+      "event": "schedule",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "Dependabot PR Triage (skills-driven)",
+      "status": "completed",
+      "workflowName": "Dependabot PR Triage (skills-driven)"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 34848877930,
+      "event": "schedule",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "Triage Scheduled Tasks",
+      "status": "completed",
+      "workflowName": "Triage Scheduled Tasks"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 34848264679,
+      "event": "dynamic",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "Configured Graph Update: go_modules in /. #1575617122",
+      "status": "completed",
+      "workflowName": "Dependency Graph"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 34848261646,
+      "event": "push",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "Unit and Integration Tests",
+      "status": "completed",
+      "workflowName": "Unit and Integration Tests"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 34848261731,
+      "event": "push",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "Lint",
+      "status": "completed",
+      "workflowName": "Lint"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 34848261696,
+      "event": "push",
+      "headBranch": "trunk",
+      "headSha": "9909db87c400abf1e5f01215ee8cae8d69d65045",
+      "name": "Code Scanning",
+      "status": "completed",
+      "workflowName": "Code Scanning"
+    }
+  ]
+}

@@ -107,7 +107,8 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 | `/monolynx:ticket-create` | Utwórz nowy ticket: zbiera kontekst z wiki, kodu i grafu zależności, generuje opis w ustalonej formie (cel, kontekst, zakres, nie ruszać, odwracalność, zależności, kryteria akceptacji). |
 | `/monolynx:ticket-review` | Zrecenzuj ticket ze sprintu: sprawdza formę (8 kryteriów, w tym granice "Nie ruszać" i "Odwracalność"), zgodność z wiki i kodem, generuje tabelkę raportu i proponuje poprawki. |
 | `/monolynx:sprint-end` | Zamknij sprint jako pipeline `sprint_close` (stepy wiki-update → wrap-up): INGEST logów pracy do wiki, LINT (audyt wiki), czyszczenie stron logów pipeline sprintu, opcjonalne `retro` (przed zamknięciem, bo `complete_sprint` wypisuje niedokończone tickety ze sprintu) i realne `complete_sprint` (niedokończone tickety wracają do backlogu, z potwierdzeniem). Raportowanie do Pipelines best-effort. Pierwszym jobem stepu `wrap-up` jest `mutation-run`: pełny przebieg mutacyjny na modułach rdzenia, wiersze na stronie wiki `Trend mutacji` (data, moduł, score, baseline, delta) i zapadka jednego pola `baseline` w `toolchain` - tylko w górę. Krok jest nieblokujący: odmowa albo brak narzędzia nie wstrzymuje zamknięcia sprintu. |
-| `/monolynx:sprint-run` | Dyspozytor sprintu: jeden idempotentny tick czyta stan sprintu i sesji w tle, startuje brakujące sesje `claude --bg --worktree <KEY> --name <slug>-<KEY>` z komendą `/monolynx:work <KEY>`, zbiera zakończone (komentarz z identyfikatorem sesji i `claude rm`), raportuje czekające na człowieka i kończy linią `SPRINT-RUN: remaining=... running=... waiting=... done=...`. Sam nigdy nie pracuje nad ticketem. Pętla jest na zewnątrz: `/loop 15m /monolynx:sprint-run` albo `plugin/scripts/sprint_run.sh`. |
+| `/monolynx:sprint-run` | Dyspozytor sprintu: jeden idempotentny tick czyta stan sprintu i sesji w tle, startuje brakujące sesje `claude --bg --worktree <KEY> --name <slug>-<KEY>-<model>` z komendą `/monolynx:work <KEY>`, zbiera zakończone (komentarz z identyfikatorem sesji i `claude rm`), raportuje czekające na człowieka i kończy linią `SPRINT-RUN: remaining=... running=... waiting=... done=...`. Sam nigdy nie pracuje nad ticketem. Pętla jest na zewnątrz: `/loop 15m /monolynx:sprint-run` albo `plugin/scripts/sprint_run.sh`. |
+| `/monolynx:mr-queue` | Kolejka merge MR (GitLab, `glab`) i PR (GitHub, `gh`): jeden idempotentny tick bierze pierwszy niezmergowany MR/PR z `.git/monolynx/mr-queue.json` i robi jedno działanie w kolejności: czerwone CI -> poprawka w tymczasowym worktree i push (maks. 2 rundy), konflikt -> merge brancha docelowego i push, brak approve -> pytanie do użytkownika, gotowe -> merge z blokadą na SHA i czekanie na zielone CI brancha docelowego przed kolejnym elementem. Bez argumentów układa kolejkę z otwartych MR/PR (stack po swojej bazie, drafty pominięte). Werdykty liczy `scripts/mr_queue_state.py`. Kończy linią `MR-QUEUE: remaining=... current=... verdict=... done=...`; pętla: `/loop 10m /monolynx:mr-queue`. |
 | `/monolynx:search` | Szukaj informacji w wiki projektu (architektura, API, integracje, standardy kodu) przez wyszukiwanie semantyczne; przy włączonej metodzie LLM Wiki proponuje zapis odpowiedzi jako stronę syntezy. |
 | `/monolynx:wiki-init` | Włącz metodę LLM Wiki dla projektu: tworzy strony systemowe (regulamin `wiki-schema`, katalog `wiki-index`, dziennik `wiki-log`) i włącza flagę. Idempotentny bootstrap. |
 | `/monolynx:wiki-ingest` | Zintegruj nowe źródło (plik, URL, wklejona treść) z wiki: strona źródła, aktualizacja powiązanych stron encji/konceptów, wikilinki, odświeżenie katalogu i wpis do dziennika. |
@@ -144,6 +145,10 @@ Plugin dostarcza hook PreToolUse na narzędziu Bash (`hooks/hooks.json` → `hoo
 | Sesja główna | lint/testy | **ask**, chyba że `MONOLYNX_AUTOTEST=true` |
 | Subagent | `glab mr create` | **deny** - "Subagent nie tworzy merge requestów - MR zakłada Team Manager (główna sesja) po pushu, wg MONOLYNX_AUTOMR. Zgłoś gotowość w raporcie końcowym." |
 | Sesja główna | `glab mr create` | **ask** - "glab mr create wymaga potwierdzenia użytkownika (MONOLYNX_AUTOMR != true).", chyba że `MONOLYNX_AUTOMR=true` |
+| Subagent | `glab mr merge` / `glab mr accept` / `gh pr merge` | **deny** - merge robi `/monolynx:mr-queue` w sesji głównej |
+| Sesja główna | `glab mr merge` / `glab mr accept` / `gh pr merge` | **ask**, chyba że `MONOLYNX_AUTOMERGE=true` |
+| Subagent | `glab mr approve` / `gh pr review --approve` | **deny** |
+| Sesja główna | `glab mr approve` / `gh pr review --approve` | **ask** - zawsze, żadna flaga tego nie znosi (approve daje człowiek) |
 | Subagent | operacje destrukcyjne (`rm -rf`, `git push --force`, `curl \| sh`, zapis do `~/.ssh`/`~/.aws`, `DROP/TRUNCATE`, `mkfs`/`dd of=/dev`) | **deny** |
 | Sesja glowna i subagent | `rm -rf` z celem pod `/tmp`, katalogiem projektu (korzen repo, takze worktree) albo katalogiem `.claude` - nigdy sam korzen | **allow** (MON-174) |
 | Sesja glowna i subagent | `rm -rf` z celem poza tymi katalogami | **deny** (MON-174) |
@@ -180,6 +185,10 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (działa TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
 | `MONOLYNX_SPRINT_RUN_MODE` | - | Tryb ticka dyspozytora. `batch` ustawia sam `sprint_run.sh`; skill `sprint-run` traktuje brak zmiennej (i każdą inną wartość) jako tryb interaktywny |
 | `MONOLYNX_SPRINT_PERMISSION_MODE` | wartość z komendy startu sesji w skillu `sprint-run` | Tryb uprawnień sesji roboczych `--bg` startowanych przez dyspozytora (patrz KROK 4 tego skilla) |
+| `MONOLYNX_SPRINT_MODEL` | `opus` | Model sesji roboczych `--bg` (`/monolynx:work <KEY>`) startowanych przez dyspozytora (patrz sekcja Modele) |
+| `MONOLYNX_AUTOMERGE` | `false` | `true` - `/monolynx:mr-queue` merguje MR/PR bez pytania (tylko przy werdykcie `ready`, z blokadą na SHA); `false` - hook pyta o każdy merge |
+| `MONOLYNX_MERGE_METHOD` | `merge` | Metoda merge w `/monolynx:mr-queue`: `merge`, `squash` albo `rebase` |
+| `MONOLYNX_SPRINT_TICK_MODEL` | `opus` | Model procesu `claude -p`, w którym `sprint_run.sh` odpala tick dyspozytora oraz `--close` (`sprint-end`, `retro`) |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goły imperatyw dostaje skill `brief` z propozycją kontraktu; `block` - prompt odrzucony z odesłaniem do `/monolynx:brief`; `off` - wyłączony (patrz sekcja Hooki) |
 
 Domyślne wartości są zachowawcze: skille **wypisują komendy zamiast je wykonywać**.
@@ -213,11 +222,27 @@ Przykład - sesja w tle, odpalana przez dyspozytor `/monolynx:sprint-run`:
 }
 ```
 
+## Modele
+
+Proces bez jawnego modelu bierze domyślny model konta, a subagent bez modelu dziedziczy model sesji, która go powołała. Oba domyślne zachowania prowadzą do tego samego: cały sprint idzie na najdroższym modelu. Plugin ustawia więc model jawnie dla każdej roli. Zasada: droższy model tylko tam, gdzie zapadają decyzje, i tylko po świadomym włączeniu; wykonanie na Opusie albo Sonnecie.
+
+| Rola | Model domyślny | Jak zmienić |
+|---|---|---|
+| Tick dyspozytora w `sprint_run.sh` (także `--close`) | `opus` | `MONOLYNX_SPRINT_TICK_MODEL` |
+| Tick dyspozytora w `/loop 15m /monolynx:sprint-run` | model Twojej sesji interaktywnej | `/model` w tej sesji |
+| Sesja robocza `--bg` (Team Manager ticketu) | `opus` | `MONOLYNX_SPRINT_MODEL`, np. `fable` dla koordynatora |
+| Sesja `/monolynx:work` odpalona ręcznie | model Twojej sesji | `/model` albo `claude --model` |
+| Researcher (`Explore`) w `work` | `sonnet` | treść skilla `work` (KROK 3b) |
+| Developer i agent testowy | `model:` z frontmatter agenta; brak pola -> `sonnet` | frontmatter agenta w `.claude/agents/` albo `plugin/agents/` |
+| Krytyk | `opus` | treść skilla `work` / `work-simple` (sekcja „Model subagentów”) |
+
+Zmienne `MONOLYNX_SPRINT_*MODEL` ustaw w środowisku procesu odpalającego pętlę albo w śledzonym `.claude/settings.json`: sesja w tle dziedziczy środowisko, a worktree nie widzi `.claude/settings.local.json`. Wartość to alias (`opus`, `sonnet`, `fable`) albo pełna nazwa modelu, tak jak przyjmuje ją `claude --model`.
+
 ## Sprint bez sesji interaktywnej
 
 Sprint da się przerobić bez człowieka siedzącego przy terminalu. Robią to dwa elementy, które można używać osobno.
 
-**Dyspozytor `/monolynx:sprint-run [sloty]`** to jeden tick: czyta aktywny sprint i stan sesji w tle, startuje brakujące sesje `/monolynx:work` (każdą w osobnym worktree, pod nazwą `<slug>-<KEY>`), zbiera zakończone, raportuje te, które czekają na człowieka, i kończy ostatnią linią:
+**Dyspozytor `/monolynx:sprint-run [sloty]`** to jeden tick: czyta aktywny sprint i stan sesji w tle, startuje brakujące sesje `/monolynx:work` (każdą w osobnym worktree, pod nazwą `<slug>-<KEY>-<model>`, np. `monolynx-MON-12-opus`), zbiera zakończone, raportuje te, które czekają na człowieka, i kończy ostatnią linią:
 
 ```
 SPRINT-RUN: remaining=<n> running=<m> waiting=<k> done=<d>
@@ -362,6 +387,19 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.13.0
+
+Jawny model dla każdej roli sprintu (bez ticketu, epizod `brief`). Sprint odpalony przez `sprint_run.sh` szedł na domyślnym modelu konta, którym był najdroższy Fable, a subagenci dziedziczyli go po sesji koordynatora.
+
+- **`sprint_run.sh`: `claude -p --model`.** Tick dyspozytora i przebiegi `--close` idą na `MONOLYNX_SPRINT_TICK_MODEL` (domyślnie `opus`). Skrypt eksportuje też `MONOLYNX_SPRINT_MODEL` (domyślnie `opus`) i loguje oba modele w linii `start:`.
+- **`/monolynx:sprint-run`: `--model "${MONOLYNX_SPRINT_MODEL:-opus}"` w komendzie startu sesji `--bg`.** Fable dla koordynatora ticketu włącza się wyłącznie przez `MONOLYNX_SPRINT_MODEL=fable`. Linia `SPRINT-RUN:` bez zmian.
+- **Nazwa sesji roboczej niesie model: `<slug>-<KEY>-<model>`** (np. `monolynx-MON-12-opus`), więc w `claude agents` od razu widać, na czym pracuje ticket. Tak samo sesje procesów `sprint_run.sh`: `<slug>-sprint-run-<model>`, a przy `--close` `<slug>-sprint-end-<model>` i `<slug>-retro-<model>` (model z `MONOLYNX_SPRINT_TICK_MODEL`). Każda nazwa sesji kończy się modelem. `sprint_run_state.py` rozpoznaje sesję ticketu po nazwie `<slug>-<KEY>` z dowolnym sufiksem modelu albo bez niego: zmiana `MONOLYNX_SPRINT_MODEL` między tickami i sesje nazwane przed tą zmianą nie powodują startu drugiej sesji na tym samym tickecie.
+- **`/monolynx:work` i `/monolynx:work-simple`: sekcja „Model subagentów”.** Każde powołanie subagenta (także re-run i nowy krytyk po śmierci poprzedniego) ma jawny model: Researcher `sonnet`, developer według `model:` z frontmatter agenta (brak pola -> `sonnet`), krytyk `opus`. Subagent nie dziedziczy już modelu sesji Team Managera.
+- **README: sekcja „Modele”** z tabelą rola -> model domyślny -> sposób zmiany.
+- **Nowy skill `/monolynx:mr-queue`: kolejka merge MR (`glab`) i PR (`gh`).** Jeden idempotentny tick na pierwszym niezmergowanym elemencie kolejki, jedno działanie w kolejności CI -> konflikt -> approve -> merge. Czerwone CI i konflikt poprawia w tymczasowym worktree (`git worktree add --detach`, push `HEAD:refs/heads/<branch>`, bez force i rebase; maks. 2 rundy, potem stop), o approve pyta użytkownika (approve z czatu wiąże się z SHA), po merge czeka na zielone CI brancha docelowego. Bez argumentów układa kolejkę z otwartych MR/PR; argumenty `!iid`, `#pr` albo URL nadpisują kolejność. W trybie batch pytania zamieniają się w `MR-QUEUE STOP: <ref> <powód>`.
+- **`scripts/mr_queue_state.py`**: `queue-propose`, `queue-set`, `queue-show`, `queue-update`, `classify` (werdykty `merged`, `closed`, `wait`, `ci_failed`, `conflict`, `needs_approval`, `needs_human`, `ready`) i `target-ci`. Literały stanów z fixture realnych wyjść `glab 1.100.0` i `gh 2.100.0` (`tests/fixtures/glab/`, `tests/fixtures/gh/`); nieznany literał daje `wait`, nigdy `ready`. GitLab `approved=true` przy `approvals_required=0` bez `approved_by` nie jest approve; pipeline `manual` na branchu docelowym jest zielony, gdy żaden automatyczny job nie padł.
+- **Hook `bash_guard.py`**: `glab mr merge|accept` i `gh pr merge` - deny dla subagenta, ask dla sesji głównej, chyba że `MONOLYNX_AUTOMERGE=true`; `glab mr approve` i `gh pr review --approve` - deny dla subagenta, zawsze ask dla sesji głównej. Nowe zmienne: `MONOLYNX_AUTOMERGE`, `MONOLYNX_MERGE_METHOD`.
 
 ### 1.12.0
 

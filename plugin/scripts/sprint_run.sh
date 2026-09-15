@@ -3,7 +3,7 @@
 #
 # Uruchamia co INTERVAL jeden tick `/monolynx:sprint-run` w SWIEZYM procesie
 # `claude -p`, az sprint sie wyczerpie. Sam nie robi zadnej pracy nad ticketami:
-# tick dyspozytora startuje nazwane sesje w tle (`claude --bg --name <slug>-<KEY>`),
+# tick dyspozytora startuje nazwane sesje w tle (`claude --bg --name <slug>-<KEY>-<model>`),
 # zbiera zakonczone i raportuje. Dziala tak samo lokalnie, w tmux na VPS i z crona.
 #
 # Uzycie:
@@ -30,6 +30,11 @@
 # `[ -t 0 ]` w narzedziu Bash Claude Code jest zawsze falszywe) oraz
 # CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 domyslnie (worktree nie widzi
 # settings.local.json, bez tej flagi sesje w tle traca Agent Teams) - MON-172.
+#
+# Model: bez `--model` proces `claude -p` bierze domyslny model konta, ktory
+# bywa najdrozszy. Tick dyspozytora idzie na MONOLYNX_SPRINT_TICK_MODEL
+# (domyslnie opus), a sesje work startowane przez tick na MONOLYNX_SPRINT_MODEL
+# (domyslnie opus; skrypt eksportuje ja, skill sprint-run wpisuje ja w `claude --bg`).
 
 set -u
 
@@ -46,7 +51,7 @@ while [ $# -gt 0 ]; do
     --max-ticks) [ $# -ge 2 ] || { echo "sprint_run: --max-ticks wymaga wartosci" >&2; exit 64; }; MAX_TICKS="$2"; shift 2 ;;
     --close) CLOSE=1; shift ;;
     --once) ONCE=1; shift ;;
-    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "sprint_run: nieznany argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -90,6 +95,10 @@ export MONOLYNX_SPRINT_RUN_MODE=batch
 # .claude/settings.local.json, wiec bez tej flagi `work` w sesji w tle traci
 # Agent Teams; domyslnie wlaczona, ale nadpisywalna z zewnatrz (MON-172).
 export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-1}"
+# Bez jawnego modelu tick i sesje work ida na domyslnym modelu konta (bywa to
+# najdrozszy model); koordynacje na drozszym modelu wlacza sie tylko swiadomie.
+TICK_MODEL="${MONOLYNX_SPRINT_TICK_MODEL:-opus}"
+export MONOLYNX_SPRINT_MODEL="${MONOLYNX_SPRINT_MODEL:-opus}"
 
 STATE_DIR="$GIT_DIR/monolynx"
 mkdir -p "$STATE_DIR"
@@ -109,15 +118,17 @@ trap cleanup EXIT
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 
 run_claude() {
-  # $1 = nazwa sesji, $2 = prompt. Swiezy proces per wywolanie; wynik na stdout i do logu.
+  # $1 = nazwa sesji bez modelu, $2 = prompt. Swiezy proces per wywolanie; wynik na stdout i do logu.
+  # Model dopisywany tu, w jednym miejscu: kazda nazwa sesji konczy sie modelem, na ktorym dziala.
   claude -p "$2" \
-    --name "$1" \
+    --name "$1-$TICK_MODEL" \
+    --model "$TICK_MODEL" \
     --permission-mode acceptEdits \
     --max-turns "${MONOLYNX_SPRINT_RUN_MAX_TURNS:-80}" \
     --output-format text 2>&1 | tee -a "$LOG"
 }
 
-log "start: slug=$SLUG slots=$SLOTS interval=$INTERVAL close=$CLOSE once=$ONCE dir=$PROJECT_DIR"
+log "start: slug=$SLUG slots=$SLOTS interval=$INTERVAL close=$CLOSE once=$ONCE tick_model=$TICK_MODEL work_model=$MONOLYNX_SPRINT_MODEL dir=$PROJECT_DIR"
 
 tick=0
 errors=0

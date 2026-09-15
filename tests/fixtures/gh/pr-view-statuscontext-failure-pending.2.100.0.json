@@ -1,0 +1,127 @@
+{
+  "_meta": {
+    "command": "gh pr view 142106 -R kubernetes/kubernetes --json number,state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,url",
+    "tool_version": "2.100.0",
+    "captured": "2026-09-15",
+    "note": "Checki jako StatusContext (pole state, bez status/conclusion): FAILURE, PENDING, SUCCESS; reviewDecision pusty string."
+  },
+  "output": {
+    "baseRefName": "master",
+    "headRefName": "fix-resize-deferred",
+    "headRefOid": "84a1a5720d6f3865eeb7e0f3b755da93b8eccd8f",
+    "isDraft": false,
+    "mergeStateStatus": "BLOCKED",
+    "mergeable": "MERGEABLE",
+    "number": 142106,
+    "reviewDecision": "",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-integration",
+        "startedAt": "2026-09-14T22:04:49Z",
+        "state": "FAILURE",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-integration/2099612176925855744"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "tide",
+        "startedAt": "2026-09-14T19:43:30Z",
+        "state": "PENDING",
+        "targetUrl": "https://prow.k8s.io/pr?query=is%3Apr+repo%3Akubernetes%2Fkubernetes+author%3Ahaircommander+head%3Afix-resize-deferred"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "EasyCLA",
+        "startedAt": "2026-09-14T19:41:57Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://easycla.lfx.linuxfoundation.org/#/?version=2"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-cmd",
+        "startedAt": "2026-09-14T19:51:15Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-cmd/2099584441016913920"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-conformance-kind-ga-only-parallel",
+        "startedAt": "2026-09-14T19:58:18Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-conformance-kind-ga-only-parallel/2099584441738334208"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-dependencies",
+        "startedAt": "2026-09-14T19:43:40Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-dependencies/2099584441323098112"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-e2e-gce",
+        "startedAt": "2026-09-14T20:36:32Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-e2e-gce/2099584441436344320"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-e2e-kind",
+        "startedAt": "2026-09-14T20:09:13Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-e2e-kind/2099584441637670912"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-linter-hints",
+        "startedAt": "2026-09-14T19:51:44Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-linter-hints/2099584443516719104"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-node-e2e-containerd",
+        "startedAt": "2026-09-14T20:27:28Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-node-e2e-containerd/2099584441922883584"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-node-kubelet-serial-containerd",
+        "startedAt": "2026-09-14T21:32:19Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-node-kubelet-serial-containerd/2099584442010963968"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-node-kubelet-serial-containerd-slow",
+        "startedAt": "2026-09-14T20:50:41Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-node-kubelet-serial-containerd-slow/2099584442149376000"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-typecheck",
+        "startedAt": "2026-09-14T19:44:15Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-typecheck/2099584442229067776"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-unit",
+        "startedAt": "2026-09-14T20:05:36Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-unit/2099584441847386112"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-verify",
+        "startedAt": "2026-09-14T20:10:55Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142106/pull-kubernetes-verify/2099584442707218432"
+      }
+    ],
+    "url": "https://github.com/kubernetes/kubernetes/pull/142106"
+  }
+}

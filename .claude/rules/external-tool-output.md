@@ -35,6 +35,7 @@ Właściwy identyfikator to ten, którym potem wołasz narzędzie (`claude logs|
 
 - Nowy parser / klasyfikator wyjścia narzędzia bez pliku w `tests/fixtures/<narzędzie>/` -> brak fixture z przechwycenia (-25).
 - Lista literałów (stany, kody, pola) bez odwołania do fixture w komentarzu WHY -> literały z wyobrażenia.
+- Komentarz WHY wymienia literały, których NIE MA w cytowanym fixture (np. "zaobserwowane w X" dla wartości ze schematu, nie z pliku) -> to samo naruszenie co brak fixture (-25), nie drobiazg konwencji; literały dodane z definicji/schematu opisuj osobno od zaobserwowanych (MON-149 `Timeout`/`NoCoverage` vs fixture Strykera; MON-172 `idle`).
 - Gałąź "nieznana wartość" prowadzi do operacji trwałej (start sesji, `rm`, komentarz, push) -> zły wariant domyślny.
 - Dopasowanie regex/substring na wyjściu komendy TUI bez zdjęcia ANSI -> punkt 4.
 - Wywołanie CLI/MCP, którego sygnatura nie została sprawdzona w tym tickecie (`--help` / `mcp_server.py`) -> punkt 5.

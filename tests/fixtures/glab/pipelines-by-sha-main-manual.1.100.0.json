@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "command": "glab api projects/piotrkrych%2Fmonolynx/pipelines?sha=8f7a62c851339643349e8afeefec1285b35113f5&ref=main",
+    "tool_version": "1.100.0",
+    "captured": "2026-09-15",
+    "note": "Pipeline na main po merge: status=manual, bo job deploy-staging jest reczny; reszta jobow success (patrz jobs-main-manual)."
+  },
+  "output": [
+    {
+      "id": 2845261133,
+      "iid": 171,
+      "project_id": 79777900,
+      "sha": "8f7a62c851339643349e8afeefec1285b35113f5",
+      "ref": "main",
+      "status": "manual",
+      "source": "push",
+      "created_at": "2026-09-13T23:33:55.096Z",
+      "updated_at": "2026-09-13T23:58:36.499Z",
+      "web_url": "https://gitlab.com/piotrkrych/monolynx/-/pipelines/2845261133",
+      "name": null
+    }
+  ]
+}

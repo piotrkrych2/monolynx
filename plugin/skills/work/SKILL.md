@@ -265,6 +265,7 @@ zawiera wlasne bloki kodu):
 ````
 Agent(
   subagent_type="Explore",
+  model="sonnet",
   description="Researcher - analiza ticketu",
   prompt="Jestes Researcherem projektu Monolynx. Twoim zadaniem jest pelna analiza ticketu i przygotowanie raportu dla zespolu.
 
@@ -461,6 +462,24 @@ Zbuduj liste kandydatow z nazwami `subagent_type`, opisami i specjalizacjami wyn
 4. **Krytyk jest ZAWSZE w zespole** - wybierz dostepnego agenta pelniacego role recenzenta kodu / quality gate. Nie zakladaj, ze musi nazywac sie `code-reviewer`
 5. **TDD** - jesli sekcja "Toolchain" raportu mowi, ze projekt ma testy i stosuje TDD: agent testowy pisze failing testy PRZED developerami i idzie SEKWENCYJNIE, jako pierwszy. Reszta zespolu startuje dopiero po jego zakonczeniu, z testami jako specyfikacja
 
+### Model subagentow
+
+Obowiazuje przy KAZDYM powolaniu subagenta w tym skillu: w obu trybach (Agent
+Teams i bez), przy re-runie (6d, 6.6b) i przy nowym krytyku po smierci
+poprzedniego (6.6a).
+
+| Rola | Parametr `model` |
+|---|---|
+| Researcher (`Explore`, 3b) | `model="sonnet"` |
+| Developer / agent testowy | frontmatter agenta ma `model:` -> NIE podawaj parametru (frontmatter decyduje); pola brak (agent projektu bez `model:`, `general-purpose`) -> `model="sonnet"` |
+| Krytyk | `model="opus"` |
+
+Przy doborze zespolu odczytaj `model:` z frontmatter kazdego wybranego agenta.
+WHY: subagent bez modelu dziedziczy model Twojej sesji - Team Manager na Fable
+robilby cala implementacje i review na Fable, a to wielokrotnosc kosztu bez
+zysku jakosci. Drozszy model zostaje przy koordynacji i decyzjach. Runtime bez
+parametru `model` (np. Codex) -> pomin.
+
 ### Przydzial plikow - obowiazkowy
 
 Dla kazdego agenta wypisz **konkretne pliki**, nie obszary. Zrodlo: sekcja
@@ -609,7 +628,8 @@ Sekwencje realizujesz przez OPOZNIONE POWOLANIE: kolejnego agenta w sekwencji
 spawnujesz dopiero po zakonczeniu poprzednika - takze w trybie Agent Teams
 (nie ma mechanizmu "wstrzymanego" agenta).
 
-Kazdy developer dostaje:
+Kazdy developer jest powolywany z parametrem `model` wg sekcji "Model
+subagentow" (KROK 5) i dostaje:
 
 - Pelna tresc ticketa (tytul + opis)
 - **Raport Researchera** (pelny lub odpowiedni fragment)
@@ -703,7 +723,8 @@ Team Manager potrzebuje tych danych do review i rozliczenia czasu.
 
 #### Przygotowanie promptu krytyka (oba tryby)
 
-Krytyk to subagent - NIE zna sciezek do plikow tego skilla. Dlatego:
+Krytyka powolujesz zawsze z `model="opus"` (sekcja "Model subagentow", KROK 5),
+w obu trybach. Krytyk to subagent - NIE zna sciezek do plikow tego skilla. Dlatego:
 
 1. Przeczytaj `review-rubric.md` z katalogu tego skilla (ten sam katalog co
    SKILL.md) i wklej jego PELNA tresc do promptu krytyka w miejsce

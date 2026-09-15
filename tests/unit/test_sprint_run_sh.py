@@ -161,7 +161,7 @@ class TestSprintRunSh:
         calls = arg_lines(sandbox)
         assert len(calls) == 1
         assert "-p /monolynx:sprint-run 2" in calls[0]
-        assert "--name testslug-sprint-run" in calls[0]
+        assert "--name testslug-sprint-run-opus" in calls[0]
 
     def test_once_flag_exits_zero_after_single_tick_even_with_remaining_work(self, sandbox):
         write_status(sandbox, "SPRINT-RUN: remaining=2 running=2 waiting=0 done=0")
@@ -229,7 +229,7 @@ class TestSprintRunSh:
         assert result.returncode == 0
         calls = arg_lines(sandbox)
         assert len(calls) == 1
-        assert "--name sluginplik-sprint-run" in calls[0]
+        assert "--name sluginplik-sprint-run-opus" in calls[0]
 
     def test_pid_file_with_live_process_exits_75(self, sandbox):
         write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
@@ -318,6 +318,36 @@ class TestSprintRunSh:
         dump = sandbox.fake_env_dump.read_text()
         assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0" in dump
 
+    def test_default_model_is_opus_for_tick_and_work_sessions(self, sandbox):
+        """Bez --model `claude -p` bierze domyslny model konta (bywal to najdrozszy
+        model) - tick idzie na opus, a sesje work dostaja MONOLYNX_SPRINT_MODEL=opus."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, ["--close"])
+
+        assert result.returncode == 0
+        calls = arg_lines(sandbox)
+        assert len(calls) == 3
+        assert all("--model opus" in call for call in calls)
+        dump = sandbox.fake_env_dump.read_text()
+        assert "MONOLYNX_SPRINT_MODEL=opus" in dump
+
+    def test_model_overrides_from_environment_are_preserved(self, sandbox):
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(
+            sandbox,
+            [],
+            env_overrides={"MONOLYNX_SPRINT_TICK_MODEL": "sonnet", "MONOLYNX_SPRINT_MODEL": "fable"},
+        )
+
+        assert result.returncode == 0
+        calls = arg_lines(sandbox)
+        assert "--model sonnet" in calls[0]
+        assert "--name testslug-sprint-run-sonnet" in calls[0]
+        dump = sandbox.fake_env_dump.read_text()
+        assert "MONOLYNX_SPRINT_MODEL=fable" in dump
+
     def test_close_flag_runs_sprint_end_and_retro_after_sprint_done(self, sandbox):
         write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=5")
 
@@ -326,6 +356,6 @@ class TestSprintRunSh:
         assert result.returncode == 0
         calls = arg_lines(sandbox)
         assert len(calls) == 3
-        assert "--name testslug-sprint-run" in calls[0]
-        assert "--name testslug-sprint-end" in calls[1]
-        assert "--name testslug-retro" in calls[2]
+        assert "--name testslug-sprint-run-opus" in calls[0]
+        assert "--name testslug-sprint-end-opus" in calls[1]
+        assert "--name testslug-retro-opus" in calls[2]

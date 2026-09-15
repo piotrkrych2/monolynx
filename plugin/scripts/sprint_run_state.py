@@ -109,19 +109,25 @@ class _ArgumentParser(argparse.ArgumentParser):
 
 
 def match_session(agents: list[Any], slug: str, key: str) -> dict[str, Any] | None:
-    """Znajdz sesje w tle dopasowana po dokladnej nazwie "<slug>-<key>".
+    """Znajdz sesje w tle ticketu: nazwa "<slug>-<key>-<model>" albo "<slug>-<key>".
+
+    Sufiks modelu jest dowolny. WHY: tick po zmianie MONOLYNX_SPRINT_MODEL albo
+    sesja nazwana przed dodaniem modelu do nazwy musza nadal byc widoczne - inaczej
+    ticket wyglada na wolny i dostaje druga sesje (duplikat, nieodwracalny).
+    Separator "-" po kluczu chroni przed dopasowaniem MON-1 do MON-10.
 
     Bierze pod uwage wylacznie wpisy kind == "background" z obecnym polem "id".
     Przy kilku trafieniach zwraca to z najwiekszym "startedAt".
     """
-    target_name = f"{slug}-{key}"
+    base_name = f"{slug}-{key}"
     candidates = [
         agent
         for agent in agents
         if isinstance(agent, dict)
         and agent.get("kind") == "background"
         and "id" in agent
-        and agent.get("name") == target_name
+        and isinstance(agent.get("name"), str)
+        and (agent["name"] == base_name or agent["name"].startswith(f"{base_name}-"))
     ]
     if not candidates:
         return None

@@ -13,6 +13,10 @@ Zasady:
   zweryfikowania (ekspansja, glob, komenda zlozona) -> jak dotad.
 - `glab mr create`: subagent -> deny; glowna sesja -> ask, chyba ze
   MONOLYNX_AUTOMR=true.
+- `glab mr merge|accept` i `gh pr merge` (skill mr-queue): subagent -> deny;
+  glowna sesja -> ask, chyba ze MONOLYNX_AUTOMERGE=true.
+- `glab mr approve` i `gh pr review --approve`: subagent -> deny; glowna
+  sesja -> zawsze ask. Approve jest decyzja czlowieka, zadna flaga go nie znosi.
 - Glowna sesja nie jest blokowana na twardo: git push / reset --hard / rebase /
   clean -f oraz lint/testy dostaja "ask" (potwierdzenie uzytkownika); push
   przechodzi bez pytania przy MONOLYNX_AUTOPUSH=true, lint/testy przy
@@ -81,6 +85,11 @@ GIT_WRITE = re.compile(
     r"\bgit\b[^|;&]*?\b(push|commit|add|reset\s+--hard|rebase|clean\s+(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b)"
 )
 GLAB_MR_CREATE = re.compile(r"\bglab\b[^|;&]*?\bmr\b[^|;&]*?\bcreate\b(?!-)")
+# `glab mr accept` to alias `glab mr merge` (glab mr merge --help, 1.100.0).
+MR_MERGE = re.compile(r"\bglab\b[^|;&]*?\bmr\b[^|;&]*?\b(?:merge|accept)\b(?!-)|\bgh\b[^|;&]*?\bpr\b[^|;&]*?\bmerge\b(?!-)")
+MR_APPROVE = re.compile(
+    r"\bglab\b[^|;&]*?\bmr\b[^|;&]*?\bapprove\b(?!-)|\bgh\b[^|;&]*?\bpr\b[^|;&]*?\breview\b[^|;&]*?(?:--approve\b|\s-a\b)"
+)
 TEST_LINT = re.compile(
     r"\b(pytest|ruff|mypy|black|isort|flake8|eslint|prettier|vitest|playwright"
     r"|makemessages|compilemessages)\b"
@@ -319,6 +328,31 @@ if GLAB_MR_CREATE.search(cmd):
             "ask",
             "glab mr create wymaga potwierdzenia użytkownika "
             "(MONOLYNX_AUTOMR != true).",
+        )
+
+if MR_APPROVE.search(cmd):
+    if is_subagent:
+        decide(
+            "deny",
+            "Subagent nie zatwierdza MR/PR - approve daje człowiek. Zgłoś gotowość w raporcie końcowym.",
+        )
+    decide(
+        "ask",
+        "Approve MR/PR to decyzja użytkownika - wymaga potwierdzenia (żadna flaga tego nie znosi).",
+    )
+
+# Merge przed GIT_WRITE z tego samego powodu co glab mr create: przy
+# MONOLYNX_AUTOMERGE=true galaz nie konczy hooka, komenda zlozona idzie dalej.
+if MR_MERGE.search(cmd):
+    if is_subagent:
+        decide(
+            "deny",
+            "Subagent nie merguje MR/PR - merge robi skill mr-queue w głównej sesji, wg MONOLYNX_AUTOMERGE.",
+        )
+    if not flag("MONOLYNX_AUTOMERGE"):
+        decide(
+            "ask",
+            "Merge MR/PR wymaga potwierdzenia użytkownika (MONOLYNX_AUTOMERGE != true).",
         )
 
 git_match = GIT_WRITE.search(cmd)

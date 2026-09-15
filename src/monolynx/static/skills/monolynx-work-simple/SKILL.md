@@ -298,6 +298,19 @@ Przeskanuj dostepnych agentow w projekcie, w katalogu zaleznym od runtime'u: **C
 
 **Krytyk jest zawsze obowiazkowy** (spawnowany w kroku 2.3 po dev) - wybierz agenta pelniacego role recenzenta kodu.
 
+**Model subagentow** - obowiazuje przy KAZDYM `Agent()` w tym skillu, takze
+przy re-runie dev (FAZA 3, 3.5.2) i nowym krytyku (3.5.2 pkt 4):
+
+- **Dev**: frontmatter wybranego agenta ma pole `model:` -> NIE podawaj
+  parametru `model` (frontmatter decyduje); pola brak (agent projektu bez
+  `model:`, `general-purpose`) -> `model="sonnet"`.
+- **Krytyk**: zawsze `model="opus"`.
+
+WHY: subagent bez modelu dziedziczy model Twojej sesji -
+Team Manager na Fable robilby cala implementacje i review na Fable, a to
+wielokrotnosc kosztu bez zysku jakosci. Drozszy model zostaje przy
+koordynacji. Runtime bez parametru `model` (np. Codex) -> pomin.
+
 ### 2.2. Kontrakt autonomii + krotki plan
 
 Prawa decyzyjne ustalasz RAZ, tutaj - nie przez przerywanie w trakcie. Stale
@@ -363,6 +376,7 @@ mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<
 ```
 Agent(
   subagent_type="<wybrany-agent>",
+  model="sonnet",  # tylko gdy frontmatter agenta nie ma `model:` - patrz 2.1 "Model subagentow"
   description="Dev SIMPLE dla [TICKET-KEY]",
   prompt="Jestes developerem w SIMPLE flow (ticket maly, bez Agent Teams).
 
@@ -666,6 +680,7 @@ mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<
 ```
 Agent(
   subagent_type="<wybrany-krytyk>",
+  model="opus",
   description="Critic SIMPLE dla [TICKET-KEY]",
   prompt="Jestes Krytykiem w SIMPLE flow.
 

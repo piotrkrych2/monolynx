@@ -1,0 +1,113 @@
+{
+  "_meta": {
+    "command": "gh pr view 142115 -R kubernetes/kubernetes --json number,state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,url",
+    "tool_version": "2.100.0",
+    "captured": "2026-09-15",
+    "note": "StatusContext PENDING + SUCCESS, bez FAILURE."
+  },
+  "output": {
+    "baseRefName": "master",
+    "headRefName": "enable-defaults-linter",
+    "headRefOid": "60086ef07638a1361070de36fb77ef93ac4bd8e4",
+    "isDraft": false,
+    "mergeStateStatus": "BLOCKED",
+    "mergeable": "MERGEABLE",
+    "number": 142115,
+    "reviewDecision": "",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "StatusContext",
+        "context": "tide",
+        "startedAt": "2026-09-15T06:21:30Z",
+        "state": "PENDING",
+        "targetUrl": "https://prow.k8s.io/pr?query=is%3Apr+repo%3Akubernetes%2Fkubernetes+author%3AitzPranshul+head%3Aenable-defaults-linter"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "EasyCLA",
+        "startedAt": "2026-09-15T06:20:20Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://easycla.lfx.linuxfoundation.org/#/?version=2"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-cmd",
+        "startedAt": "2026-09-15T06:29:40Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-cmd/2099745095015206912"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-conformance-kind-ga-only-parallel",
+        "startedAt": "2026-09-15T06:36:41Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-conformance-kind-ga-only-parallel/2099745096340606976"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-dependencies",
+        "startedAt": "2026-09-15T06:22:03Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-dependencies/2099745095422054400"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-e2e-gce",
+        "startedAt": "2026-09-15T07:15:46Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-e2e-gce/2099745095845679104"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-e2e-kind",
+        "startedAt": "2026-09-15T06:45:59Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-e2e-kind/2099745096265109504"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-integration",
+        "startedAt": "2026-09-15T06:52:43Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-integration/2099745096130891776"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-linter-hints",
+        "startedAt": "2026-09-15T06:29:45Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-linter-hints/2099745096839729152"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-node-e2e-containerd",
+        "startedAt": "2026-09-15T07:07:37Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-node-e2e-containerd/2099745096596459520"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-typecheck",
+        "startedAt": "2026-09-15T06:22:35Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-typecheck/2099745096680345600"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-unit",
+        "startedAt": "2026-09-15T06:44:05Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-unit/2099745096428687360"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "pull-kubernetes-verify",
+        "startedAt": "2026-09-15T06:46:33Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142115/pull-kubernetes-verify/2099745096768425984"
+      }
+    ],
+    "url": "https://github.com/kubernetes/kubernetes/pull/142115"
+  }
+}
