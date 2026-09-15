@@ -452,7 +452,9 @@ def _write_queue(path: Path, queue: dict[str, Any]) -> None:
 def _with_next(queue: dict[str, Any]) -> dict[str, Any]:
     # "merging" idzie przed "pending": po merge kolejka czeka na zielone CI
     # brancha docelowego, zanim wezmie nastepny MR.
-    active = [item for item in queue["items"] if item["status"] in ("merging", "pending")]
+    merging = [item for item in queue["items"] if item["status"] == "merging"]
+    pending = [item for item in queue["items"] if item["status"] == "pending"]
+    active = merging + pending
     return {**queue, "next": active[0]["ref"] if active else None}
 
 
