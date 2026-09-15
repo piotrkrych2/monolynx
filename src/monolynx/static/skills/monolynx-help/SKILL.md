@@ -199,6 +199,26 @@ Skrypt leży w katalogu cache pluginu, nie w Twoim repozytorium, a jego ścieżk
 numer wersji pluginu - po aktualizacji rozwiń ją ponownie. Pełna lista flag:
 `sprint_run.sh --help`.
 
+### 9. `/monolynx:mr-queue [!iid | #pr | URL ...]`
+
+**Kolejka merge** - jeden tick na pierwszym niezmergowanym MR (GitLab, `glab`) albo PR
+(GitHub, `gh`) z kolejki, dokładnie jedno działanie w kolejności:
+
+1. CI czerwone -> poprawka w tymczasowym worktree brancha MR, push (maks. 2 rundy),
+2. konflikt -> merge brancha docelowego do brancha MR, push, i znowu CI,
+3. brak approve -> pyta Ciebie (approve z czatu wiąże się z SHA; w tle: `MR-QUEUE STOP`),
+4. gotowe -> merge z blokadą na SHA, potem czeka na zielone CI brancha docelowego
+   i dopiero wtedy bierze kolejny MR/PR.
+
+Bez argumentów sam układa kolejkę z otwartych MR/PR (MR oparty o branch innego MR idzie
+po nim, reszta od najstarszego, drafty pominięte) i daje ją do akceptacji. Argumenty
+nadpisują kolejność. Stan leży w `.git/monolynx/mr-queue.json`, werdykty liczy skrypt
+`mr_queue_state.py` z JSON-a `glab` / `gh`. Checkout użytkownika zostaje nietknięty.
+
+Merge bez pytania tylko przy `MONOLYNX_AUTOMERGE=true`; approve daje zawsze człowiek
+(hook `bash_guard.py`). Pętla: `/loop 10m /monolynx:mr-queue`. Ostatnia linia ticka:
+`MR-QUEUE: remaining=... current=... verdict=... done=...`.
+
 ---
 
 ## Wiki
@@ -315,6 +335,8 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_SPRINT_RUN_MODE` | - | Tryb ticka `/monolynx:sprint-run`: `batch` ustawia sam `sprint_run.sh`, brak zmiennej (i kazda inna wartosc) znaczy tryb interaktywny |
 | `MONOLYNX_SPRINT_PERMISSION_MODE` | wartosc z komendy startu sesji w skillu `sprint-run` | Tryb uprawnien sesji roboczych `--bg` startowanych przez dyspozytora |
 | `MONOLYNX_SPRINT_MODEL` | `opus` | Model sesji roboczych `--bg` (`/monolynx:work <KEY>`) startowanych przez dyspozytora; `fable` tylko swiadomie, dla koordynatora ticketu |
+| `MONOLYNX_AUTOMERGE` | `false` | `true` - `/monolynx:mr-queue` merguje MR/PR bez pytania (tylko przy werdykcie `ready`); `false` - hook pyta o każdy merge |
+| `MONOLYNX_MERGE_METHOD` | `merge` | Metoda merge w `/monolynx:mr-queue`: `merge`, `squash` albo `rebase` |
 | `MONOLYNX_SPRINT_TICK_MODEL` | `opus` | Model procesu `claude -p`, w ktorym `sprint_run.sh` odpala tick dyspozytora oraz `--close` (`sprint-end`, `retro`) |
 | `MONOLYNX_MUTATION_BUDGET` | `600` | Budżet czasu przebiegu `/monolynx:mutation-check` w sekundach. Maksimum 600 (limit narzędzia Bash); większa wartość jest skracana do 600 |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goly imperatyw dostaje skill `brief` z propozycja kontraktu; `block` - prompt odrzucony z odeslaniem do `/monolynx:brief`; `off` - wylaczony |

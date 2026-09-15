@@ -1,0 +1,40 @@
+{
+  "_meta": {
+    "command": "gh run list -R cli/cli --status failure --json databaseId,status,conclusion,name,headBranch,headSha,event,workflowName -L 3",
+    "tool_version": "2.100.0",
+    "captured": "2026-09-15",
+    "note": "Runy zakonczone porazka: status=completed, conclusion=failure."
+  },
+  "output": [
+    {
+      "conclusion": "failure",
+      "databaseId": 34857793347,
+      "event": "schedule",
+      "headBranch": "trunk",
+      "headSha": "38316c1c4f275030e3df6666382922e75410d68b",
+      "name": "Dependabot PR Triage (skills-driven)",
+      "status": "completed",
+      "workflowName": "Dependabot PR Triage (skills-driven)"
+    },
+    {
+      "conclusion": "failure",
+      "databaseId": 34856988782,
+      "event": "pull_request",
+      "headBranch": "fix/issue-14386",
+      "headSha": "7a6e524af72d271c9e1dbd646413f428a9e74868",
+      "name": "Unit and Integration Tests",
+      "status": "completed",
+      "workflowName": "Unit and Integration Tests"
+    },
+    {
+      "conclusion": "failure",
+      "databaseId": 34856988778,
+      "event": "pull_request",
+      "headBranch": "fix/issue-14386",
+      "headSha": "7a6e524af72d271c9e1dbd646413f428a9e74868",
+      "name": "Code Scanning",
+      "status": "completed",
+      "workflowName": "Code Scanning"
+    }
+  ]
+}

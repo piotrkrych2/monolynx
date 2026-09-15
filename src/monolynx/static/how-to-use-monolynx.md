@@ -181,6 +181,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Set up lint and test commands | `monolynx:project-toolchain` (run once per project) |
 | Find the test cases your suite is missing | `monolynx:mutation-check [module]` - runs the mutation tool from the `toolchain` wiki page under a hard time budget (by default only the diff against the baseline branch), then turns surviving mutants into acceptance criteria on a ticket or into backlog tickets. Diff mode reports the survivor count, not a percentage; the score is never a gate |
 | Run a whole sprint in background sessions | `monolynx:sprint-run [slots]` - one idempotent tick: starts a named background `monolynx:work` session per ticket (own worktree), collects finished ones, reports those waiting for a human. Loop it with `/loop 15m /monolynx:sprint-run` or the plugin script `sprint_run.sh`. Requires `MONOLYNX_AUTOTEST`, `MONOLYNX_AUTOCOMMIT` and `MONOLYNX_AUTOPUSH` |
+| Merge MRs and PRs in a set order | `monolynx:mr-queue [!iid \| #pr \| URL ...]` - one idempotent tick on the first MR/PR in the queue: red CI -> fix in a temporary worktree and push; conflict -> merge the target branch and push; no approval -> ask you; ready -> merge and wait for green CI on the target branch before the next one. Without arguments it builds the queue from open MRs/PRs (stacked ones after their base, drafts skipped). Loop it with `/loop 10m /monolynx:mr-queue`; merges without a prompt only with `MONOLYNX_AUTOMERGE=true` |
 | Close a sprint | `monolynx:sprint-end` (INGEST work logs, LINT, retro, close the sprint) |
 | Turn repeated corrections into rules | `monolynx:retro` (reviewer remarks, STOPs and escalations grouped per ticket, with a rule / rubric / constitution proposal for each) |
 | Define your team | `.claude/agents/*.md` (Claude Code) or `AGENTS.md` (Codex) - per project, not shipped by Monolynx |
@@ -191,7 +192,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Add a non-blocking mutation-testing CI step | `monolynx:create-mutation-ci-script` - diff mode on MR/PR, report artifact, baseline ratchet (does not install the mutation tool) |
 | See how the skills work | `monolynx:help` |
 
-Full set of 20 skills: `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`, `monolynx:create-mutation-ci-script`.
+Full set of 21 skills: `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:mr-queue`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`, `monolynx:create-mutation-ci-script`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
 

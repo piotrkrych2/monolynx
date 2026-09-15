@@ -136,7 +136,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Claude Code skills - one prompt, zero setup",
         "skills_sub": (
-            "The flagship AI tool install_monolynx_skills drops all 20 ticket and wiki"
+            "The flagship AI tool install_monolynx_skills drops all 21 ticket and wiki"
             " skills into any project connected to Monolynx - Claude Code, Codex or Cursor."
             " No ZIPs, no manual placeholder replacement."
         ),
@@ -146,7 +146,8 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "skills_what_1": (
             "/monolynx:brief, /monolynx:ticket-create, /monolynx:ticket-review, /monolynx:work, /monolynx:work-simple,"
             " /monolynx:resume, /monolynx:sprint-run, /monolynx:sprint-end, /monolynx:retro - the work contract, ticket workflow and sprint retro;"
-            " /monolynx:sprint-run dispatches the whole sprint into named background sessions, one ticket per session"
+            " /monolynx:sprint-run dispatches the whole sprint into named background sessions, one ticket per session;"
+            " /monolynx:mr-queue walks MRs and PRs to merge in order: green CI, no conflict, approval, then merge"
         ),
         "skills_what_2": (
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG"
@@ -200,7 +201,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Skille Claude Code - jeden prompt, zero konfiguracji",
         "skills_sub": (
-            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 20 skilli"
+            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 21 skilli"
             " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - w Claude Code,"
             " Codeksie lub Cursorze. Bez ZIP-ów i ręcznego podmieniania placeholderów."
         ),
@@ -210,7 +211,8 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "skills_what_1": (
             "/monolynx:brief, /monolynx:ticket-create, /monolynx:ticket-review, /monolynx:work, /monolynx:work-simple,"
             " /monolynx:resume, /monolynx:sprint-run, /monolynx:sprint-end, /monolynx:retro - kontrakt pracy, workflow ticketowy i retro sprintu;"
-            " /monolynx:sprint-run rozdziela cały sprint na nazwane sesje w tle, jeden ticket na sesję"
+            " /monolynx:sprint-run rozdziela cały sprint na nazwane sesje w tle, jeden ticket na sesję;"
+            " /monolynx:mr-queue prowadzi MR-y i PR-y do merge po kolei: zielone CI, brak konfliktu, approve, merge"
         ),
         "skills_what_2": (
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG"

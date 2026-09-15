@@ -449,7 +449,77 @@ class TestGlabMrCreate:
         assert_ask(exit_code, decision, reason_substr="AUTOPUSH")
 
 
-TEST_LINT_KEYWORDS = ["pytest", "ruff", "mypy", "eslint", "playwright", "makemessages"]
+MR_MERGE_COMMANDS = [
+    pytest.param("glab mr merge 70 --auto-merge=false --sha abc -y", id="glab_mr_merge"),
+    pytest.param("glab mr accept 70 -y", id="glab_mr_accept_alias"),
+    pytest.param("gh pr merge 15 --merge --match-head-commit abc", id="gh_pr_merge"),
+]
+
+MR_APPROVE_COMMANDS = [
+    pytest.param("glab mr approve 70", id="glab_mr_approve"),
+    pytest.param("gh pr review 15 --approve", id="gh_pr_review_approve"),
+    pytest.param("gh pr review 15 -a", id="gh_pr_review_short_a"),
+]
+
+
+@pytest.mark.unit
+class TestMrMergeAndApprove:
+    """Skill mr-queue: merge subagent -> deny, sesja glowna -> ask chyba ze
+    MONOLYNX_AUTOMERGE=true; approve zawsze ask dla sesji glownej, deny dla subagenta."""
+
+    @pytest.mark.parametrize("cmd", MR_MERGE_COMMANDS)
+    def test_subagent_merge_denied_even_with_automerge(self, cmd):
+        payload = bash_payload(cmd, **SUBAGENT)
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOMERGE": "true"})
+        assert_deny(exit_code, decision, reason_substr="Subagent")
+
+    @pytest.mark.parametrize("cmd", MR_MERGE_COMMANDS)
+    def test_main_session_merge_without_flag_asks(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOMERGE")
+
+    @pytest.mark.parametrize("cmd", MR_MERGE_COMMANDS)
+    def test_main_session_merge_with_automerge_allows(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra={**MAIN_SESSION, "MONOLYNX_AUTOMERGE": "true"})
+        assert_allow(exit_code, decision)
+
+    def test_sprint_run_mode_turns_merge_ask_into_deny(self):
+        payload = bash_payload("glab mr merge 70 -y")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_SPRINT_RUN": "1"})
+        assert_deny(exit_code, decision, reason_substr="MONOLYNX_SPRINT_RUN=1")
+
+    @pytest.mark.parametrize("cmd", MR_APPROVE_COMMANDS)
+    def test_subagent_approve_denied(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="Subagent")
+
+    @pytest.mark.parametrize("cmd", MR_APPROVE_COMMANDS)
+    def test_main_session_approve_asks_even_with_automerge(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra={**MAIN_SESSION, "MONOLYNX_AUTOMERGE": "true"})
+        assert_ask(exit_code, decision, reason_substr="Approve")
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "glab mr view 70 -F json",
+            "gh pr view 15 --json mergeable",
+            "gh pr review 15 --comment -b 'uwagi'",
+            "git merge origin/main",
+            "glab mr merge-train-status",
+        ],
+    )
+    def test_read_only_and_git_merge_are_not_caught(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_compound_merge_with_automerge_still_checks_push(self):
+        """Galaz merge przy AUTOMERGE=true nie konczy hooka - push dalej pyta o AUTOPUSH."""
+        payload = bash_payload("git push origin feat-x && glab mr merge 70 -y")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOMERGE": "true"})
+        assert_ask(exit_code, decision, reason_substr="AUTOPUSH")
+
+
+TEST_LINT_KEYWORDS =["pytest", "ruff", "mypy", "eslint", "playwright", "makemessages"]
 
 
 @pytest.mark.unit

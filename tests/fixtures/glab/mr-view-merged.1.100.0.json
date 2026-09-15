@@ -1,0 +1,171 @@
+{
+  "_meta": {
+    "command": "glab mr view 69 -F json",
+    "tool_version": "1.100.0",
+    "captured": "2026-09-15",
+    "note": "MR zmergowany: state=merged, detailed_merge_status=not_open, head_pipeline.status=success."
+  },
+  "output": {
+    "id": 531534535,
+    "iid": 69,
+    "target_branch": "main",
+    "source_branch": "worktree-MON-152",
+    "project_id": 79777900,
+    "title": "MON-152: wpięcie mutation-check w work, work-simple i sprint-end (plugin 1.12.0)",
+    "state": "merged",
+    "imported": false,
+    "imported_from": "none",
+    "created_at": "2026-09-13T21:32:50.061Z",
+    "updated_at": "2026-09-13T23:33:54.353Z",
+    "upvotes": 0,
+    "downvotes": 0,
+    "author": {
+      "id": 2344487,
+      "username": "piotrkrych",
+      "name": "Piotr Krych",
+      "state": "active",
+      "created_at": null,
+      "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/2344487/avatar.png?v=1789430403",
+      "web_url": "https://gitlab.com/piotrkrych"
+    },
+    "assignee": null,
+    "assignees": [],
+    "reviewers": [],
+    "source_project_id": 79777900,
+    "target_project_id": 79777900,
+    "labels": [],
+    "label_details": null,
+    "description": "- MON-149: parser raportów mutacyjnych do wspólnego modelu survivora (plugin 1.9.0)  \n- MON-150: skill /monolynx:mutation-check - przebieg diffowy i survivorzy jako praca (plugin 1.10.0)  \n- MON-152: plugin 1.11.0 - wpiecie mutation-check w work, work-simple i sprint-end",
+    "draft": false,
+    "milestone": null,
+    "merge_when_pipeline_succeeds": false,
+    "detailed_merge_status": "not_open",
+    "merge_user": {
+      "id": 2344487,
+      "username": "piotrkrych",
+      "name": "Piotr Krych",
+      "state": "active",
+      "created_at": null,
+      "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/2344487/avatar.png?v=1789430403",
+      "web_url": "https://gitlab.com/piotrkrych"
+    },
+    "merged_at": "2026-09-13T23:33:53.85Z",
+    "merge_after": null,
+    "prepared_at": "2026-09-13T21:32:51.418Z",
+    "closed_by": null,
+    "closed_at": null,
+    "sha": "e8e8423dbe2e8aa4333af5a850a61e3d3c5a03b5",
+    "merge_commit_sha": "8f7a62c851339643349e8afeefec1285b35113f5",
+    "squash_commit_sha": "",
+    "user_notes_count": 0,
+    "should_remove_source_branch": true,
+    "force_remove_source_branch": true,
+    "allow_collaboration": false,
+    "allow_maintainer_to_push": false,
+    "web_url": "https://gitlab.com/piotrkrych/monolynx/-/merge_requests/69",
+    "references": {
+      "short": "!69",
+      "relative": "!69",
+      "full": "piotrkrych/monolynx!69"
+    },
+    "discussion_locked": false,
+    "time_stats": {
+      "human_time_estimate": "",
+      "human_total_time_spent": "",
+      "time_estimate": 0,
+      "total_time_spent": 0
+    },
+    "squash": false,
+    "squash_on_merge": false,
+    "task_completion_status": {
+      "count": 0,
+      "completed_count": 0
+    },
+    "has_conflicts": false,
+    "blocking_discussions_resolved": true,
+    "merged_by": {
+      "id": 2344487,
+      "username": "piotrkrych",
+      "name": "Piotr Krych",
+      "state": "active",
+      "created_at": null,
+      "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/2344487/avatar.png?v=1789430403",
+      "web_url": "https://gitlab.com/piotrkrych"
+    },
+    "merge_error": "",
+    "subscribed": true,
+    "changes_count": "10",
+    "user": {
+      "can_merge": true
+    },
+    "latest_build_started_at": "2026-09-13T22:50:53.119Z",
+    "latest_build_finished_at": "2026-09-13T23:33:26.462Z",
+    "first_deployed_to_production_at": null,
+    "pipeline": {
+      "id": 2845210886,
+      "iid": 170,
+      "project_id": 79777900,
+      "status": "success",
+      "source": "merge_request_event",
+      "ref": "refs/merge-requests/69/head",
+      "sha": "e8e8423dbe2e8aa4333af5a850a61e3d3c5a03b5",
+      "name": "",
+      "web_url": "https://gitlab.com/piotrkrych/monolynx/-/pipelines/2845210886",
+      "updated_at": "2026-09-13T23:33:26.473Z",
+      "created_at": "2026-09-13T22:49:31.621Z"
+    },
+    "head_pipeline": {
+      "id": 2845210886,
+      "iid": 170,
+      "project_id": 79777900,
+      "status": "success",
+      "source": "merge_request_event",
+      "ref": "refs/merge-requests/69/head",
+      "name": "",
+      "sha": "e8e8423dbe2e8aa4333af5a850a61e3d3c5a03b5",
+      "before_sha": "e8e8423dbe2e8aa4333af5a850a61e3d3c5a03b5",
+      "tag": false,
+      "yaml_errors": "",
+      "user": {
+        "id": 2344487,
+        "username": "piotrkrych",
+        "name": "Piotr Krych",
+        "state": "active",
+        "created_at": null,
+        "avatar_url": "https://gitlab.com/uploads/-/system/user/avatar/2344487/avatar.png?v=1789430403",
+        "web_url": "https://gitlab.com/piotrkrych"
+      },
+      "updated_at": "2026-09-13T23:33:26.473Z",
+      "created_at": "2026-09-13T22:49:31.621Z",
+      "started_at": "2026-09-13T22:50:53.119Z",
+      "finished_at": "2026-09-13T23:33:26.462Z",
+      "committed_at": null,
+      "duration": 1481,
+      "queued_duration": 81,
+      "coverage": "91.29",
+      "web_url": "https://gitlab.com/piotrkrych/monolynx/-/pipelines/2845210886",
+      "detailed_status": {
+        "icon": "status_success",
+        "text": "Passed",
+        "label": "passed",
+        "group": "success",
+        "tooltip": "passed",
+        "has_details": true,
+        "details_path": "/piotrkrych/monolynx/-/pipelines/2845210886",
+        "illustration": {
+          "image": ""
+        },
+        "favicon": "/assets/ci_favicons/favicon_status_success-8451333011eee8ce9f2ab25dc487fe24a8758c694827a582f17f42b0a90446a2.png"
+      }
+    },
+    "diff_refs": {
+      "base_sha": "3fbac130b91404122014dbcc54eccd1ad25fa678",
+      "head_sha": "e8e8423dbe2e8aa4333af5a850a61e3d3c5a03b5",
+      "start_sha": "3fbac130b91404122014dbcc54eccd1ad25fa678"
+    },
+    "rebase_in_progress": false,
+    "diverged_commits_count": 0,
+    "first_contribution": false,
+    "work_in_progress": false
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "_meta": {
+    "command": "glab api projects/piotrkrych%2Fmonolynx/merge_requests/70/approvals",
+    "tool_version": "1.100.0",
+    "captured": "2026-09-15",
+    "note": "Projekt bez regul approve: approvals_required=0 i approved=true, ale approved_by=[] - nikt nie zatwierdzil. approved=true NIE jest dowodem approve."
+  },
+  "output": {
+    "id": 532129755,
+    "iid": 70,
+    "project_id": 79777900,
+    "title": "feat(plugin): jawny model dla każdej roli sprintu (1.13.0)",
+    "description": "## Problem\n\nSprint odpalony przez `sprint_run.sh` szedł na domyślnym modelu konta (Fable 5.1, najdroższy). `claude -p` i `claude --bg` bez `--model` biorą model domyślny, a subagent bez `model` dziedziczy model sesji koordynatora.\n\n## Zmiany\n\n- **`sprint_run.sh`**: tick i `--close` przez `claude -p --model \"${MONOLYNX_SPRINT_TICK_MODEL:-opus}\"`; eksport `MONOLYNX_SPRINT_MODEL` (domyślnie `opus`); oba modele w linii `start:` logu.\n- **`/monolynx:sprint-run`**: sesje `--bg` z `--model \"${MONOLYNX_SPRINT_MODEL:-opus}\"`. Fable dla koordynatora ticketu tylko przez jawne `MONOLYNX_SPRINT_MODEL=fable`.\n- **Nazwy sesji niosą model**: `<slug>-<KEY>-<model>` i `<slug>-sprint-run-<model>`. `sprint_run_state.py` dopasowuje `<slug>-<KEY>` z dowolnym sufiksem modelu albo bez niego, więc zmiana modelu między tickami (i sesje nazwane po staremu) nie startuje duplikatu sesji; `MON-1` nadal nie łapie `MON-10-opus`.\n- **`/monolynx:work` i `/monolynx:work-simple`**: sekcja \"Model subagentów\" - Researcher `sonnet`, developer z `model:` we frontmatter albo `sonnet`, krytyk `opus`; obowiązuje też przy re-runach.\n- **Dokumentacja**: sekcja \"Modele\" w `plugin/README.md` (rola -> model -> jak zmienić), zmienne w tabelach README i `help`, `CLAUDE.md`, `agent-bootstrap.md`, kopie w `static/skills`.\n- **Wersja pluginu 1.13.0**.\n\n## Testy\n\n- `test_sprint_run_sh.py`: domyślny `--model opus` dla ticka, `--close` i sesji; nadpisanie przez obie zmienne; nazwa `<slug>-sprint-run-<model>`.\n- `test_sprint_run_state.py`: sufiks modelu pasuje, `MON-1` nie łapie `MON-10-opus`, przy różnych modelach wygrywa najnowsza sesja.\n- Lokalnie 119 passed (przed zmianą nazwy sesji dyspozytora; ta zmiana weryfikowana w CI).\n\n## Do sprawdzenia po merge\n\nNa pierwszym ticku potwierdzić, że `claude --bg` stosuje `--model` (`claude attach <id>`).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "state": "opened",
+    "created_at": "2026-09-15T07:35:20.422Z",
+    "updated_at": "2026-09-15T07:39:57.123Z",
+    "merge_status": "can_be_merged",
+    "approved": true,
+    "approvals_required": 0,
+    "approvals_left": 0,
+    "require_password_to_approve": false,
+    "approved_by": [],
+    "suggested_approvers": [],
+    "approvers": [],
+    "approver_groups": [],
+    "user_has_approved": false,
+    "user_can_approve": false,
+    "approval_rules_left": [],
+    "has_approval_rules": false,
+    "merge_request_approvers_available": false,
+    "multiple_approval_rules_available": false,
+    "invalid_approvers_rules": []
+  }
+}
