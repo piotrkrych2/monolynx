@@ -141,7 +141,7 @@ By default the skills **print commands instead of running them**. Environment va
 
 In a chat client without skills, you can still call the underlying MCP tools in the same order: `get_ticket`, `update_ticket(status="in_progress")`, `search_wiki`/`query_graph`, do the work, `add_comment`, `log_time`, `update_acceptance_criterion`, `update_ticket(status="in_review")`.
 
-**The two skills that matter most are `monolynx:ticket-create` and `monolynx:work`.** Everything else (`brief`, `resume`, `project-toolchain`, `mutation-check`, `search`, `ticket-review`, `wiki-ingest`, `wiki-lint`, `sprint-end`, `retro`, `graph-sync`) supports that core loop.
+**The two skills that matter most are `monolynx:ticket-create` and `monolynx:work`.** Everything else (`setup`, `brief`, `resume`, `project-toolchain`, `mutation-check`, `search`, `ticket-review`, `wiki-ingest`, `wiki-lint`, `sprint-end`, `retro`, `graph-sync`) supports that core loop.
 
 ---
 
@@ -172,6 +172,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 |---|---|
 | Get full power (skills + tools) | Marketplace plugin in Claude Code: `/plugin marketplace add ...` then `/plugin install monolynx@monolynx` + set `mcp_token`. This is marketplace + MCP together. |
 | Connect a chat client (Claude.ai / ChatGPT) | MCP connector only: `https://your-instance/mcp` + Bearer token. Tools but no skills - replicate the flow manually. |
+| Check what a project is missing | `monolynx:setup` - read-only checklist (no arguments): project slug, `toolchain` wiki page, LLM Wiki, code graph and mutation testing in CI, `MONOLYNX_*` flags. Marks each item `OK` or `BRAK` (missing) and, with your consent, runs the fixing skill (`project-toolchain`, `wiki-init`, `create-graph-ci-script`, `create-mutation-ci-script`); a project without CI can run `graph-sync` itself instead of the graph CI step. Autonomy flags are only reported, never set |
 | Understand the project | `search_wiki`, `get_wiki_page` (read the `constitution` page if present) |
 | Add a task | `monolynx:ticket-create` (or replicate its steps with MCP tools) |
 | Review a ticket before starting | `monolynx:ticket-review` |
@@ -190,9 +191,9 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Keep the wiki healthy | `monolynx:wiki-lint` |
 | Generate a code-graph CI script | `monolynx:create-graph-ci-script` |
 | Add a non-blocking mutation-testing CI step | `monolynx:create-mutation-ci-script` - diff mode on MR/PR, report artifact, baseline ratchet (does not install the mutation tool) |
-| See how the skills work | `monolynx:help` |
+| See which skill to pick | `monolynx:help` - a map of all skills in 6 groups (Setup, Planning, Work, Integration, Sprint, Wiki) plus the manual and autopilot work paths |
 
-Full set of 21 skills: `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:mr-queue`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`, `monolynx:create-mutation-ci-script`.
+Full set of 22 skills: `monolynx:setup`, `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:mr-queue`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`, `monolynx:create-mutation-ci-script`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
 

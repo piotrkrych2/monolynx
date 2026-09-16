@@ -55,6 +55,7 @@ Jesli wszystko jest ustawione i `list_projects` dziala - napisz to wprost i prze
 
 Zaproponuj uzytkownikowi konkretny start. Zasugeruj skille dobrane do typowych pierwszych krokow:
 
+- **`/monolynx:setup`** - checklista konfiguracji projektu (OK/BRAK); za zgodą uruchamia skille naprawcze z listy poniżej, więc to naturalny pierwszy krok.
 - **`/monolynx:project-toolchain`** - wykryj komendy lint i testow projektu i zapisz je jako strone wiki `toolchain`; bez tego `work` nie zweryfikuje kodu przed zamknieciem ticketu.
 - **`/monolynx:create-graph-ci-script`** - wygeneruj skrypt CI, ktory synchronizuje graf zaleznosci kodu z Monolynx (dobry pierwszy krok w repo bez grafu).
 - **`/monolynx:create-mutation-ci-script`** - wygeneruj nieblokujacy krok CI z testami mutacyjnymi w trybie diffowym na MR/PR, z raportem jako artefaktem i zapadka baseline (narzedzia mutacyjnego nie instaluje).
@@ -66,8 +67,9 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 
 ---
 
-## Komplet 20 skilli `/monolynx:*`
+## Komplet 22 skilli `/monolynx:*`
 
+- **`/monolynx:setup`** - checklista konfiguracji projektu: slug, strona wiki `toolchain`, LLM Wiki, graf i mutacje w CI, flagi `MONOLYNX_*`. Pokazuje OK/BRAK i za zgodą uruchamia skill naprawczy; sam niczego nie zmienia, flagi autonomii tylko raportuje. Dobry pierwszy krok w nowym projekcie.
 - **`/monolynx:brief`** - kontrakt epizodu bez ticketu: gotowe = obserwowalny stan, czego nie ruszac, przed czym sie zatrzymac; ENTER = start pracy.
 - **`/monolynx:work`** - podejmij ticket pelnym flow: research + kontrakt autonomii + zespol agentow + tryb defektu (najpierw czerwony test) + rekoncyliacja z kryteriami + obowiazkowy krytyk + lint i testy przed zamknieciem.
 - **`/monolynx:work-simple`** - uproszczony flow dla malych ticketow (do 3 SP): 1 dev + krytyk, bez Agent Teams; ten sam kontrakt i tryb defektu.
@@ -85,7 +87,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 - **`/monolynx:wiki-ingest`** - zintegruj nowe zrodlo (plik, URL, wklejona tresc) z wiki, linkujac wikilinkami.
 - **`/monolynx:wiki-lint`** - audyt zdrowia wiki: sieroty, martwe linki, sprzecznosci, luki.
 - **`/monolynx:wiki-sync-merge`** - post-merge INGEST do wiki, uruchamiany po merge ticketow/PR do main.
-- **`/monolynx:help`** - przewodnik po skillach Monolynx i flow pracy z ticketami.
+- **`/monolynx:help`** - mapa skilli w 6 grupach (Setup, Planowanie, Praca, Integracja, Sprint, Wiki) z dwiema ścieżkami pracy: ręczną i autopilotem.
 - **`/monolynx:create-graph-ci-script`** - wygeneruj skrypt CI synchronizujacy graf zaleznosci kodu z Monolynx.
 - **`/monolynx:create-mutation-ci-script`** - wygeneruj nieblokujacy krok CI z testami mutacyjnymi: tryb diffowy na MR/PR, raport jako artefakt, zapadka baseline (score / baseline / delta).
 - **`/monolynx:graph-sync`** - zsynchronizuj graf zaleznosci lokalnie, bez CI (pierwsze zasilenie albo odswiezenie ad hoc).

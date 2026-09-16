@@ -7,7 +7,9 @@ metadata:
 
 Dokumentacja pod `plugin/` ma DWIE rozne konwencje diakrytykow:
 
-- `plugin/skills/*/SKILL.md` - **konwencja jest PER PLIK, nie globalna**. Starsze skille (help, work, work-simple, retro, resume, brief, sprint-end, ticket-*, graph-*, project-toolchain, wiki-init/lint) pisane BEZ polskich znakow; nowsze (sprint-run, wiki-sync-merge, search) maja **pelne diakrytyki**. Przed edycja sprawdz plik: `grep -c "[ąćęłńóśźż]" <plik>` i trzymaj sie tego, co juz w nim jest. Nie ujednolicaj cudzych plikow przy okazji.
+- `plugin/skills/*/SKILL.md` - **konwencja jest PER PLIK, nie globalna**. Starsze skille (work, work-simple, retro, resume, brief, sprint-end, ticket-*, graph-*, project-toolchain, wiki-init/lint) pisane BEZ polskich znakow; nowsze (sprint-run, mr-queue, wiki-sync-merge, search, help od MON-179) maja **pelne diakrytyki**.
+
+`help/SKILL.md` od MON-179 to mapa <= 100 linii (test `tests/unit/test_skill_counters.py`: limit linii, kazdy skill jako `/monolynx:<nazwa>`, pierwsza wzmianka to `/monolynx:setup`). Szczegoly skilli dopisuj do `plugin/README.md`, nie do help. Ten sam test pilnuje fraz licznikow: `**N skilli**` (README), `Komplet N skilli` (agent-bootstrap), `Full set of N skills:` + lista nazw (how-to-use), `Dostajesz N skilli` (mcp_guide), `all N ticket` / `wszystkie N skilli` (main.py). Przed edycja sprawdz plik: `grep -c "[ąćęłńóśźż]" <plik>` i trzymaj sie tego, co juz w nim jest. Nie ujednolicaj cudzych plikow przy okazji.
 - `plugin/README.md` i `plugin/.claude-plugin/plugin.json` - polski **Z pelnymi** diakrytykami. To dokumentacja dla czlowieka.
 
 Wspolne dla obu: **zero em-dash `-` (U+2014) i en-dash (U+2013)** - `scripts/validate_plugin_consistency.py` skanuje kazdy `.md` pod `plugin/` i wywala exit 1.
