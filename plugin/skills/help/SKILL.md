@@ -11,6 +11,8 @@ Wyświetl poniższą mapę użytkownikowi i zakończ. Nie wykonuj żadnych dodat
 
 ---
 
+**Zapamiętaj `/monolynx:next`** - odczytuje stan projektu i wskazuje 1-3 uzasadnione komendy; niczego nie uruchamia.
+
 **Nowy projekt? `/monolynx:setup`** - checklista konfiguracji, zanim weźmiesz pierwszy ticket.
 
 ## Setup
@@ -29,6 +31,8 @@ Wyświetl poniższą mapę użytkownikowi i zakończ. Nie wykonuj żadnych dodat
 - `/monolynx:brief [goly opis zadania, np. "napraw build na CI"]` - kontrakt pracy bez ticketu (gotowe / nie ruszać / stop przed), ENTER = start
 
 ## Praca
+
+- `/monolynx:next` - router read-only: git, ticket, sprint, sesje, MR i konfiguracja -> 1-3 komendy z uzasadnieniem oraz `NEXT: <komenda>`
 
 - `/monolynx:work [ticket-id lub klucz np. PROJ-12]` - ticket powyżej 3 SP: Researcher, zespół agentów, krytyk, lint i testy przed `in_review`
 - `/monolynx:work-simple [ticket-id]` - ticket do 3 SP: 1 dev + krytyk; eskaluje do `work` przy `SCOPE GREW`
