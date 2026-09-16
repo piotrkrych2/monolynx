@@ -172,6 +172,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 |---|---|
 | Get full power (skills + tools) | Marketplace plugin in Claude Code: `/plugin marketplace add ...` then `/plugin install monolynx@monolynx` + set `mcp_token`. This is marketplace + MCP together. |
 | Connect a chat client (Claude.ai / ChatGPT) | MCP connector only: `https://your-instance/mcp` + Bearer token. Tools but no skills - replicate the flow manually. |
+| Find the next step | `monolynx:next` - read-only router: checks git, ticket, sprint, sessions, MRs and configuration; recommends 1-3 commands with reasons and ends with `NEXT: <command>`. Does not run them or modify project state |
 | Check what a project is missing | `monolynx:setup` - read-only checklist (no arguments): project slug, `toolchain` wiki page, LLM Wiki, code graph and mutation testing in CI, `MONOLYNX_*` flags. Marks each item `OK` or `BRAK` (missing) and, with your consent, runs the fixing skill (`project-toolchain`, `wiki-init`, `create-graph-ci-script`, `create-mutation-ci-script`); a project without CI can run `graph-sync` itself instead of the graph CI step. Autonomy flags are only reported, never set |
 | Understand the project | `search_wiki`, `get_wiki_page` (read the `constitution` page if present) |
 | Add a task | `monolynx:ticket-create` (or replicate its steps with MCP tools) |
@@ -193,7 +194,7 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Add a non-blocking mutation-testing CI step | `monolynx:create-mutation-ci-script` - diff mode on MR/PR, report artifact, baseline ratchet (does not install the mutation tool) |
 | See which skill to pick | `monolynx:help` - a map of all skills in 6 groups (Setup, Planning, Work, Integration, Sprint, Wiki) plus the manual and autopilot work paths |
 
-Full set of 22 skills: `monolynx:setup`, `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:mr-queue`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`, `monolynx:create-mutation-ci-script`.
+Full set of 23 skills: `monolynx:next`, `monolynx:setup`, `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:mr-queue`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`, `monolynx:create-mutation-ci-script`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
 

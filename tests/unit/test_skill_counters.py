@@ -6,7 +6,7 @@ więc liczniki w kodzie i dokumentacji (main.py PL i EN, mcp_guide.html,
 how-to-use-monolynx.md, plugin/README.md, agent-bootstrap.md) rozjeżdżały się
 niezauważone (np. "20 skilli" w README przy 21 katalogach). Każdy z tych
 liczników musi być zgodny z liczbą katalogów, a plugin/skills/help/SKILL.md
-ma pozostać krótką mapą skilli w grupach, z '/monolynx:setup' jako pierwszą
+ma pozostać krótką mapą skilli w grupach, z '/monolynx:next' jako pierwszą
 wzmianką w treści.
 """
 
@@ -116,14 +116,14 @@ def test_help_skill_lists_every_skill_as_slash_command() -> None:
 
 
 @pytest.mark.unit
-def test_help_skill_mentions_setup_before_any_other_skill() -> None:
-    """Pierwsza wzmianka /monolynx: w treści help/SKILL.md (po frontmatterze) to /monolynx:setup - pierwsza linia mapy skilli."""
+def test_help_skill_mentions_next_before_any_other_skill() -> None:
+    """Pierwsza wzmianka /monolynx: w treści help/SKILL.md (po frontmatterze) to /monolynx:next - pierwsza linia mapy skilli."""
     content = HELP_SKILL_PATH.read_text(encoding="utf-8")
     body_match = re.match(r"^---\n.*?\n---\n(.*)$", content, re.DOTALL)
     assert body_match is not None, "plugin/skills/help/SKILL.md nie ma poprawnego frontmatteru YAML (brak zamykającego '---')."
     body = body_match.group(1)
     first_mention = re.search(r"/monolynx:[A-Za-z0-9-]+", body)
     assert first_mention is not None, "plugin/skills/help/SKILL.md nie ma żadnej wzmianki /monolynx: w treści po frontmatterze."
-    assert first_mention.group(0) == "/monolynx:setup", (
-        f"Pierwsza wzmianka /monolynx: w help/SKILL.md to {first_mention.group(0)!r}, oczekiwano '/monolynx:setup'."
+    assert first_mention.group(0) == "/monolynx:next", (
+        f"Pierwsza wzmianka /monolynx: w help/SKILL.md to {first_mention.group(0)!r}, oczekiwano '/monolynx:next'."
     )

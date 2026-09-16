@@ -67,7 +67,9 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 
 ---
 
-## Komplet 22 skilli `/monolynx:*`
+## Komplet 23 skilli `/monolynx:*`
+
+- **`/monolynx:next`** - pierwsza komenda do zapamiętania. Router read-only sprawdza git, ticket, sprint, sesje, MR i konfigurację; podaje 1-3 komendy z uzasadnieniem oraz `NEXT: <komenda>`, bez uruchamiania pracy.
 
 - **`/monolynx:setup`** - checklista konfiguracji projektu: slug, strona wiki `toolchain`, LLM Wiki, graf i mutacje w CI, flagi `MONOLYNX_*`. Pokazuje OK/BRAK i za zgodą uruchamia skill naprawczy; sam niczego nie zmienia, flagi autonomii tylko raportuje. Dobry pierwszy krok w nowym projekcie.
 - **`/monolynx:brief`** - kontrakt epizodu bez ticketu: gotowe = obserwowalny stan, czego nie ruszac, przed czym sie zatrzymac; ENTER = start pracy.

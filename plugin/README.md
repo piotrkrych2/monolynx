@@ -2,7 +2,7 @@
 
 Plugin Monolynx pakuje w jeden, instalowalny zestaw to, czego potrzebujesz, żeby pracować z platformą Monolynx bezpośrednio z Claude Code:
 
-- **22 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (checklista konfiguracji projektu, kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, dyspozytor sprintu w sesjach w tle, kolejka merge MR/PR, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, testy mutacyjne zamieniane na pracę, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, mapa skilli, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu, generowanie nieblokującego kroku CI z testami mutacyjnymi),
+- **23 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (checklista konfiguracji projektu, kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, dyspozytor sprintu w sesjach w tle, kolejka merge MR/PR, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, testy mutacyjne zamieniane na pracę, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, mapa skilli, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu, generowanie nieblokującego kroku CI z testami mutacyjnymi),
 - **7 agentów** wyspecjalizowanych w rolach zespołu (backend, frontend, baza danych, DevOps, QA, code review, dokumentacja),
 - **zdalny serwer MCP** Monolynx (HTTP, autoryzacja Bearer), który udostępnia narzędzia do Scrum, 500ki, Monitoringu, Wiki, Połączeń i Planu pracy.
 
@@ -40,7 +40,7 @@ Wskaż adres repozytorium z `marketplace.json`:
 /plugin install monolynx@monolynx
 ```
 
-Po instalacji Claude Code poprosi o uzupełnienie konfiguracji (`userConfig`). Sprawdź dostępność komend wpisując `/monolynx:help` - wyświetla mapę skilli w grupach. W nowym projekcie zacznij od `/monolynx:setup`: checklista pokaże, czego brakuje w konfiguracji.
+Po instalacji Claude Code poprosi o uzupełnienie konfiguracji (`userConfig`). Zacznij od `/monolynx:next`: odczyta stan projektu i wskaże kolejny krok bez wykonywania zmian. Sprawdź dostępność komend wpisując `/monolynx:help` - wyświetla mapę skilli w grupach. W nowym projekcie zacznij od `/monolynx:setup`: checklista pokaże, czego brakuje w konfiguracji.
 
 ## Konfiguracja (`userConfig`)
 
@@ -101,6 +101,7 @@ Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin ob
 
 | Komenda | Opis |
 |---------|------|
+| `/monolynx:next` | Router read-only bez argumentów: sprawdza git, bieżący ticket, aktywny sprint, sesje, MR i konfigurację. Zwraca 1-3 komendy z uzasadnieniem i linię `NEXT: <komenda>`. Nie uruchamia polecanych skilli, nie zmienia ticketów ani konfiguracji. |
 | `/monolynx:setup` | Checklista konfiguracji projektu, bez argumentów: slug, strona wiki `toolchain`, metoda LLM Wiki, graf zależności i testy mutacyjne w CI, flagi `MONOLYNX_*`. Każdą pozycję pokazuje jako OK albo BRAK i za zgodą uruchamia skill naprawczy (`/monolynx:project-toolchain`, `/monolynx:wiki-init`, `/monolynx:create-graph-ci-script`, `/monolynx:create-mutation-ci-script`); projekt bez CI może zamiast grafu w CI sam uruchomić `/monolynx:graph-sync`. Sam niczego nie zmienia; flagi autonomii tylko raportuje, nie ustawia ich. Pierwszy krok w nowym projekcie. |
 | `/monolynx:brief` | Kontrakt epizodu bez ticketu (konfiguracja, investigation, docs): w jednej turze ustala "gotowe" jako obserwowalny stan, "nie ruszać" i prawa decyzyjne (sam / stop przed). ENTER = akceptacja i start pracy w tej samej turze. Działa bez MCP. |
 | `/monolynx:work` | Podejmij zadanie z aktualnego sprintu: walidacja brancha, wznowienie przerwanej pracy, tryb defektu (mechanizm + test regresyjny przed fixem), research, dobór zespołu agentów, kontrakt autonomii (STOP CONDITIONS w promptach), praca równoległa, rekoncyliacja raportów, obowiązkowy krytyk z regułami do pamięci agentów, pełny lint/test przed `in_review`. Raportuje przebieg pracy do modułu Pipelines (obserwowalność): pipeline `ticket_work` ze stepami research → coding → wrap-up, job per agent, log każdego agenta jako strona wiki. Raportowanie best-effort - nie blokuje pracy. Po zielonym lincie i testach, przed krytykiem, proponuje diffowy przebieg `/monolynx:mutation-check` dla większych ticketów (od 5 SP albo 4 zmienionych plików z kodem); survivorzy trafiają jako kryteria akceptacji do bieżącego ticketu. Propozycja, nie automat. |
@@ -423,6 +424,8 @@ Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkc
 ## Changelog
 
 ### 1.14.0
+
+- **Nowy skill `/monolynx:next` (MON-181)**: router read-only stanu projektu (git, ticket, sprint, sesje, MR i konfiguracja), 1-3 uzasadnione komendy oraz `NEXT: <komenda>`. Pierwsza komenda do zapamiętania w `help`; pakiet liczy teraz 23 skille.
 
 Wejście do pluginu w jednym miejscu: checklista konfiguracji projektu i `help` skrócony do mapy skilli.
 

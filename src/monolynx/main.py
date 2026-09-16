@@ -136,7 +136,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Claude Code skills - one prompt, zero setup",
         "skills_sub": (
-            "The flagship AI tool install_monolynx_skills drops all 22 ticket and wiki"
+            "The flagship AI tool install_monolynx_skills drops all 23 ticket and wiki"
             " skills into any project connected to Monolynx - Claude Code, Codex or Cursor."
             " No ZIPs, no manual placeholder replacement."
         ),
@@ -153,9 +153,10 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG"
         ),
         "skills_what_3": (
-            "/monolynx:setup, /monolynx:project-toolchain, /monolynx:mutation-check,"
+            "/monolynx:next, /monolynx:setup, /monolynx:project-toolchain, /monolynx:mutation-check,"
             " /monolynx:create-graph-ci-script, /monolynx:create-mutation-ci-script, /monolynx:graph-sync,"
             " /monolynx:help - setup, mutation testing and code graph;"
+            " /monolynx:next reads project state and recommends 1-3 commands with reasons, ending with NEXT: <command>;"
             " /monolynx:setup checks project configuration (slug, toolchain wiki page, LLM Wiki,"
             " graph and mutation CI, MONOLYNX_* flags), shows what's OK or missing, and with your"
             " consent runs the skills that fill the gaps;"
@@ -204,7 +205,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Skille Claude Code - jeden prompt, zero konfiguracji",
         "skills_sub": (
-            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 22 skilli"
+            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 23 skilli"
             " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - w Claude Code,"
             " Codeksie lub Cursorze. Bez ZIP-ów i ręcznego podmieniania placeholderów."
         ),
@@ -221,9 +222,10 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG"
         ),
         "skills_what_3": (
-            "/monolynx:setup, /monolynx:project-toolchain, /monolynx:mutation-check,"
+            "/monolynx:next, /monolynx:setup, /monolynx:project-toolchain, /monolynx:mutation-check,"
             " /monolynx:create-graph-ci-script, /monolynx:create-mutation-ci-script, /monolynx:graph-sync,"
             " /monolynx:help - setup, testy mutacyjne i graf kodu;"
+            " /monolynx:next odczytuje stan projektu i podaje 1-3 uzasadnione komendy oraz NEXT: <komenda>;"
             " /monolynx:setup sprawdza konfigurację projektu (slug, strona wiki toolchain, LLM Wiki,"
             " graf i mutacje w CI, flagi MONOLYNX_*), pokazuje co OK, a co brakuje, i za zgodą"
             " uruchamia skille naprawiające braki;"
@@ -419,7 +421,7 @@ def _landing_markdown(lang: str) -> str:
             "",
             "W konfiguracji pluginu ustaw token (`mcp_token`, format `osk_...`), opcjonalnie `mcp_endpoint` "
             "(domyślnie `https://monolynx.com/mcp`) i `project_slug`. Po instalacji dostępne są komendy: "
-            "`/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
+            "`/monolynx:next`, `/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
             "`/monolynx:help`, `/monolynx:create-graph-ci-script`, `/monolynx:create-mutation-ci-script`.",
             "",
         ]
@@ -434,7 +436,7 @@ def _landing_markdown(lang: str) -> str:
             "",
             "In the plugin config set your token (`mcp_token`, `osk_...` format), optionally `mcp_endpoint` "
             "(defaults to `https://monolynx.com/mcp`) and `project_slug`. After install the commands are: "
-            "`/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
+            "`/monolynx:next`, `/monolynx:work`, `/monolynx:ticket-create`, `/monolynx:ticket-review`, `/monolynx:search`, "
             "`/monolynx:help`, `/monolynx:create-graph-ci-script`, `/monolynx:create-mutation-ci-script`.",
             "",
         ]
