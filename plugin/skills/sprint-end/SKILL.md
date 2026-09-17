@@ -1,4 +1,5 @@
 ---
+name: sprint-end
 description: "Zamknij sprint jako pipeline sprint_close: zintegruj logi pracy z wiki (INGEST), zaudytuj wiki (LINT), wyczysc logi pipeline'ow sprintu, uruchom pelny przebieg mutacyjny z trendem i domknij sprint. Przebieg raportowany do modulu Pipelines (best-effort). Uzyj gdy chcesz zamknac sprint."
 user-invocable: true
 argument-hint: [nazwa sprintu (opcjonalnie)]

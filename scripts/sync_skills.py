@@ -1,24 +1,12 @@
 #!/usr/bin/env python3
-"""Sync skilli pluginowych do katalogu serwowanego przez install_monolynx_skills.
+"""Synchronize bundled plugin resources and standalone skills from shared sources.
 
-Zrodlo prawdy: `plugin/skills/<nazwa>/`.
-Cel: `src/monolynx/static/skills/monolynx-<nazwa>/`.
-
-Kopie roznia sie od zrodla dwoma rzeczami, dlatego nie da sie ich podlinkowac:
-- SKILL.md w static ma dodatkowe pole `name: monolynx-<nazwa>` we frontmatterze
-  (skille instalowane recznie nie maja namespace'u pluginu, wiec potrzebuja
-  jawnej nazwy),
-- placeholder `<PROJECT_SLUG>` zamieniany jest na `<PROJECT-SLUG>`, bo tylko taki
-  wariant podmienia `_render_skill_content` w mcp_server.py.
-
-Uruchamianie (lokalnie - katalog `plugin/` nie jest montowany w kontenerze):
-
-    python3 scripts/sync_skills.py            # sync
-    python3 scripts/sync_skills.py --check    # exit 1 gdy kopie sa nieaktualne
+Run ``python3 scripts/sync_skills.py --check`` to detect distribution drift.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -27,79 +15,130 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DIR = ROOT / "plugin" / "skills"
 TARGET_DIR = ROOT / "src" / "monolynx" / "static" / "skills"
 TARGET_PREFIX = "monolynx-"
+SCRIPT_RESOURCES = {
+    "next": ("sprint_run_state.py", "mr_queue_state.py"),
+    "sprint-run": ("sprint_run_state.py", "sprint_run.sh"),
+    "mr-queue": ("mr_queue_state.py",),
+    "mutation-check": ("mutation_report.py",),
+    "create-mutation-ci-script": ("mutation_report.py", "mutation_baseline.py"),
+}
+REFERENCE_RESOURCES = {
+    "work": ("resume", "## KROK 3:", "## KROK 4:", "resume-stages.md"),
+    "work-simple": ("work", "### 3b.", "### 3c.", "researcher.md"),
+    "graph-sync": ("create-graph-ci-script", "## KROK 3:", "## KROK 4:", "graph-mapper.md"),
+}
 
 
-def render(raw: str, skill_name: str, is_skill_md: bool) -> str:
-    content = raw.replace("<PROJECT_SLUG>", "<PROJECT-SLUG>")
+def render(raw: str, skill_name: str, is_skill_md: bool, *, prefix: str = TARGET_PREFIX) -> str:
+    content = raw.replace("<PROJECT_SLUG>", "<PROJECT-SLUG>") if prefix else raw
     if not is_skill_md:
         return content
-    if not content.startswith("---\n"):
-        raise ValueError(f"{skill_name}/SKILL.md nie ma frontmattera YAML")
-    if "\nname:" in content[: content.find("\n---", 4)]:
-        return content
-    return "---\n" + f"name: {TARGET_PREFIX}{skill_name}\n" + content[4:]
+    end = content.find("\n---", 4)
+    if not content.startswith("---\n") or end == -1:
+        raise ValueError(f"{skill_name}/SKILL.md has no YAML frontmatter")
+    metadata = content[4:end]
+    name = f"name: {prefix}{skill_name}"
+    if re.search(r"^name:", metadata, flags=re.MULTILINE):
+        metadata = re.sub(r"^name:.*$", name, metadata, flags=re.MULTILINE)
+    else:
+        metadata = name + "\n" + metadata
+    return "---\n" + metadata + content[end:]
+
+
+def read_files(skill_dir: Path) -> dict[str, str]:
+    files = {}
+    root = skill_dir.resolve()
+    for path in sorted(skill_dir.rglob("*")):
+        if not path.resolve().is_relative_to(root):
+            raise ValueError(f"Resource escapes skill directory: {path}")
+        if path.is_file():
+            files[path.relative_to(skill_dir).as_posix()] = path.read_text(encoding="utf-8")
+    return files
 
 
 def build(skill_dir: Path) -> dict[str, str]:
-    """Zbuduj docelowa zawartosc katalogu skilla: {nazwa pliku: tresc}."""
-    files = {}
-    for path in sorted(skill_dir.glob("*.md")):
-        is_skill_md = path.name == "SKILL.md"
-        files[path.name] = render(path.read_text(encoding="utf-8"), skill_dir.name, is_skill_md)
+    """Build standalone files while preserving scripts verbatim."""
+    files = read_files(skill_dir)
     if "SKILL.md" not in files:
-        raise ValueError(f"{skill_dir.name} nie ma pliku SKILL.md")
-    return files
+        raise ValueError(f"{skill_dir.name} has no SKILL.md")
+    return {
+        name: render(content, skill_dir.name, name == "SKILL.md") if name.endswith(".md") else content
+        for name, content in files.items()
+    }
+
+
+def bundled_resources(name: str) -> dict[str, str]:
+    resources = {}
+    for script in SCRIPT_RESOURCES.get(name, ()):
+        resources[f"scripts/{script}"] = (SOURCE_DIR.parent / "scripts" / script).read_text(encoding="utf-8")
+    if name in REFERENCE_RESOURCES:
+        source, start, end, filename = REFERENCE_RESOURCES[name]
+        source_path = SOURCE_DIR / source / "SKILL.md"
+        raw = source_path.read_text(encoding="utf-8")
+        match = re.search(rf"^{re.escape(start)}.*?(?=^{re.escape(end)})", raw, flags=re.MULTILINE | re.DOTALL)
+        if match is None:
+            raise ValueError(f"Missing section markers {start!r}, {end!r} in {source_path}")
+        resources[f"references/{filename}"] = match.group().rstrip() + "\n"
+    return resources
+
+
+def write_files(directory: Path, files: dict[str, str]) -> None:
+    for name, content in files.items():
+        path = directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
 
 
 def main() -> int:
     check_only = "--check" in sys.argv
-
     if not SOURCE_DIR.is_dir():
-        print(f"BLAD: brak katalogu {SOURCE_DIR}", file=sys.stderr)
+        print(f"BŁĄD: brak katalogu {SOURCE_DIR}", file=sys.stderr)
         return 2
 
     stale: list[str] = []
     synced = 0
-
     source_names = sorted(d.name for d in SOURCE_DIR.iterdir() if d.is_dir())
     for name in source_names:
-        files = build(SOURCE_DIR / name)
+        source = SOURCE_DIR / name
+        existing_source = read_files(source)
+        source_files = dict(existing_source)
+        source_files["SKILL.md"] = render(source_files["SKILL.md"], name, True, prefix="")
+        source_files.update(bundled_resources(name))
+        files = {
+            path: render(content, name, path == "SKILL.md") if path.endswith(".md") else content
+            for path, content in source_files.items()
+        }
         target = TARGET_DIR / f"{TARGET_PREFIX}{name}"
-
-        existing = {p.name: p.read_text(encoding="utf-8") for p in target.glob("*.md")} if target.is_dir() else {}
-        if existing == files:
+        existing = read_files(target) if target.is_dir() else {}
+        if existing_source == source_files and existing == files:
             continue
-
         if check_only:
             stale.append(name)
             continue
-
-        target.mkdir(parents=True, exist_ok=True)
+        write_files(source, source_files)
         for obsolete in set(existing) - set(files):
             (target / obsolete).unlink()
-        for filename, content in files.items():
-            (target / filename).write_text(content, encoding="utf-8")
-        print(f"  zsynchronizowano {name} ({len(files)} plik(ow))")
+        write_files(target, files)
+        print(f"  zsynchronizowano {name} ({len(files)} plików)")
         synced += 1
 
     expected = {f"{TARGET_PREFIX}{n}" for n in source_names}
-    orphans = sorted(d.name for d in TARGET_DIR.iterdir() if d.is_dir() and d.name not in expected)
+    orphans = sorted(d.name for d in TARGET_DIR.iterdir() if d.is_dir() and d.name not in expected) if TARGET_DIR.is_dir() else []
     for orphan in orphans:
         if check_only:
             stale.append(f"{orphan} (osierocony)")
         else:
             shutil.rmtree(TARGET_DIR / orphan)
-            print(f"  usunieto osierocony {orphan}")
+            print(f"  usunięto osierocony {orphan}")
             synced += 1
 
     if check_only:
         if stale:
-            print("Kopie w static/skills sa nieaktualne: " + ", ".join(stale), file=sys.stderr)
+            print("Dystrybucje skilli są nieaktualne: " + ", ".join(stale), file=sys.stderr)
             print("Uruchom: python3 scripts/sync_skills.py", file=sys.stderr)
             return 1
-        print("static/skills zgodne z plugin/skills")
+        print("Dystrybucje skilli zgodne ze źródłami")
         return 0
-
     print(f"Gotowe. Zmienionych skilli: {synced}/{len(source_names)}")
     return 0
 

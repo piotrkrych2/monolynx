@@ -1,6 +1,6 @@
-# Monolynx: plugin Claude Code
+# Monolynx: plugin Claude Code i Codex
 
-Plugin Monolynx pakuje w jeden, instalowalny zestaw to, czego potrzebujesz, żeby pracować z platformą Monolynx bezpośrednio z Claude Code:
+Plugin Monolynx dostarcza wspólny zestaw skilli i zasobów dla Claude Code oraz Codex. Źródłem prawdy jest `plugin/skills`; instalator MCP udostępnia wygenerowane z niego, samowystarczalne pakiety pojedynczych skilli.
 
 - **23 skilli** dające komendy w przestrzeni nazw `/monolynx:*` (checklista konfiguracji projektu, kontrakt epizodu bez ticketu, praca z ticketami w pełnym i uproszczonym flow, dyspozytor sprintu w sesjach w tle, kolejka merge MR/PR, wznowienie po `/clear`, tworzenie i recenzja zadań, retro korekt, zamknięcie sprintu, testy mutacyjne zamieniane na pracę, wyszukiwanie w wiki, metoda LLM Wiki - inicjalizacja, integracja źródeł, post-merge sync i audyt, mapa skilli, generowanie skryptu CI grafu zależności, lokalna synchronizacja grafu, generowanie nieblokującego kroku CI z testami mutacyjnymi),
 - **7 agentów** wyspecjalizowanych w rolach zespołu (backend, frontend, baza danych, DevOps, QA, code review, dokumentacja),
@@ -13,25 +13,38 @@ Plugin nie zawiera kopii serwera MCP. Deklaruje jedynie dostęp do istniejącego
 Zanim zainstalujesz plugin, przygotuj:
 
 1. **Konto Monolynx** z dostępem do co najmniej jednego projektu (członkostwo w projekcie jest weryfikowane po stronie serwera MCP).
-2. **Token API** w formacie `osk_...`. Wygeneruj go w panelu: `/dashboard/profile/tokens` (przycisk tworzenia tokenu). Token wyświetlany jest tylko raz przy tworzeniu, skopiuj go od razu.
-3. **Claude Code CLI** w wersji obsługującej pluginy i marketplace (komendy `/plugin`).
+2. **Logowanie OAuth** do zdalnego MCP. Token API `osk_...` z `/dashboard/profile/tokens` jest alternatywą dla ręcznej konfiguracji, a nie warunkiem instalacji pluginu.
+3. **Claude Code CLI 2.1.273 lub Codex CLI 0.154.0**: wersje użyte do weryfikacji opisanej poniżej. Starsze wersje nie zostały sprawdzone. Skrypty pomocnicze wymagają Python 3.10+, a `sprint_run.sh` także Bash i Claude Code CLI.
 
 ## Instalacja
 
 Instalacja przebiega w dwóch krokach: najpierw dodajesz marketplace (źródło pluginu), potem instalujesz z niego plugin `monolynx`.
 
-### Z lokalnego repozytorium (tryb deweloperski)
+### Claude Code: pełny plugin
 
 Wskaż katalog zawierający `.claude-plugin/marketplace.json` (root repozytorium):
 
-```text
-/plugin marketplace add /Users/piotrkrych/projects/monolynx/monolynx
-/plugin install monolynx@monolynx
+Uruchom z katalogu głównego sklonowanego repozytorium:
+
+```bash
+claude plugin marketplace add .
+claude plugin install monolynx@monolynx
 ```
 
 Zapis `monolynx@monolynx` oznacza: plugin o nazwie `monolynx` ze źródła (marketplace) o nazwie `monolynx`.
 
-### Ze zdalnego repozytorium
+### Codex: pełny plugin
+
+Ten sam marketplace `.claude-plugin/marketplace.json` wskazuje `./plugin`. Codex czyta natywny manifest `plugin/.codex-plugin/plugin.json`, a Claude Code swój manifest `.claude-plugin/plugin.json`; oba korzystają z tego samego `skills/` i endpointu MCP.
+
+```bash
+codex plugin marketplace add .
+codex plugin add monolynx@monolynx
+```
+
+Rozpocznij nową sesję po instalacji. W Codex wybierz `$monolynx:next` albo `$monolynx:help`; w Claude Code użyj `/monolynx:next` albo `/monolynx:help`. Definicje agentów Claude w `agents/` nie stają się automatycznie agentami Codex. Dostępne role i sposób delegowania zależą od klienta. Dyspozytor `sprint-run` nadal uruchamia sesje przez CLI `claude`; ten ticket zmienia dystrybucję jego zasobów, nie algorytm ani backend sesji.
+
+### Ze zdalnego repozytorium (Claude Code)
 
 Wskaż adres repozytorium z `marketplace.json`:
 
@@ -40,17 +53,57 @@ Wskaż adres repozytorium z `marketplace.json`:
 /plugin install monolynx@monolynx
 ```
 
-Po instalacji Claude Code poprosi o uzupełnienie konfiguracji (`userConfig`). Zacznij od `/monolynx:next`: odczyta stan projektu i wskaże kolejny krok bez wykonywania zmian. Sprawdź dostępność komend wpisując `/monolynx:help` - wyświetla mapę skilli w grupach. W nowym projekcie zacznij od `/monolynx:setup`: checklista pokaże, czego brakuje w konfiguracji.
+Codex przyjmuje także adres Git przez `codex plugin marketplace add`. Dostęp do prywatnego repozytorium wymaga uprawnień Git. W nowym projekcie uruchom skill `setup`, aby sprawdzić konfigurację projektu.
+
+### Pojedyncze skille przez MCP
+
+Ta ścieżka działa bez instalacji pełnego pluginu. Najpierw skonfiguruj zdalny MCP w wybranym kliencie:
+
+```bash
+# Claude Code
+claude mcp add --transport http monolynx https://monolynx.com/mcp
+# Codex
+codex mcp add monolynx --url https://monolynx.com/mcp
+codex mcp login monolynx
+```
+
+W Claude Code dokończ logowanie przez `/mcp`. Nie dodawaj drugiego połączenia, jeśli MCP jest już dostępny z pełnego pluginu. Następnie poproś agenta o dwa wywołania:
+
+```text
+install_monolynx_skills(project_slug="twoj-projekt", target="codex")
+install_monolynx_skills(project_slug="twoj-projekt", target="codex", skill_names=["monolynx-work"])
+```
+
+Pierwsze zwraca katalog bez treści plików. Drugie zwraca `skills[].files[]` z `relative_path` i `content`. Zapisz **każdy** plik, zachowując podkatalogi. Wybierz `target="claude"` dla `.claude/skills`, `target="codex"` dla `.agents/skills` albo `target="cursor"` dla `.cursor/skills`. Nie przenoś ani nie usuwaj automatycznie wcześniejszych instalacji w `.codex/skills`.
+
+Standalone ma nazwę `monolynx-work`, a plugin namespace `monolynx:work`. Wybieraj skill po nazwie widocznej w kliencie. Sam instalator dostarcza skille i ich zasoby, nie instaluje globalnych hooków ani definicji agentów.
+
+Skrypty są dostarczane w `scripts/`, wymagane fragmenty instrukcji w `references/`, względem danego `SKILL.md`. Kopie powstają z `plugin/scripts` i sekcji źródłowych skilli. Nie wymagają ścieżki autora, symlinków ani sąsiedniego skilla. Polecenia proponujące użytkownikowi osobny workflow nadal wymagają wybrania lub pobrania tego skilla.
+
+### Wyniki smoke testu (2026-09-16)
+
+Sprawdzone wersje: Claude Code **2.1.273**, Codex CLI **0.154.0**. Test używał kopii dystrybucji w katalogu tymczasowym i osobnego katalogu projektu.
+
+| Klient / ścieżka | Sprawdzenie | Wynik |
+|---|---|---|
+| Claude Code / plugin | `claude plugin validate plugin` oraz `claude --plugin-dir <kopia-pluginu> plugin list --json` | Manifest poprawny; plugin `monolynx@inline` 1.15.0 aktywny w sesji, MCP `monolynx` wykryty. |
+| Codex / plugin | App-server `plugin/read` ze wspólnym marketplace wskazującym `./plugin` | 23 skille `monolynx:*`, MCP `monolynx` i dwa hooki wykryte. |
+| Codex / pojedynczy skill | Kopia `monolynx-work` do `.agents/skills`, app-server `skills/list` | Skill `monolynx-work` aktywny, brak błędów odczytu. |
+| Instalator MCP | Testy integracyjne dla `claude`, `codex`, `cursor` | Katalog bez treści, wybór skilla i rekursywne pliki z właściwymi ścieżkami. |
+
+To test ładowania lokalnej dystrybucji i kontraktu instalatora. Nie zastępuje logowania OAuth ani wykonania workflow; nie zmieniał trwałych instalacji użytkownika. Hooki wymagają osobnego zaufania w kliencie.
+
+Formaty dystrybucji opisują [dokumentacja pluginów Codex](https://learn.chatgpt.com/docs/build-plugins), [skilli Codex](https://learn.chatgpt.com/docs/build-skills) oraz [pluginów Claude Code](https://code.claude.com/docs/en/plugins-reference).
 
 ## Konfiguracja (`userConfig`)
 
-Plugin pyta o trzy parametry przy instalacji. Możesz je później zmienić przez `/plugin`.
+Poniższa konfiguracja `userConfig` dotyczy Claude Code. Codex korzysta ze swojej konfiguracji MCP i zmiennych środowiskowych; nie interpretuje pól `user_config` jako konfiguracji projektu.
 
 | Parametr | Wymagany | Wartość domyślna | Opis |
 |----------|----------|------------------|------|
 | `mcp_token` | nie | brak | Token API Monolynx (`osk_...`). Oznaczony jako `sensitive`, trafia do keychain systemu. Potrzebny tylko przy ręcznej konfiguracji MCP - connector pluginu uwierzytelnia się przez OAuth. |
 | `mcp_endpoint` | nie | `https://monolynx.com/mcp` | Adres Twojej instancji, używany przez skille (m.in. synchronizację grafu). **Nie zmienia adresu connectora** - ten jest zapisany na stałe w manifeście. |
-| `project_slug` | nie | brak | Domyślny slug projektu. Używany jako fallback, gdy w projekcie nie ma `MONOLYNX_PROJECT_SLUG`. |
+| `project_slug` | nie | brak | Pole konfiguracji pluginu. Skille wymagają sluga podanego przez użytkownika lub zmiennej `MONOLYNX_PROJECT_SLUG`; samo to pole jej nie eksportuje. |
 
 ### Token API (`mcp_token`)
 
@@ -81,19 +134,28 @@ Uwierzytelnianie idzie przez **OAuth 2.1 z Dynamic Client Registration** (RFC 75
 
 **Self-hosted**: connector pluginu wskazuje na `https://monolynx.com/mcp`. Dla własnej instancji dodaj connector ręcznie w ustawieniach klienta, podając adres swojego serwera MCP.
 
-Klucz `monolynx` w `mcpServers` jest częścią nazw narzędzi (`mcp__monolynx__get_ticket`), do których odwołują się wszystkie skille. **Nie zmieniaj go** - zmiana zerwie każdy skill w pakiecie.
+Rzeczywiste nazwy narzędzi zależą od klienta i connectora. Agent odczytuje dostępne schematy zamiast zakładać prefix `mcp__monolynx__`.
 
 ### Ustalanie slug projektu (`project_slug`)
 
 Skille pluginu pracują w kontekście jednego projektu. Slug ustalany jest w stałej kolejności:
 
-1. **`MONOLYNX_PROJECT_SLUG`** z pliku `.env` projektu, w którym pracujesz (najwyższy priorytet, ustawienie per repozytorium),
-2. **`user_config.project_slug`** z konfiguracji pluginu (fallback globalny dla użytkownika),
-3. **`"monolynx"`** jako ostateczna wartość domyślna.
+1. Slug podany jawnie przez użytkownika.
+2. Zmienna środowiskowa **`MONOLYNX_PROJECT_SLUG`**.
+3. Jeśli obu brakuje, agent prosi o konfigurację. Nie zgaduje sluga.
 
-Dzięki temu plugin działa **cross-project**: ten sam token i ten sam plugin obsługują wiele projektów. Wystarczy w danym repozytorium ustawić `MONOLYNX_PROJECT_SLUG` w `.env`, a skille automatycznie zadziałają na właściwym projekcie. `user_config.project_slug` jest wygodny, gdy najczęściej pracujesz z jednym projektem i nie chcesz ustawiać go w każdym repozytorium.
+Dzięki temu jeden plugin obsługuje wiele projektów. Sam plik `.env` nie eksportuje zmiennych do procesu klienta.
 
 `MONOLYNX_PROJECT_SLUG` działa też jako zwykła zmienna środowiskowa, więc na stałe możesz ją wpisać w `.claude/settings.json` projektu (pole `env`, przykłady w sekcji [Zmienne konfiguracyjne](#zmienne-konfiguracyjne)).
+
+W Codex użyj projektowego `.codex/config.toml`:
+
+```toml
+[shell_environment_policy.set]
+MONOLYNX_PROJECT_SLUG = "twoj-projekt"
+```
+
+Pozostałe `MONOLYNX_*` zapisuj w tej samej tabeli jako stringi. Po zmianie konfiguracji rozpocznij nową sesję i sprawdź wartość zmiennej w shellu klienta.
 
 ## Zawartość pluginu
 
@@ -168,6 +230,8 @@ Plugin dostarcza 7 agentów do delegowania pracy w odpowiednich rolach:
 - **technical-writer**: dokumentacja (CLAUDE.md, wiki, README, SDK, przewodniki).
 
 ### Hooki
+
+Codex wykrywa ten sam `hooks/hooks.json` i udostępnia `CLAUDE_PLUGIN_ROOT` jako alias zgodności. Hooki pluginu wymagają przeglądu i nadania zaufania przez użytkownika; sama instalacja ich nie aktywuje. Instalacja pojedynczego skilla przez MCP nie rejestruje hooków. Obsługa zdarzeń i kontekst subagentów zależą od klienta, więc odczyt manifestu nie stanowi dowodu egzekwowania wszystkich reguł guardów.
 
 Plugin dostarcza hook PreToolUse na narzędziu Bash (`hooks/hooks.json` → `hooks/bash_guard.py`), który deterministycznie egzekwuje reguły workflow, dotąd zapisane wyłącznie w promptach skilli `work` / `work-simple`:
 
@@ -422,6 +486,10 @@ Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cu
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.15.0
+
+- MON-182: wspólne źródło skilli dla Claude Code i Codex, natywny manifest Codex, instalacja standalone w `.agents/skills` oraz rekurencyjne pakowanie skryptów i lokalnych referencji. Zachowano targety Claude/Cursor i konfigurację użytkownika.
 
 ### 1.14.0
 

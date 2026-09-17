@@ -1,4 +1,5 @@
 ---
+name: wiki-sync-merge
 description: >
   Post-merge INGEST do wiki metodą LLM Wiki. Odpala człowiek po merge
   ticketów/PR do main. Gated na wiki_llm_enabled. Używaj plain [[slug]].

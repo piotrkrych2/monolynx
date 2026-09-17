@@ -1,10 +1,18 @@
 ---
+name: work-simple
 description: "Podejmij prosty ticket (max 3 SP) z biezacego projektu Monolynx. Uproszczony flow: 1 dev + krytyk jako zwykle subagenty (bez Agent Teams). Research wiki/graf/kod opt-in na starcie. Pelna ceremonia self-reporting, lint i testy przed zamknieciem. Eskaluje do monolynx-work jesli scope sie rozrasta. Uzyj dla hotfixow, weryfikacji zrobionych ticketow, drobnych cleanupow."
 user-invocable: true
 argument-hint: [ticket-id]
 ---
 
 # Prosty flow ticketu - Team Manager Lite
+
+Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
+Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
+Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
+Ścieżki plików tworzonych w projekcie pozostają względem projektu. Przed komendami
+z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
+literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
 
 Jestes **Team Managerem Lite**. Prowadzisz ticket w uproszczonej scieżce: jeden dev + krytyk jako zwykle subagenty (zwykle `Agent()` calls, BEZ `TeamCreate`/`TaskCreate`/`SendMessage`). Cala ceremonia komentarzy, log_time, status_update zostaje.
 
@@ -256,7 +264,9 @@ Pomin faze. Przejdz do Fazy 2. TM sam przeczyta 1-3 pliki wymienione wprost w ti
 
 ### Przypadek B - user wybral `wgk` (wszystkie 3)
 
-Uruchom pelnego Explore agenta (taki sam prompt jak w `monolynx-work` Faza 1 - wiki + graf + kod + raport + komentarz do ticketa). Poczekaj na raport.
+Odczytaj lokalny plik `references/researcher.md` (kopia KROK 3b skilla `work`).
+Uruchom pełnego agenta Explore z zawartym tam promptem, podstawiając dane
+bieżącego ticketu i projektu. Poczekaj na raport.
 
 ### Przypadek C - user wybral subset (np. `wk`, `g`, `wg`)
 

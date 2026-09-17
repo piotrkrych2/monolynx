@@ -110,7 +110,7 @@ class TestInstallMonolynxSkills:
 
     @pytest.mark.parametrize(
         ("target", "expected_dir"),
-        [("claude", ".claude/skills"), ("codex", ".codex/skills"), ("cursor", ".cursor/skills")],
+        [("claude", ".claude/skills"), ("codex", ".agents/skills"), ("cursor", ".cursor/skills")],
     )
     async def test_target_changes_skills_directory(self, target: str, expected_dir: str):
         mock_auth_fn, project = _mock_auth()
@@ -145,3 +145,42 @@ class TestInstallMonolynxSkills:
         content = result["skills"][0]["files"][0]["content"]
         assert "<PROJECT-ID>" not in content
         assert "foo-bar" in content
+
+    @pytest.mark.parametrize("target", ["claude", "codex", "cursor"])
+    async def test_nested_resources_preserve_paths_order_and_script_content(self, tmp_path, target):
+        skill = tmp_path / "monolynx-sample"
+        (skill / "scripts").mkdir(parents=True)
+        (skill / "references").mkdir()
+        (skill / "SKILL.md").write_text("---\nname: monolynx-sample\ndescription: Sample\n---\n<PROJECT-SLUG>", encoding="utf-8")
+        (skill / "references/context.md").write_text("Project <PROJECT-SLUG>", encoding="utf-8")
+        (skill / "scripts/context.md").write_text("Other <PROJECT-ID>", encoding="utf-8")
+        script = 'print("<PROJECT-SLUG>")\n'
+        shell = 'echo "<PROJECT-ID>"\n'
+        (skill / "scripts/run.py").write_text(script, encoding="utf-8")
+        (skill / "scripts/run.sh").write_text(shell, encoding="utf-8")
+        auth, project = _mock_auth("acme")
+        with patch("monolynx.mcp_server._get_user_and_project", auth), patch("monolynx.mcp_server._STATIC_SKILLS_DIR", tmp_path):
+            result = await install_monolynx_skills(_make_ctx(), project.slug, skill_names=["monolynx-sample"], target=target)
+        prefix = f"{result['skills_dir']}/monolynx-sample/"
+        files = {item["relative_path"].removeprefix(prefix): item["content"] for item in result["skills"][0]["files"]}
+        assert list(files) == ["SKILL.md", "references/context.md", "scripts/context.md", "scripts/run.py", "scripts/run.sh"]
+        assert files["references/context.md"] == "Project acme"
+        assert files["scripts/context.md"] == "Other acme"
+        assert files["scripts/run.py"] == script
+        assert files["scripts/run.sh"] == shell
+
+    async def test_rejects_symlink_resource_outside_package(self, tmp_path):
+        packages = tmp_path / "packages"
+        skill = packages / "monolynx-sample"
+        (skill / "references").mkdir(parents=True)
+        (skill / "SKILL.md").write_text("---\nname: monolynx-sample\n---\nSample", encoding="utf-8")
+        outside = tmp_path / "outside.md"
+        outside.write_text("private", encoding="utf-8")
+        (skill / "references/outside.md").symlink_to(outside)
+        auth, project = _mock_auth()
+        with (
+            patch("monolynx.mcp_server._get_user_and_project", auth),
+            patch("monolynx.mcp_server._STATIC_SKILLS_DIR", packages),
+            pytest.raises(ValueError),
+        ):
+            await install_monolynx_skills(_make_ctx(), project.slug, skill_names=["monolynx-sample"], target="codex")

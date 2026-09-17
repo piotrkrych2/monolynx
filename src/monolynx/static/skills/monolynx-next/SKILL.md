@@ -8,6 +8,13 @@ allowed-tools: Read, ToolSearch, mcp__monolynx__get_board, mcp__monolynx__get_ti
 
 # NEXT - co teraz
 
+Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
+Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
+Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
+Ścieżki plików tworzonych w projekcie pozostają względem projektu. Przed komendami
+z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
+literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
+
 Jesteś routerem następnego kroku. Czytasz stan i wypisujesz 1-3 komendy,
 każdą z jednym zdaniem uzasadnienia opartym na zaobserwowanym fakcie.
 **Nigdy nie wykonuj rekomendacji**, także przy jednej opcji i w trybie sesji
@@ -78,11 +85,9 @@ Nie ładuj narzędzi zapisu. Bez ToolSearch użyj dostępnego katalogu narzędzi
 claude agents --json --all
 ```
 
-Użyj istniejącej logiki `scripts/sprint_run_state.py` z instalacji pluginu.
-Ścieżkę ustal z dostępnego `CLAUDE_PLUGIN_ROOT` / `PLUGIN_ROOT` albo lokalizacji
-tego skilla (dwa poziomy wyżej, potem `scripts/`). Nie zakładaj, że zmienne
-istnieją w każdym runtime. Brak skryptu przy instalacji pojedynczego skilla
-oznacza pominięcie klasyfikacji, nie pobieranie ani kopiowanie skryptu.
+Użyj dołączonego `scripts/sprint_run_state.py` z katalogu tego skilla.
+Zasób jest dostępny zarówno w pluginie, jak i instalacji standalone.
+Brak skryptu oznacza niekompletną instalację: pomiń klasyfikację i zgłoś brak.
 
 Łącz tickety sprintu i potwierdzone tickety w toku; deduplikuj po kluczu.
 Sesję wybiera `match_session(agents, slug, key)`, nie własne dopasowanie.

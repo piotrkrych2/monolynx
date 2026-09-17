@@ -1,4 +1,5 @@
 ---
+name: resume
 description: "Wznowienie pracy po /clear, kompakcji albo nastepnego dnia: odtwarza stan ticketu z trwalych zrodel (ticket, komentarze Team Managera, pipeline, kryteria akceptacji, git) i wypisuje 'gdzie jestesmy, co zostalo, nastepny krok'. Read-only - niczego nie zmienia. Uzyj zamiast trzymania jednego watku przez wiele dni."
 user-invocable: true
 argument-hint: [ticket-id lub klucz np. PROJ-12; puste = moje tickety in_progress]

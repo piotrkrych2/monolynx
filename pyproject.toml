@@ -67,6 +67,8 @@ known-first-party = ["monolynx"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
+# Distributed helper copies are package data, not importable application modules.
+exclude = ["src/monolynx/static/skills/"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

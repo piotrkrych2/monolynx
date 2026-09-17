@@ -12,54 +12,64 @@ Monolynx is an AI-first project platform. It exposes every module (Scrum, Wiki w
 
 ### Full setup - Claude Code plugin from the marketplace (this is the real thing)
 
-The plugin bundles the skills, the agents scaffolding, and the remote MCP server. Install it and set your token:
+Plugin dostarcza skille, definicje agentów Claude Code i połączenie ze zdalnym MCP. Zainstaluj go i zaloguj się przez OAuth:
 
 ```bash
 /plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git
 /plugin install monolynx@monolynx
 ```
 
-In the plugin config set:
-
-- `mcp_token` - your Monolynx API token (format `osk_...`), generated in the dashboard under "API Tokens". This is the MCP connection.
-- `mcp_endpoint` - your instance MCP URL (defaults to `https://monolynx.com/mcp`).
-- `project_slug` - optional default project (fallback only, see below).
+W Claude Code otwórz `/mcp` i dokończ logowanie. Token API `osk_...` jest alternatywą przy ręcznej konfiguracji. Plugin wskazuje `https://monolynx.com/mcp`; własna instancja wymaga osobnego połączenia MCP.
 
 **Tell the skills which project they operate on.** The skills resolve the target project slug in a fixed order (highest priority first):
 
-1. `MONOLYNX_PROJECT_SLUG` from the `.env` file of the repository you are working in (per-repo setting, highest priority). Set it there so the same plugin works across many projects. In Claude Code you can also expose it through the `env` field in `.claude/settings.json`.
-2. `user_config.project_slug` from the plugin config (a global fallback for your most-used project).
-3. `"monolynx"` as the final default.
+1. Slug podany jawnie przez użytkownika.
+2. `MONOLYNX_PROJECT_SLUG` ze środowiska procesu klienta. Claude Code: `env` w `.claude/settings.json`; Codex: `[shell_environment_policy.set]` w `.codex/config.toml`.
+3. Jeśli sluga brakuje, zapytaj użytkownika. Sam `.env` nie eksportuje zmiennych do klienta; nie zgaduj projektu.
 
 So the full first-time sequence a developer runs is:
 
 1. Add the marketplace: `/plugin marketplace add https://gitlab.com/piotrkrych/monolynx.git`
 2. Install the plugin: `/plugin install monolynx@monolynx`
-3. Set `mcp_token` and `mcp_endpoint` in the plugin config.
-4. Set `MONOLYNX_PROJECT_SLUG` in the repo's `.env` (or the plugin `project_slug`).
+3. Zaloguj się do MCP przez OAuth.
+4. Ustaw `MONOLYNX_PROJECT_SLUG` w konfiguracji środowiska klienta opisanej powyżej.
 5. Start using the `/monolynx:*` skills.
 
 After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all 119 MCP tools. This is full power.
 
 If you are an agent asked to set this up inside a user's repository, follow the imperative checklist at <https://monolynx.com/agent-bootstrap.md> - it walks you through SETUP, NOTIFY, and COLLABORATE phases, including verifying the connection with `list_projects`.
 
-### Codex and Cursor: skills without the plugin
+### Codex: pełny plugin
 
-The plugin marketplace is a Claude Code mechanism, but the `SKILL.md` format is shared. Codex and Cursor read the same skills - only the directory differs, so `install_monolynx_skills` takes a `target` parameter:
+Z katalogu sklonowanego repozytorium uruchom:
+
+```bash
+codex plugin marketplace add .
+codex plugin add monolynx@monolynx
+```
+
+Codex czyta `plugin/.codex-plugin/plugin.json`, Claude Code swój manifest, a oba klienty współdzielą `plugin/skills`, marketplace i MCP. Rozpocznij nową sesję i wybierz `$monolynx:next`. Agentów i zaufania do hooków nie należy utożsamiać z samym odczytem skilli. Dyspozytor `sprint-run` nadal wymaga CLI Claude Code.
+
+### Pojedyncze skille przez MCP: Claude Code, Codex i Cursor
+
+Instalator `install_monolynx_skills` obsługuje trzy katalogi docelowe:
 
 | `target` | Directory | Runtime |
 |---|---|---|
 | `claude` (default) | `.claude/skills/` | Claude Code |
-| `codex` | `.codex/skills/` | Codex CLI |
+| `codex` | `.agents/skills/` | Codex CLI |
 | `cursor` | `.cursor/skills/` | Cursor |
 
 ```
 install_monolynx_skills(project_slug="my-project", target="codex")
+install_monolynx_skills(project_slug="my-project", target="codex", skill_names=["monolynx-work"])
 ```
 
-The tool returns `skills: [{name, files: [{relative_path, content}]}]`. **Write every file in `files`**, not just `SKILL.md` - `monolynx-work` also ships `pipeline.md` and `review-rubric.md`.
+Pierwsze wywołanie zwraca katalog. Drugie zwraca `skills: [{name, files: [{relative_path, content}]}]`. Zapisz wszystkie pliki, zachowując podkatalogi `scripts/` i `references/` oraz pliki pomocnicze. Nie usuwaj wcześniejszych instalacji ani konfiguracji użytkownika. Standalone ma nazwę `monolynx-work`, plugin namespace `monolynx:work`.
 
-Connect the MCP server separately: Codex through `~/.codex/config.toml`, Cursor through `.cursor/mcp.json` (key `mcpServers`, HTTP + `Authorization: Bearer osk_...`). In both, the `monolynx:work` skills read agent roles from `AGENTS.md` in the repo root instead of `.claude/agents/`.
+Bez pełnego pluginu skonfiguruj MCP osobno: w Codex `codex mcp add monolynx --url https://monolynx.com/mcp`, następnie `codex mcp login monolynx`; w Claude Code `claude mcp add --transport http monolynx https://monolynx.com/mcp` i logowanie przez `/mcp`. Cursor zachowuje `.cursor/mcp.json`. Role Codex pochodzą z dostępnych agentów i `AGENTS.md` projektu.
+
+Slug podany przez użytkownika ma pierwszeństwo przed `MONOLYNX_PROJECT_SLUG`. W Codex ustaw tę zmienną w `[shell_environment_policy.set]` projektowego `.codex/config.toml`, w Claude Code w `env` pliku `.claude/settings.json`. Brak sluga wymaga pytania; nie przyjmuj domyślnego `monolynx`.
 
 ### Fallback - chat clients (Claude.ai, ChatGPT): MCP connector only
 

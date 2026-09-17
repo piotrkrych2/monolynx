@@ -1,4 +1,5 @@
 ---
+name: retro
 description: "Retro korekt sprintu: zbiera uwagi krytyka, NEEDS WORK, reguly, eskalacje i STOP-y z komentarzy ticketow, pamieci agentow oraz auto-memory Claude Code (korekty uzytkownika z czatu), grupuje powtarzajace sie i dla kazdej proponuje trwala maszynerie (regula w .claude/rules/, wiersz rubryki, wpis w constitution). Zapisuje wybrane. Uzyj na koniec sprintu albo gdy ta sama korekta wraca."
 user-invocable: true
 argument-hint: [nazwa sprintu (opcjonalnie; domyslnie aktywny albo ostatnio zamkniety)]

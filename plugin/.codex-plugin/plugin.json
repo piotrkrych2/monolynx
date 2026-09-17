@@ -1,0 +1,27 @@
+{
+  "name": "monolynx",
+  "version": "1.15.0",
+  "description": "Monolynx: zarządzanie projektami, sprintami i wiedzą. Skille oraz zdalny serwer MCP.",
+  "author": {
+    "name": "Monolynx"
+  },
+  "homepage": "https://monolynx.com",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Monolynx",
+    "shortDescription": "Zadania, sprinty i wiedza projektu w Codex.",
+    "longDescription": "Planuj sprinty, realizuj tickety i aktualizuj wiki projektu dzięki skillom Monolynx oraz zdalnemu serwerowi MCP.",
+    "developerName": "Monolynx",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://monolynx.com",
+    "defaultPrompt": [
+      "Pokaż następny krok w moim projekcie Monolynx.",
+      "Podejmij zadanie ze sprintu Monolynx."
+    ]
+  }
+}
