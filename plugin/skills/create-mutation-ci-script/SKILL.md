@@ -2,8 +2,9 @@
 name: create-mutation-ci-script
 description: "Wygeneruj nieblokujacy krok CI z testami mutacyjnymi dla biezacego projektu: wykrywa system CI (GitLab/GitHub/Bitbucket/Jenkins), czyta komende diffowa i format raportu z sekcji Mutacje strony wiki toolchain, kopiuje do cicd/ skrypty mutation_report.py i mutation_baseline.py, dodaje osobny etap mutation uruchamiany tylko na MR/PR, publikuje raport jako artefakt i porownuje wynik z zapisanym baseline (zapadka: baseline tylko rosnie, spadek jest raportowany widocznie i nigdy nie oblewa builda). Uzyj raz per projekt, ktory ma juz wykryte narzedzie mutacyjne i chce widziec trend przy kazdym MR."
 user-invocable: true
-allowed-tools: mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, AskUserQuestion, Bash, Read, Write, Edit, Glob, Grep
 ---
+
+Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/runtime.md).
 
 # Nieblokujacy krok CI z testami mutacyjnymi
 
@@ -40,22 +41,13 @@ i nie blokuje merge'a.
 
 ---
 
+Do odczytu MCP użyj faktycznego katalogu narzędzi i aktualnych schematów. Wywołania helperów monitoruj po identyfikatorze procesu do potwierdzonego exit; yield narzędzia nie jest deadline procesu ani wynikiem komendy. Lokalne próby mutacji podlegają kontraktowi procesów i skilla mutation-check: bez kontroli całego drzewa procesów przekaż komendę użytkownikowi przed startem.
+
 ## KROK 0: Resolucja konfiguracji
 
 ### 0a. Slug projektu
 
-Pierwsza znaleziona wartosc wygrywa:
-
-1. zmienna `MONOLYNX_PROJECT_SLUG` z `.env` / srodowiska,
-2. `user_config.project_slug` pluginu,
-3. zapytaj uzytkownika (AskUserQuestion).
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-W dokumentacji i przykladach ponizej uzywaj placeholdera `<PROJECT_SLUG>` - NIGDY konkretnego
-sluga.
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
 
 ### 0b. Odczytaj sekcje `## Mutacje` strony wiki `toolchain`
 
@@ -120,7 +112,7 @@ cp "${MONOLYNX_SKILL_DIR}/scripts/mutation_report.py" cicd/mutation_report.py
 cp "${MONOLYNX_SKILL_DIR}/scripts/mutation_baseline.py" cicd/mutation_baseline.py
 ```
 
-Kopia juz istnieje -> zapytaj (AskUserQuestion), czy nadpisac. **Kopii nie edytuj recznie** -
+Kopia juz istnieje -> zapytaj (narzędzie pytań dostępne w bieżącym trybie lub wiadomość), czy nadpisac. **Kopii nie edytuj recznie** -
 aktualizacja idzie przez ponowne uruchomienie tego skilla, inaczej lokalna poprawka wyparuje przy
 nastepnym kopiowaniu.
 

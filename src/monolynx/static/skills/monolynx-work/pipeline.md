@@ -1,3 +1,5 @@
+Przed użyciem odczytaj [Kontrakt runtime](references/runtime.md) względem katalogu skilla work. Narzędzia pipeline odkrywaj w faktycznym katalogu runtime i sprawdzaj aktualny schemat; prefiksy poniżej są placeholderami. Brak wyszukiwarki z przykładu klientowego nie oznacza braku MCP; użyj discovery bieżącego runtime.
+
 # Instrumentacja pipeline - protokol raportowania
 
 Warstwa obserwowalnosci nad praca zespolu agentow. Odwzorowuje przebieg w module
@@ -16,10 +18,14 @@ Wszystkie wywolania w tym pliku sa **best-effort**.
 
 Toole laduja sie w KROK 1 skilla przez:
 
+Użyj dostępnego discovery schematów; przykład klienta poniżej.
+
+<!-- runtime:claude-code -->
 ```
 ToolSearch(query="+monolynx pipeline create job finish", max_results=10)
 ```
 
+<!-- /runtime:claude-code -->
 Zestaw: `create_pipeline`, `create_pipeline_job`, `update_pipeline_job`,
 `append_job_log`, `finish_pipeline`.
 
@@ -27,7 +33,7 @@ Brak ktoregokolwiek -> pomin instrumentacje w calosci.
 
 **Prefix tooli**: nazwy `mcp__monolynx__<tool>` w tym pliku to placeholder.
 Rzeczywisty prefix zalezy od instalacji (np. `mcp__claude_ai_Monolynx__*` przy
-connectorze globalnym) - uzywaj DOKLADNIE nazw zwroconych przez ToolSearch.
+connectorze globalnym) - uzywaj DOKLADNIE nazw z aktualnego katalogu narzędzi.
 
 ---
 
@@ -97,15 +103,18 @@ mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<
 ## 4. Blok do wklejenia w prompt agenta (KROK 6)
 
 Kazdy agent raportuje siebie sam. Wklej ponizsze do promptu, podstawiajac `job_id`.
-W trybie solo (runtime bez subagentow, np. Codex) subagentow nie ma - Team
+W trybie solo (runtime bez subagentow) subagentow nie ma - Team
 Manager tworzy joby per ROLA (sekcja 3b) i sam wykonuje ponizszy blok dla kazdej
 roli: otwiera job przed praca w roli, zamyka po niej.
 
+Użyj dostępnego discovery schematów; przykład klienta poniżej.
+
+<!-- runtime:claude-code -->
 ```
 RAPORT DO PIPELINE (job_id: <twoj_job_id>):
 
 Na poczatku pracy:
-  1. Zaladuj schematy tooli JEDNYM wywolaniem: ToolSearch(query="+monolynx pipeline job log", max_results=10)
+  1. Odkryj aktualne schematy capability pipeline job/log przez mechanizm dostępny w runtime
      i uzywaj DOKLADNIE zwroconych nazw (prefix moze roznic sie od mcp__monolynx__).
      Runtime bez ToolSearch (toole dostepne od razu) -> uzywaj ich bezposrednio.
      ToolSearch istnieje, ale nic nie zwrocil -> pomin cale raportowanie do pipeline.
@@ -127,6 +136,7 @@ Jesli toole pipeline niedostepne lub zwroca blad - pomin raportowanie, NIE przer
 Linie `CZAS PRACY: X min` podaj ZAWSZE, niezaleznie od dostepnosci pipeline.
 ```
 
+<!-- /runtime:claude-code -->
 Linia `CZAS PRACY` jest zrodlem danych dla `log_time` w KROK 6.7a - Team Manager
 loguje czas zgloszony przez agenta, nie wlasny stoper.
 

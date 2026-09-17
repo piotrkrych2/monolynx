@@ -3,8 +3,9 @@ name: monolynx-mr-queue
 description: "Kolejka merge MR (GitLab, glab) i PR (GitHub, gh): jeden idempotentny tick bierze pierwszy niezmergowany MR/PR z kolejki i robi dokładnie jedno działanie w kolejności CI -> konflikt -> approve -> merge, a po merge czeka na zielone CI brancha docelowego. Bez argumentów sam układa kolejkę z otwartych MR/PR. Użyj gdy chcesz przeprowadzić MR-y do main po kolei, ręcznie albo w pętli /loop."
 user-invocable: true
 argument-hint: "[!iid | #pr | URL ...]"
-allowed-tools: Bash, Read, Edit, Write, Agent
 ---
+
+Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/runtime.md).
 
 # MR-QUEUE - kolejka merge MR/PR
 
@@ -27,6 +28,8 @@ Zasady, które definiują ten skill:
 Pętla jest **na zewnątrz** skilla: `/loop 10m /monolynx:mr-queue`.
 
 ---
+
+Każdą komendę helpera uruchom przez dostępny mechanizm procesów. Zachowaj identyfikator działającej sesji i odpytuj ją do potwierdzonego exit; nie czytaj częściowego JSON ani nie powtarzaj mutacji po samym yield. Uprawnienia użytkownika i runtime mają pierwszeństwo przed AUTO* i hookiem.
 
 ## KROK 0: Stałe i tryb
 
@@ -60,10 +63,10 @@ gh auth status 2>&1 | head -3
 
 ## KROK 2: Kolejka
 
-**Podano argumenty** (`$ARGUMENTS` niepusty): to jest kolejność merge. Zapisz ją:
+**Podano argumenty** (argument wejściowy niepusty): to jest kolejność merge. Zapisz ją:
 
 ```bash
-python3 "$SCRIPT" queue-set --queue-file "$QUEUE" <refy z $ARGUMENTS w podanej kolejności>
+python3 "$SCRIPT" queue-set --queue-file "$QUEUE" <refy z wiadomości użytkownika w podanej kolejności>
 ```
 
 Ref to `!<iid>` (GitLab), `#<numer>` (GitHub) albo pełny URL MR/PR. Kod `2` (nieznany ref, duplikat) -> wypisz stderr i zakończ tick.

@@ -1,8 +1,11 @@
 ### 3b. Uruchom Researchera
 
-Uruchom agenta `Explore` z nastepujacym zadaniem (fence poczworny, bo prompt
+Dobierz dostępnego agenta badawczego (w Claude Code `Explore`) i przekaż zadanie z poniższego szablonu wraz z wymaganym formatem raportu. Zachowaj treść zadania niezależnie od API delegowania. Przykład Claude Code (fence poczworny, bo prompt
 zawiera wlasne bloki kodu):
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ````
 Agent(
   subagent_type="Explore",
@@ -25,7 +28,7 @@ ZANIM zaczniesz: zaladuj toole MCP Monolynx JEDNYM wywolaniem
 ToolSearch(query='+monolynx wiki page graph search', max_results=10) i uzywaj
 DOKLADNIE zwroconych nazw - prefix moze roznic sie od mcp__monolynx__ (np.
 mcp__claude_ai_Monolynx__). Potrzebujesz: get_wiki_page, list_wiki_pages,
-search_wiki, query_graph - brakujacy doladuj celowanym ToolSearch. Runtime bez
+search_wiki, query_graph - brakujacy odkryj przez dostępny mechanizm runtime. Runtime bez
 ToolSearch -> uzywaj tooli bezposrednio. Toole niedostepne -> pomin kroki
 wiki/graf i odnotuj to w raporcie.
 
@@ -114,3 +117,5 @@ Na koniec wygeneruj RAPORT w dokladnie tym formacie:
 - Podzial plikow: [dla kazdego rekomendowanego agenta wypisz KONKRETNE pliki. Zaznacz jesli dwa zakresy dotykaja tego samego pliku]"
 )
 ````
+
+<!-- /runtime:claude-code -->

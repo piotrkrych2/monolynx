@@ -102,21 +102,18 @@ def check_step_refs(files: dict[str, str]) -> list[str]:
 
         for match in _REF_SEKCJA_RE.finditer(content):
             if match.group(1) not in existing_sekcja:
-                violations.append(
-                    f"{name}: martwa referencja 'sekcja {match.group(1)} pipeline.md' "
-                    "- brak takiego naglowka w pipeline.md"
-                )
+                violations.append(f"{name}: martwa referencja 'sekcja {match.group(1)} pipeline.md' - brak takiego naglowka w pipeline.md")
 
     return violations
 
 
 def check_em_dash(files: dict[str, str]) -> list[str]:
-    """Zgloś kazdy plik zawierajacy em-dash (—) lub en-dash (–)."""
+    """Report files containing U+2014 or U+2013 instead of a hyphen."""
     violations = []
     for name in sorted(files):
         content = files[name]
-        if "—" in content or "–" in content:
-            violations.append(f"{name}: zawiera em-dash (—) lub en-dash (–) - uzyj zwyklego myslnika '-'")
+        if "\u2014" in content or "\u2013" in content:
+            violations.append(f"{name}: zawiera em-dash (U+2014) lub en-dash (U+2013) - użyj zwykłego myślnika '-'")
     return violations
 
 
@@ -130,9 +127,7 @@ def check_command_names(files: dict[str, str]) -> list[str]:
     for name in sorted(files):
         content = files[name]
         for match in _COMMAND_NAME_RE.finditer(content):
-            violations.append(
-                f"{name}: nieprawidlowa nazwa komendy '{match.group(0)}' - uzyj formatu /monolynx:<nazwa>"
-            )
+            violations.append(f"{name}: nieprawidlowa nazwa komendy '{match.group(0)}' - uzyj formatu /monolynx:<nazwa>")
     return violations
 
 
@@ -162,10 +157,7 @@ def check_version_matches_changelog(plugin_json: str, readme: str) -> list[str]:
 
     changelog_version = entry_match.group(1)
     if changelog_version != version:
-        return [
-            f"plugin.json: version '{version}' nie zgadza sie z pierwszym wpisem changeloga "
-            f"'{changelog_version}' w README.md"
-        ]
+        return [f"plugin.json: version '{version}' nie zgadza sie z pierwszym wpisem changeloga '{changelog_version}' w README.md"]
     return []
 
 
@@ -186,11 +178,75 @@ def check_skill_coverage(skill_names: list[str], pages: dict[str, str]) -> list[
     return violations
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Walidator spojnosci pluginu Monolynx (referencje krokow, em-dash, "
-        "nazwy komend, wersja/changelog)."
+def check_runtime_contract(files: dict[str, str]) -> list[str]:
+    """Check portable entrypoints and skill-local Markdown resources."""
+    violations = []
+    sections = ("Projekt", "Narzędzia", "Skille i argumenty", "Pytania i zgody", "Uprawnienia", "Procesy")
+    start, end = "<!-- runtime:claude-code -->", "<!-- /runtime:claude-code -->"
+    client_call = re.compile(r"\b(?:ToolSearch|Skill|AskUserQuestion)\s*\(")
+    required_client = re.compile(
+        r"(?:weź|użyj|wywołaj|uruchom|czytaj|odczytaj|wykonaj|sprawdź|wymagane|obowiązkowo).*"
+        r"(?:\$ARGUMENTS|\$\{?CLAUDE_PLUGIN_ROOT|\bToolSearch\b|\bAskUserQuestion\b)",
+        re.IGNORECASE,
     )
+    link = re.compile(r"\[[^\]]*\]\(([^\s)]+\.md)(?:#[^)]*)?\)|`(references/[^`\s]+\.md)`")
+    for name in sorted(files):
+        if Path(name).name != "SKILL.md":
+            continue
+        directory = Path(name).parent
+        runtime = (directory / "references/runtime.md").as_posix()
+        content = files[name]
+        if "references/runtime.md" not in content or runtime not in files:
+            violations.append(f"{name}: brak lokalnego kontraktu references/runtime.md lub odnośnika")
+        elif any(f"## {section}\n" not in files[runtime] for section in sections):
+            violations.append(f"{runtime}: niekompletny kontrakt runtime")
+        elif "references/runtime.md" in files and files[runtime] != files["references/runtime.md"]:
+            violations.append(f"{runtime}: kontrakt różni się od źródła kanonicznego")
+        for resource_name in sorted(files):
+            if not Path(resource_name).is_relative_to(directory) or not resource_name.endswith(".md"):
+                continue
+            resource = files[resource_name]
+            if resource_name != runtime:
+                depth = 0
+                fenced = False
+                for line_number, line in enumerate(resource.splitlines(), 1):
+                    if start in line:
+                        depth += 1
+                        if depth != 1:
+                            violations.append(f"{resource_name}:{line_number}: zagnieżdżony wariant runtime")
+                        continue
+                    if end in line:
+                        depth -= 1
+                        if depth != 0:
+                            violations.append(f"{resource_name}:{line_number}: błędny koniec wariantu runtime")
+                        continue
+                    if depth:
+                        continue
+                    if line.lstrip().startswith(("```", "~~~")):
+                        fenced = not fenced
+                    negated = re.search(r"\bnie\s+(?:używaj|wywołuj|uruchamiaj|wymagaj|zakładaj)", line, re.IGNORECASE)
+                    if not negated and (
+                        client_call.search(line)
+                        or required_client.search(line)
+                        or (fenced and re.search(r"\$ARGUMENTS|\$\{?CLAUDE_PLUGIN_ROOT", line))
+                    ):
+                        violations.append(f"{resource_name}:{line_number}: bezwarunkowa instrukcja Claude Code poza wariantem runtime")
+                if depth:
+                    violations.append(f"{resource_name}: niezamknięty wariant runtime")
+            for match in link.finditer(resource):
+                target = match.group(1) or match.group(2)
+                if "://" in target or "/" not in target:
+                    continue
+                path = Path(target)
+                if path.is_absolute() or ".." in path.parts:
+                    violations.append(f"{resource_name}: referencja poza katalogiem skilla: {target}")
+                elif (directory / path).as_posix() not in files:
+                    violations.append(f"{resource_name}: brak lokalnej referencji {target}")
+    return violations
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Walidator spojnosci pluginu Monolynx (referencje krokow, em-dash, nazwy komend, wersja/changelog).")
     parser.add_argument(
         "--plugin-json",
         type=Path,
@@ -220,8 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         action="append",
         default=None,
-        help="strona opisujaca skille, do sprawdzenia pokrycia (powtarzalne; "
-        "domyslnie README, help, mcp_guide, agent-bootstrap, how-to, main.py)",
+        help="strona opisujaca skille, do sprawdzenia pokrycia (powtarzalne; domyslnie README, help, mcp_guide, agent-bootstrap, how-to, main.py)",
     )
     args = parser.parse_args(argv)
 
@@ -238,15 +293,13 @@ def main(argv: list[str] | None = None) -> int:
     plugin_json_text = args.plugin_json.read_text(encoding="utf-8")
     readme_text = args.readme.read_text(encoding="utf-8")
 
-    files = {
-        str(path.relative_to(args.skills_dir)): path.read_text(encoding="utf-8")
-        for path in sorted(args.skills_dir.rglob("*.md"))
-    }
+    files = {str(path.relative_to(args.skills_dir)): path.read_text(encoding="utf-8") for path in sorted(args.skills_dir.rglob("*.md"))}
 
     violations: list[str] = []
     violations.extend(check_step_refs(files))
     violations.extend(check_em_dash(files))
     violations.extend(check_command_names(files))
+    violations.extend(check_runtime_contract(files))
 
     try:
         violations.extend(check_version_matches_changelog(plugin_json_text, readme_text))
@@ -260,9 +313,7 @@ def main(argv: list[str] | None = None) -> int:
     if pages_paths is None and args.skills_dir == DEFAULT_SKILLS_DIR:
         pages_paths = list(DEFAULT_PAGES)
     if pages_paths:
-        skills_root = args.skills_root or (
-            DEFAULT_SKILLS_ROOT if args.skills_dir == DEFAULT_SKILLS_DIR else args.skills_dir / "skills"
-        )
+        skills_root = args.skills_root or (DEFAULT_SKILLS_ROOT if args.skills_dir == DEFAULT_SKILLS_DIR else args.skills_dir / "skills")
         if not skills_root.is_dir():
             print(f"BLAD: brak katalogu skilli {skills_root}", file=sys.stderr)
             return 2

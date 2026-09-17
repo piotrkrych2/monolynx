@@ -61,10 +61,7 @@ def build(skill_dir: Path) -> dict[str, str]:
     files = read_files(skill_dir)
     if "SKILL.md" not in files:
         raise ValueError(f"{skill_dir.name} has no SKILL.md")
-    return {
-        name: render(content, skill_dir.name, name == "SKILL.md") if name.endswith(".md") else content
-        for name, content in files.items()
-    }
+    return {name: render(content, skill_dir.name, name == "SKILL.md") if name.endswith(".md") else content for name, content in files.items()}
 
 
 def bundled_resources(name: str) -> dict[str, str]:
@@ -79,6 +76,7 @@ def bundled_resources(name: str) -> dict[str, str]:
         if match is None:
             raise ValueError(f"Missing section markers {start!r}, {end!r} in {source_path}")
         resources[f"references/{filename}"] = match.group().rstrip() + "\n"
+    resources["references/runtime.md"] = (SOURCE_DIR.parent / "references" / "runtime.md").read_text(encoding="utf-8")
     return resources
 
 
@@ -104,10 +102,7 @@ def main() -> int:
         source_files = dict(existing_source)
         source_files["SKILL.md"] = render(source_files["SKILL.md"], name, True, prefix="")
         source_files.update(bundled_resources(name))
-        files = {
-            path: render(content, name, path == "SKILL.md") if path.endswith(".md") else content
-            for path, content in source_files.items()
-        }
+        files = {path: render(content, name, path == "SKILL.md") if path.endswith(".md") else content for path, content in source_files.items()}
         target = TARGET_DIR / f"{TARGET_PREFIX}{name}"
         existing = read_files(target) if target.is_dir() else {}
         if existing_source == source_files and existing == files:

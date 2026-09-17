@@ -5,10 +5,11 @@ description: >
   ticketów/PR do main. Gated na wiki_llm_enabled. Używaj plain [[slug]].
 user-invocable: true
 argument-hint: [ticket-id lub lista ticket-id, np. MON-75 MON-76]
-allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__get_ticket, mcp__monolynx__search_wiki, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, mcp__monolynx__create_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__regenerate_wiki_index, mcp__monolynx__append_wiki_log, mcp__monolynx__get_wiki_backlinks
 ---
 
 # wiki-sync-merge - INGEST po merge do main
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Realizujesz **post-merge INGEST** metody LLM Wiki: bierzesz zamknięte tickety (zmergowane do main) i wpisujesz ich wiedzę trwale w wiki projektu. Skill odpala **człowiek ręcznie** po merge, nigdy automatycznie w trakcie pracy nad branchy.
 
@@ -18,24 +19,7 @@ Realizujesz **post-merge INGEST** metody LLM Wiki: bierzesz zamknięte tickety (
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej środowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdź ją:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - użyj jej wartości jako `project_slug` we wszystkich wywołaniach narzędzi MCP poniżej. Slug podany wprost przez użytkownika ma pierwszeństwo.
-- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Poproś użytkownika, by skonfigurował slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomił skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakończ bez dalszych akcji, dopóki slug nie jest znany.
-
----
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT_SLUG>`.
 
 ## Warunek wstępny: tylko branch main/master
 
@@ -63,7 +47,7 @@ mcp__monolynx__get_wiki_config(project_slug="<PROJECT_SLUG>")
 
 ## Krok 1: Ustal listę ticketów do przetworzenia
 
-`$ARGUMENTS` to ticket-id lub lista ticket-id (np. `MON-75 MON-76` albo samo UUID).
+Faktyczne argumenty wywołania to ticket-id lub lista ticket-id (np. `MON-75 MON-76` albo samo UUID).
 
 - **Argumenty podane** - użyj ich bezpośrednio.
 - **Brak argumentów** - zapytaj użytkownika: _"Podaj ID ticketów zmergowanych do main (np. MON-75 MON-76 lub UUID). Możesz podać kilka naraz."_ Poczekaj; nie kontynuuj bez listy.

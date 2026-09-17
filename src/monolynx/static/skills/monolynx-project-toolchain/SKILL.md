@@ -7,6 +7,8 @@ argument-hint: (bez argumentow)
 
 # Toolchain projektu - konfiguracja lint i testow
 
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
+
 Wykrywasz, jak w tym projekcie uruchamia sie linter i testy, potwierdzasz to z
 uzytkownikiem i zapisujesz jako strone wiki `toolchain`. Skille `/monolynx:work`
 i `/monolynx:work-simple` czytaja te strone i egzekwuja lint + testy przed
@@ -18,28 +20,18 @@ Uruchamiane **raz per projekt**. Ponownie tylko gdy zmienil sie stack.
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Ustawiona** - uzyj jej wartosci jako `project_slug`. Slug podany wprost przez uzytkownika ma pierwszenstwo.
-- **Nie ustawiona** - NIE zgaduj. Popros o konfiguracje w `.claude/settings.json` (pole `env`) i zakoncz:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
----
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT-SLUG>`.
 
 ## KROK 1: Zaladuj narzedzia i sprawdz stan
 
+W katalogu dostępnych narzędzi znajdź funkcje Monolynx potrzebne poniżej i sprawdź ich schematy. Discovery jest opcjonalne, jeśli narzędzia są już dostępne.
+
+<!-- runtime:claude-code -->
+Opcjonalny wariant discovery w Claude Code:
 ```
 ToolSearch(query="+monolynx wiki page list get create update", max_results=10)
 ```
+<!-- /runtime:claude-code -->
 
 Sprawdz, czy strona juz istnieje - po slugu, nie semantycznie:
 
@@ -47,11 +39,7 @@ Sprawdz, czy strona juz istnieje - po slugu, nie semantycznie:
 mcp__monolynx__list_wiki_pages(project_slug="<PROJECT-SLUG>")
 ```
 
-Z wyniku wez strone, ktorej `slug` rowna sie dokladnie `toolchain`. Nie uzywaj tu
-`search_wiki`: wykrywanie i odczyt musza isc ta sama droga, ktora czytaja `work`
-i `work-simple` (`list_wiki_pages` + dopasowanie slugu). Przy wyszukiwaniu
-semantycznym slabe trafienie kazaloby skillowi uznac, ze strony nie ma, i
-utworzyc jej duplikat.
+`list_wiki_pages` zwraca ID, Title i Updated, bez pola `slug`. Wybierz kandydata o tytule `Toolchain`, odczytaj `get_wiki_page` po jego ID i potwierdź `slug == "toolchain"`. Nie używaj tu wyszukiwania semantycznego: słabe trafienie mogłoby spowodować duplikat. Błąd odczytu nie oznacza braku strony.
 
 **Strona `toolchain` istnieje** - pobierz jej tresc przez `get_wiki_page`, pokaz
 uzytkownikowi i zapytaj:
@@ -188,7 +176,7 @@ Mavena, Stryker.NET narzedziem `dotnet tool`, cargo-mutants podkomenda `cargo`,
 Stryker JS pakietem node - dla nich `command -v` zawsze zwroci "brak".
 
 **Ekosystem nierozpoznany albo kilka naraz** (np. `package.json` obok
-`pyproject.toml`) - NIE zgaduj. Zapytaj uzytkownika (AskUserQuestion), ktory
+`pyproject.toml`) - NIE zgaduj. Zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość), ktory
 ekosystem jest rdzeniem projektu, i dla niego prowadz reszte kroku. Mutacja
 konfigurowana jest dla jednego runnera.
 

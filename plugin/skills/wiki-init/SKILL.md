@@ -3,10 +3,11 @@ name: wiki-init
 description: "Wlacz metode LLM Wiki dla biezacego projektu. Tworzy strony systemowe (regulamin, katalog, dziennik) i wlacza flage. Uzyj gdy chcesz zaczac prowadzic wiki metoda LLM Wiki (wg Karpathy'ego)."
 user-invocable: true
 argument-hint: []
-allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__bootstrap_wiki_llm, mcp__monolynx__list_projects, AskUserQuestion, Bash
 ---
 
 # Inicjalizacja metody LLM Wiki
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Wlaczasz dla biezacego projektu metode **LLM Wiki** (wg pomyslu Andreja Karpathy'ego): wiki to narastajacy, kompilowany artefakt wiedzy, ktory pisze i utrzymuje agent AI, a czlowiek dostarcza zrodla i zadaje pytania. Ten skill jednorazowo przygotowuje projekt: tworzy strony systemowe i wlacza flage metody.
 
@@ -14,24 +15,7 @@ Wlaczasz dla biezacego projektu metode **LLM Wiki** (wg pomyslu Andreja Karpathy
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
-- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
-
----
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT_SLUG>`.
 
 ## Warunek wstepny: tylko branch main/master
 
@@ -42,7 +26,7 @@ git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
 ```
 
 - **Branch `main` lub `master`** - kontynuuj normalnie.
-- **Inny branch albo brak repozytorium git** - NIE zapisuj automatycznie. Zapytaj uzytkownika (`AskUserQuestion`): _"Jestes na branchu `<branch>`, nie na main/master. Zapis do wiki zalecany dopiero po merge do main. Kontynuowac mimo to?"_ z opcjami:
+- **Inny branch albo brak repozytorium git** - NIE zapisuj automatycznie. Zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość): _"Jestes na branchu `<branch>`, nie na main/master. Zapis do wiki zalecany dopiero po merge do main. Kontynuowac mimo to?"_ z opcjami:
   - **Nie, przerwij (zalecane)** - zakoncz bez zapisu do wiki.
   - **Tak, kontynuuj mimo to** - przejdz dalej.
 
@@ -62,7 +46,7 @@ Zwraca `wiki_llm_enabled` oraz id stron systemowych (`schema_page_id`, `log_page
 
 Decyzja:
 
-- **Jesli `wiki_llm_enabled` jest `true` i wszystkie trzy strony systemowe istnieja** (id nie sa null) - metoda jest juz wlaczona. Poinformuj uzytkownika i zapytaj (`AskUserQuestion`):
+- **Jesli `wiki_llm_enabled` jest `true` i wszystkie trzy strony systemowe istnieja** (id nie sa null) - metoda jest juz wlaczona. Poinformuj uzytkownika i zapytaj (przez dostępne narzędzie pytań albo wiadomość):
   - **Odswiez** - ponowny bootstrap jest idempotentny: odbuduje katalog `wiki-index` i dopisze wpis do dziennika `wiki-log`, nie nadpisze ani nie usunie istniejacych stron.
   - **Przerwij** - nic nie rob, zakoncz.
 

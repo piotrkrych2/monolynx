@@ -3,10 +3,11 @@ name: monolynx-graph-sync
 description: "Zsynchronizuj lokalnie graf zaleznosci kodu biezacego projektu z Monolynx (modul Polaczenia). Prowadzi za reke: wykrywa graphify (instrukcje instalacji dla macOS/Linux/Windows), generuje .graphifyignore, uruchamia ekstrakcje offline i wypycha graf przez cicd/sync_graph.py (replace_graph). Uzyj gdy chcesz zasilic lub odswiezyc graf bez CI - np. przy pierwszym setupie projektu albo ad hoc."
 user-invocable: true
 argument-hint: []
-allowed-tools: mcp__monolynx__get_graph_stats, mcp__monolynx__query_graph, AskUserQuestion, Bash, Read, Write, Edit, Glob, Grep
 ---
 
 # Lokalna synchronizacja grafu kodu z Monolynx (graphify)
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
 Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
@@ -23,15 +24,7 @@ Prowadzisz uzytkownika za reke przez lokalna synchronizacje grafu zaleznosci **b
 
 ## KROK 0: Ustal konfiguracje
 
-1. **Slug projektu** (pierwsza znaleziona wartosc wygrywa):
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- Zmienna ustawiona (lub w `.env` projektu) - uzyj jej.
-- Brak - sprawdz `user_config.project_slug` pluginu.
-- Nadal brak - zapytaj uzytkownika (AskUserQuestion). NIE zgaduj sluga.
+1. **Slug projektu**: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` w środowisku > jawnie odczytana konfiguracja klienta lub `.env`, zgodnie z kontraktem runtime. Czytaj dane bez wykonywania kodu i bez ujawniania sekretów. Brak: zapytaj i zatrzymaj zależne działania.
 
 2. **URL i token**: `MONOLYNX_URL` (default `https://monolynx.com`), `MONOLYNX_GRAPH_TOKEN` (uzytkownik generuje w Monolynx -> Profil -> Tokeny API). Jesli token nie jest ustawiony w srodowisku/.env - popros uzytkownika, zeby wyeksportowal go w terminalu przed KROK 4. **NIGDY nie pros o wklejenie tokenu do czatu i nie wypisuj jego wartosci.**
 
@@ -52,7 +45,7 @@ Na Windows PowerShell odpowiednik to `Get-Command graphify` lub `where.exe graph
 
 **Jesli graphify JEST** - przejdz do KROK 2.
 
-**Jesli BRAK** - zapytaj uzytkownika (AskUserQuestion) o preferowana metode instalacji i podaj instrukcje dla jego systemu. Pakiet PyPI to **`graphifyy`** (podwojne "y"), komenda to `graphify`:
+**Jesli BRAK** - zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość) o preferowana metode instalacji i podaj instrukcje dla jego systemu. Pakiet PyPI to **`graphifyy`** (podwojne "y"), komenda to `graphify`:
 
 | System | Instalacja |
 |---|---|
@@ -150,7 +143,7 @@ Automatyzacja po merge do main: /monolynx:create-graph-ci-script
 
 ## WAZNE ZASADY
 
-1. **Nie instaluj niczego bez zgody uzytkownika** - instalacja graphify zawsze po potwierdzeniu (AskUserQuestion).
+1. **Nie instaluj niczego bez zgody uzytkownika** - instalacja graphify zawsze po potwierdzeniu (przez dostępne narzędzie pytań albo wiadomość).
 2. **Token nigdy w czacie** - tylko zmienna srodowiskowa; nie wypisuj wartosci.
 3. **Jedna logika mapowania** - zawsze przez `cicd/sync_graph.py` (istniejacy lub wygenerowany wg lokalnej specyfikacji `references/graph-mapper.md`). Zrodlem prawdy mapowania jest wiki "Mapowanie taksonomii Graphify -> Monolynx".
 4. **Dry-run przed pushem** - uzytkownik widzi liczby i potwierdza podmiane grafu.

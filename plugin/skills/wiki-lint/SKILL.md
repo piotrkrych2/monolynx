@@ -3,10 +3,11 @@ name: wiki-lint
 description: "Audyt zdrowia wiki projektu (metoda LLM Wiki). Wykrywa sieroty, martwe linki, sprzecznosci i luki, prezentuje raport i proponuje naprawy. Uzyj gdy chcesz sprawdzic spojnosc wiki i ja uporzadkowac."
 user-invocable: true
 argument-hint: []
-allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__lint_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_backlinks, mcp__monolynx__create_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__append_wiki_log, AskUserQuestion, Bash
 ---
 
 # LINT - audyt zdrowia wiki
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Realizujesz operacje **LINT** metody LLM Wiki: okresowy audyt spojnosci wiki. Sprawdzasz, czy graf wiedzy jest spojny (brak sierot i martwych linkow), czy nie ma nierozstrzygnietych sprzecznosci i czy nie brakuje stron dla wielokrotnie wzmiankowanych konceptow. Po raporcie pomagasz uzytkownikowi naprawic znalezione problemy.
 
@@ -14,24 +15,7 @@ Realizujesz operacje **LINT** metody LLM Wiki: okresowy audyt spojnosci wiki. Sp
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
-- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
-
----
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT_SLUG>`.
 
 ## Krok 0: Warunek wstepny - metoda musi byc wlaczona
 
@@ -94,7 +78,7 @@ git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
 ```
 
 - **Branch `main` lub `master`** - mozesz wykonywac naprawy.
-- **Inny branch albo brak repozytorium git** - NIE naprawiaj automatycznie. Zapytaj uzytkownika (`AskUserQuestion`): _"Jestes na branchu `<branch>`, nie na main/master. Zmiany w wiki zalecane dopiero po merge do main. Kontynuowac naprawy mimo to?"_ z opcjami:
+- **Inny branch albo brak repozytorium git** - NIE naprawiaj automatycznie. Zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość): _"Jestes na branchu `<branch>`, nie na main/master. Zmiany w wiki zalecane dopiero po merge do main. Kontynuowac naprawy mimo to?"_ z opcjami:
   - **Nie, przerwij (zalecane)** - pokaz raport, ale nie zapisuj zmian.
   - **Tak, kontynuuj mimo to** - wykonaj naprawy.
 
@@ -111,7 +95,7 @@ Dla kazdej niepustej kategorii zaproponuj konkretna akcje naprawcza:
 - **Sprzecznosci** - rozstrzygnij z uzytkownikiem ktora wersja jest aktualna, zaktualizuj tresc i **usun marker** sprzecznosci ze strony (`update_wiki_page`).
 - **Luki** - rozwaz utworzenie strony konceptu (`create_wiki_page`, `type: koncept`) i podlaczenie do niej istniejacych wzmianek.
 
-Zapytaj uzytkownika (`AskUserQuestion`), ktore problemy naprawic teraz - nie naprawiaj wszystkiego automatycznie. Sprzecznosci ZAWSZE wymagaja decyzji czlowieka. Po decyzji wykonaj zaakceptowane naprawy.
+Zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość), ktore problemy naprawic teraz - nie naprawiaj wszystkiego automatycznie. Sprzecznosci ZAWSZE wymagaja decyzji czlowieka. Po decyzji wykonaj zaakceptowane naprawy.
 
 ---
 
@@ -139,6 +123,6 @@ Na koniec pokaz:
 
 1. **Warunek wstepny** - Krok 0 jest obowiazkowy; bez wlaczonej metody `lint_wiki` zwroci blad.
 2. **Sprzecznosci rozstrzyga czlowiek** - nigdy nie usuwaj markera bez decyzji uzytkownika.
-3. **Pytaj przed naprawa** - nie modyfikuj stron automatycznie; zatwierdz zakres przez `AskUserQuestion`.
+3. **Pytaj przed naprawa** - nie modyfikuj stron automatycznie; zatwierdz zakres przez dostępne narzędzie pytań lub wiadomość.
 4. **Odnotuj audyt** - jesli cos naprawiono, dopisz wpis do `wiki-log`.
 5. **Jezyk**: polski (terminy techniczne i nazwy narzedzi w oryginale).

@@ -3,8 +3,9 @@ name: retro
 description: "Retro korekt sprintu: zbiera uwagi krytyka, NEEDS WORK, reguly, eskalacje i STOP-y z komentarzy ticketow, pamieci agentow oraz auto-memory Claude Code (korekty uzytkownika z czatu), grupuje powtarzajace sie i dla kazdej proponuje trwala maszynerie (regula w .claude/rules/, wiersz rubryki, wpis w constitution). Zapisuje wybrane. Uzyj na koniec sprintu albo gdy ta sama korekta wraca."
 user-invocable: true
 argument-hint: [nazwa sprintu (opcjonalnie; domyslnie aktywny albo ostatnio zamkniety)]
-allowed-tools: mcp__monolynx__list_sprints, mcp__monolynx__list_tickets, mcp__monolynx__search_tickets, mcp__monolynx__list_comments, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__create_wiki_page, mcp__monolynx__get_wiki_config, mcp__monolynx__append_wiki_log, AskUserQuestion, Bash, Read, Write, Edit, Glob, Grep
 ---
+
+Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/runtime.md).
 
 # Retro - korekty w maszynerie
 
@@ -18,31 +19,21 @@ wiersz rubryki (`review-rubric.md` w pluginie), wpis w stronie wiki
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`:
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
 
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Ustawiona** - uzyj jej jako `project_slug`. Slug podany wprost ma pierwszenstwo.
-- **Nie ustawiona i brak sluga od uzytkownika** - NIE zgaduj. Popros
-  o konfiguracje w `.claude/settings.json` (pole `env`) i zakoncz:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
 
 ## KROK 1: Zaladuj narzedzia i wybierz sprint
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 ToolSearch(query="+monolynx sprint ticket comment search", max_results=10)
 ToolSearch(query="+monolynx wiki page config log", max_results=10)
 ```
 
-Prefix tooli odczytaj z wynikow i uzywaj konsekwentnie. Runtime bez ToolSearch
--> toole bezposrednio.
+<!-- /runtime:claude-code -->
+Nazwy i prefiksy narzędzi odczytaj z faktycznego katalogu runtime. Używaj dostępnego discovery i aktualnych schematów także wtedy, gdy klient nie udostępnia wyszukiwarki z powyższego przykładu.
 
 `$ARGUMENTS` (literalny "$ARGUMENTS" = brak):
 
@@ -79,7 +70,11 @@ nawet gdy nie maja tresci; ich liczba sama w sobie jest sygnalem T21
 
 Kazda korekta = wiersz: `ticket | zrodlo | kategoria | tresc | plik (jesli jest)`.
 
-### 2b. Pamiec agentow i auto-memory sesji (lokalnie)
+### 2b. Pamięć agentów i sesji (lokalnie)
+
+Czytaj wyłącznie pamięć dostępną w faktycznym runtime i udostępnioną do tego zadania. Gdy brak źródła, odnotuj brak i pracuj na komentarzach ticketów; nie buduj nowego backendu pamięci. Poniżej opcjonalne źródła Claude Code.
+
+<!-- runtime:claude-code -->
 
 Dwa zrodla. Pierwsze to pamiec subagentow w repo:
 
@@ -118,6 +113,8 @@ Ticket: klucz `[A-Z]+-[0-9]+` z tresci pliku, jesli jest; bez klucza wiersz
 liczy sie w KROK 3 jak wpis MEMORY.md bez ticketu (jedno wystapienie spoza
 sprintu). Plik z data spoza sprintu tez wchodzi - retro pyta o wzorzec, nie
 o kalendarz.
+
+<!-- /runtime:claude-code -->
 
 ### 2c. Co juz jest maszyneria (zeby nie proponowac drugi raz)
 
