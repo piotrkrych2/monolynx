@@ -1,4 +1,5 @@
 ---
+name: mr-queue
 description: "Kolejka merge MR (GitLab, glab) i PR (GitHub, gh): jeden idempotentny tick bierze pierwszy niezmergowany MR/PR z kolejki i robi dokładnie jedno działanie w kolejności CI -> konflikt -> approve -> merge, a po merge czeka na zielone CI brancha docelowego. Bez argumentów sam układa kolejkę z otwartych MR/PR. Użyj gdy chcesz przeprowadzić MR-y do main po kolei, ręcznie albo w pętli /loop."
 user-invocable: true
 argument-hint: "[!iid | #pr | URL ...]"
@@ -6,6 +7,13 @@ allowed-tools: Bash, Read, Edit, Write, Agent
 ---
 
 # MR-QUEUE - kolejka merge MR/PR
+
+Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
+Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
+Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
+Ścieżki plików tworzonych w projekcie pozostają względem projektu. Przed komendami
+z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
+literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
 
 Jesteś **strażnikiem kolejki merge**. Jedno uruchomienie tego skilla to jeden **tick**: czytasz stan pierwszego MR/PR z kolejki, robisz dokładnie jedno działanie, raportujesz i kończysz turę.
 
@@ -26,7 +34,7 @@ Pętla jest **na zewnątrz** skilla: `/loop 10m /monolynx:mr-queue`.
 COMMON="$(git rev-parse --git-common-dir)"
 STATE_DIR="$COMMON/monolynx/mr-queue"
 QUEUE="$COMMON/monolynx/mr-queue.json"
-SCRIPT="${CLAUDE_PLUGIN_ROOT}/scripts/mr_queue_state.py"
+SCRIPT="${MONOLYNX_SKILL_DIR}/scripts/mr_queue_state.py"
 mkdir -p "$STATE_DIR"
 echo "STATE_DIR=$STATE_DIR QUEUE=$QUEUE SCRIPT=$SCRIPT"
 echo "MODE=${MONOLYNX_SPRINT_RUN_MODE:-interactive} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} AUTOMERGE=${MONOLYNX_AUTOMERGE:-false} MERGE_METHOD=${MONOLYNX_MERGE_METHOD:-merge}"

@@ -7,6 +7,13 @@ argument-hint: [ticket-id lub klucz np. PROJ-12]
 
 # Proces pracy nad zadaniem - Team Manager
 
+Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
+Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
+Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
+Ścieżki plików tworzonych w projekcie pozostają względem projektu. Przed komendami
+z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
+literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
+
 Jestes **Team Managerem**. Koordynujesz prace zespolu agentow nad zadaniem z projektu Monolynx.
 
 ---
@@ -143,8 +150,8 @@ kontynuowac / przejac. Poczekaj na odpowiedz.
 Ticket ma status `in_progress`, assignee to biezacy uzytkownik (albo nieznany)
 I w komentarzach (`list_comments`) jest wpis "Team Manager - Plan pracy" ->
 to praca przerwana przez `/clear`, kompakcje albo zamkniecie sesji. Nie startuj
-od zera. Ustal ostatni domkniety etap wg tabeli etapow ze skilla `resume`
-(KROK 3 tamze; zrodla: komentarze agentow, `get_pipeline` po `pipeline_id`
+od zera. Ustal ostatni domkniety etap wg lokalnej tabeli `references/resume-stages.md`
+(kopia KROK 3 skilla `resume`; zrodla: komentarze agentow, `get_pipeline` po `pipeline_id`
 z komentarza planu - doladuj celowanym ToolSearch, `git status --porcelain`).
 Zapytaj:
 

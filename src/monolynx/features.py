@@ -1511,6 +1511,10 @@ def _feature_pipelines(lang: str) -> dict[str, Any]:
             "screenshot_hint_2": "Widok detalu pipeline'u z kolumnami stepów i kartami jobów",
             "features": [
                 {
+                    "title": "Skille dla Claude Code i Codex",
+                    "desc": "Korzystaj z tego samego zestawu skilli w obu klientach. Zainstaluj pełny plugin albo wybierz pojedyncze skille przez MCP wraz z potrzebnymi instrukcjami i skryptami.",
+                },
+                {
                     "title": "Hierarchia Pipeline -> Step -> Job",
                     "desc": "Każdy pipeline składa się ze stepów (research, coding, wrap-up), a każdy step z jobów. Status propaguje się w górę - nieudany job -> nieudany step -> nieudany pipeline.",
                 },
@@ -1623,6 +1627,10 @@ def _feature_pipelines(lang: str) -> dict[str, Any]:
         "screenshot_hint": "Pipeline list with status and type filters",
         "screenshot_hint_2": "Pipeline detail view with step columns and job cards",
         "features": [
+            {
+                "title": "Skills for Claude Code and Codex",
+                "desc": "Use the same set of skills in both clients. Install the full plugin or select individual skills through MCP with their required instructions and scripts.",
+            },
             {
                 "title": "Pipeline -> Step -> Job hierarchy",
                 "desc": "Each pipeline has steps (research, coding, wrap-up), each step has jobs. Status propagates upward - failed job -> failed step -> failed pipeline.",

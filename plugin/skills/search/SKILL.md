@@ -1,4 +1,5 @@
 ---
+name: search
 description: Szukaj informacji w wiki projektu na platformie Monolynx. Użyj gdy użytkownik pyta o dokumentację projektu, architekturę, API, integracje, standardy kodu lub inne informacje zapisane w wiki Monolynx. Trigger na słowa "monolynx", "wiki", "szukaj w wiki", "sprawdź w monolynx", "co mamy w wiki", "jak działa" (w kontekście dokumentacji projektu).
 allowed-tools: mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__list_projects, mcp__monolynx__log_time, mcp__monolynx__get_wiki_config, mcp__monolynx__create_wiki_page, mcp__monolynx__regenerate_wiki_index, mcp__monolynx__append_wiki_log, AskUserQuestion, Bash
 ---

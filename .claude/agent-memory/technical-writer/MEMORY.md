@@ -14,3 +14,6 @@
 
 ## Raportowanie do ticketów (obowiązkowe)
 - Po każdej sesji: komentarz PL (`add_comment`) + log czasu (`log_time`, min 1 min) na tickecie. MCP: `mcp__claude_ai_Monolynx__*`.
+
+## Reguły z review
+- Nowa integracja dostępna użytkownikowi musi być opisana na landing page w obu obsługiwanych językach (MON-182).

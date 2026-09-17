@@ -1,4 +1,5 @@
 ---
+name: project-toolchain
 description: "Wykryj komendy lint i testow biezacego projektu, opcjonalnie narzedzie do testow mutacyjnych, i zapisz je jako strone wiki 'toolchain' w Monolynx. Jednorazowa konfiguracja per projekt - skille work i work-simple czytaja te strone, zeby uruchomic lint i testy przed zamknieciem ticketu. Uzyj przy pierwszym setupie projektu albo gdy zmienil sie stack."
 user-invocable: true
 argument-hint: (bez argumentow)

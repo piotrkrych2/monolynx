@@ -1,4 +1,5 @@
 ---
+name: graph-sync
 description: "Zsynchronizuj lokalnie graf zaleznosci kodu biezacego projektu z Monolynx (modul Polaczenia). Prowadzi za reke: wykrywa graphify (instrukcje instalacji dla macOS/Linux/Windows), generuje .graphifyignore, uruchamia ekstrakcje offline i wypycha graf przez cicd/sync_graph.py (replace_graph). Uzyj gdy chcesz zasilic lub odswiezyc graf bez CI - np. przy pierwszym setupie projektu albo ad hoc."
 user-invocable: true
 argument-hint: []
@@ -6,6 +7,13 @@ allowed-tools: mcp__monolynx__get_graph_stats, mcp__monolynx__query_graph, AskUs
 ---
 
 # Lokalna synchronizacja grafu kodu z Monolynx (graphify)
+
+Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
+Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
+Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
+Ścieżki plików tworzonych w projekcie pozostają względem projektu. Przed komendami
+z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
+literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
 
 Prowadzisz uzytkownika za reke przez lokalna synchronizacje grafu zaleznosci **biezacego projektu** z modulem Polaczenia. To lokalny odpowiednik CI-owego skilla `/monolynx:create-graph-ci-script` - uzywa TEJ SAMEJ logiki mapowania (`cicd/sync_graph.py`) i tego samego toola `replace_graph` (pelna, idempotentna podmiana grafu).
 
@@ -103,7 +111,7 @@ Poinformuj uzytkownika: sam AST, offline, bez LLM i bez kosztow API. Po zakoncze
 
 1. **Sprawdz czy istnieje `cicd/sync_graph.py`** (wygenerowany przez `/monolynx:create-graph-ci-script`):
    - **Istnieje** - uzyj go (jedna logika mapowania dla CI i lokalnie, zero dryfu).
-   - **Brak** - wygeneruj go zgodnie ze specyfikacja z KROK 3 skilla `/monolynx:create-graph-ci-script` (cienki mapper graph.json -> `replace_graph`, stdlib only, mapowanie wg wiki "Mapowanie taksonomii Graphify -> Monolynx"). NIE wymyslaj wlasnego mapowania.
+   - **Brak** - wygeneruj go zgodnie z lokalną specyfikacją `references/graph-mapper.md` (kopia KROK 3 skilla `create-graph-ci-script`) (cienki mapper graph.json -> `replace_graph`, stdlib only, mapowanie wg wiki "Mapowanie taksonomii Graphify -> Monolynx"). NIE wymyslaj wlasnego mapowania.
 
 2. **Najpierw dry-run** (pokaz uzytkownikowi liczby):
 
@@ -144,7 +152,7 @@ Automatyzacja po merge do main: /monolynx:create-graph-ci-script
 
 1. **Nie instaluj niczego bez zgody uzytkownika** - instalacja graphify zawsze po potwierdzeniu (AskUserQuestion).
 2. **Token nigdy w czacie** - tylko zmienna srodowiskowa; nie wypisuj wartosci.
-3. **Jedna logika mapowania** - zawsze przez `cicd/sync_graph.py` (istniejacy lub wygenerowany wg spec z `/monolynx:create-graph-ci-script`). Zrodlem prawdy mapowania jest wiki "Mapowanie taksonomii Graphify -> Monolynx".
+3. **Jedna logika mapowania** - zawsze przez `cicd/sync_graph.py` (istniejacy lub wygenerowany wg lokalnej specyfikacji `references/graph-mapper.md`). Zrodlem prawdy mapowania jest wiki "Mapowanie taksonomii Graphify -> Monolynx".
 4. **Dry-run przed pushem** - uzytkownik widzi liczby i potwierdza podmiane grafu.
 5. **Graf code-only (v1)** - rationale/docs/pakiety/symbole zewnetrzne sa pomijane; brak krawedzi INHERITS po filtrze to nie blad.
 6. **Cross-OS** - na Windows uzywaj `Get-Command`/`where.exe` i `$env:` zamiast unixowych odpowiednikow.

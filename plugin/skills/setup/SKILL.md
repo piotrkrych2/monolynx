@@ -1,4 +1,5 @@
 ---
+name: setup
 description: "Checklista konfiguracji projektu Monolynx: slug, strona wiki toolchain, LLM Wiki, graf i mutacje w CI, flagi MONOLYNX_*. Pokazuje stan OK/BRAK każdego punktu i za zgodą uruchamia po kolei skille naprawcze. Użyj przy pierwszym starcie pracy w projekcie albo gdy podejrzewasz, że czegoś brakuje w konfiguracji."
 user-invocable: true
 argument-hint: ""

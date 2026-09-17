@@ -1,4 +1,5 @@
 ---
+name: brief
 description: "Kontrakt epizodu bez ticketu: w jednej turze ustala, jak wyglada 'gotowe' (obserwowalny stan), czego nie ruszac i co agent robi sam, a przed czym sie zatrzymuje; po ENTER od razu zaczyna prace. Dziala bez MCP i bez sluga. Uzyj na starcie kazdej pracy, ktora nie jest ticketem: konfiguracja, investigation, dokumentacja, drobna zmiana."
 user-invocable: true
 argument-hint: [goly opis zadania, np. "napraw build na CI"]

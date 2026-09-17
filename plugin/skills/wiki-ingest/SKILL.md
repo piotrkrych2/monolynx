@@ -1,4 +1,5 @@
 ---
+name: wiki-ingest
 description: "Zintegruj nowe zrodlo (plik, URL lub wklejona tresc) z wiki projektu metoda LLM Wiki. Tworzy strone zrodla, aktualizuje powiazane strony, linkuje wikilinkami, odswieza katalog i dziennik. Uzyj gdy masz dokument lub artykul do wlaczenia w wiki."
 user-invocable: true
 argument-hint: [sciezka pliku / URL / temat zrodla]

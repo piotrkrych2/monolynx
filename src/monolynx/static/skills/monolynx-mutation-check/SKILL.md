@@ -8,6 +8,13 @@ allowed-tools: mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, mcp
 
 # Mutacje jako praca - przebieg diffowy i survivorzy
 
+Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
+Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
+Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
+Ścieżki plików tworzonych w projekcie pozostają względem projektu. Przed komendami
+z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
+literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
+
 Uruchamiasz przebieg mutacyjny **biezacego projektu**, parsujesz raport i zamieniasz
 przezywajacych mutantow (survivorow) na sledzona prace w Monolynx. Wartosc tego skilla nie
 lezy w samym przebiegu - Strykera czy PIT-a uzytkownik odpali sam. Lezy w tym, ze raport
@@ -196,7 +203,7 @@ Parsowanie idzie WYLACZNIE przez skrypt pluginu - skill nie ma wlasnego parsera 
 wlasnego formatu:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/mutation_report.py" --report <sciezka z pola raport> --format <format>
+python3 "${MONOLYNX_SKILL_DIR}/scripts/mutation_report.py" --report <sciezka z pola raport> --format <format>
 ```
 
 Format bierzesz z pola `raport` strony `toolchain`. Mapowanie narzedzie -> format:
@@ -377,7 +384,7 @@ wystartowalo, parser zwrocil kod 2 albo raport nie powstal. Przebieg czesciowy (
    i odpuszczasz; asercje pinujace implementacje dla podniesienia score sa zabronione.
 7. **Budzet zamiast wiszacego terminala** - domyslnie 600 s przez `timeout` narzedzia Bash;
    przekroczenie daje raport czesciowy albo jawne "brak raportu" z komenda do dokonczenia.
-8. **Jeden parser** - `plugin/scripts/mutation_report.py`. Skill nie ma wlasnego silnika ani
+8. **Jeden parser** - dołączony `scripts/mutation_report.py`, kopia źródła z pluginu. Skill nie ma wlasnego silnika ani
    wlasnego formatu raportu; narzedzie bez parsera zglaszasz wprost.
 9. **Pipeline jest best-effort** - blad toola pipeline nigdy nie przerywa skilla, a w trybie
    samodzielnym pipeline w ogole nie powstaje.

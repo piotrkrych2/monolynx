@@ -1,4 +1,5 @@
 ---
+name: create-graph-ci-script
 description: "Skonfiguruj graphify jako ekstraktor grafu zaleznosci kodu dla Monolynx. Wykrywa system CI (GitLab/GitHub/Bitbucket/Jenkins), generuje .graphifyignore i cienki cicd/sync_graph.py (graph.json -> replace_graph), dodaje non-blocking step CI oraz instrukcje lokalne. Dziala dla kazdego jezyka wspieranego przez graphify (36 jezykow). Uzyj w dowolnym projekcie, ktory ma byc widoczny w module Polaczenia."
 user-invocable: true
 argument-hint: [monolynx-url]

@@ -1,4 +1,5 @@
 ---
+name: wiki-init
 description: "Wlacz metode LLM Wiki dla biezacego projektu. Tworzy strony systemowe (regulamin, katalog, dziennik) i wlacza flage. Uzyj gdy chcesz zaczac prowadzic wiki metoda LLM Wiki (wg Karpathy'ego)."
 user-invocable: true
 argument-hint: []

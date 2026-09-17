@@ -1,4 +1,5 @@
 ---
+name: help
 description: "Wyświetl mapę skilli Monolynx: 6 grup (Setup, Planowanie, Praca, Integracja, Sprint, Wiki), każdy skill w jednej linii, oraz dwie ścieżki pracy - ręczną i autopilot. Zmienne, runtime'y i pełne opisy skilli są w README pluginu. Użyj gdy chcesz wiedzieć, który skill wybrać."
 user-invocable: true
 argument-hint: ""

@@ -7,6 +7,13 @@ allowed-tools: mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, Ask
 
 # Nieblokujacy krok CI z testami mutacyjnymi
 
+Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
+Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
+Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
+Ścieżki plików tworzonych w projekcie pozostają względem projektu. Przed komendami
+z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
+literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
+
 Twoim zadaniem jest wygenerowanie w **biezacym projekcie** kroku CI, ktory przy kazdym MR/PR
 uruchamia przebieg mutacyjny ograniczony do zmiany, publikuje raport jako artefakt i porownuje
 wynik z zapisanym baseline.
@@ -105,20 +112,20 @@ Sprawdz w korzeniu repo (w tej kolejnosci). To ta sama tabela wykrywania CI, kto
 
 ## KROK 2: Skopiuj skrypty do `cicd/`
 
-Utworz katalog `cicd/` (jesli go nie ma) i skopiuj do niego dwa skrypty z pluginu:
+Utworz katalog `cicd/` (jesli go nie ma) i skopiuj do niego dwa skrypty z lokalnego katalogu `scripts/` tego skilla:
 
 ```bash
 mkdir -p cicd
-cp "${CLAUDE_PLUGIN_ROOT}/scripts/mutation_report.py" cicd/mutation_report.py
-cp "${CLAUDE_PLUGIN_ROOT}/scripts/mutation_baseline.py" cicd/mutation_baseline.py
+cp "${MONOLYNX_SKILL_DIR}/scripts/mutation_report.py" cicd/mutation_report.py
+cp "${MONOLYNX_SKILL_DIR}/scripts/mutation_baseline.py" cicd/mutation_baseline.py
 ```
 
 Kopia juz istnieje -> zapytaj (AskUserQuestion), czy nadpisac. **Kopii nie edytuj recznie** -
 aktualizacja idzie przez ponowne uruchomienie tego skilla, inaczej lokalna poprawka wyparuje przy
 nastepnym kopiowaniu.
 
-**Brak ktoregos pliku w pluginie** (plugin starszy niz 1.10.0 albo skille zainstalowane przez
-`install_monolynx_skills`, ktory kopiuje wylacznie pliki `.md`) - wypisz uzytkownikowi, zeby
+**Brak któregoś dołączonego skryptu** oznacza niekompletną instalację
+pluginu lub skilla standalone. Wypisz użytkownikowi, żeby
 pobral je z repozytorium Monolynx ze sciezek `plugin/scripts/mutation_report.py` i
 `plugin/scripts/mutation_baseline.py`, i **kontynuuj** generowanie kroku CI.
 

@@ -159,7 +159,7 @@ _SKILL_SLUG_PLACEHOLDERS = ("<PROJECT-SLUG>", "<PROJECT-ID>")
 # jest wspolny dla Claude Code, Codex i Cursora - rozni sie tylko lokalizacja.
 _SKILL_TARGET_DIRS = {
     "claude": ".claude/skills",
-    "codex": ".codex/skills",
+    "codex": ".agents/skills",
     "cursor": ".cursor/skills",
 }
 
@@ -6182,9 +6182,15 @@ def _list_available_skills() -> list[str]:
 
 
 def _list_skill_files(skill_dir: Path) -> list[Path]:
-    """Zwroc pliki markdown skilla: SKILL.md pierwszy, pliki pomocnicze alfabetycznie."""
-    extras = sorted(p for p in skill_dir.glob("*.md") if p.name != "SKILL.md")
-    return [skill_dir / "SKILL.md", *extras]
+    """Return skill resources in stable order, with SKILL.md first."""
+    root = skill_dir.resolve()
+    files = []
+    for path in skill_dir.rglob("*"):
+        if not path.resolve().is_relative_to(root):
+            raise ValueError(f"Resource escapes skill directory: {path}")
+        if path.is_file():
+            files.append(path)
+    return sorted(files, key=lambda path: (path != skill_dir / "SKILL.md", path.relative_to(skill_dir).as_posix()))
 
 
 def _render_skill_content(raw: str, project_slug: str) -> str:
@@ -6230,7 +6236,7 @@ async def install_monolynx_skills(
     - `project_slug`: slug projektu Monolynx (wymagany; weryfikuje czlonkostwo uzytkownika)
     - `skill_names`: opcjonalna lista nazw skilli do pobrania pelnej tresci
     - `target`: runtime docelowy - `claude` (domyslnie, `.claude/skills/`),
-      `codex` (`.codex/skills/`) lub `cursor` (`.cursor/skills/`). Format plikow jest
+      `codex` (`.agents/skills/`) lub `cursor` (`.cursor/skills/`). Format plikow jest
       identyczny dla wszystkich trzech; zmienia sie tylko katalog w `relative_path`.
 
     Zwraca (tryb listy):
@@ -6284,8 +6290,12 @@ async def install_monolynx_skills(
     for name in selected:
         files = [
             {
-                "relative_path": f"{skills_dir}/{name}/{path.name}",
-                "content": _render_skill_content(path.read_text(encoding="utf-8"), project.slug),
+                "relative_path": f"{skills_dir}/{name}/{path.relative_to(_STATIC_SKILLS_DIR / name).as_posix()}",
+                "content": (
+                    _render_skill_content(path.read_text(encoding="utf-8"), project.slug)
+                    if path.suffix == ".md"
+                    else path.read_text(encoding="utf-8")
+                ),
             }
             for path in _list_skill_files(_STATIC_SKILLS_DIR / name)
         ]

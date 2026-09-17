@@ -40,6 +40,7 @@ Thumbs.db
 # our dev data
 .data/
 .mcp.json
+!plugin/.mcp.json
 
 # lokalne skrypty/dokumenty dev (nie commitowac)
 seed_pipelines.py
@@ -49,4 +50,3 @@ spec-driven-debate.md
 # graphify - lokalny artefakt buildu (odtwarzalny: graphify update .);
 # wspolny graf zyje w Monolynx (replace_graph), .graphifyignore commitujemy
 graphify-out/
-

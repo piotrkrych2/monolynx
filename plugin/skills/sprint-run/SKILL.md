@@ -1,4 +1,5 @@
 ---
+name: sprint-run
 description: "Dyspozytor sprintu: jeden idempotentny tick, który czyta stan sprintu i sesji w tle, startuje brakujące sesje /monolynx:work w worktree, zbiera zakończone i raportuje. Sam nigdy nie pracuje nad ticketem. Użyj gdy chcesz przerobić sprint sesjami w tle, w pętli /loop albo ze skryptu sprint_run.sh."
 user-invocable: true
 argument-hint: "[sloty]"
@@ -6,6 +7,13 @@ allowed-tools: mcp__monolynx__list_sprints, mcp__monolynx__list_tickets, mcp__mo
 ---
 
 # SPRINT-RUN - dyspozytor nazwanych sesji w tle
+
+Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
+Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
+Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
+Ścieżki plików tworzonych w projekcie pozostają względem projektu. Przed komendami
+z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
+literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
 
 Jesteś **dyspozytorem sprintu**. Jedno uruchomienie tego skilla to jeden **tick**: czytasz stan sprintu i stan sesji w tle, startujesz brakujące sesje, zbierasz zakończone, raportujesz i kończysz turę.
 
@@ -178,7 +186,7 @@ claude logs "<session_id>" | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' | tr '\r' '\n' | 
 **Wylicz stan:**
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run_state.py" \
+python3 "${MONOLYNX_SKILL_DIR}/scripts/sprint_run_state.py" \
   --slug "<PROJECT_SLUG>" \
   --agents-file - \
   --tickets-file "$TICKETS" \
@@ -360,10 +368,10 @@ Ten blok wypisuj wtedy, gdy `MODE` z KROK 1 **nie jest** `batch`, czyli w trybie
 Najpierw rozwiń absolutną ścieżkę skryptu:
 
 ```bash
-echo "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run.sh"
+echo "${MONOLYNX_SKILL_DIR}/scripts/sprint_run.sh"
 ```
 
-Wypisz tę ścieżkę, a potem trzy sposoby uruchomienia pętli. W komendach **podstaw rozwiniętą ścieżkę** w miejsce `<ścieżka>` - użytkownik ma dostać wiersz gotowy do wklejenia w terminalu. Nie zostawiaj w nich literału `${CLAUDE_PLUGIN_ROOT}`: ta zmienna istnieje tylko wewnątrz sesji Claude Code, a w zwykłym shellu rozwinie się do pustego stringu i komenda po cichu wskaże złą ścieżkę.
+Wypisz tę ścieżkę, a potem trzy sposoby uruchomienia pętli. W komendach **podstaw rozwiniętą ścieżkę** w miejsce `<ścieżka>` (pełna ścieżka pliku, wraz z `sprint_run.sh`) - użytkownik ma dostać wiersz gotowy do wklejenia w terminalu. Nie zostawiaj w nich zmiennej `${MONOLYNX_SKILL_DIR}`: została przypisana lokalnie przez agenta, więc terminal użytkownika może jej nie znać.
 
 - **W tej sesji**, bez żadnego skryptu:
 
@@ -374,22 +382,22 @@ Wypisz tę ścieżkę, a potem trzy sposoby uruchomienia pętli. W komendach **p
 - **W tmux** (VPS, sesja przeżywa rozłączenie):
 
   ```bash
-  tmux new -d -s "<PROJECT_SLUG>-sprint" "<ścieżka>/sprint_run.sh --slots 2"
+  tmux new -d -s "<PROJECT_SLUG>-sprint" "bash \"<ścieżka>\" --slots 2"
   ```
 
 - **Z crona** (cron sam jest pętlą, więc jeden tick na wywołanie):
 
   ```
-  */15 * * * * cd /sciezka/projektu && "<ścieżka>/sprint_run.sh" --once >> ~/sprint-run.log 2>&1
+  */15 * * * * cd /sciezka/projektu && bash "<ścieżka>" --once >> ~/sprint-run.log 2>&1
   ```
 
 - **Pełna lista flag**:
 
   ```bash
-  "<ścieżka>/sprint_run.sh" --help
+  bash "<ścieżka>" --help
   ```
 
-Powiedz wprost: **ten skill niczego nie kopiuje ani nie instaluje**. Ścieżka wskazuje katalog cache zainstalowanego pluginu, a nie plik w repozytorium projektu. Po aktualizacji pluginu zmienia się numer wersji w tej ścieżce, więc rozwiń ją ponownie, zamiast trzymać starą w notatkach albo w crontabie na stałe.
+Powiedz wprost: **ten skill niczego nie kopiuje ani nie instaluje**. Ścieżka wskazuje skrypt dołączony do zainstalowanego pluginu albo skilla standalone. Po aktualizacji lokalizacja może się zmienić, więc rozwiń ją ponownie, zamiast trzymać starą w notatkach albo w crontabie na stałe.
 
 ### Ostatnia linia
 

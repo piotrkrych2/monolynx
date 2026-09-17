@@ -1,4 +1,5 @@
 ---
+name: wiki-lint
 description: "Audyt zdrowia wiki projektu (metoda LLM Wiki). Wykrywa sieroty, martwe linki, sprzecznosci i luki, prezentuje raport i proponuje naprawy. Uzyj gdy chcesz sprawdzic spojnosc wiki i ja uporzadkowac."
 user-invocable: true
 argument-hint: []
