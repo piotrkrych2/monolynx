@@ -3,10 +3,11 @@ name: monolynx-create-graph-ci-script
 description: "Skonfiguruj graphify jako ekstraktor grafu zaleznosci kodu dla Monolynx. Wykrywa system CI (GitLab/GitHub/Bitbucket/Jenkins), generuje .graphifyignore i cienki cicd/sync_graph.py (graph.json -> replace_graph), dodaje non-blocking step CI oraz instrukcje lokalne. Dziala dla kazdego jezyka wspieranego przez graphify (36 jezykow). Uzyj w dowolnym projekcie, ktory ma byc widoczny w module Polaczenia."
 user-invocable: true
 argument-hint: [monolynx-url]
-allowed-tools: mcp__monolynx__replace_graph, mcp__monolynx__query_graph, mcp__monolynx__get_graph_stats, AskUserQuestion, Bash, Read, Write, Edit, Glob, Grep
 ---
 
 # Konfiguracja graphify jako ekstraktora grafu kodu dla Monolynx
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Twoim zadaniem jest skonfigurowanie synchronizacji grafu zaleznosci kodu **biezacego projektu** z platforma Monolynx (modul Polaczenia).
 
@@ -17,7 +18,7 @@ Twoim zadaniem jest skonfigurowanie synchronizacji grafu zaleznosci kodu **bieza
 
 **Zasada kluczowa: CI NIE instaluje graphify.** Instalacja graphify na runnerze (gitlab-runner, self-hosted agent) to jednorazowy setup wlasciciela projektu - instrukcje w Monolynx: modul Polaczenia -> "Jak zasilic graf?". Step CI tylko UZYWA graphify; gdy go brak - konczy sie non-blocking z czytelnym komunikatem, a build projektu przechodzi dalej.
 
-**Monolynx URL**: `$ARGUMENTS` (domyslnie: `https://monolynx.com`)
+**Monolynx URL**: faktyczny argument URL wywołania (domyslnie: `https://monolynx.com`)
 
 ---
 
@@ -25,8 +26,8 @@ Twoim zadaniem jest skonfigurowanie synchronizacji grafu zaleznosci kodu **bieza
 
 Ustal trzy wartosci (w tej kolejnosci, pierwsza znaleziona wygrywa):
 
-1. **Slug projektu**: zmienna `MONOLYNX_PROJECT_SLUG` z `.env` / srodowiska -> `user_config.project_slug` pluginu -> zapytaj uzytkownika (AskUserQuestion).
-2. **URL**: `$ARGUMENTS` -> `MONOLYNX_URL` -> `user_config.mcp_endpoint` (bez suffixu `/mcp`) -> `https://monolynx.com`.
+1. **Slug projektu**: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` w środowisku > jawnie odczytana konfiguracja klienta lub `.env`, zgodnie z kontraktem runtime. Brak: zapytaj i zatrzymaj zależne działania. Konfigurację czytaj jako dane, bez wykonywania kodu i ujawniania sekretów.
+2. **URL**: faktyczny argument URL wywołania -> `MONOLYNX_URL` -> jawnie odczytany endpoint MCP konfiguracji klienta (bez suffixu `/mcp`) -> `https://monolynx.com`.
 3. **Token**: `MONOLYNX_GRAPH_TOKEN` (uzytkownik generuje w Monolynx -> Profil -> Tokeny API). NIE wypisuj wartosci tokenu.
 
 ```bash

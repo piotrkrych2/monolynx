@@ -3,8 +3,9 @@ name: mutation-check
 description: "Uruchom przebieg testow mutacyjnych ograniczony do zmiany, pokaz przezywajacych mutantow i zamien ich na sledzona prace w Monolynx - kryteria akceptacji przy tickecie albo tickety w backlogu. Komendy i format raportu czyta z sekcji Mutacje strony wiki toolchain, przebieg raportuje jako job w module Pipelines. Uzyj gdy chcesz sprawdzic, czy testy faktycznie lapia zmiany w kodzie."
 user-invocable: true
 argument-hint: [sciezka modulu (opcjonalnie)]
-allowed-tools: mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__get_ticket, mcp__monolynx__add_acceptance_criterion, mcp__monolynx__create_ticket, mcp__monolynx__create_pipeline_job, mcp__monolynx__update_pipeline_job, mcp__monolynx__append_job_log, AskUserQuestion, Bash, Read, Grep, Glob
 ---
+
+Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/runtime.md).
 
 # Mutacje jako praca - przebieg diffowy i survivorzy
 
@@ -32,11 +33,15 @@ przejscia.
 
 Dwa wywolania rownolegle:
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 ToolSearch(query="+monolynx wiki page list get update", max_results=10)
 ToolSearch(query="+monolynx ticket acceptance criterion pipeline job log", max_results=10)
 ```
 
+<!-- /runtime:claude-code -->
 Potrzebne toole: `list_wiki_pages`, `get_wiki_page`, `update_wiki_page`, `get_ticket`,
 `add_acceptance_criterion`, `create_ticket` oraz opcjonalnie `create_pipeline_job`,
 `update_pipeline_job`, `append_job_log`.
@@ -44,27 +49,16 @@ Potrzebne toole: `list_wiki_pages`, `get_wiki_page`, `update_wiki_page`, `get_ti
 **Prefix tooli - ustal RAZ, nie zgaduj**: nazwy w tym skillu zapisane sa jako
 `mcp__monolynx__<tool>` - to placeholder. Rzeczywisty prefix zalezy od instalacji
 (`mcp__monolynx__*` plugin lokalny, `mcp__claude_ai_Monolynx__*` connector globalny
-claude.ai, w innych runtime'ach inny). Odczytaj prefix z nazw zwroconych przez ToolSearch i
+claude.ai, w innych runtime'ach inny). Odczytaj prefix z nazw z aktualnego katalogu narzędzi i
 uzywaj go konsekwentnie. Zapytanie z `+monolynx` zwrocilo pusto mimo podpietego connectora
--> powtorz bez `+`. Runtime bez ToolSearch (toole dostepne od razu) -> uzywaj ich
-bezposrednio.
+-> powtorz bez `+`. Runtime bez ToolSearch: sprawdź faktyczny katalog narzędzi i użyj jego discovery oraz aktualnych schematów.
 
 W szablonach podstawiaj realne wartosci za `<PROJECT_SLUG>`, `<pipeline_id>`, `<job_id>`.
 Nie zostawiaj placeholderow w faktycznych wywolaniach.
 
 ### 0.2. Slug projektu
 
-Pierwsza znaleziona wartosc wygrywa:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-1. `MONOLYNX_PROJECT_SLUG` ze srodowiska lub `.env` projektu.
-2. `user_config.project_slug` pluginu.
-3. Fallback `monolynx`.
-
-Slug podany wprost przez uzytkownika bije wszystkie trzy.
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
 
 ### 0.3. Budzet czasu
 
@@ -72,10 +66,7 @@ Slug podany wprost przez uzytkownika bije wszystkie trzy.
 echo "BUDZET=${MONOLYNX_MUTATION_BUDGET:-600}s"
 ```
 
-Domyslnie **600 sekund (10 minut)**. Wartosc wieksza niz 600 skapuj do 600 i powiedz o tym
-uzytkownikowi: narzedzie Bash przyjmuje maksymalnie `timeout: 600000` ms. Budzet
-egzekwujesz parametrem `timeout` narzedzia Bash (w milisekundach), NIE komenda `timeout` /
-`gtimeout` - na macOS bez coreutils ich nie ma.
+Domyślnie **600 sekund**, maksymalnie 600 sekund; większą wartość ogranicz do 600 i powiedz o tym użytkownikowi. To deadline całego procesu, niezależny od czasu yield lub timeout pojedynczego wywołania narzędzia. Przed startem sprawdź możliwość monitorowania oraz zakończenia procesu i wszystkich potomków. Brak tej kontroli: przekaż komendę użytkownikowi przed startem.
 
 ### 0.4. Argument
 
@@ -168,32 +159,23 @@ wlasnych. Flagi zostaly zweryfikowane przez `--help` przy zapisie strony.
 Pole `kto odpala`:
 
 - `agent` -> odpal sam.
-- `user` -> zapytaj (AskUserQuestion): odpalic teraz w tej sesji, czy uzytkownik uruchomi
+- `user` -> zapytaj (narzędzie pytań dostępne w bieżącym trybie lub wiadomość): odpalic teraz w tej sesji, czy uzytkownik uruchomi
   komende u siebie i wklei sciezke raportu?
 
-Uruchomienie (`<budzet_ms>` to budzet z 0.3 w milisekundach):
+Uruchom przez dostępny mechanizm procesów. Zapisz czas startu, deadline oraz identyfikator sesji/procesu. Gdy narzędzie zwróci działający proces, monitoruj ten sam identyfikator aż do potwierdzonego zakończenia i kodu wyjścia albo upływu budżetu. Yield/timeout odczytu nie oznacza końca procesu i nie uzasadnia ponownego startu.
 
-```
-Bash(command="<komenda z toolchain>", timeout=<budzet_ms>, description="Przebieg mutacyjny")
-```
+### Przekroczenie budżetu
 
-### Przekroczenie budzetu
+Zatrzymaj proces oraz całe drzewo potomków i potwierdź ich zakończenie. Brak potwierdzenia zgłoś jawnie; nie przechodź do parsowania.
 
-Nigdy nie zostawiaj wiszacego terminala. Po wyczerpaniu budzetu sprawdz plik z pola
-`raport`:
+Po potwierdzonym zatrzymaniu sprawdź plik raportu:
 
-- **Plik istnieje** -> sparsuj co jest i oznacz caly wynik jako **CZESCIOWY**. Napisz
-  wprost, ze przebieg zostal przerwany po `<N>` sekundach, wiec liczba mutantow jest dolna
-  granica, a nie pelnym obrazem.
-- **Pliku nie ma** -> "budzet wyczerpany, brak raportu". Podaj uzytkownikowi komende do
-  recznego dokonczenia i sposob podniesienia budzetu:
+- Świeży plik z tego przebiegu, zamknięty i poprawny strukturalnie: sparsuj go jako **CZĘŚCIOWY**. Zbiór mutantów może być niepełny; wynik jest dolną granicą liczby znalezionych mutantów, nie pełnym przebiegiem ani jego sukcesem. Nie aktualizuj baseline na tej podstawie.
+- Stary, nadal zapisywany, nieparsowalny albo nieistniejący plik: zgłoś „budżet wyczerpany, brak raportu”. Nie przetwarzaj jego zawartości jako wyniku.
 
-  ```bash
-  MONOLYNX_MUTATION_BUDGET=600 # sekundy, maksimum 600
-  ```
+Podaj komendę do ręcznego dokończenia.
 
-  Wiecej niz 600 s -> przebieg nalezy do uzytkownika, poza sesja. Zaproponuj wezszy zakres
-  (pojedynczy modul, pojedynczy plik) zamiast dluzszego czekania.
+Przed parsowaniem po normalnym zakończeniu potwierdź, że raport pochodzi z tego przebiegu i jest kompletny. Niezerowy exit wyjaśnij zgodnie z kontraktem narzędzia; nie traktuj samej obecności pliku jako sukcesu.
 
 ---
 
@@ -310,7 +292,7 @@ Szablon tresci kryterium / ticketu:
 
 ## KROK 7: Zamien survivorow na prace
 
-Zapytaj uzytkownika (AskUserQuestion; runtime bez tego toola -> zwykle pytanie i czekasz):
+Zapytaj uzytkownika (narzędzie pytań dostępne w bieżącym trybie lub wiadomość; runtime bez tego toola -> zwykle pytanie i czekasz):
 
 | Opcja | Co robi |
 |---|---|
@@ -364,7 +346,7 @@ mcp__monolynx__update_pipeline_job(project_slug="<PROJECT_SLUG>", job_id="<job_i
 Status koncowy: `success`, gdy przebieg sie udal - **takze wtedy, gdy survivorzy sa**.
 Survivorzy to informacja, nie porazka. `failed` tylko przy awarii przebiegu: narzedzie nie
 wystartowalo, parser zwrocil kod 2 albo raport nie powstal. Przebieg czesciowy (budzet) ->
-`success` z jawnym "CZESCIOWY" w `summary`.
+`success` z jawnym „CZĘŚCIOWY” w `summary` i logu, jeśli po potwierdzonym zakończeniu całego drzewa procesów istnieje świeży, poprawny i zamknięty raport. Ten status oznacza poprawne przetworzenie częściowego wyniku, nie ukończenie pełnego przebiegu mutacji. Brak poprawnego raportu oznacza `failed`.
 
 ---
 
@@ -382,12 +364,10 @@ wystartowalo, parser zwrocil kod 2 albo raport nie powstal. Przebieg czesciowy (
    nie niesie informacji.
 6. **Survivor to brakujacy przypadek testowy** - mutant rownowazny semantycznie uzasadniasz
    i odpuszczasz; asercje pinujace implementacje dla podniesienia score sa zabronione.
-7. **Budzet zamiast wiszacego terminala** - domyslnie 600 s przez `timeout` narzedzia Bash;
-   przekroczenie daje raport czesciowy albo jawne "brak raportu" z komenda do dokonczenia.
+7. **Budżet procesu** - domyślnie 600 s, niezależnie od yield narzędzia. Zachowaj identyfikator procesu, monitoruj i potwierdź zakończenie całego drzewa; po potwierdzonym stopie poprawny, zamknięty i świeży raport można sparsować jako CZĘŚCIOWY, bez pełnego sukcesu ani aktualizacji baseline. Starego lub nadal zapisywanego pliku nie parsuj.
 8. **Jeden parser** - dołączony `scripts/mutation_report.py`, kopia źródła z pluginu. Skill nie ma wlasnego silnika ani
    wlasnego formatu raportu; narzedzie bez parsera zglaszasz wprost.
 9. **Pipeline jest best-effort** - blad toola pipeline nigdy nie przerywa skilla, a w trybie
    samodzielnym pipeline w ogole nie powstaje.
 10. **Podstawiaj `<PROJECT_SLUG>`** i pozostale placeholdery realnymi wartosciami. Slug
-    bierze sie z `MONOLYNX_PROJECT_SLUG`, potem `user_config.project_slug`, na koncu
-    `monolynx`.
+    ustalaj według kontraktu runtime, bez domyślnego projektu.

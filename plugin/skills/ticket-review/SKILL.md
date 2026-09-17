@@ -3,10 +3,11 @@ name: ticket-review
 description: "Zrecenzuj ticket ze sprintu Monolynx. Sprawdza forme, zgodnosc z wiki i kodem. Generuje tabelke raportu i proponuje poprawki. Uzyj gdy chcesz zweryfikowac jakosc ticketu przed podjęciem pracy."
 user-invocable: true
 argument-hint: [ticket-id lub klucz np. MNX-12]
-allowed-tools: mcp__monolynx__get_ticket, mcp__monolynx__get_board, mcp__monolynx__list_tickets, mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__update_ticket, mcp__monolynx__add_comment, mcp__monolynx__add_acceptance_criterion, mcp__monolynx__list_acceptance_criteria, mcp__monolynx__query_graph, mcp__monolynx__get_graph_node, AskUserQuestion, Agent, Glob, Grep, Read, Bash
 ---
 
 # Recenzja ticketu Monolynx
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Jestes **Ticket Reviewerem** - ekspertem od oceny jakosci zadan w projekcie Monolynx. Twoje zadanie to zweryfikowac ticket pod trzema katami i wygenerowac czytelny raport.
 
@@ -14,38 +15,26 @@ Jestes **Ticket Reviewerem** - ekspertem od oceny jakosci zadan w projekcie Mono
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
-- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
-
----
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT_SLUG>`.
 
 ## KROK 1: Zaladuj narzedzia i pobierz ticket
 
 Zaladuj narzedzia Monolynx (rownolegle):
 
+W katalogu dostępnych narzędzi znajdź funkcje Monolynx potrzebne poniżej i sprawdź ich schematy. Discovery jest opcjonalne, jeśli narzędzia są już dostępne.
+
+<!-- runtime:claude-code -->
+Opcjonalny wariant discovery w Claude Code:
 ```
-ToolSearch(query="+monolynx ticket board comment wiki search")
-ToolSearch(query="+monolynx graph query")
+ToolSearch(query="+monolynx ticket board comment wiki search", max_results=10)
+ToolSearch(query="+monolynx graph query", max_results=10)
 ```
+<!-- /runtime:claude-code -->
 
 Nastepnie pobierz ticket:
 
-- **Jesli podano ticket-id** (`$ARGUMENTS` nie jest pusty):
-  Pobierz ticket: `mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="$ARGUMENTS")`
+- **Jesli podano ticket-id** (faktyczny argument wywołania nie jest pusty):
+  Pobierz ticket: `mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ticket-id z wywołania>")`
 
 - **Jesli NIE podano ticket-id**:
   1. Pobierz tablice Kanban: `mcp__monolynx__get_board(project_slug="<PROJECT_SLUG>")`
@@ -106,13 +95,12 @@ Dla kazdego twierdzenia okresl:
 
 ## KROK 4: Weryfikacja z kodem (Czy zalozenia sa realne?)
 
-Uruchom agenta Explore do weryfikacji zalozen z kodem:
+Zweryfikuj założenia ticketu z kodem:
 
-```
-Agent(
-  subagent_type="Explore",
-  description="Weryfikacja zalozen ticketu z kodem",
-  prompt="Jestes weryfikatorem zalozen ticketu w projekcie Monolynx.
+Zleć odczytowy research agentowi przez dostępny mechanizm delegacji, z poniższymi instrukcjami. Jeśli delegacja nie jest dostępna, wykonaj ten sam odczyt samodzielnie i odnotuj ograniczenie.
+
+```text
+Jestes weryfikatorem zalozen ticketu w projekcie Monolynx.
 
 TICKET: [tytul]
 OPIS: [pelny opis]
@@ -137,11 +125,10 @@ DODATKOWO - granice (dla kryteriow 'Nie ruszac' i 'Odwracalnosc'):
 - Czy zakres dotyka: migracji Alembic / wysylki (mail, SMS, webhook) /
   publikacji / publicznego API lub schematu / kasowania danych? Wypisz
   z plik:linia. Ticket mowi 'brak operacji nieodwracalnych', a znalazles
-  ktoras -> to NIEZGODNE dla kryterium Odwracalnosc."
-)
+  ktoras -> to NIEZGODNE dla kryterium Odwracalnosc.
 ```
 
-Jesli agent Explore nie jest dostepny - wykonaj weryfikacje samodzielnie uzywajac Glob, Grep i Read.
+Do samodzielnej weryfikacji użyj dostępnych narzędzi wyszukiwania plików, tekstu i odczytu.
 
 ---
 

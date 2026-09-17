@@ -1,11 +1,13 @@
 ---
 name: brief
-description: "Kontrakt epizodu bez ticketu: w jednej turze ustala, jak wyglada 'gotowe' (obserwowalny stan), czego nie ruszac i co agent robi sam, a przed czym sie zatrzymuje; po ENTER od razu zaczyna prace. Dziala bez MCP i bez sluga. Uzyj na starcie kazdej pracy, ktora nie jest ticketem: konfiguracja, investigation, dokumentacja, drobna zmiana."
+description: "Kontrakt epizodu bez ticketu: w jednej turze ustala, jak wyglada 'gotowe' (obserwowalny stan), czego nie ruszac i co agent robi sam, a przed czym sie zatrzymuje; po jawnej akceptacji od razu zaczyna prace. Dziala bez MCP i bez sluga. Uzyj na starcie kazdej pracy, ktora nie jest ticketem: konfiguracja, investigation, dokumentacja, drobna zmiana."
 user-invocable: true
 argument-hint: [goly opis zadania, np. "napraw build na CI"]
 ---
 
 # Brief - kontrakt epizodu
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Uzytkownik otwiera epizod jednym zdaniem w trybie rozkazujacym. To zdanie
 mowi, CO zrobic, a nie: po czym poznac, ze zrobione; czego przy okazji nie
@@ -21,8 +23,7 @@ tego nie robi, zeby nie zadawac drugiego pytania.
 
 ## KROK 1: Opis zadania
 
-`$ARGUMENTS` to opis od uzytkownika (w runtime bez substytucji literalny napis
-"$ARGUMENTS" traktuj jak brak argumentu). Brak opisu -> zapytaj jednym zdaniem:
+Argumentem jest faktyczny opis zadania z wiadomości użytkownika lub wejścia wywołania. Brak opisu -> zapytaj jednym zdaniem:
 **"Co chcesz zrobic? Jedno zdanie wystarczy."** i poczekaj.
 
 Nie dopytuj o szczegoly. Zwiezlosc opisu jest normalna - kontrakt ma ja
@@ -66,9 +67,9 @@ Wypelnij szablon konkretami z KROK 1-2 (nie zostawiaj placeholderow) i pokaz:
 > - Stop przed: [z KROK 2 + domyslne: commit/push, migracja, wysylka poza system, nowa zaleznosc, usuwanie plikow, zmiana shared config/infra]
 > - Eskaluje, gdy: [zadanie okaze sie wieksze niz opis, sprzecznosc z regulami repo, 2 nieudane podejscia]
 >
-> ENTER = akceptujesz. Albo napisz, co zmienic (np. "commit sam", "gotowe = tez PR").
+> jawne „tak” = akceptujesz. Albo napisz, co zmienic (np. "commit sam", "gotowe = tez PR").
 
-**Poczekaj na odpowiedz.** Korekta uzytkownika nadpisuje propozycje. Nie
+**Poczekaj na odpowiedź.** Użyj narzędzia pytań dostępnego w bieżącym trybie albo wiadomości. Cisza, timeout i brak odpowiedzi nigdy nie oznaczają zgody. Korekta uzytkownika nadpisuje propozycje. Nie
 zadawaj drugiego pytania - jesli czegos nie wiesz, wpisz to do "Stop przed"
 zamiast pytac teraz.
 
@@ -92,7 +93,7 @@ Po akceptacji wypisz koncowy kontrakt jeszcze raz w tym samym formacie
 > Pracuje wg kontraktu. Zatrzymam sie przed: [lista "Stop przed" w jednej linii].
 
 i w TEJ SAMEJ turze zacznij prace nad zadaniem. Zadnego "napisz, kiedy mam
-zaczac" - ENTER byl zgoda na kontrakt i na start.
+zaczac" - jawna akceptacja była zgodą na kontrakt i na start.
 
 ## W trakcie pracy
 
@@ -108,10 +109,10 @@ zaczac" - ENTER byl zgoda na kontrakt i na start.
 ## WAZNE ZASADY
 
 1. **Jedno pytanie, jedna tura.** Skill nie prowadzi wywiadu. Propozycja
-   z konkretami + ENTER, potem od razu praca. Brak informacji laduje
+   z konkretami + jawne „tak”, potem od razu praca. Brak informacji laduje
    w "Stop przed", nie w pytaniu
 2. **Nie zaczynaj zadania przed akceptacja** - nawet gdy jest trywialne.
-   Kontrakt najpierw, praca po ENTER
+   Kontrakt najpierw, praca po jawnej akceptacji
 3. **Bez MCP** - skill nie wola tooli Monolynx; ticket z kontraktu robi
    `ticket-create`, jesli uzytkownik tego chce
 4. **Placeholdery w propozycji sa bledem** - "[np. ...]" w wypisanym kontrakcie

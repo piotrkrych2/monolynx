@@ -3,8 +3,9 @@ name: monolynx-sprint-end
 description: "Zamknij sprint jako pipeline sprint_close: zintegruj logi pracy z wiki (INGEST), zaudytuj wiki (LINT), wyczysc logi pipeline'ow sprintu, uruchom pelny przebieg mutacyjny z trendem i domknij sprint. Przebieg raportowany do modulu Pipelines (best-effort). Uzyj gdy chcesz zamknac sprint."
 user-invocable: true
 argument-hint: [nazwa sprintu (opcjonalnie)]
-allowed-tools: mcp__monolynx__list_sprints, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, mcp__monolynx__create_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__create_pipeline, mcp__monolynx__create_pipeline_job, mcp__monolynx__update_pipeline_job, mcp__monolynx__append_job_log, mcp__monolynx__finish_pipeline, mcp__monolynx__complete_sprint, mcp__monolynx__clean_pipeline_logs, AskUserQuestion, Bash, Skill
 ---
+
+Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/runtime.md).
 
 # SPRINT-END - zamkniecie sprintu jako pipeline sprint_close
 
@@ -14,28 +15,12 @@ Orkiestrujesz zamkniecie sprintu w projekcie Monolynx. Calosc modelujesz jako pi
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
 
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
-- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
-
----
 
 ## KROK 1: Ustal sprint do zamkniecia
 
-`$ARGUMENTS` moze byc nazwa sprintu albo puste.
+Argument z wiadomości użytkownika może być nazwa sprintu albo puste.
 
 - **Podano nazwe** - wylistuj sprinty i znajdz pasujacy po nazwie:
 
@@ -53,7 +38,7 @@ echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
 
   - Dokladnie jeden aktywny sprint - uzyj go.
   - Brak aktywnego sprintu - wypisz czytelny komunikat PL (_"Brak aktywnego sprintu do zamkniecia. Podaj nazwe sprintu jako argument albo uruchom sprint."_) i **przerwij**.
-  - Wiecej niz jeden aktywny sprint - zapytaj uzytkownika (`AskUserQuestion`), ktory zamknac, i poczekaj na wybor.
+  - Wiecej niz jeden aktywny sprint - zapytaj uzytkownika (`narzędzie pytań dostępne w bieżącym trybie lub wiadomość`), ktory zamknac, i poczekaj na wybor.
 
 Zapamietaj `sprint_id` (UUID) oraz nazwe wybranego sprintu - uzywasz ich do konca skilla.
 
@@ -170,7 +155,7 @@ Niczego nie instalujesz i nie zgadujesz komendy.
 
 **2. Zaproponuj przebieg - nie odpalaj go sam**
 
-Zapytaj uzytkownika (`AskUserQuestion`): _"Uruchomic pelny przebieg mutacyjny na modulach
+Zapytaj uzytkownika (`narzędzie pytań dostępne w bieżącym trybie lub wiadomość`): _"Uruchomic pelny przebieg mutacyjny na modulach
 rdzenia (`<lista modulow>`)? Budzet do 600 s na modul."_ z opcjami **Tak** / **Nie, pomin**.
 
 **Nie** -> job `mutation-run` ze statusem `skipped`, summary _"odmowa uzytkownika"_, jedna
@@ -185,10 +170,14 @@ mcp__monolynx__update_pipeline_job(project_slug="<PROJECT-SLUG>", job_id="<job_i
 
 Dla KAZDEGO modulu z pola `moduly rdzenia`, **sekwencyjnie**:
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 Skill(skill="monolynx:mutation-check", args="<sciezka modulu>")
 ```
 
+<!-- /runtime:claude-code -->
 W kontekscie wywolania przekaz skillowi dwa ograniczenia - bez nich zdubluje prace
 `sprint-end`:
 
@@ -300,7 +289,7 @@ Do 4b przechodzisz niezaleznie od statusu.
 
 ### 4b. Job `retro` - korekty sprintu w reguly (opcjonalny, PRZED zamknieciem)
 
-Zapytaj uzytkownika (`AskUserQuestion`): _"Uruchomic retro korekt sprintu
+Zapytaj uzytkownika (`narzędzie pytań dostępne w bieżącym trybie lub wiadomość`): _"Uruchomic retro korekt sprintu
 (`/monolynx:retro`)? Zbierze powtarzajace sie uwagi krytyka i zaproponuje
 reguly / wiersze rubryki."_ z opcjami **Tak** / **Nie, pomin**.
 
@@ -320,7 +309,7 @@ ile regul zapisano) i `update_pipeline_job(status="success"|"failed")`.
 
 > **UWAGA**: `complete_sprint` to nieodwracalne zamkniecie sprintu. **Niedokonczone tickety wracaja do backlogu.** Zanim wywolasz tool, ostrzez uzytkownika i poczekaj na potwierdzenie.
 
-Zapytaj uzytkownika (`AskUserQuestion`): _"Zamykam sprint `<nazwa>`. Niedokonczone tickety wroca do backlogu. Kontynuowac?"_ z opcjami:
+Zapytaj uzytkownika (`narzędzie pytań dostępne w bieżącym trybie lub wiadomość`): _"Zamykam sprint `<nazwa>`. Niedokonczone tickety wroca do backlogu. Kontynuowac?"_ z opcjami:
 
 - **Tak, zamknij sprint** - przejdz dalej.
 - **Nie, przerwij** - zakoncz bez zamykania sprintu (wiki-update juz wykonane; poinformuj uzytkownika).

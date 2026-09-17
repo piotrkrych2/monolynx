@@ -142,9 +142,10 @@ Skille pluginu pracują w kontekście jednego projektu. Slug ustalany jest w sta
 
 1. Slug podany jawnie przez użytkownika.
 2. Zmienna środowiskowa **`MONOLYNX_PROJECT_SLUG`**.
-3. Jeśli obu brakuje, agent prosi o konfigurację. Nie zgaduje sluga.
+3. Jawna konfiguracja projektu: ustawienie `MONOLYNX_PROJECT_SLUG` w konfiguracji klienta lub `.env`, odczytane jako dane zgodnie z [kontraktem runtime](references/runtime.md).
+4. Jeśli żadna wartość nie jest dostępna, agent pyta o slug. Do tego czasu nie wykonuje operacji MCP wymagających projektu.
 
-Dzięki temu jeden plugin obsługuje wiele projektów. Sam plik `.env` nie eksportuje zmiennych do procesu klienta.
+Dzięki temu jeden plugin obsługuje wiele projektów. Sam plik `.env` nie eksportuje zmiennych do procesu klienta; agent może odczytać z niego nazwany klucz bez wykonywania pliku i ujawniania pozostałych wartości. Sprzeczne ustawienia tego samego poziomu wymagają wyjaśnienia.
 
 `MONOLYNX_PROJECT_SLUG` działa też jako zwykła zmienna środowiskowa, więc na stałe możesz ją wpisać w `.claude/settings.json` projektu (pole `env`, przykłady w sekcji [Zmienne konfiguracyjne](#zmienne-konfiguracyjne)).
 
@@ -158,6 +159,40 @@ MONOLYNX_PROJECT_SLUG = "twoj-projekt"
 Pozostałe `MONOLYNX_*` zapisuj w tej samej tabeli jako stringi. Po zmianie konfiguracji rozpocznij nową sesję i sprawdź wartość zmiennej w shellu klienta.
 
 ## Zawartość pluginu
+
+### Kontrakt runtime i zakres zgodności
+
+Każdy skill zaczyna od lokalnego `references/runtime.md`. Źródło wspólnej instrukcji to [kontrakt runtime](references/runtime.md); synchronizacja dostarcza tę samą treść do pluginu i pakietów MCP. Argumenty pochodzą z wywołania lub wiadomości użytkownika. Przykłady MCP wymagają mapowania na dostępne nazwy i schematy; brak `ToolSearch`, `Skill` lub narzędzia pytań ma opisany wariant bez tych API. Uprawnienia sesji i instrukcje użytkownika mają pierwszeństwo przed flagami `MONOLYNX_AUTO*`.
+
+Poniższa macierz opisuje wymagania instrukcji, **nie potwierdza pełnego wykonania każdego workflow**. Wyniki i ograniczenia prób są w [raporcie weryfikacji runtime](runtime-verification.md). Claude Code używa `/monolynx:<nazwa>`, Codex wybiera `$monolynx:<nazwa>`; dla pojedynczej instalacji wybierz nazwę widoczną w katalogu klienta, np. `monolynx-work`.
+
+| Skill | Claude Code | Codex | Dodatkowe wymagania / granica |
+|---|---|---|---|
+| `brief` | Wspólny kontrakt | Wspólny kontrakt | Bez MCP; rozpoczęcie pracy po odpowiedzi użytkownika |
+| `help` | Mapa komend Claude | Mapa komend klienta | Bez zapisów; nie wymaga projektu |
+| `setup` | Konfiguracja Claude jako dane | Konfiguracja Codex jako dane | MCP dla checklisty projektu; naprawy po zgodzie |
+| `next` | Router tylko do odczytu | Router tylko do odczytu | Git, MCP, opcjonalne CLI; brak danych oznaczony |
+| `resume` | Odczyt stanu | Odczyt stanu | MCP, opcjonalny git i pipeline |
+| `search` | MCP wiki | MCP wiki | Narzędzie wyszukiwania wiki |
+| `ticket-create` | MCP + pytania | MCP + pytania | Zapis do wskazanego projektu |
+| `ticket-review` | MCP + odczyt źródeł | MCP + odczyt źródeł | Review nie zastępuje zgody na zmiany |
+| `project-toolchain` | Odczyt repo + MCP | Odczyt repo + MCP | Zapisy komend potwierdzone w repo |
+| `graph-sync` | Terminal + MCP | Terminal + MCP | Dostępny generator grafu i repo |
+| `create-graph-ci-script` | Repo + MCP | Repo + MCP | Projektowy CI i zgoda na jego zmianę |
+| `wiki-init` | MCP | MCP | Bootstrap wiki wskazanego projektu |
+| `wiki-ingest` | MCP + źródło | MCP + źródło | Dostęp do źródła i włączona metoda LLM Wiki |
+| `wiki-lint` | MCP | MCP | Naprawy oddzielone od audytu |
+| `wiki-sync-merge` | Git + MCP | Git + MCP | Wiedza z faktycznie scalonych zmian |
+| `work` | Dostępne role i delegowanie | Dostępne role i delegowanie | Repo, MCP, toolchain; brak agentów obsługiwany jawnie |
+| `work-simple` | Dostępne role i delegowanie | Dostępne role i delegowanie | Repo, MCP, toolchain; próg 3 SP bez zmian |
+| `retro` | MCP, opcjonalna pamięć Claude | MCP, dostępne źródła pamięci | Brak automatycznej migracji pamięci między klientami |
+| `sprint-end` | MCP + skille zależne | MCP + skille zależne | Potwierdzenie zamknięcia sprintu i zapisów |
+| `mr-queue` | Terminal, git, `gh`/`glab` | Terminal, git, `gh`/`glab` | Lokalny skrypt stanu; zgody na push/merge |
+| `mutation-check` | Terminal z kontrolą procesu | Terminal z kontrolą procesu | Toolchain mutacji; deadline procesu i polling do zakończenia |
+| `create-mutation-ci-script` | Repo + lokalne skrypty | Repo + lokalne skrypty | Narzędzie mutacyjne i projektowy CI |
+| `sprint-run` | Backend `claude` | Dyspozytor wymaga CLI `claude` | Brak natywnego backendu sesji Codex; `/loop` tylko gdy dostępne |
+
+Tabela modeli poniżej dotyczy backendu Claude. W pozostałych klientach wybór opiera się na faktycznie dostępnych rolach, modelach i parametrach; aliasów `sonnet`/`opus` nie należy przekazywać do API, które ich nie obsługuje. Sam brak parametru lub inna nazwa produktu nie jest dowodem braku agentów.
 
 ### Skille (komendy `/monolynx:*`)
 
@@ -363,13 +398,7 @@ Dyspozytor **nigdy sam nie pracuje nad ticketem**. Jest cienki z premedytacją: 
    plugin/scripts/sprint_run.sh --interval 15m --slots 2
    ```
 
-Skrypt uruchamiasz z katalogu projektu (repo git ze slugiem w `.claude/settings.json`). Po instalacji pluginu leży on w katalogu cache pluginu, nie w Twoim repozytorium. Absolutną ścieżkę wypisuje sam dyspozytor na końcu raportu; można ją też rozwinąć ręcznie:
-
-```bash
-echo "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run.sh"
-```
-
-Ścieżka zawiera numer wersji pluginu, więc po aktualizacji rozwiń ją ponownie zamiast trzymać starą na stałe w crontabie.
+Skrypt uruchamiasz z katalogu projektu. Ten zewnętrzny backend czyta slug ze środowiska lub konfiguracji Claude; nie interpretuje konfiguracji Codex ani całego kontraktu agenta. Agent przed uruchomieniem przekazuje rozstrzygnięty slug w środowisku procesu. Absolutną ścieżkę lokalnego `scripts/sprint_run.sh` ustala względem otrzymanego `SKILL.md` dyspozytora i wypisuje w raporcie. Po instalacji może to być katalog cache pluginu albo pakiet pojedynczego skilla. Po aktualizacji ustal ścieżkę ponownie.
 
 ### Flagi skryptu
 
@@ -417,20 +446,14 @@ Plik z flagami musi być **śledzony przez gita**. Sesja robocza dostaje worktre
 
 ### Uruchomienie w tmux i z crona
 
-`${CLAUDE_PLUGIN_ROOT}` istnieje **tylko wewnątrz sesji Claude Code**. W zwykłym terminalu rozwinie się do pustego stringu, więc najpierw rozwiń ścieżkę w Claude Code (dyspozytor wypisuje ją sam na końcu raportu):
+Poproś dyspozytora o absolutną ścieżkę dołączonego `scripts/sprint_run.sh`. Nie używaj w terminalu zmiennych, których klient nie przekazał do Twojego shella. Poniższe szablony wymagają podstawienia otrzymanej ścieżki oraz katalogu projektu:
 
 ```bash
-echo "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_run.sh"
-```
-
-Rozwiniętą ścieżkę podstaw do komend w terminalu:
-
-```bash
-tmux new -d -s monolynx-sprint "/pelna/sciezka/z/echo/sprint_run.sh --slots 2"
+tmux new -d -s monolynx-sprint "bash '/pelna/sciezka/skilla/scripts/sprint_run.sh' --slots 2"
 ```
 
 ```
-*/15 * * * * cd /sciezka/projektu && "/pelna/sciezka/z/echo/sprint_run.sh" --once >> ~/sprint-run.log 2>&1
+*/15 * * * * cd /sciezka/projektu && bash "/pelna/sciezka/skilla/scripts/sprint_run.sh" --once >> ~/sprint-run.log 2>&1
 ```
 
 Log pętli trafia do `.git/monolynx/sprint-run.log`, a plik PID w tym samym katalogu pilnuje, żeby dla jednego repozytorium działała tylko jedna pętla. Na stdout `sprint_run.sh --once` wypisuje wyłącznie linie logu pętli razem z linią statusu ticka; pełny raport dyspozytora zostaje w pliku logu, więc wpis w crontabie nie zalewa skrzynki.
@@ -459,12 +482,12 @@ Innymi słowy:
 
 ### Codex i Cursor
 
-Marketplace pluginów jest mechanizmem Claude Code. Codex i Cursor nie mają jego odpowiednika, ale **czytają ten sam format `SKILL.md`** (katalog + frontmatter `name` / `description` + opcjonalne pliki towarzyszące). Różni się wyłącznie katalog docelowy, dlatego `install_monolynx_skills` przyjmuje parametr `target`:
+Claude Code i Codex obsługują pełny plugin opisany w sekcji instalacji. Instalator MCP jest osobną ścieżką dla pojedynczych skilli, również dla Cursora. Zwraca `SKILL.md` i wszystkie lokalne zasoby; parametr `target` wybiera katalog:
 
 | `target` | Katalog | Runtime |
 |---|---|---|
 | `claude` (domyślnie) | `.claude/skills/` | Claude Code |
-| `codex` | `.codex/skills/` | Codex CLI |
+| `codex` | `.agents/skills/` | Codex CLI |
 | `cursor` | `.cursor/skills/` | Cursor |
 
 ```
@@ -476,16 +499,20 @@ Narzędzie zwraca `skills: [{name, files: [{relative_path, content}]}]`. **Zapis
 
 Serwer MCP podłącza się poza skillami:
 
-- **Codex**: wpis w `~/.codex/config.toml` (grupa `mcp_servers`), HTTP + nagłówek `Authorization: Bearer osk_...`.
+- **Codex**: konfiguracja MCP i logowanie OAuth opisane w sekcji instalacji; token API pozostaje opcją dla konfiguracji ręcznej.
 - **Cursor**: `.cursor/mcp.json` w projekcie lub `~/.cursor/mcp.json` globalnie, klucz `mcpServers` - ten sam kształt co `.mcp.json` pluginu.
 
-Agenci pluginowi (`plugin/agents/`) są mechanizmem Claude Code. W Codeksie i Cursorze skille `/monolynx:work` i `/monolynx:work-simple` dobierają role z `AGENTS.md` w korzeniu repo.
+Definicje `plugin/agents/` dotyczą Claude Code. W każdym kliencie skille sprawdzają faktycznie dostępne mechanizmy delegowania i role projektu. Sam napis „Codex” nie oznacza braku subagentów ani dostępności określonego modelu. Przeniesienie konfiguracji agentów, pamięci i hooków nie jest częścią kontraktu runtime.
 
 ### Serwer MCP bez zmian funkcjonalnych
 
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.15.1
+
+- MON-183: wspólny kontrakt argumentów, projektu, narzędzi i uprawnień w 23 skillach; lokalne referencje runtime w dystrybucji standalone, warianty klientów i rozdzielenie budżetu procesu od oczekiwania terminala. Walidacja referencji oraz macierz możliwości z zakresem weryfikacji.
 
 ### 1.15.0
 

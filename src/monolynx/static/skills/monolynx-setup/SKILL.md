@@ -3,10 +3,11 @@ name: monolynx-setup
 description: "Checklista konfiguracji projektu Monolynx: slug, strona wiki toolchain, LLM Wiki, graf i mutacje w CI, flagi MONOLYNX_*. Pokazuje stan OK/BRAK każdego punktu i za zgodą uruchamia po kolei skille naprawcze. Użyj przy pierwszym starcie pracy w projekcie albo gdy podejrzewasz, że czegoś brakuje w konfiguracji."
 user-invocable: true
 argument-hint: ""
-allowed-tools: mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, mcp__monolynx__get_wiki_config, AskUserQuestion, Bash, Read, Skill, ToolSearch
 ---
 
 # SETUP - checklista konfiguracji projektu
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Jesteś **audytorem konfiguracji**. Sprawdzasz 6 punktów, pokazujesz tabelę stanu
 i, tylko za wyraźną zgodą, wołasz po kolei skille naprawcze. Sam nic nie
@@ -34,39 +35,9 @@ skilli) w całości. Zakończ na samej tabeli.
 
 ## KROK 1: Slug projektu
 
-Slug jest wejściem do punktów 2 i 3 (wywołania MCP), więc sprawdzasz go jako
-pierwszy. Trzy źródła, każde osobna komenda:
+Slug jest wejściem do punktów 2 i 3. Ustal go zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` w środowisku > jawnie odczytana konfiguracja klienta lub `.env`. Czytaj tylko ten klucz jako dane, bez `source` i bez wypisywania sekretów.
 
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(brak w env procesu)}"
-```
-
-```bash
-grep -m1 "^MONOLYNX_PROJECT_SLUG=" .env
-```
-
-Brak pliku `.env` kończy powyższą komendę błędem `grep` - to informacja
-("nie ma tego źródła"), nie awaria kroku.
-
-Odczytaj też narzędziem `Read` plik `.claude/settings.json` w korzeniu
-projektu, jeśli istnieje, i sprawdź w nim pole `env.MONOLYNX_PROJECT_SLUG`.
-
-- **Znaleziono w którymś źródle** - stan **OK**. Zapisz wartość i źródło
-  (env procesu / `.env` / `.claude/settings.json`); ta wartość jest
-  `<PROJECT-SLUG>` we wszystkich wywołaniach MCP poniżej. Gdy występuje w
-  kilku źródłach naraz, priorytet ma env procesu, potem `.env`, potem
-  `.claude/settings.json` - ale w tabeli wypisz wszystkie źródła, w których
-  go znalazłeś.
-- **Brak we wszystkich trzech** - stan **BRAK**. Bez skilla naprawczego: slug
-  to jednorazowa, ręczna decyzja człowieka, nie stan, który da się wykryć.
-  Instrukcja do tabeli:
-
-  ```json
-  { "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" } }
-  ```
-
-  Punkty 2 i 3 dostają wtedy stan "nie sprawdzono - brak sluga" - nie zgaduj
-  sluga, żeby je mimo to wykonać.
+Znaleziono: **OK**, zapisz wartość i źródło; zgłoś rozbieżne źródła, stosując powyższe pierwszeństwo. Brak: **BRAK**, poproś o slug; punkty 2 i 3 oznacz „nie sprawdzono - brak sluga”, a niezależne punkty checklisty sprawdź dalej. Nie zgaduj projektu.
 
 ---
 
@@ -74,9 +45,14 @@ projektu, jeśli istnieje, i sprawdź w nim pole `env.MONOLYNX_PROJECT_SLUG`.
 
 Pomiń, gdy punkt 1 to BRAK.
 
+W katalogu dostępnych narzędzi znajdź funkcje Monolynx potrzebne poniżej i sprawdź ich schematy. Discovery jest opcjonalne, jeśli narzędzia są już dostępne.
+
+<!-- runtime:claude-code -->
+Opcjonalny wariant discovery w Claude Code:
 ```
 ToolSearch(query="+monolynx wiki page list get config", max_results=10)
 ```
+<!-- /runtime:claude-code -->
 
 ```
 mcp__monolynx__list_wiki_pages(project_slug="<PROJECT-SLUG>")
@@ -245,11 +221,7 @@ Pusty wynik znaczy, że `.claude/settings.json` nie jest śledzony (albo nie
 istnieje) - dowolna flaga ustawiona tam ma tę samą wadę co flaga w
 `settings.local.json`.
 
-Odczytaj oba pliki narzędziem `Read` (jeśli istnieją) i w polu `env` zgłoś
-**każdy** klucz zaczynający się od `MONOLYNX_`, niezależnie od tego, czy jest
-na liście `echo` powyżej - dla pliku wczytanego w całości ograniczanie się do
-znanej listy gubiłoby flagi dopisane później, których lista w `echo` (env
-procesu) jeszcze nie zna.
+Odczytaj konfigurację klienta i, gdy diagnozujesz sesje Claude Code, oba powyższe pliki jako dane. Raportuj wyłącznie jawne flagi z listy `echo` powyżej; nigdy nie wypisuj całej konfiguracji ani sekretów. Nie wykonuj `source`.
 
 Dla każdej flagi znalezionej w co najmniej jednym źródle zbuduj wiersz
 `flaga | wartość | źródło | uwaga`:
@@ -316,7 +288,7 @@ pytania - nie mają skilla naprawczego. Punkt w stanie **BŁĄD** też nie trafi
 do pytania (patrz KROK 2 i KROK 3) - błąd wywołania MCP nie jest brakiem
 konfiguracji do naprawienia skillem.
 
-W przeciwnym razie zapytaj `AskUserQuestion` (`multiSelect: true`) z opcjami
+W przeciwnym razie zapytaj przez narzędzie dostępne w bieżącym trybie albo wiadomość o wybór punktów. Przedstaw opcje
 wyłącznie dla punktów spośród 2-5, które mają stan **BRAK** - każdy z nich ma
 skill naprawczy, więc opcji jest najwyżej tyle, ile punktów BRAK, maksymalnie
 4 (tyle ma cała checklista punktów ze skillem naprawczym). Punkt 5 w stanie
@@ -328,13 +300,7 @@ Brak zaznaczenia albo odmowa - nie wołaj żadnego skilla. Zakończ jednym
 zdaniem, które punkty zostały nienaprawione, i że `/monolynx:setup` można
 uruchomić ponownie w dowolnym momencie.
 
-**Środowisko bez `AskUserQuestion` i `Skill`** (np. Codex, inne runtime bez
-tych narzędzi) - pomiń KROK 8-9 w postaci interaktywnej. Zamiast tego, pod
-tabelą, dla każdego punktu w stanie **BRAK** (z pominięciem punktu 5 w stanie
-**BRAK bez opcji w KROK 8** - z tych samych powodów co w wersji interaktywnej)
-wypisz gotową komendę do ręcznego wklejenia, np. `/monolynx:project-toolchain`,
-i zakończ. Nie zgaduj zgody użytkownika przez brak narzędzia - brak możliwości
-zapytania nie jest zgodą.
+**Brak narzędzia pytań** - zadaj to samo pytanie zwykłą wiadomością i poczekaj na jawną zgodę. Brak odpowiedzi lub timeout nie są wyborem. W Codex znajdź wybrane skille w katalogu klienta; jeśli brak natywnego wywołania, odczytaj ich dostarczone instrukcje. Brak skilla zgłoś i zatrzymaj zależną naprawę.
 
 ---
 
@@ -344,12 +310,12 @@ Niezależnie od kolejności zaznaczenia w KROK 8, wołaj wybrane skille w tej
 stałej kolejności - `create-mutation-ci-script` wymaga sekcji `## Mutacje` ze
 strony `toolchain`, którą dopiero co mógł zapisać `project-toolchain`:
 
-1. `Skill(skill="monolynx:project-toolchain")` - gdy wybrany punkt 2.
-2. `Skill(skill="monolynx:wiki-init")` - gdy wybrany punkt 3.
-3. `Skill(skill="monolynx:create-graph-ci-script")` - gdy wybrany punkt 4.
-4. `Skill(skill="monolynx:create-mutation-ci-script")` - gdy wybrany punkt 5.
+1. skill `project-toolchain` - gdy wybrany punkt 2.
+2. skill `wiki-init` - gdy wybrany punkt 3.
+3. skill `create-graph-ci-script` - gdy wybrany punkt 4.
+4. skill `create-mutation-ci-script` - gdy wybrany punkt 5.
 
-Wołaj je pojedynczo, jeden po drugim, nie równolegle - każdy z nich może sam
+Uruchamiaj przez natywny mechanizm klienta albo odczyt dostępnego `SKILL.md`. Wołaj je pojedynczo, jeden po drugim, nie równolegle - każdy z nich może sam
 pytać o potwierdzenie, i te pytania nie mogą się nakładać.
 
 Po ostatnim wywołanym skillu zaproponuj człowiekowi ponowne uruchomienie
@@ -362,7 +328,7 @@ Po ostatnim wywołanym skillu zaproponuj człowiekowi ponowne uruchomienie
 1. **Read-only, zawsze.** Jedyne zapisy w tym przebiegu pochodzą z wywołanych
    za zgodą skilli - `setup` sam nie tworzy ani nie edytuje niczego.
 2. **Bez zgody - bez wywołania.** Odmowa albo brak wyboru w KROK 8 kończy
-   przebieg bez ani jednego `Skill(...)`.
+   przebieg bez ani jednego wywołania zależnego skilla.
 3. **Flagi autonomii tylko raportowane.** Punkt 6 nigdy nie proponuje włączenia
    `MONOLYNX_AUTOPUSH`, `MONOLYNX_AUTOMERGE` i podobnych - to decyzja
    człowieka, nie stan do naprawienia.

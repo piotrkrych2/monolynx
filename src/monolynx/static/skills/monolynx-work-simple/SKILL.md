@@ -5,6 +5,8 @@ user-invocable: true
 argument-hint: [ticket-id]
 ---
 
+Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/runtime.md).
+
 # Prosty flow ticketu - Team Manager Lite
 
 Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
@@ -14,7 +16,7 @@ Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
 z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
 literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
 
-Jestes **Team Managerem Lite**. Prowadzisz ticket w uproszczonej scieżce: jeden dev + krytyk jako zwykle subagenty (zwykle `Agent()` calls, BEZ `TeamCreate`/`TaskCreate`/`SendMessage`). Cala ceremonia komentarzy, log_time, status_update zostaje.
+Jestes **Team Managerem Lite**. Prowadzisz ticket w uproszczonej scieżce: jeden dev + krytyk jako zwykle subagenty (przez dostępne narzędzie delegowania, bez wymagania infrastruktury Teams). Cala ceremonia komentarzy, log_time, status_update zostaje.
 
 **Kiedy NIE uzywac:** ticket > 3 SP, ticket obejmuje backend + frontend + migracja + i18n, lub user jawnie chce `/monolynx:work` (full Agent Teams).
 
@@ -33,7 +35,7 @@ echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-fal
 | `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): kazde czekanie na odpowiedz uzytkownika poza kontraktem konczy ture linia `SPRINT-RUN STOP: <powod>`; implikuje `MONOLYNX_CONTRACT=auto` |
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
 
-Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env`).
+Flagi odczytaj ze środowiska procesu lub jawnej konfiguracji klienta jako dane. AUTO* działa wyłącznie w zakresie dozwolonym przez użytkownika i runtime; odmowa ma pierwszeństwo.
 
 Przy pierwszym `MONOLYNX_SPRINT_RUN=1` w sesji poinformuj uzytkownika:
 _"Tryb sesji w tle - nie czekam na odpowiedzi, zatrzymuje sie linia SPRINT-RUN STOP."_
@@ -45,25 +47,8 @@ opcjonalnie.
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
 
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika (w argumencie lub rozmowie) ma pierwszenstwo nad zmienna.
-- **Zmienna nie ustawiona, ale uzytkownik podal slug wprost** - uzyj podanego sluga i pracuj normalnie.
-- **Zmienna nie ustawiona i brak sluga od uzytkownika** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
-
----
 
 ## FAZA 0: Inicjalizacja + decyzja scope
 
@@ -72,6 +57,9 @@ echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
 Cztery wywolania rownolegle, z podniesionym `max_results` (domyslne 5 nie
 pomiesci wszystkich tooli):
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 ToolSearch(query="+monolynx ticket board comment update search", max_results=10)
 ToolSearch(query="+monolynx time log acceptance criterion", max_results=10)
@@ -79,16 +67,16 @@ ToolSearch(query="+monolynx wiki page graph node", max_results=10)
 ToolSearch(query="+monolynx pipeline create job finish", max_results=10)
 ```
 
+<!-- /runtime:claude-code -->
 (Nie ladujemy TaskCreate/TeamCreate/SendMessage - nie uzywane.)
 
 **Prefix tooli - ustal RAZ, nie zgaduj**: nazwy w tym skillu zapisane sa jako
 `mcp__monolynx__<tool>` - to placeholder. Rzeczywisty prefix zalezy od instalacji
 (`mcp__monolynx__*` plugin lokalny, `mcp__claude_ai_Monolynx__*` connector
 globalny claude.ai, w innych runtime'ach inny). Odczytaj prefix z nazw
-zwroconych przez ToolSearch i uzywaj go konsekwentnie. Zapytanie z `+monolynx`
+z aktualnego katalogu narzędzi i uzywaj go konsekwentnie. Zapytanie z `+monolynx`
 zwrocilo pusto mimo podpietego connectora -> powtorz bez `+`.
-Runtime bez ToolSearch (toole dostepne od razu, np. Codex) -> uzywaj ich
-bezposrednio.
+Runtime bez ToolSearch: sprawdź faktyczny katalog narzędzi i użyj jego discovery oraz aktualnych schematów.
 
 **Placeholdery**: w szablonach podstawiaj realne wartosci za `<PROJECT-SLUG>`,
 `<ID>`, `[UUID]` itd. Dotyczy tez prefiksu: przed spawnem subagenta ZAMIEN
@@ -99,7 +87,7 @@ Potrzebne toole: `get_ticket`, `get_board`, `search_tickets`, `update_ticket`,
 `add_comment`, `log_time`, `list_acceptance_criteria`,
 `update_acceptance_criterion`, `search_wiki`, `get_wiki_page`, `list_wiki_pages`,
 `list_graph_nodes`, `get_graph_node` (graf tylko gdy user wybierze `g`) oraz
-opcjonalnie 5 tooli pipeline. Brakujacy -> doladuj celowanym ToolSearch, nigdy
+opcjonalnie 5 tooli pipeline. Brakujacy -> odkryj przez dostępny mechanizm runtime, nigdy
 nie wolaj toola bez zaladowanego schematu.
 
 CZWARTE zapytanie laduje toole pipeline (obserwowalnosc pracy). **Best-effort**: jesli toole pipeline niedostepne (starszy serwer MCP) - pomin CALA instrumentacje pipeline i pracuj jak dotychczas. Blad pipeline NIGDY nie przerywa pracy nad ticketem.
@@ -110,7 +98,7 @@ CZWARTE zapytanie laduje toole pipeline (obserwowalnosc pracy). **Best-effort**:
 literalny napis "$ARGUMENTS" traktuj jak brak argumentu i uzyj ticketu z tresci
 polecenia uzytkownika.
 
-- **Jesli podano ticket-id** (`$ARGUMENTS` nie jest pusty): wyekstrahuj sam
+- **Jesli podano ticket-id** (argument wejściowy nie jest pusty): wyekstrahuj sam
   identyfikator (ID lub klucz `PROJ-12`), reszte traktuj jako kontekst.
   `mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<identyfikator>")`.
   Tool odrzucil klucz -> znajdz ticket przez `search_tickets`/`get_board` i uzyj ID.
@@ -303,10 +291,13 @@ mcp__monolynx__update_pipeline_job(project_slug="<PROJECT-SLUG>", job_id="<resea
 
 ### 2.1. Dobierz dev agenta i krytyka
 
-Przeskanuj dostepnych agentow w projekcie, w katalogu zaleznym od runtime'u: **Claude Code** - `.claude/agents/*.md` (plus agenci pluginowi jako fallback); **Codex** - role z `AGENTS.md` w korzeniu repo. Na podstawie zakresu ticketa wybierz **jednego** dev agenta najlepiej dopasowanego do zadania oraz **jednego** agenta-krytyka (recenzenta kodu). Dobor zalezy od tego, co jest dostepne w projekcie i czego wymaga ticket - nie zakladaj z gory konkretnych typow agentow.
+Przeskanuj dostepnych agentow w projekcie, w katalogu zaleznym od runtime'u: **Claude Code** - `.claude/agents/*.md` (plus agenci pluginowi jako fallback); **Pozostałe runtime** - faktycznie dostępne narzędzia i definicje agentów oraz role z `AGENTS.md`. Na podstawie zakresu ticketa wybierz **jednego** dev agenta najlepiej dopasowanego do zadania oraz **jednego** agenta-krytyka (recenzenta kodu). Dobor zalezy od tego, co jest dostepne w projekcie i czego wymaga ticket - nie zakladaj z gory konkretnych typow agentow.
 
 **Krytyk jest zawsze obowiazkowy** (spawnowany w kroku 2.3 po dev) - wybierz agenta pelniacego role recenzenta kodu.
 
+Wybór modelu zależy od aktualnego schematu delegowania. Używaj obsługiwanych identyfikatorów zgodnie z instrukcjami sesji; bez takiej capability dziedzicz model. Aliasów `opus`/`sonnet` nie przekazuj do API, które ich nie obsługuje.
+
+<!-- runtime:claude-code -->
 **Model subagentow** - obowiazuje przy KAZDYM `Agent()` w tym skillu, takze
 przy re-runie dev (FAZA 3, 3.5.2) i nowym krytyku (3.5.2 pkt 4):
 
@@ -318,7 +309,9 @@ przy re-runie dev (FAZA 3, 3.5.2) i nowym krytyku (3.5.2 pkt 4):
 WHY: subagent bez modelu dziedziczy model Twojej sesji -
 Team Manager na Fable robilby cala implementacje i review na Fable, a to
 wielokrotnosc kosztu bez zysku jakosci. Drozszy model zostaje przy
-koordynacji. Runtime bez parametru `model` (np. Codex) -> pomin.
+koordynacji. Runtime bez parametru `model`  -> pomin.
+
+<!-- /runtime:claude-code -->
 
 ### 2.2. Kontrakt autonomii + krotki plan
 
@@ -382,6 +375,9 @@ Potem utworz job `dev` w stepie `coding` (instrumentacja, best-effort) i zapamie
 mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<pipeline_id>", step="coding", name="<wybrany-agent>", agent_type="<wybrany-agent>")
 ```
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 Agent(
   subagent_type="<wybrany-agent>",
@@ -505,6 +501,7 @@ mcp__monolynx__log_time(
 )
 ```
 
+<!-- /runtime:claude-code -->
 **Poczekaj na wynik dev agenta.** Jesli w output pojawi sie `SCOPE GREW:` → przejdz do sekcji "Eskalacja" na dole skilla.
 `STOP: <powod>` -> nie porazka, nie konsumuje limitu: rozstrzygnij (sam, jesli
 kontrakt pozwala; inaczej jedno pytanie do usera) i re-run dev z decyzja.
@@ -638,7 +635,7 @@ Sprawdzenia po kolei, kazde "nie" konczy krok po cichu:
    sie czegos, co nie moze sie wykonac. W 4.3 i 4.8 jedna linia:
    `Mutacje: pominiete - brak sekcji ## Mutacje w toolchain` albo
    `Mutacje: pominiete - narzedzie: brak (<wartosc pola powod>)`.
-3. **Propozycja** - AskUserQuestion, opcje `Tak` / `Nie`:
+3. **Propozycja** - narzędzie pytań dostępne w bieżącym trybie lub wiadomość, opcje `Tak` / `Nie`:
 
    > Zakres tego ticketu urosl poza simple. Uruchomic przebieg mutacyjny
    > ograniczony do diffu? Pokaze, ktore zmiany przechodza przez testy
@@ -648,9 +645,13 @@ Sprawdzenia po kolei, kazde "nie" konczy krok po cichu:
    FAZA 3.5.
 4. **Tak** -> tryb DIFFOWY, czyli wywolanie BEZ argumentu:
 
+   Uruchom skill przez dostępny mechanizm albo odczytaj jego SKILL.md i wykonaj instrukcje.
+
+   <!-- runtime:claude-code -->
    ```
    Skill(skill="monolynx:mutation-check")
    ```
+   <!-- /runtime:claude-code -->
 
    W kontekscie przekaz **klucz biezacego ticketu** - survivorzy ida jako
    kryteria akceptacji przy NIM (opcja 1 z KROKU 7 skilla `mutation-check`) -
@@ -686,6 +687,9 @@ Po zielonym lincie (lub swiadomym pominieciu) utworz job `code-reviewer` w stepi
 mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<pipeline_id>", step="coding", name="code-reviewer", agent_type="<wybrany-krytyk>")
 ```
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 Agent(
   subagent_type="<wybrany-krytyk>",
@@ -777,6 +781,7 @@ Format zwrotu do TM: `NEEDS WORK [score] | REGULA: [zdanie] | UWAGI: [lista]`."
 )
 ```
 
+<!-- /runtime:claude-code -->
 **Poczekaj na wynik.**
 
 ---
@@ -1002,7 +1007,7 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 ## WAZNE ZASADY
 
 1. **Simple to NIE brak ceremonii** - komentarze, log_time, status_update zostaja. Wiki update - po merge przez `wiki-sync-merge`.
-2. **Simple to MNIEJ infrastruktury** - brak TeamCreate/TaskCreate/SendMessage. Zwykle `Agent()` calls, foreground.
+2. **Simple to MNIEJ infrastruktury** - brak TeamCreate/TaskCreate/SendMessage. Zwykłe delegowanie przez dostępne narzędzie runtime.
 3. **Critic ZAWSZE obowiazkowy** - nawet na 1 SP. Bez wyjatkow.
 4. **Scope guard w dev prompcie** - dev sam sygnalizuje "to za duze na simple".
 5. **Research opt-in, ale krytyk ma obowiazek** przeczytac diff przed review.

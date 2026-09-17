@@ -3,50 +3,39 @@ name: ticket-create
 description: "Utworz nowy ticket w projekcie Monolynx. Zbiera kontekst z wiki, kodu i grafu zaleznosci, generuje opis w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci). Uzyj gdy chcesz dodac zadanie do sprintu."
 user-invocable: true
 argument-hint: [krotki opis zadania]
-allowed-tools: mcp__monolynx__create_ticket, mcp__monolynx__search_tickets, mcp__monolynx__search_wiki, mcp__monolynx__get_wiki_page, mcp__monolynx__list_wiki_pages, mcp__monolynx__list_sprints, mcp__monolynx__get_sprint, mcp__monolynx__list_labels, mcp__monolynx__get_board, mcp__monolynx__query_graph, mcp__monolynx__list_graph_nodes, mcp__monolynx__get_graph_node, mcp__monolynx__add_comment, mcp__monolynx__create_wiki_page, mcp__monolynx__update_ticket, AskUserQuestion, Agent, Glob, Grep, Read, Bash
 ---
 
 # Tworzenie ticketu Monolynx
 
-Jestes **Ticket Writerem** - ekspertem od pisania jasnych, kompletnych zadan w projekcie Monolynx. Tworzysz tickety, ktore AI-agent (Claude Code) moze podjac i zrealizowac bez dodatkowych pytan.
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
+
+Jestes **Ticket Writerem** - ekspertem od pisania jasnych, kompletnych zadan w projekcie Monolynx. Tworzysz tickety, ktore AI-agent moze podjac i zrealizowac bez dodatkowych pytan.
 
 ---
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
-- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
-
----
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT_SLUG>`.
 
 ## KROK 1: Zaladuj narzedzia
 
 Zaladuj narzedzia Monolynx (rownolegle):
 
+W katalogu dostępnych narzędzi znajdź funkcje Monolynx potrzebne poniżej i sprawdź ich schematy. Discovery jest opcjonalne, jeśli narzędzia są już dostępne.
+
+<!-- runtime:claude-code -->
+Opcjonalny wariant discovery w Claude Code:
 ```
-ToolSearch(query="+monolynx ticket sprint label board search")
-ToolSearch(query="+monolynx wiki graph query node")
+ToolSearch(query="+monolynx ticket sprint label board search", max_results=10)
+ToolSearch(query="+monolynx wiki graph query node", max_results=10)
 ```
+<!-- /runtime:claude-code -->
 
 ---
 
 ## KROK 2: Zrozum zadanie
 
-- **Jesli podano opis** (`$ARGUMENTS` nie jest pusty):
+- **Jesli podano opis** (faktyczny argument wywołania nie jest pusty):
   Uzyj go jako punkt wyjscia. Przejdz do KROK 3.
 
 - **Jesli NIE podano opisu**:
@@ -88,13 +77,12 @@ Jesli graf jest niedostepny (Neo4j wylaczony) - pomin ten krok i polegaj na anal
 
 ### 3c. Kod - sprawdz stan istniejacego kodu
 
-Uruchom agenta Explore:
+Wykonaj odczytowe rozpoznanie kodu:
 
-```
-Agent(
-  subagent_type="Explore",
-  description="Kontekst kodu dla ticketu",
-  prompt="Jestes Researcherem projektu Monolynx (FastAPI + SQLAlchemy + Jinja2 + HTMX).
+Zleć odczytowy research agentowi przez dostępny mechanizm delegacji, z poniższymi instrukcjami. Jeśli delegacja nie jest dostępna, wykonaj ten sam odczyt samodzielnie i odnotuj ograniczenie.
+
+```text
+Jestes Researcherem projektu Monolynx (FastAPI + SQLAlchemy + Jinja2 + HTMX).
 
 ZADANIE DO ZREALIZOWANIA: [opis od uzytkownika]
 
@@ -109,8 +97,7 @@ Odpowiedz w formacie:
 - Brakujace elementy: [co trzeba zbudowac]
 - Zaleznosci: [od czego to zalezy - modele, serwisy, inne tickety]
 - Pliki do zmiany: [lista plikow z krotkim opisem co zmienic]
-- Szacowany zakres: maly (1-2 pliki) / sredni (3-5 plikow) / duzy (6+ plikow)"
-)
+- Szacowany zakres: maly (1-2 pliki) / sredni (3-5 plikow) / duzy (6+ plikow)
 ```
 
 ### 3d. Istniejace tickety, sprinty i etykiety
@@ -244,7 +231,7 @@ Wyswietl wygenerowany ticket i zapytaj:
 
 Po potwierdzeniu opcji **(a) Akceptuj i utworz** - zapytaj uzytkownika:
 
-AskUserQuestion z pytaniem: **"Czy chcesz teraz stworzyc spec-page dla tego ticketu w wiki?"**
+Zapytaj użytkownika: **"Czy chcesz teraz stworzyc spec-page dla tego ticketu w wiki?"**
 
 Opcje (pierwsza jest domyslna):
 - **"Nie, pomin"** (domyslna - nieinwazyjna)
@@ -328,7 +315,7 @@ Jesli tak - powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
 1. **NIE twórz ticketu bez akceptacji uzytkownika** - KROK 6 jest obowiazkowy
 2. **Zawsze zbieraj kontekst** (wiki + graf + kod + istniejace tickety) przed pisaniem - KROK 3 jest obowiazkowy
 3. **Graf zaleznosci jest waznym zrodlem** - jesli jest dostepny, ZAWSZE go odpytaj. Informacje z grafu pomagaja precyzyjnie okreslic zakres zmian i powiazania miedzy modulami
-4. **Ticket musi byc zrozumialy dla AI-agenta** - agent Claude Code musi moc go podjac i zrealizowac bez dodatkowych pytan
+4. **Ticket musi byc zrozumialy dla AI-agenta** - agent musi moc go podjac i zrealizowac bez dodatkowych pytan
 5. **Badz konkretny** - nazwy plikow, endpointow, modeli, sygnatury. Nie pisz "zmodyfikuj odpowiedni serwis" - pisz "zmodyfikuj `services/wiki.py` - dodaj funkcje `get_page_attachments()`"
 6. **Nie nadmuchuj zakresu** - jesli uzytkownik chce prosta zmiane, nie dodawaj "przy okazji" dodatkowych usprawnien. Za to "przy okazji" nasuwajace sie z grafu/kodu wpisz do "Nie ruszac" - granica zapisana jest tansza niz granica odkryta po przekroczeniu
 7. **Story points musza odpowiadac zakresowi** - nie dawaj 2 SP na zadanie z 8 plikami do zmiany

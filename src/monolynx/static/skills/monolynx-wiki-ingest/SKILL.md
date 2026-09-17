@@ -3,10 +3,11 @@ name: monolynx-wiki-ingest
 description: "Zintegruj nowe zrodlo (plik, URL lub wklejona tresc) z wiki projektu metoda LLM Wiki. Tworzy strone zrodla, aktualizuje powiazane strony, linkuje wikilinkami, odswieza katalog i dziennik. Uzyj gdy masz dokument lub artykul do wlaczenia w wiki."
 user-invocable: true
 argument-hint: [sciezka pliku / URL / temat zrodla]
-allowed-tools: mcp__monolynx__get_wiki_config, mcp__monolynx__search_wiki, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, mcp__monolynx__create_wiki_page, mcp__monolynx__update_wiki_page, mcp__monolynx__regenerate_wiki_index, mcp__monolynx__append_wiki_log, mcp__monolynx__get_wiki_backlinks, AskUserQuestion, Bash, Read, WebFetch
 ---
 
 # INGEST - integracja zrodla z wiki
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Realizujesz operacje **INGEST** metody LLM Wiki: bierzesz jedno zrodlo (dokument, artykul, transkrypcje, wklejona tresc) i wpisujesz jego wiedze trwale w wiki projektu. Wiki to narastajacy artefakt - jedno dobre zrodlo zwykle dotyka wielu stron, a nie jednej. Twoim celem jest **aktualizowac istniejace strony**, nie duplikowac wiedzy, i wszystko **linkowac wikilinkami**, zeby graf rosl.
 
@@ -14,24 +15,7 @@ Realizujesz operacje **INGEST** metody LLM Wiki: bierzesz jedno zrodlo (dokument
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika ma pierwszenstwo.
-- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
-
----
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT-SLUG>`.
 
 ## Warunek wstepny: tylko branch main/master
 
@@ -42,7 +26,7 @@ git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
 ```
 
 - **Branch `main` lub `master`** - kontynuuj normalnie.
-- **Inny branch albo brak repozytorium git** - NIE zapisuj automatycznie. Zapytaj uzytkownika (`AskUserQuestion`): _"Jestes na branchu `<branch>`, nie na main/master. Zapis do wiki zalecany dopiero po merge do main. Kontynuowac mimo to?"_ z opcjami:
+- **Inny branch albo brak repozytorium git** - NIE zapisuj automatycznie. Zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość): _"Jestes na branchu `<branch>`, nie na main/master. Zapis do wiki zalecany dopiero po merge do main. Kontynuowac mimo to?"_ z opcjami:
   - **Nie, przerwij (zalecane)** - zakoncz bez zapisu do wiki.
   - **Tak, kontynuuj mimo to** - przejdz dalej.
 
@@ -65,12 +49,12 @@ mcp__monolynx__get_wiki_config(project_slug="<PROJECT-SLUG>")
 
 ## Krok 1: Ustal zrodlo
 
-`$ARGUMENTS` moze byc sciezka pliku, adresem URL albo tematem/wklejona trescia.
+Faktyczny argument wywołania może być sciezka pliku, adresem URL albo tematem/wklejona trescia.
 
 - **Sciezka pliku** - przeczytasz go w Kroku 3 narzedziem `Read`.
 - **URL** - pobierzesz go w Kroku 3 narzedziem `WebFetch`.
 - **Wklejona tresc / temat** - uzyj tego co podal uzytkownik.
-- **Brak argumentu** - zapytaj uzytkownika (`AskUserQuestion`): _"Jakie zrodlo chcesz zintegrowac z wiki? Podaj sciezke pliku, URL albo wklej tresc."_ Poczekaj na odpowiedz; nie kontynuuj bez zrodla.
+- **Brak argumentu** - zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość): _"Jakie zrodlo chcesz zintegrowac z wiki? Podaj sciezke pliku, URL albo wklej tresc."_ Poczekaj na odpowiedz; nie kontynuuj bez zrodla.
 
 ---
 
@@ -139,7 +123,7 @@ Typ strony ustalasz **przez frontmatter YAML** na poczatku `content` (narzedzia 
    ```
 
 2. **Strony encji i konceptow** - jedno dobre zrodlo dotyka wielu stron. Dla kazdego istotnego bytu/idei:
-   - jesli strona **istnieje** - `update_wiki_page(project_slug=..., page_id=..., content=...)` (wzbogac tresc, dodaj wikilinki),
+   - jesli strona **istnieje** - `update_wiki_page(project_slug="<PROJECT-SLUG>", page_id=..., content=...)` (wzbogac tresc, dodaj wikilinki),
    - jesli **nie istnieje** - `create_wiki_page(...)` z odpowiednim `type` (`encja` lub `koncept`) we frontmatterze.
 
 3. **Linkowanie** - wszystko lacz wikilinkami ze slugami docelowych stron (nie pelne URL), zeby graf powiazan rosl.

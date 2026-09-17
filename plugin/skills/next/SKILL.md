@@ -3,10 +3,11 @@ name: next
 description: "Co teraz? Odczytaj stan projektu, ticketów, sprintu, sesji w tle i MR/PR. Zaproponuj 1-3 następne komendy z uzasadnieniem. Tylko odczyt, bez wykonywania rekomendacji."
 user-invocable: true
 argument-hint: ""
-allowed-tools: Read, ToolSearch, mcp__monolynx__get_board, mcp__monolynx__get_ticket, mcp__monolynx__list_tickets, mcp__monolynx__list_sprints, mcp__monolynx__list_wiki_pages, mcp__monolynx__get_wiki_page, Bash(git branch --show-current), Bash(git --no-optional-locks status --porcelain), Bash(git rev-parse:*), Bash(git remote get-url:*), Bash(claude agents --json --all), Bash(claude logs:*), Bash(glab mr list:*), Bash(glab api --method GET:*), Bash(gh pr list:*), Bash(gh pr view:*)
 ---
 
 # NEXT - co teraz
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
 Odnośniki do dołączonych `scripts/`, `references/` i pomocniczych plików
@@ -30,12 +31,7 @@ Nie instaluj brakujących narzędzi ani nie zmieniaj uprawnień.
 
 ## KROK 1: Projekt i git
 
-Ustal slug: wartość podana przez użytkownika, następnie
-`MONOLYNX_PROJECT_SLUG` ze środowiska, pojedynczy klucz o tej nazwie z `.env`,
-a potem `env.MONOLYNX_PROJECT_SLUG` w `.claude/settings.json`.
-Czytaj tylko ten klucz; nie wykonuj `source .env` i nie wypisuj całego pliku.
-Brak sluga: oznacz konfigurację BRAK, pomiń MCP wymagające projektu.
-Sprzeczne wartości: użyj podanego pierwszeństwa i zgłoś rozbieżność.
+Ustal slug według kontraktu runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` w środowisku > jawnie odczytana konfiguracja klienta lub `.env`. Czytaj wyłącznie ten klucz jako dane, bez `source` i bez sekretów. Brak: oznacz konfigurację BRAK i pomiń MCP wymagające projektu. Sprzeczne wartości: użyj podanego pierwszeństwa i zgłoś rozbieżność.
 
 Odczyty git, każdy niezależnie:
 
@@ -81,6 +77,8 @@ Nie ładuj narzędzi zapisu. Bez ToolSearch użyj dostępnego katalogu narzędzi
 
 ## KROK 3: Sesje w tle
 
+Źródłem tego kroku są sesje CLI `claude`, także gdy dyspozytor działa w Codex. Brak CLI lub odczytu: NIEZNANE, pomiń klasyfikację; nie zastępuj jej agentami klienta.
+
 ```bash
 claude agents --json --all
 ```
@@ -111,8 +109,7 @@ Nie dopisuj nowego skryptu ani nowej logiki klasyfikatora:
    Dopisz ostrzeżenie z `session_state_reason`, jeśli wystąpiło.
 
 Dane przekazuj jako JSON przez stdin w pamięci; nie interpoluj logów,
-tytułów ani sluga do kodu Python lub komendy shella. Nie dodawaj ogólnego
-`Bash` ani `Bash(python3:*)` do allowed-tools. Jeśli wykonanie odczytowego
+tytułów ani sluga do kodu Python lub komendy shella. Nie rozszerzaj uprawnień powłoki dla adaptera. Jeśli wykonanie odczytowego
 adaptera nie jest dostępne lub dozwolone, oznacz klasyfikację NIEZNANE.
 Nie zastępuj jej ręcznym zgadywaniem po `state="blocked"`.
 
@@ -160,7 +157,7 @@ Obiekt zamknięty/zmergowany między listą a odczytem usuń z kandydatów.
 
 ## KROK 5: Wybór rekomendacji
 
-Stosuj poniższy priorytet od góry. Deduplikuj komendy i wybierz najwyżej
+Nazwy komend w tabeli są wariantem Claude Code. W raporcie dla innego klienta użyj jego potwierdzonej nazwy skilla lub wskaż odczyt dostępnego pliku instrukcji; nie fabrykuj komendy. Stosuj poniższy priorytet od góry. Deduplikuj komendy i wybierz najwyżej
 trzy, bez propozycji sprzecznych (np. rozpoczęcie i zamknięcie sprintu).
 `NEXT` powtarza dokładnie pierwszą komendę. Jeden potwierdzony brak
 konfiguracji ma pierwszeństwo nawet przy częściowo niedostępnych źródłach.

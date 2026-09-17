@@ -3,8 +3,9 @@ name: sprint-run
 description: "Dyspozytor sprintu: jeden idempotentny tick, który czyta stan sprintu i sesji w tle, startuje brakujące sesje /monolynx:work w worktree, zbiera zakończone i raportuje. Sam nigdy nie pracuje nad ticketem. Użyj gdy chcesz przerobić sprint sesjami w tle, w pętli /loop albo ze skryptu sprint_run.sh."
 user-invocable: true
 argument-hint: "[sloty]"
-allowed-tools: mcp__monolynx__list_sprints, mcp__monolynx__list_tickets, mcp__monolynx__get_board, mcp__monolynx__get_ticket, mcp__monolynx__list_comments, mcp__monolynx__add_comment, Bash, Read, ToolSearch
 ---
+
+Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/runtime.md).
 
 # SPRINT-RUN - dyspozytor nazwanych sesji w tle
 
@@ -31,22 +32,8 @@ Pętla jest **na zewnątrz** tego skilla. Ty robisz jeden tick, pętlę robi `/l
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej środowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdź ją:
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
 
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - użyj jej wartości jako `project_slug` we wszystkich wywołaniach narzędzi MCP poniżej. Slug podany wprost przez użytkownika ma pierwszeństwo.
-- **Zmienna nie ustawiona** - NIE zgaduj sluga i NIE startuj żadnej sesji. Poproś użytkownika, by skonfigurował slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomił skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakończ bez dalszych akcji, dopóki slug nie jest znany.
 
 Slug jest częścią kontraktu nazw: sesja robocza ticketu nazywa się `<PROJECT_SLUG>-<KEY>-<MODEL>` (np. `monolynx-MON-167-opus`), gdzie `<MODEL>` to wartość `${MONOLYNX_SPRINT_MODEL:-opus}` z chwili startu, a sesja samego dyspozytora w `sprint_run.sh` `<PROJECT_SLUG>-sprint-run-<MODEL>`, gdzie `<MODEL>` to `${MONOLYNX_SPRINT_TICK_MODEL:-opus}` (tak samo `<PROJECT_SLUG>-sprint-end-<MODEL>` i `<PROJECT_SLUG>-retro-<MODEL>` przy `--close`). Każda nazwa sesji kończy się modelem, na którym sesja działa. Te nazwy są **zamrożone** - inne narzędzia po nich rozpoznają sesje sprintu. Nie zmieniaj ich i nie dodawaj innych sufiksów.
 
@@ -55,6 +42,8 @@ Sesję ticketu rozpoznajesz po nazwie równej `<PROJECT_SLUG>-<KEY>` albo zaczyn
 ---
 
 ## KROK 1: Preflight
+
+Dyspozytor nadal wymaga Claude CLI także uruchomiony z innego klienta. Nie zastępuj go backendem agentów bieżącego runtime. AUTO* i tryb uprawnień nie uchylają instrukcji użytkownika ani odmowy runtime; brak wymaganych zgód zatrzymuje dispatch.
 
 Sprawdź środowisko jednym przebiegiem. Bez tego tick w tle utknie na pierwszym pytaniu, na które nikt nie odpowie.
 
@@ -97,7 +86,7 @@ Wymagania twarde. Brak któregokolwiek zatrzymuje tick **przed** startem jakiejk
 }
 ```
 
-Sesja w tle **dziedziczy środowisko**, ale nie dziedziczy Twojego shella. Flagi muszą być w `.claude/settings.json` projektu (pole `env`), nie tylko wyeksportowane w terminalu, z którego uruchamiasz tick.
+Sesja w tle **dziedziczy środowisko**, ale nie dziedziczy Twojego shella. Flagi muszą być w środowisku procesu startującego sesje lub śledzonym `.claude/settings.json` projektu (pole `env`). Konfiguracja odczytana jako dane nie staje się automatycznie środowiskiem potomka.
 
 **Tryb `batch`**: zmienna `MONOLYNX_SPRINT_RUN_MODE` równa `batch` (ustawia ją sam `sprint_run.sh` dla procesów, które odpala). Nikt wtedy nie przeczyta instrukcji konfiguracyjnej, a pętla musi się dowiedzieć, że tick padł, więc po komunikacie o brakujących flagach zakończ odpowiedź dokładnie taką ostatnią linią:
 
@@ -111,7 +100,7 @@ SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0
 
 Tryb bierze się ze zmiennej, a nie z wykrycia terminala, bo `[ -t 0 ]` w narzędziu Bash Claude Code jest fałszywe także w sesji z człowiekiem (zweryfikowane na CLI 2.1.270), więc nie nadaje się na sygnał trybu.
 
-**Argument `[sloty]`**: liczba równoległych sesji roboczych. Weź `$ARGUMENTS`, gdy to liczba całkowita większa od zera. W przeciwnym razie użyj `${MONOLYNX_SPRINT_PARALLEL:-2}`. Argument, który nie jest dodatnią liczbą, zignoruj i odnotuj to jednym zdaniem w raporcie.
+**Argument `[sloty]`**: liczba równoległych sesji roboczych. Weź argument z wiadomości użytkownika lub jawnego wejścia wywołania, gdy to liczba całkowita większa od zera. W przeciwnym razie użyj `${MONOLYNX_SPRINT_PARALLEL:-2}`. Argument, który nie jest dodatnią liczbą, zignoruj i odnotuj to jednym zdaniem w raporcie.
 
 ---
 
@@ -119,10 +108,14 @@ Tryb bierze się ze zmiennej, a nie z wykrycia terminala, bo `[ -t 0 ]` w narzę
 
 Załaduj narzędzia MCP tego kroku:
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 ToolSearch(query="+monolynx sprint list tickets board ticket", max_results=10)
 ```
 
+<!-- /runtime:claude-code -->
 **Aktywny sprint:**
 
 ```
@@ -225,10 +218,14 @@ Werdykty i to, co z nimi robisz:
 
 Załaduj narzędzia MCP tego kroku:
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 ToolSearch(query="+monolynx comment list add ticket", max_results=10)
 ```
 
+<!-- /runtime:claude-code -->
 Przejdź po ticketach z werdyktem innym niż `free` i `running`.
 
 ### Werdykt `done`

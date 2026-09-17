@@ -317,6 +317,13 @@ class TestMainCliSkillCoverage:
         (skills_dir / "skills" / "work" / "SKILL.md").write_text("---\ndescription: x\n---\n# work\n", encoding="utf-8")
         (skills_dir / "skills" / "retro").mkdir()
         (skills_dir / "skills" / "retro" / "SKILL.md").write_text("---\ndescription: y\n---\n# retro\n", encoding="utf-8")
+        contract = (VALIDATOR_PATH.parent.parent / "plugin/references/runtime.md").read_text(encoding="utf-8")
+        for name in ("work", "retro"):
+            skill = skills_dir / "skills" / name
+            entrypoint = skill / "SKILL.md"
+            entrypoint.write_text(entrypoint.read_text(encoding="utf-8") + "\n[runtime](references/runtime.md)\n", encoding="utf-8")
+            (skill / "references").mkdir()
+            (skill / "references/runtime.md").write_text(contract, encoding="utf-8")
         page = tmp_path / "guide.html"
         page.write_text(page_text, encoding="utf-8")
         return plugin_json, readme, skills_dir, page
@@ -339,6 +346,12 @@ class TestMainCliSkillCoverage:
         fx = self._write_fixture(tmp_path, "<code>/monolynx:work</code> <code>/monolynx:retro</code>")
         assert validator.main(self._argv(*fx)) == 0
 
+    def test_missing_runtime_fails_cli_even_when_coverage_is_complete(self, tmp_path, capsys):
+        fx = self._write_fixture(tmp_path, "/monolynx:work /monolynx:retro")
+        (fx[2] / "skills/work/references/runtime.md").unlink()
+        assert validator.main(self._argv(*fx)) == 1
+        assert "runtime.md" in capsys.readouterr().out
+
     def test_page_missing_a_skill_returns_one(self, tmp_path, capsys):
         fx = self._write_fixture(tmp_path, "<code>/monolynx:work</code>")
         assert validator.main(self._argv(*fx)) == 1
@@ -353,3 +366,79 @@ class TestMainCliSkillCoverage:
         plugin_json, readme, skills_dir, _ = self._write_fixture(tmp_path, "")
         argv = self._argv(plugin_json, readme, skills_dir, tmp_path / "nope.html")
         assert validator.main(argv) == 2
+
+
+@pytest.mark.unit
+class TestRuntimeContract:
+    @staticmethod
+    def files(body=""):
+        contract = (VALIDATOR_PATH.parent.parent / "plugin/references/runtime.md").read_text(encoding="utf-8")
+        return {
+            "skills/sample/SKILL.md": "Przeczytaj [runtime](references/runtime.md).\n" + body,
+            "skills/sample/references/runtime.md": contract,
+            "references/runtime.md": contract,
+        }
+
+    def test_local_complete_contract_is_valid(self):
+        assert validator.check_runtime_contract(self.files()) == []
+
+    def test_missing_contract_is_reported(self):
+        files = self.files()
+        del files["skills/sample/references/runtime.md"]
+        assert any("runtime.md" in item for item in validator.check_runtime_contract(files))
+
+    def test_unlinked_contract_is_reported(self):
+        files = self.files()
+        files["skills/sample/SKILL.md"] = "Opis bez kontraktu."
+        assert validator.check_runtime_contract(files)
+
+    def test_truncated_contract_is_reported_without_canonical_source(self):
+        files = self.files()
+        del files["references/runtime.md"]
+        files["skills/sample/references/runtime.md"] = "# Runtime\n## Projekt\n"
+        assert validator.check_runtime_contract(files)
+
+    def test_stale_contract_is_reported(self):
+        files = self.files()
+        files["skills/sample/references/runtime.md"] += "Stara instrukcja.\n"
+        assert validator.check_runtime_contract(files)
+
+    @pytest.mark.parametrize("reference", ["../other/references/context.md", "/tmp/context.md", "references/missing.md"])
+    def test_external_or_missing_reference_is_reported(self, reference):
+        assert validator.check_runtime_contract(self.files(f"Czytaj [kontekst]({reference})."))
+
+    def test_local_reference_is_valid(self):
+        files = self.files("Czytaj [kontekst](references/context.md).")
+        files["skills/sample/references/context.md"] = "Kontekst."
+        assert validator.check_runtime_contract(files) == []
+
+    def test_project_paths_in_code_are_not_bundled_references(self):
+        body = "Odczytaj `.claude/rules/db-commit.md` i `src/docs/guide.md`.\n"
+        assert validator.check_runtime_contract(self.files(body)) == []
+
+    def test_nested_reference_resolves_from_skill_root(self):
+        files = self.files("Czytaj `references/stages.md`.\n")
+        files["skills/sample/references/stages.md"] = "Czytaj `references/context.md`.\n"
+        files["skills/sample/references/context.md"] = "Kontekst."
+        assert validator.check_runtime_contract(files) == []
+        del files["skills/sample/references/context.md"]
+        assert validator.check_runtime_contract(files)
+
+    @pytest.mark.parametrize(
+        "instruction",
+        ["ToolSearch(query='x')", "Skill(skill='work')", "AskUserQuestion(...)", "Weź $ARGUMENTS.", "Czytaj ${CLAUDE_PLUGIN_ROOT}/x."],
+    )
+    def test_unconditional_client_instruction_is_reported(self, instruction):
+        assert validator.check_runtime_contract(self.files(instruction))
+
+    def test_explicit_claude_variant_is_valid_but_does_not_leak(self):
+        body = "<!-- runtime:claude-code -->\nToolSearch(query='x')\n<!-- /runtime:claude-code -->\n"
+        assert validator.check_runtime_contract(self.files(body)) == []
+        assert validator.check_runtime_contract(self.files(body + "AskUserQuestion(...)\n"))
+
+    def test_explanations_of_fallback_and_negation_are_valid(self):
+        body = "ToolSearch jest opcjonalne. Nie używaj literalnego `$ARGUMENTS`.\n"
+        assert validator.check_runtime_contract(self.files(body)) == []
+
+    def test_unclosed_variant_is_reported(self):
+        assert validator.check_runtime_contract(self.files("<!-- runtime:claude-code -->\nToolSearch(query='x')"))

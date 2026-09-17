@@ -17,6 +17,9 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def source_skill(tmp_path):
     skill = tmp_path / "source" / "sample"
+    canonical = tmp_path / "references"
+    canonical.mkdir()
+    (canonical / "runtime.md").write_text("# Runtime\n", encoding="utf-8")
     (skill / "references").mkdir(parents=True)
     (skill / "scripts").mkdir()
     (skill / "SKILL.md").write_text("---\nname: sample\ndescription: Sample\n---\n<PROJECT_SLUG>\n", encoding="utf-8")
@@ -93,3 +96,21 @@ def test_committed_standalone_distribution_matches_source():
         target = sync_skills.TARGET_DIR / f"monolynx-{source.name}"
         actual = {p.relative_to(target).as_posix(): p.read_text(encoding="utf-8") for p in target.rglob("*") if p.is_file()}
         assert actual == sync_skills.build(source), source.name
+
+
+def test_bundled_resources_includes_canonical_runtime(tmp_path, monkeypatch):
+    source = tmp_path / "plugin/skills"
+    source.mkdir(parents=True)
+    reference = source.parent / "references/runtime.md"
+    reference.parent.mkdir()
+    reference.write_text("# Canonical runtime\n", encoding="utf-8")
+    monkeypatch.setattr(sync_skills, "SOURCE_DIR", source)
+    assert sync_skills.bundled_resources("sample") == {"references/runtime.md": "# Canonical runtime\n"}
+
+
+def test_bundled_resources_requires_runtime_source(tmp_path, monkeypatch):
+    source = tmp_path / "plugin/skills"
+    source.mkdir(parents=True)
+    monkeypatch.setattr(sync_skills, "SOURCE_DIR", source)
+    with pytest.raises(FileNotFoundError):
+        sync_skills.bundled_resources("sample")

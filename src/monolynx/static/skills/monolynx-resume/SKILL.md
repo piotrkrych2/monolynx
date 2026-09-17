@@ -3,10 +3,11 @@ name: monolynx-resume
 description: "Wznowienie pracy po /clear, kompakcji albo nastepnego dnia: odtwarza stan ticketu z trwalych zrodel (ticket, komentarze Team Managera, pipeline, kryteria akceptacji, git) i wypisuje 'gdzie jestesmy, co zostalo, nastepny krok'. Read-only - niczego nie zmienia. Uzyj zamiast trzymania jednego watku przez wiele dni."
 user-invocable: true
 argument-hint: [ticket-id lub klucz np. PROJ-12; puste = moje tickety in_progress]
-allowed-tools: mcp__monolynx__get_ticket, mcp__monolynx__search_tickets, mcp__monolynx__get_board, mcp__monolynx__list_comments, mcp__monolynx__list_acceptance_criteria, mcp__monolynx__list_pipelines, mcp__monolynx__get_pipeline, mcp__monolynx__get_pipeline_job_log, Bash(git branch:*), Bash(git status:*), Bash(git log:*), Bash(git stash list:*), Read, Grep
 ---
 
 # Resume - odtworzenie stanu pracy
+
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
 Kontekst pracy nie zyje w watku rozmowy - zyje w Monolynx (komentarze, pipeline,
 kryteria) i w gicie. Ten skill sklada z nich jeden obraz i mowi, co dalej.
@@ -20,35 +21,23 @@ nie dotyka plikow. Prace podejmuje `/monolynx:work` / `/monolynx:work-simple`
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`:
-
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Ustawiona** - uzyj jej jako `project_slug`. Slug podany wprost przez
-  uzytkownika ma pierwszenstwo.
-- **Nie ustawiona i brak sluga od uzytkownika** - NIE zgaduj. Popros
-  o konfiguracje w `.claude/settings.json` (pole `env`) i zakoncz:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT-SLUG>`.
 
 ## KROK 1: Zaladuj narzedzia i wybierz ticket
 
+W katalogu dostępnych narzędzi znajdź funkcje Monolynx potrzebne poniżej i sprawdź ich schematy. Discovery jest opcjonalne, jeśli narzędzia są już dostępne.
+
+<!-- runtime:claude-code -->
+Opcjonalny wariant discovery w Claude Code:
 ```
 ToolSearch(query="+monolynx ticket board comment acceptance", max_results=10)
 ToolSearch(query="+monolynx pipeline list get job log", max_results=10)
 ```
+<!-- /runtime:claude-code -->
 
-Prefix tooli odczytaj z wynikow (moze byc `mcp__monolynx__*` albo
-`mcp__claude_ai_Monolynx__*`) i uzywaj konsekwentnie. Runtime bez ToolSearch ->
-toole bezposrednio.
+Nazwę każdego narzędzia i jego schemat odczytaj z katalogu runtime; przykłady MCP mapuj na faktycznie udostępnione funkcje.
 
-`$ARGUMENTS` (literalny napis "$ARGUMENTS" = brak):
+Faktyczne argumenty wiadomości użytkownika lub wywołania:
 
 - **Podano identyfikator** -> `get_ticket(project_slug, ticket_id)`. Klucz
   odrzucony -> `search_tickets(query=<klucz>)` i uzyj ID.
@@ -143,7 +132,7 @@ decyzja, czy wznawia teraz).
 ## WAZNE ZASADY
 
 1. **Read-only, bez wyjatkow** - zadnych `update_*`, `add_comment`, `log_time`,
-   zadnych zmian w plikach ani gicie; `allowed-tools` dopuszcza tylko
+   zadnych zmian w plikach ani gicie; odczyty git ogranicz do
    `git branch/status/log/stash list`
 2. **Kazde zrodlo best-effort** - brak pipeline'u, brak repo, brak komentarzy
    to informacja ("praca nie ruszyla" / "runtime bez gita"), nie blad

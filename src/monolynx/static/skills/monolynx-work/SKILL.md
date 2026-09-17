@@ -5,6 +5,8 @@ user-invocable: true
 argument-hint: [ticket-id lub klucz np. PROJ-12]
 ---
 
+Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/runtime.md).
+
 # Proces pracy nad zadaniem - Team Manager
 
 Zasoby tego skilla: ustal absolutny katalog otrzymanego pliku `SKILL.md`.
@@ -20,23 +22,8 @@ Jestes **Team Managerem**. Koordynujesz prace zespolu agentow nad zadaniem z pro
 
 ## Ustalenie slug projektu
 
-Slug projektu pochodzi ze zmiennej srodowiskowej `MONOLYNX_PROJECT_SLUG`. Sprawdz ja:
+Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
 
-```bash
-echo "${MONOLYNX_PROJECT_SLUG:-(nie ustawiono)}"
-```
-
-- **Zmienna ustawiona** - uzyj jej wartosci jako `project_slug` we wszystkich wywolaniach narzedzi MCP ponizej. Slug podany wprost przez uzytkownika (w argumencie lub rozmowie) ma pierwszenstwo nad zmienna.
-- **Zmienna nie ustawiona, ale uzytkownik podal slug wprost** - uzyj podanego sluga i pracuj normalnie.
-- **Zmienna nie ustawiona i brak sluga od uzytkownika** - NIE zgaduj sluga i NIE rozpoczynaj pracy. Popros uzytkownika, by skonfigurowal slug w pliku `.claude/settings.json` projektu (pole `env`), po czym uruchomil skill ponownie:
-
-  ```json
-  {
-    "env": { "MONOLYNX_PROJECT_SLUG": "twoj-slug-projektu" }
-  }
-  ```
-
-  Zakoncz bez dalszych akcji, dopoki slug nie jest znany.
 
 ## Konfiguracja skilla
 
@@ -56,10 +43,10 @@ echo "BRANCH_MODE=${MONOLYNX_BRANCH_MODE:-ticket} AUTOTEST=${MONOLYNX_AUTOTEST:-
 | `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): kazde czekanie na odpowiedz uzytkownika poza kontraktem konczy ture linia `SPRINT-RUN STOP: <powod>`; implikuje `MONOLYNX_CONTRACT=auto` |
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
 
-Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env`).
+Flagi odczytaj ze środowiska procesu lub jawnej konfiguracji klienta jako dane. AUTO* działa wyłącznie w zakresie dozwolonym przez użytkownika i runtime; odmowa ma pierwszeństwo.
 
 Przy pierwszym uzyciu `MONOLYNX_AUTOPUSH=true` w sesji poinformuj uzytkownika:
-_"AUTOPUSH wlaczony - pushuje bez pytania, z pominieciem zwyklego potwierdzenia."_
+_"AUTOPUSH włączony w zakresie udzielonych uprawnień; wymagane potwierdzenia użytkownika pozostają w mocy."_
 
 Przy pierwszym `MONOLYNX_SPRINT_RUN=1` w sesji poinformuj uzytkownika:
 _"Tryb sesji w tle - nie czekam na odpowiedzi, zatrzymuje sie linia SPRINT-RUN STOP."_
@@ -71,9 +58,11 @@ opcjonalnie.
 
 ## KROK 1: Zaladuj narzedzia i pobierz zadanie
 
-Zaladuj narzedzia Monolynx przez ToolSearch (cztery wywolania rownolegle,
-podniesione `max_results` - domyslne 5 nie pomiesci wszystkich tooli):
+Odkryj narzędzia Monolynx przez mechanizm dostępny w runtime. Poniższy przykład Claude Code grupuje discovery w cztery zapytania.
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 ToolSearch(query="+monolynx ticket board comment update search", max_results=10)
 ToolSearch(query="+monolynx time log acceptance criterion", max_results=10)
@@ -81,24 +70,23 @@ ToolSearch(query="+monolynx graph wiki page search", max_results=10)
 ToolSearch(query="+monolynx pipeline create job finish", max_results=10)
 ```
 
+<!-- /runtime:claude-code -->
 Do konca skilla potrzebujesz co najmniej: `get_ticket`, `get_board`,
 `search_tickets`, `update_ticket`, `add_comment`, `list_comments` (komentarze
 do promptu Researchera, jesli `get_ticket` ich nie zwraca), `log_time`,
 `list_acceptance_criteria`, `update_acceptance_criterion` oraz (opcjonalnie)
-5 tooli pipeline. Ktoregos brakuje w wynikach -> doladuj CELOWANYM ToolSearch
+5 tooli pipeline. Ktoregos brakuje w wynikach -> odkryj przez dostępny mechanizm runtime
 zanim go wywolasz - nigdy nie wolaj toola bez zaladowanego schematu.
 Zapytanie z `+monolynx` zwrocilo pusto, a connector jest podpiety -> powtorz
 bez `+` (np. `monolynx ticket board`) - matcher moze inaczej traktowac
 wielkosc liter w prefiksie.
-Runtime bez ToolSearch (toole MCP dostepne od razu, np. Codex) -> pomin
-ladowanie i uzywaj tooli bezposrednio.
+Runtime bez ToolSearch: sprawdź faktyczny katalog narzędzi i użyj jego discovery oraz aktualnych schematów.
 
 **Prefix tooli - ustal RAZ, nie zgaduj**: nazwy w tym skillu i w `pipeline.md`
 zapisane sa jako `mcp__monolynx__<tool>` - to placeholder. Rzeczywisty prefix
 zalezy od sposobu instalacji: `mcp__monolynx__*` (plugin/connector lokalny),
 `mcp__claude_ai_Monolynx__*` (connector zainstalowany globalnie w claude.ai),
-w innych runtime'ach jeszcze inny. Odczytaj prefix z nazw zwroconych przez
-ToolSearch i uzywaj go konsekwentnie we WSZYSTKICH wywolaniach do konca skilla.
+w innych runtime'ach jeszcze inny. Odczytaj prefix z aktualnego katalogu narzędzi i uzywaj go konsekwentnie we WSZYSTKICH wywolaniach do konca skilla.
 
 **Placeholdery**: we wszystkich szablonach tego skilla podstawiaj realne wartosci
 za `<PROJECT-SLUG>`, `<ID>`, `<job_id>`, `[tytul]` itd. - zarowno w wywolaniach
@@ -119,7 +107,7 @@ Nastepnie pobierz zadanie:
 (connector claude.ai, Codex) uzyj ticketu wskazanego wprost w poleceniu
 uzytkownika - literalny napis "$ARGUMENTS" traktuj jak brak argumentu.
 
-- **Jesli podano ticket-id** (`$ARGUMENTS` nie jest pusty):
+- **Jesli podano ticket-id** (argument wejściowy nie jest pusty):
   Wyekstrahuj z argumentu sam identyfikator (ID lub klucz `PROJ-12`); reszte
   tekstu traktuj jako dodatkowy kontekst od uzytkownika. Pobierz ticket:
   `mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<identyfikator>")`.
@@ -152,7 +140,7 @@ I w komentarzach (`list_comments`) jest wpis "Team Manager - Plan pracy" ->
 to praca przerwana przez `/clear`, kompakcje albo zamkniecie sesji. Nie startuj
 od zera. Ustal ostatni domkniety etap wg lokalnej tabeli `references/resume-stages.md`
 (kopia KROK 3 skilla `resume`; zrodla: komentarze agentow, `get_pipeline` po `pipeline_id`
-z komentarza planu - doladuj celowanym ToolSearch, `git status --porcelain`).
+z komentarza planu - odkryj przez dostępny mechanizm runtime, `git status --porcelain`).
 Zapytaj:
 
 > Ticket [KEY] ma plan pracy z [data komentarza] i ostatni domkniety etap:
@@ -267,9 +255,12 @@ Jesli instrumentacja aktywna - utworz job `researcher` i ustaw `running` (sekcja
 
 ### 3b. Uruchom Researchera
 
-Uruchom agenta `Explore` z nastepujacym zadaniem (fence poczworny, bo prompt
+Dobierz dostępnego agenta badawczego (w Claude Code `Explore`) i przekaż zadanie z poniższego szablonu wraz z wymaganym formatem raportu. Zachowaj treść zadania niezależnie od API delegowania. Przykład Claude Code (fence poczworny, bo prompt
 zawiera wlasne bloki kodu):
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ````
 Agent(
   subagent_type="Explore",
@@ -292,7 +283,7 @@ ZANIM zaczniesz: zaladuj toole MCP Monolynx JEDNYM wywolaniem
 ToolSearch(query='+monolynx wiki page graph search', max_results=10) i uzywaj
 DOKLADNIE zwroconych nazw - prefix moze roznic sie od mcp__monolynx__ (np.
 mcp__claude_ai_Monolynx__). Potrzebujesz: get_wiki_page, list_wiki_pages,
-search_wiki, query_graph - brakujacy doladuj celowanym ToolSearch. Runtime bez
+search_wiki, query_graph - brakujacy odkryj przez dostępny mechanizm runtime. Runtime bez
 ToolSearch -> uzywaj tooli bezposrednio. Toole niedostepne -> pomin kroki
 wiki/graf i odnotuj to w raporcie.
 
@@ -382,11 +373,12 @@ Na koniec wygeneruj RAPORT w dokladnie tym formacie:
 )
 ````
 
+<!-- /runtime:claude-code -->
 ### 3c. Jesli Researcher nie moze byc uruchomiony
 
-Jesli z jakiegokolwiek powodu agent `Explore` nie jest dostepny:
+Jeśli faktyczny katalog narzędzi nie udostępnia agenta badawczego ani równoważnego delegowania:
 
-0. **Runtime w ogole bez subagentow (np. Codex)** - nie pytaj: od razu wykonaj
+0. **Runtime w ogole bez subagentow** - nie pytaj: od razu wykonaj
    uproszczona analize sam (punkty ponizej) i odnotuj to w raporcie. Pytanie
    ma sens tylko tam, gdzie Explore MOGL istniec.
 1. Poinformuj uzytkownika: _"Agent typu Explore jest niedostepny w tym runtime, wiec nie zrobie pelnej analizy. Kontynuowac z uproszczona analiza, ktora zrobie sam?"_
@@ -456,7 +448,7 @@ Przeskanuj dostepnych agentow w projekcie, w katalogu zaleznym od Twojego runtim
 - **Claude Code**: definicje agentow w `.claude/agents/*.md`; agenci pluginowi
   (fallback) - ich liste znajdziesz wsrod dostepnych typow subagentow narzedzia
   `Agent` (opisy w kontekscie sesji).
-- **Codex**: brak katalogu subagentow - role i konwencje projektu wyczytaj z `AGENTS.md` w korzeniu repo.
+- **Pozostałe runtime**: sprawdź faktyczny katalog i schemat narzędzi delegowania; role i konwencje czytaj z dostępnych definicji i `AGENTS.md`.
 
 Traktuj agentow/role zdefiniowane w projekcie jako preferowane zrodlo prawdy dla stacku i konwencji. Agenci pluginowi sa fallbackiem, gdy projekt nie ma wlasnego dopasowanego agenta.
 
@@ -472,6 +464,10 @@ Zbuduj liste kandydatow z nazwami `subagent_type`, opisami i specjalizacjami wyn
 
 ### Model subagentow
 
+Sprawdź capability wyboru modelu w aktualnym schemacie. W innym runtime używaj wyłącznie obsługiwanych identyfikatorów modeli zgodnie z instrukcjami sesji, a gdy wybór nie jest dostępny - dziedzicz model. Nie wysyłaj aliasów `opus`/`sonnet` do API, które ich nie obsługuje.
+
+<!-- runtime:claude-code -->
+
 Obowiazuje przy KAZDYM powolaniu subagenta w tym skillu: w obu trybach (Agent
 Teams i bez), przy re-runie (6d, 6.6b) i przy nowym krytyku po smierci
 poprzedniego (6.6a).
@@ -486,7 +482,9 @@ Przy doborze zespolu odczytaj `model:` z frontmatter kazdego wybranego agenta.
 WHY: subagent bez modelu dziedziczy model Twojej sesji - Team Manager na Fable
 robilby cala implementacje i review na Fable, a to wielokrotnosc kosztu bez
 zysku jakosci. Drozszy model zostaje przy koordynacji i decyzjach. Runtime bez
-parametru `model` (np. Codex) -> pomin.
+parametru `model`  -> pomin.
+
+<!-- /runtime:claude-code -->
 
 ### Przydzial plikow - obowiazkowy
 
@@ -591,7 +589,11 @@ plikow, kontrakt, baseline i identyfikatory pipeline w calosci, nie skrot.
 developerami (patrz 6c), ale review zaczyna dopiero po sygnale startu od
 Team Managera z wynikiem lintu i testow (KROK 6.5 -> 6.6).
 
-### 6a. Sprawdz czy Agent Teams jest wlaczony
+### 6a. Wybierz dostępny mechanizm delegowania
+
+Sprawdź faktyczne narzędzia delegowania i komunikacji. Jeśli istnieją, użyj ich zgodnie ze schematem, zachowując role, kolejność, własność plików i bramki opisane dalej. Nazwy Agent/SendMessage/TeamCreate w wariancie Claude nie są wymaganiem dla innego klienta. Brak delegowania stwierdzaj wyłącznie na podstawie capability.
+
+<!-- runtime:claude-code -->
 
 ```bash
 echo "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-0}"
@@ -608,14 +610,18 @@ echo "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-0}"
 - **inaczej** -> wiele wywolan `Agent()`, BEZ komunikacji miedzy agentami.
   Agentow rownoleglych uruchamiaj w JEDNEJ wiadomosci; agentow sekwencyjnych
   (kolizje plikow, TDD - patrz 6c) w OSOBNYCH, kolejnych wiadomosciach.
-- **Runtime bez subagentow (np. Codex)** -> nie ma kogo powolac: wykonaj prace
+
+
+Ta roznica zmienia moment startu i prompt krytyka - patrz 6c i KROK 6.6.
+
+<!-- /runtime:claude-code -->
+
+- **Runtime bez subagentow** -> nie ma kogo powolac: wykonaj prace
   SAM, sekwencyjnie, rola po roli wg przydzialu plikow z KROK 5. Review zrob
   jako OSOBNY przebieg w roli krytyka, scisle wg rubryki (pelna tabela odjec,
   bez taryfy ulgowej dla wlasnej pracy) - prog 82 i wspolny limit 3 poprawek
   obowiazuja takze wobec wlasnej pracy per rola. Cala ceremonia (lint/testy,
   komentarze, czas per rola, kryteria akceptacji) obowiazuje bez zmian.
-
-Ta roznica zmienia moment startu i prompt krytyka - patrz 6c i KROK 6.6.
 
 ### 6b. Zmierz czas startu zespolu
 
@@ -703,6 +709,9 @@ Brak kryteriow -> pomin ten blok. W przeciwnym razie przypisz kazde kryterium do
 agenta odpowiedzialnego za jego realizacje. Kryterium dotyczace kilku agentow ->
 przypisz temu, ktory odpowiada za wiekszosc pracy. W prompcie:
 
+Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
+
+<!-- runtime:claude-code -->
 ```
 KRYTERIA AKCEPTACJI DO ODHACZENIA (po zakonczeniu pracy):
 - [criterion_id] - [opis kryterium]
@@ -716,6 +725,7 @@ Po zakonczeniu pracy, dla KAZDEGO zrealizowanego kryterium uzyj:
 mcp__monolynx__update_acceptance_criterion(project_slug="<PROJECT-SLUG>", ticket_id="<ID>", criterion_id="<CID>", is_completed=true)
 ```
 
+<!-- /runtime:claude-code -->
 **Czas pracy**: kazdy agent mierzy i raportuje SWOJ czas - blok RAPORT DO PIPELINE
 w `pipeline.md` (sekcja 4) zawiera instrukcje. Jesli instrumentacja nieaktywna,
 i tak wklej do promptu kazdego agenta:
@@ -731,7 +741,7 @@ Team Manager potrzebuje tych danych do review i rozliczenia czasu.
 
 #### Przygotowanie promptu krytyka (oba tryby)
 
-Krytyka powolujesz zawsze z `model="opus"` (sekcja "Model subagentow", KROK 5),
+Krytyka powołujesz z modelem dobranym do capability runtime (sekcja "Model subagentow", KROK 5),
 w obu trybach. Krytyk to subagent - NIE zna sciezek do plikow tego skilla. Dlatego:
 
 1. Przeczytaj `review-rubric.md` z katalogu tego skilla (ten sam katalog co
@@ -1067,7 +1077,7 @@ Sprawdzenia ida po kolei. KAZDE "nie" konczy krok - dalszych juz nie robisz:
    czegos, co nie moze sie wykonac. W 7b i 7f jedna linia:
    `Mutacje: pominiete - brak sekcji ## Mutacje w toolchain` albo
    `Mutacje: pominiete - narzedzie: brak (<wartosc pola powod>)`.
-4. **Propozycja** - AskUserQuestion, opcje `Tak` / `Nie`:
+4. **Propozycja** - narzędzie pytań dostępne w bieżącym trybie lub wiadomość, opcje `Tak` / `Nie`:
 
    > Diff tego ticketu obejmuje <N> plikow z kodem (<SP> SP). Uruchomic
    > przebieg mutacyjny ograniczony do diffu? Pokaze, ktore zmiany przechodza
@@ -1078,9 +1088,13 @@ Sprawdzenia ida po kolei. KAZDE "nie" konczy krok - dalszych juz nie robisz:
    odmowil`, i przechodzisz do KROK 6.6.
 5. **Tak** -> uruchom skill w trybie DIFFOWYM, czyli BEZ argumentu:
 
+   Uruchom skill przez dostępny mechanizm albo odczytaj jego SKILL.md i wykonaj instrukcje.
+
+   <!-- runtime:claude-code -->
    ```
    Skill(skill="monolynx:mutation-check")
    ```
+   <!-- /runtime:claude-code -->
 
    W kontekscie wywolania przekaz dwie rzeczy, ktorych skill sam nie odgadnie:
    - **klucz biezacego ticketu** - survivorzy maja trafic jako kryteria
@@ -1368,7 +1382,7 @@ mcp__monolynx__update_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<ID>", st
 
 Potem, jesli instrumentacja aktywna: PRZED `finish_pipeline` sprawdz, czy
 wszystkie joby sa domkniete (wlasna ksiegowosc lub `get_pipeline` - nie ma go
-w podstawowym zestawie 5 tooli, doladuj celowanym ToolSearch) - wiszacy
+w podstawowym zestawie 5 tooli, odkryj przez dostępny mechanizm runtime) - wiszacy
 `running`/`pending` (np. job krytyka, ktory umarl przed zamknieciem) domknij
 wg zasady 7. Nastepnie job `team-manager-summary` i `finish_pipeline`
 (sekcja 7 `pipeline.md`). Ta kolejnosc gwarantuje, ze summary joba ("status

@@ -3,18 +3,21 @@ name: help
 description: "Wyświetl mapę skilli Monolynx: 6 grup (Setup, Planowanie, Praca, Integracja, Sprint, Wiki), każdy skill w jednej linii, oraz dwie ścieżki pracy - ręczną i autopilot. Zmienne, runtime'y i pełne opisy skilli są w README pluginu. Użyj gdy chcesz wiedzieć, który skill wybrać."
 user-invocable: true
 argument-hint: ""
-allowed-tools: ""
 ---
 
 # Monolynx - mapa skilli
 
-Wyświetl poniższą mapę użytkownikowi i zakończ. Nie wykonuj żadnych dodatkowych akcji.
+Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
+
+Po odczycie kontraktu runtime wyświetl poniższą mapę użytkownikowi i zakończ. Nie wykonuj żadnych dodatkowych akcji.
 
 ---
 
 **Zapamiętaj `/monolynx:next`** - odczytuje stan projektu i wskazuje 1-3 uzasadnione komendy; niczego nie uruchamia.
 
 **Nowy projekt? `/monolynx:setup`** - checklista konfiguracji, zanim weźmiesz pierwszy ticket.
+
+Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runtime.md). Mapa pokazuje nazwy Claude Code. W Codex wybierz potwierdzoną nazwę w katalogu skilli lub odczytaj dostarczony plik instrukcji. `sprint-run` nadal wymaga CLI `claude` i jego sesji; natywne subagenty Codex nie są zamiennikiem tego backendu. `/loop` proponuj wyłącznie tam, gdzie istnieje.
 
 ## Setup
 
@@ -29,7 +32,7 @@ Wyświetl poniższą mapę użytkownikowi i zakończ. Nie wykonuj żadnych dodat
 
 - `/monolynx:ticket-create [krotki opis zadania]` - ticket z kontekstem z wiki, kodu i grafu (cel, zakres, nie ruszać, odwracalność, kryteria)
 - `/monolynx:ticket-review [ticket-id lub klucz np. MNX-12]` - recenzja formy i zgodności z wiki oraz kodem; powtarzaj, aż raport pokaże same OK
-- `/monolynx:brief [goly opis zadania, np. "napraw build na CI"]` - kontrakt pracy bez ticketu (gotowe / nie ruszać / stop przed), ENTER = start
+- `/monolynx:brief [goly opis zadania, np. "napraw build na CI"]` - kontrakt pracy bez ticketu (gotowe / nie ruszać / stop przed), jawna akceptacja = start
 
 ## Praca
 
@@ -66,10 +69,10 @@ Wyświetl poniższą mapę użytkownikowi i zakończ. Nie wykonuj żadnych dodat
 
 1. `/monolynx:ticket-create`, potem `/monolynx:ticket-review`, aż raport pokaże same OK.
 2. `/monolynx:work <KEY>` (do 3 SP: `/monolynx:work-simple <KEY>`). Przerwa w pracy: `/clear`, potem `/monolynx:resume <KEY>`.
-3. Commit i push: komendę wypisze `work`, a flagi `MONOLYNX_AUTOCOMMIT` / `MONOLYNX_AUTOPUSH` robią to same.
+3. Commit i push: komendę wypisze `work`, a flagi `MONOLYNX_AUTOCOMMIT` / `MONOLYNX_AUTOPUSH` automatyzują je wyłącznie w zakresie dozwolonym przez użytkownika i runtime.
 4. Po merge do `main`: `/monolynx:wiki-sync-merge <KEY>`.
 
-**Autopilot - cały sprint:**
+**Autopilot - cały sprint (CLI Claude Code; `/loop` tylko gdy dostępny):**
 
 1. W śledzonym `.claude/settings.json` (pole `env`): `MONOLYNX_AUTOTEST`, `MONOLYNX_AUTOCOMMIT`, `MONOLYNX_AUTOPUSH` ustawione na `true`.
 2. `/loop 15m /monolynx:sprint-run` - każdy ticket dostaje sesję `work` w tle i własny worktree.
