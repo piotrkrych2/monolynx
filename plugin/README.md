@@ -323,6 +323,7 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_AUTOMERGE` | `false` | `true` - `/monolynx:mr-queue` merguje MR/PR bez pytania (tylko przy werdykcie `ready`, z blokadą na SHA); `false` - hook pyta o każdy merge |
 | `MONOLYNX_MERGE_METHOD` | `merge` | Metoda merge w `/monolynx:mr-queue`: `merge`, `squash` albo `rebase` |
 | `MONOLYNX_SPRINT_TICK_MODEL` | `opus` | Model procesu `claude -p`, w którym `sprint_run.sh` odpala tick dyspozytora oraz `--close` (`sprint-end`, `retro`) |
+| `MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS` | `Bash(claude:*),Bash(python3:*),Read(~/.claude/plugins/**),mcp__monolynx,mcp__claude_ai_Monolynx,mcp__plugin_monolynx_monolynx` | Lista narzędzi (po przecinkach), którą `sprint_run.sh` przekazuje tickowi w `claude -p --allowedTools`. Ustaw w środowisku procesu odpalającego pętlę; zastępuje całą listę domyślną (patrz sekcja „Uprawnienia ticku i preflight”) |
 | `MONOLYNX_MUTATION_BUDGET` | `600` | Budżet czasu przebiegu `/monolynx:mutation-check` w sekundach. Maksimum 600 (limit narzędzia Bash); większa wartość jest skracana do 600 |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goły imperatyw dostaje skill `brief` z propozycją kontraktu; `block` - prompt odrzucony z odesłaniem do `/monolynx:brief`; `off` - wyłączony (patrz sekcja Hooki) |
 
@@ -401,6 +402,28 @@ Dyspozytor **nigdy sam nie pracuje nad ticketem**. Jest cienki z premedytacją: 
 
 Skrypt uruchamiasz z katalogu projektu. Ten zewnętrzny backend czyta slug ze środowiska lub konfiguracji Claude; nie interpretuje konfiguracji Codex ani całego kontraktu agenta. Agent przed uruchomieniem przekazuje rozstrzygnięty slug w środowisku procesu. Absolutną ścieżkę lokalnego `scripts/sprint_run.sh` ustala względem otrzymanego `SKILL.md` dyspozytora i wypisuje w raporcie. Po instalacji może to być katalog cache pluginu albo pakiet pojedynczego skilla. Po aktualizacji ustal ścieżkę ponownie.
 
+### Uprawnienia ticku i preflight
+
+Tick w `claude -p` nie ma komu zadać pytania o zgodę, więc `sprint_run.sh` przekazuje mu uprawnienia sam, niezależnie od `permissions` w settings projektu:
+
+- `--allowedTools` z listą `Bash(claude:*),Bash(python3:*),Read(~/.claude/plugins/**),mcp__monolynx,mcp__claude_ai_Monolynx,mcp__plugin_monolynx_monolynx`. Wpis `mcp__<serwer>` zezwala na wszystkie narzędzia serwera; są trzy prefiksy, bo nazwa serwera zależy od sposobu instalacji (plugin, connector claude.ai, `.mcp.json`). `Read` jest zawężony do `~/.claude/plugins/**`, bo gołe `Read` dawałoby tickowi odczyt całego dysku, w tym `~/.ssh`; odczyt w katalogu projektu Claude Code pozwala domyślnie. Całą listę zastępuje `MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS` ze środowiska procesu; linia `start:` w logu pętli podaje tylko `allowed_tools=default` albo `allowed_tools=custom`.
+- `--permission-prompts none`: wszystko, co wymagałoby potwierdzenia, jest odrzucane od razu i widać to w logu, zamiast wisieć bez odpowiedzi.
+
+Stąd wymóg, żeby tick nie wołał gołego shella. Cała logika ticku, która wcześniej była inline bashem w skillu, siedzi w jednym skrypcie `sprint_run_tick.py` (katalog `scripts/` skilla `sprint-run`), wołanym przez `python3`. Komendy, które skrypt uruchamia przez `subprocess`, nie przechodzą przez uprawnienia Claude Code.
+
+`sprint_run_tick.py preflight` to pierwszy krok każdego ticku. Zbiera wszystkie problemy naraz, zamiast przerywać na pierwszym:
+
+1. katalog projektu jest repozytorium git;
+2. `claude --version` i `claude agents --json --all` odpowiadają (drugie zwraca listę JSON);
+3. `.claude/settings.json` i `.claude/settings.local.json`, o ile istnieją, są poprawnym obiektem JSON, `permissions` jest obiektem z listami napisów w `allow` / `deny` / `ask`, a `env` jest obiektem. Tryb `-p` po cichu pomija plik, który nie przechodzi walidacji (`claude --help`, opis `-p`), a razem z nim jego `env`, hooki i model; preflight zamienia tę ciszę na błąd z nazwą pliku i powodem (przy błędzie składni z linią i kolumną);
+4. `MONOLYNX_PROJECT_SLUG` jest niepusty, a `MONOLYNX_AUTOTEST`, `MONOLYNX_AUTOCOMMIT` i `MONOLYNX_AUTOPUSH` są równe `true` w **środowisku procesu**, nie w pliku. Flaga obecna w `env` pliku settings, której proces nie widzi, dostaje dopisek, że plik mógł zostać odrzucony. `MONOLYNX_AUTOMR` różne od `true` daje tylko ostrzeżenie.
+
+Wynik to linie `KLUCZ=wartość` (slug, tryb, sloty, model, tryb uprawnień sesji, flagi AUTO*, wersja `claude`, katalog projektu i katalog ticku), potem `WARN:` i `ERROR:`, na końcu `PREFLIGHT: ok` albo `PREFLIGHT: failed problems=<n>`. Skrypt nie wypisuje żadnej innej zmiennej środowiska ani całego `env` z plików settings. Przy `failed` tick nie startuje żadnej sesji; w trybie `batch` kończy się linią `SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0`.
+
+Pliki stanu ticku (lista ticketów, `claude agents --json --all`, ogony logów sesji) lądują w `.git/monolynx/tick/`, obok logu pętli, a nie w `/tmp`: katalog tymczasowy jest poza zapisem ticku, a `.git/` nigdy nie trafia do commita. Każdy tick nadpisuje te pliki.
+
+> **Nie wypisuj środowiska.** Ani w ticku, ani przy diagnozie: `printenv`, `env`, `set`, `export -p` i `declare -x` wypisują wszystkie zmienne procesu, w tym klucze API i tokeny, do transkryptu i do logu pętli. Konfigurację sprawdzaj przez `sprint_run_tick.py preflight`, który pokazuje wyłącznie zmienne `MONOLYNX_*` potrzebne tickowi.
+
 ### Flagi skryptu
 
 | Flaga | Domyślnie | Znaczenie |
@@ -444,6 +467,35 @@ Tryb `-p` nie odpowie na żadne pytanie, dlatego sesje w tle muszą mieć komple
 `AUTOTEST`, `AUTOCOMMIT` i `AUTOPUSH` są wymagane - bez nich preflight dyspozytora zatrzymuje tick i nie startuje żadnej sesji. `AUTOMR` jest zalecane: bez niego branch jest wypchnięty, ale merge request tworzysz ręcznie. Projekt, który merguje tickety do innego brancha niż domyślny branch repozytorium (np. `develop`), ustawia też `MONOLYNX_MR_TARGET`. Skrypt `sprint_run.sh` ustawia te flagi sam dla procesów, które uruchamia; każdą można nadpisać w środowisku. Poza nimi eksportuje też `MONOLYNX_SPRINT_RUN_MODE=batch` (tick wie, że jego raportu nikt nie przeczyta) i `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (domyślnie `1`).
 
 Plik z flagami musi być **śledzony przez gita**. Sesja robocza dostaje worktree utworzony przez `claude --bg --worktree`, a w worktree trafia tylko to, co git zna: `.claude/settings.local.json` jest ignorowany, więc ani uprawnienia, ani flagi AUTO* z niego nie docierają do sesji w tle. Druga poprawna droga to środowisko procesu, który odpala tick - `sprint_run.sh` eksportuje flagi sam, a `claude --bg` dziedziczy środowisko.
+
+Tick w pętli `sprint_run.sh` dostaje uprawnienia z `--allowedTools`, więc blok `permissions` nie jest mu potrzebny. Tick interaktywny (`/loop 15m /monolynx:sprint-run` albo ręczne `/monolynx:sprint-run`) korzysta z uprawnień sesji; żeby nie pytał przy każdym ticku, dopisz do śledzonego `.claude/settings.json` poprawny blok `permissions`:
+
+```json
+{
+  "env": {
+    "MONOLYNX_PROJECT_SLUG": "twoj-projekt",
+    "MONOLYNX_CONTRACT": "auto",
+    "MONOLYNX_SPRINT_RUN": "1",
+    "MONOLYNX_AUTOTEST": "true",
+    "MONOLYNX_AUTOCOMMIT": "true",
+    "MONOLYNX_AUTOPUSH": "true",
+    "MONOLYNX_AUTOMR": "true"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(claude:*)",
+      "Bash(python3:*)",
+      "Read(~/.claude/plugins/**)",
+      "mcp__monolynx",
+      "mcp__claude_ai_Monolynx"
+    ]
+  }
+}
+```
+
+- `permissions` to obiekt z listą `allow`, nie sama lista. Plik z inną strukturą Claude Code pomija w trybie `-p` bez komunikatu, razem z `env`, hookami i modelem; `sprint_run_tick.py preflight` zgłasza taki plik jako `ERROR:`.
+- `Read(~/.claude/plugins/**)` obejmuje skrypty pluginu bez ścieżki absolutnej z nazwą konta i bez numeru wersji pluginu, więc reguła przeżywa aktualizację i działa u każdego w zespole.
+- Reguły osobiste (ścieżki na Twoim dysku, dodatkowe narzędzia) wpisuj do `.claude/settings.local.json`, nie do śledzonego pliku.
 
 ### Uruchomienie w tmux i z crona
 
@@ -511,9 +563,17 @@ Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkc
 
 ## Changelog
 
-### 1.15.2
+### 1.16.1
 
 - MON-192: `MONOLYNX_AUTOMR` w `work` i `work-simple` nie tworzy już MR na sztywno do `main`. Branch docelowy pochodzi z nowej zmiennej `MONOLYNX_MR_TARGET` (np. `develop`), a bez niej z domyślnego brancha repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`, potem `glab repo view`); gdy nie da się go ustalić, MR nie powstaje, a skill wypisuje gotową komendę.
+
+### 1.16.0
+
+- MON-190: tick `sprint-run` w `claude -p` dostaje uprawnienia od `sprint_run.sh`: `--allowedTools` z listą domyślną (`Bash(claude:*)`, `Bash(python3:*)`, `Read(~/.claude/plugins/**)`, trzy prefiksy serwera MCP Monolynx; `Read` zawężony do skryptów pluginu, bo gołe `Read` otwierało cały dysk łącznie z `~/.ssh`), nadpisywaną przez nową zmienną `MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS`, oraz `--permission-prompts none`, więc odmowa jest natychmiastowa i widoczna w logu. Incydent 18.09: tick w `--permission-mode acceptEdits` miał odrzucane komendy Bash i nie wystartował żadnej sesji.
+- **Nowy skrypt `sprint_run_tick.py`** zastępuje inline bash w skillu: `preflight` sprawdza git, `claude --version` i `claude agents --json --all`, poprawność JSON i struktury `permissions` / `env` w `.claude/settings.json` i `.claude/settings.local.json` (tryb `-p` po cichu pomija niepoprawny plik razem z `env`, hookami i modelem) oraz flagi AUTO* w środowisku procesu; `state` zapisuje listę ticketów, sesje i ogony logów w `.git/monolynx/tick/` zamiast `mktemp -d` w `/tmp` i zwraca JSON werdyktów z `sprint_run_state.py`.
+- **Zakaz `printenv`, `env`, `set`, `export -p` i `declare -x` w ticku**: 18.09 `printenv` wypisał sekrety do logu pętli. Preflight pokazuje wyłącznie zmienne `MONOLYNX_*` potrzebne tickowi.
+- **Start sesji odrzucony przez uprawnienia** (np. klasyfikator trybu auto przy `claude --bg --permission-mode bypassPermissions`): dyspozytor nie ponawia i nie szuka obejścia; w trybie interaktywnym wypisuje gotową komendę startu do wklejenia i poleca pętlę `sprint_run.sh`, w trybie `batch` odnotowuje to w raporcie.
+- README: sekcja „Uprawnienia ticku i preflight” oraz przykład poprawnego bloku `"permissions": {"allow": [...]}` dla ticku interaktywnego, bez ścieżek z nazwą konta i wersją pluginu.
 
 ### 1.15.1
 

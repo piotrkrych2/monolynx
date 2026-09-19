@@ -16,6 +16,8 @@ Markdown rozwiązuj względem tego katalogu, nie katalogu roboczego projektu.
 z `MONOLYNX_SKILL_DIR` przypisz tej lokalnej zmiennej powłoki ustaloną
 literalną ścieżkę katalogu skilla; nie oczekuj jej w środowisku systemowym.
 
+**Uprawnienia ticku (MON-190)**: tick uruchomiony w `claude -p` ma tylko dwie reguły Bash - `Bash(claude:*)` i `Bash(python3:*)`. W komendach tego skilla podstawiaj ścieżkę katalogu skilla **literalnie** (rozwiniętą absolutną ścieżkę), nigdy jako `${MONOLYNX_SKILL_DIR}` czy inne przypisanie zmiennej powłoki - i nigdy `&&`, `|`, `>` w tej samej komendzie. Każda komenda tego skilla to pojedyncze, samodzielne wywołanie `claude ...` albo `python3 ...`.
+
 Jesteś **dyspozytorem sprintu**. Jedno uruchomienie tego skilla to jeden **tick**: czytasz stan sprintu i stan sesji w tle, startujesz brakujące sesje, zbierasz zakończone, raportujesz i kończysz turę.
 
 Dyspozytor jest **cienki**. Trzy zasady, które go definiują:
@@ -32,7 +34,7 @@ Pętla jest **na zewnątrz** tego skilla. Ty robisz jeden tick, pętlę robi `/l
 
 ## Ustalenie slug projektu
 
-Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
+`project_slug` bierzesz z linii `SLUG=` wyjścia preflightu (KROK 1) - nie z osobnego odczytu `MONOLYNX_PROJECT_SLUG`, `echo` ani pliku `.env`. Ten skill nie przyjmuje slugu jako argumentu. Brak wartości nie jest scenariuszem do obsłużenia tutaj: preflight wymaga `MONOLYNX_PROJECT_SLUG` w środowisku procesu i sam kończy się błędem (`PREFLIGHT: failed`), zanim dojdziesz do tego miejsca.
 
 
 Slug jest częścią kontraktu nazw: sesja robocza ticketu nazywa się `<PROJECT_SLUG>-<KEY>-<MODEL>` (np. `monolynx-MON-167-opus`), gdzie `<MODEL>` to wartość `${MONOLYNX_SPRINT_MODEL:-opus}` z chwili startu, a sesja samego dyspozytora w `sprint_run.sh` `<PROJECT_SLUG>-sprint-run-<MODEL>`, gdzie `<MODEL>` to `${MONOLYNX_SPRINT_TICK_MODEL:-opus}` (tak samo `<PROJECT_SLUG>-sprint-end-<MODEL>` i `<PROJECT_SLUG>-retro-<MODEL>` przy `--close`). Każda nazwa sesji kończy się modelem, na którym sesja działa. Te nazwy są **zamrożone** - inne narzędzia po nich rozpoznają sesje sprintu. Nie zmieniaj ich i nie dodawaj innych sufiksów.
@@ -45,32 +47,21 @@ Sesję ticketu rozpoznajesz po nazwie równej `<PROJECT_SLUG>-<KEY>` albo zaczyn
 
 Dyspozytor nadal wymaga Claude CLI także uruchomiony z innego klienta. Nie zastępuj go backendem agentów bieżącego runtime. AUTO* i tryb uprawnień nie uchylają instrukcji użytkownika ani odmowy runtime; brak wymaganych zgód zatrzymuje dispatch.
 
-Sprawdź środowisko jednym przebiegiem. Bez tego tick w tle utknie na pierwszym pytaniu, na które nikt nie odpowie.
+Sprawdź środowisko jednym wywołaniem skryptu ticku. Bez tego tick w tle utknie na pierwszym pytaniu, na które nikt nie odpowie.
 
 ```bash
-echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} AUTOMR=${MONOLYNX_AUTOMR:-false} CONTRACT=${MONOLYNX_CONTRACT:-ask} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0}"
-claude --version
-claude agents --json --all >/dev/null && echo "agents-ok"
-git rev-parse --show-toplevel
-echo "MODE=${MONOLYNX_SPRINT_RUN_MODE:-interactive}"
+python3 "<katalog skilla>/scripts/sprint_run_tick.py" preflight
 ```
 
-Wymagania twarde. Brak któregokolwiek zatrzymuje tick **przed** startem jakiejkolwiek sesji:
+Podstaw `<katalog skilla>` literalnie (rozwiniętą absolutną ścieżkę) - bez `${MONOLYNX_SKILL_DIR}`. To jest **jedyna** komenda tego kroku.
 
-| Warunek | Dlaczego wymagany |
-|---|---|
-| `claude --version` odpowiada | bez CLI nie ma czym startować sesji |
-| `claude agents --json --all` działa | to jedyne źródło stanu sesji w tle |
-| katalog jest repozytorium git | worktree per ticket wymaga repo |
-| `MONOLYNX_AUTOTEST=true` | sesja w tle sama odpala lint i testy; przy `false` czeka na wklejony wynik |
-| `MONOLYNX_AUTOCOMMIT=true` | bez commitu praca sesji nie przetrwa jej zamknięcia |
-| `MONOLYNX_AUTOPUSH=true` | bez pusha nie ma czego przeglądać po tickecie |
+**Jawny zakaz**: nigdy `printenv`, `env`, `set`, `export -p`, `declare -x` ani `echo` zmiennej spoza `MONOLYNX_*` - w tym kroku ani nigdzie indziej w tym skillu. WHY: 18.09 `printenv` wypisał do transkryptu i logu pętli klucz API OpenAI i token GitLaba zamiast samego statusu flag. Żadnych innych komend Bash w KROK 1 poza wywołaniem powyżej.
 
-`MONOLYNX_AUTOMR=true` jest **zalecane**, nie wymagane: bez niego sesja pushuje branch, ale merge request tworzysz ręcznie. Brak `AUTOMR` odnotuj w raporcie jako ostrzeżenie i pracuj dalej.
+Skrypt sam sprawdza `claude --version`, `claude agents --json --all`, repozytorium git, kształt `.claude/settings.json` i `.claude/settings.local.json` oraz flagi `MONOLYNX_*` w środowisku procesu, i wypisuje na stdout wyłącznie linie `KLUCZ=wartość` (`SLUG`, `MODE`, `PARALLEL`, `SPRINT_MODEL`, `PERMISSION_MODE`, `AUTOTEST`, `AUTOCOMMIT`, `AUTOPUSH`, `AUTOMR`, `CONTRACT`, `SPRINT_RUN`, `CLAUDE_VERSION`, `PROJECT_DIR`, `TICK_DIR`), potem ewentualne `WARN: ...`, potem `ERROR: ...`, a na końcu dokładnie jedną linię `PREFLIGHT: ok` albo `PREFLIGHT: failed problems=<n>`. Nigdy nie wypisuje wartości zmiennych spoza tej listy ani całego `env` pliku settings - nie próbuj tego obejść dociąganiem pliku ręcznie.
 
-`MONOLYNX_CONTRACT` i `MONOLYNX_SPRINT_RUN` ustawia sobie sam skrypt `sprint_run.sh`. Gdy odpalasz tick ręcznie albo przez `/loop`, dopilnuj, żeby były w `.claude/settings.json`, inaczej sesje w tle będą czekać na kontrakt.
+**`PREFLIGHT: ok`** (kod wyjścia `0`): przejdź do KROK 2. Weź `SLUG` (patrz "Ustalenie slug projektu"), `PARALLEL` jako domyślną liczbę slotów, `SPRINT_MODEL` i `PERMISSION_MODE` do KROK 4, `MODE` do KROK 5. Każdą linię `WARN:` (np. brak `MONOLYNX_AUTOMR`) dopisz do raportu jako ostrzeżenie, bez zatrzymywania ticku.
 
-**Gdy brakuje wymaganej flagi albo narzędzia**: wypisz, czego brakuje, i pokaż gotową konfigurację do wklejenia. Potem zakończ turę **bez startowania sesji**.
+**`PREFLIGHT: failed problems=<n>`** (kod wyjścia `2`): wypisz użytkownikowi dosłownie każdą linię `ERROR:` i zakończ turę **bez startowania jakiejkolwiek sesji**. Pokaż gotową konfigurację do wklejenia:
 
 ```json
 {
@@ -82,13 +73,24 @@ Wymagania twarde. Brak któregokolwiek zatrzymuje tick **przed** startem jakiejk
     "MONOLYNX_AUTOCOMMIT": "true",
     "MONOLYNX_AUTOPUSH": "true",
     "MONOLYNX_AUTOMR": "true"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(claude:*)",
+      "Bash(python3:*)",
+      "Read(~/.claude/plugins/**)",
+      "mcp__monolynx",
+      "mcp__claude_ai_Monolynx"
+    ]
   }
 }
 ```
 
+Ten blok jest dla ticku **interaktywnego** albo uruchamianego przez `/loop` w tej samej sesji - własne reguły osobiste trzymaj w `.claude/settings.local.json`, nie w tym pliku. Tick uruchomiony przez `sprint_run.sh` **nie potrzebuje** `permissions` w settings projektu: skrypt sam przekazuje uprawnienia ticku przez `--allowedTools`, niezależnie od tego, co jest w `.claude/settings.json`. Blok wyżej nie zawiera ścieżek absolutnych z nazwą konta ani numeru wersji pluginu - to szczegóły instalacji, nie projektu.
+
 Sesja w tle **dziedziczy środowisko**, ale nie dziedziczy Twojego shella. Flagi muszą być w środowisku procesu startującego sesje lub śledzonym `.claude/settings.json` projektu (pole `env`). Konfiguracja odczytana jako dane nie staje się automatycznie środowiskiem potomka.
 
-**Tryb `batch`**: zmienna `MONOLYNX_SPRINT_RUN_MODE` równa `batch` (ustawia ją sam `sprint_run.sh` dla procesów, które odpala). Nikt wtedy nie przeczyta instrukcji konfiguracyjnej, a pętla musi się dowiedzieć, że tick padł, więc po komunikacie o brakujących flagach zakończ odpowiedź dokładnie taką ostatnią linią:
+**Tryb `batch`** (`MODE=batch` z wyjścia preflightu, ustawia go sam `sprint_run.sh` dla procesów, które odpala): nikt wtedy nie przeczyta instrukcji konfiguracyjnej, a pętla musi się dowiedzieć, że tick padł, więc po komunikacie o brakujących flagach zakończ odpowiedź dokładnie taką ostatnią linią:
 
 ```
 SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0
@@ -96,11 +98,9 @@ SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0
 
 `remaining=-1` nie pasuje do wzorca, którego szuka `sprint_run.sh`, więc pętla policzy tick jako nieudany i po trzech takich przebiegach zakończy się kodem 2. Tak ma być: pętla ma umrzeć głośno, a nie kręcić się bez efektu.
 
-**Brak zmiennej albo dowolna inna jej wartość** znaczy tryb interaktywny: instrukcję konfiguracyjną czyta człowiek, więc wypisz ją zwyczajnie i zakończ turę bez linii statusu.
+**`MODE=interactive`** (brak `MONOLYNX_SPRINT_RUN_MODE` albo dowolna inna wartość): instrukcję konfiguracyjną czyta człowiek, więc wypisz ją zwyczajnie i zakończ turę bez linii statusu.
 
-Tryb bierze się ze zmiennej, a nie z wykrycia terminala, bo `[ -t 0 ]` w narzędziu Bash Claude Code jest fałszywe także w sesji z człowiekiem (zweryfikowane na CLI 2.1.270), więc nie nadaje się na sygnał trybu.
-
-**Argument `[sloty]`**: liczba równoległych sesji roboczych. Weź argument z wiadomości użytkownika lub jawnego wejścia wywołania, gdy to liczba całkowita większa od zera. W przeciwnym razie użyj `${MONOLYNX_SPRINT_PARALLEL:-2}`. Argument, który nie jest dodatnią liczbą, zignoruj i odnotuj to jednym zdaniem w raporcie.
+**Argument `[sloty]`**: liczba równoległych sesji roboczych. Weź argument z wiadomości użytkownika lub jawnego wejścia wywołania, gdy to liczba całkowita większa od zera. W przeciwnym razie użyj `PARALLEL` z wyjścia preflightu. Argument, który nie jest dodatnią liczbą, zignoruj i odnotuj to jednym zdaniem w raporcie.
 
 ---
 
@@ -140,51 +140,26 @@ mcp__monolynx__list_tickets(project_slug="<PROJECT_SLUG>", sprint_id="<sprint_id
 
 Lista jest paginowana po 20. Gdy pierwsza linia mówi o więcej niż jednej stronie, dociągnij kolejne przez `page=2`, `page=3` i tak dalej, aż zbierzesz komplet. Alternatywa, gdy interesuje Cię tylko obraz tablicy: `mcp__monolynx__get_board(project_slug="<PROJECT_SLUG>")` - ale `list_tickets` jest źródłem pierwszego wyboru, bo daje pełny wiersz z priorytetem i etykietami.
 
-Zapisz tickety do pliku tymczasowego w formacie, którego oczekuje skrypt stanu:
+Zbuduj z ticketów listę JSON w kształcie, którego oczekuje skrypt stanu (klucze `key`, `status`, opcjonalnie `assignee`):
 
-```bash
-STATE_TMP="$(mktemp -d)"
-TICKETS="$STATE_TMP/tickets.json"
-AGENTS="$STATE_TMP/agents.json"
-LOGS="$STATE_TMP/logs"
-mkdir -p "$LOGS"
-cat > "$TICKETS" <<'JSON'
+```json
 [
   {"key": "MON-167", "status": "in_progress", "assignee": "piotr@example.com"},
   {"key": "MON-168", "status": "todo", "assignee": null}
 ]
-JSON
-```
-
-Nie kasuj katalogu tymczasowego po ticku. System sam sprząta `/tmp`, a zostawione pliki bywają jedynym śladem, gdy trzeba odtworzyć, co widział dyspozytor.
-
-**Sesje w tle i ogony logów:**
-
-```bash
-claude agents --json --all > "$AGENTS"
 ```
 
 **Identyfikator sesji to pole `id`, nie `sessionId`.** W wyjściu `claude agents --json --all` każdy wpis ma oba. `id` jest krótki (8 znaków) i występuje wyłącznie dla wpisów o `kind` równym `background`; `sessionId` to UUID wątku i żadna komenda go nie przyjmuje. `claude logs`, `claude attach` i `claude rm` działają **tylko** na `id`. Wszędzie dalej w tym skillu `<session_id>` oznacza właśnie to krótkie `id`: tak nazywasz plik ogona logu, tak wpisujesz identyfikator do komentarza ticketu i taki podajesz człowiekowi w komendzie `claude attach`. Pole `session_id` w JSON-ie ze skryptu stanu niesie tę samą wartość.
 
-Dla każdej sesji, której nazwa pasuje do `<PROJECT_SLUG>-<KEY>` z dowolnym sufiksem modelu (gdzie `<KEY>` to klucz ticketu ze sprintu; reguła dopasowania pod kontraktem nazw), zrzuć ostatnie 20 linii logu do katalogu logów. Plik nazywa się `<id>.log`, bo tego pliku szuka skrypt stanu:
+**Wylicz stan** jednym wywołaniem. Podkomenda `state` sama woła `claude agents --json --all`, dla każdej sesji dopasowanej do ticketu (nazwa `<PROJECT_SLUG>-<KEY>` z dowolnym sufiksem modelu) woła `claude logs <id>`, zdejmuje kody ANSI i zamienia `\r` na `\n` w renderze terminala (`claude logs` nie zwraca czystego tekstu - kolory, ruch kursora, przerysowania spinnera), bierze ostatnie 20 niepustych linii i zapisuje pliki stanu w `TICK_DIR` (`.git/monolynx/tick/`, **nigdy** w `/tmp`):
 
 ```bash
-claude logs "<session_id>" | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' | tr '\r' '\n' | tail -n 20 > "$LOGS/<session_id>.log"
+python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT_SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>'
 ```
 
-`claude logs` zwraca **render terminala**, nie czysty tekst: kody ANSI, `\r` zamiast `\n` w roli separatora linii i przerysowania spinnera. Skrypt stanu zdejmuje sekwencje sterujące sam, ale `sed` i `tr` w potoku dają plik czytelny dla człowieka, który potem ogląda ten ogon w komentarzu ticketu.
+Podstaw `<katalog skilla>` i JSON ticketów literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, zdjęcie ANSI, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
 
-`claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching". Plik z takiej próby klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
-
-**Wylicz stan:**
-
-```bash
-python3 "${MONOLYNX_SKILL_DIR}/scripts/sprint_run_state.py" \
-  --slug "<PROJECT_SLUG>" \
-  --agents-file - \
-  --tickets-file "$TICKETS" \
-  --logs-dir "$LOGS" < "$AGENTS"
-```
+`claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching" - podkomenda `state` i tak zapisuje to, co dostała (bez przerywania), a taki przypadek klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
 
 Skrypt zwraca na stdout JSON:
 
@@ -200,7 +175,7 @@ Skrypt zwraca na stdout JSON:
 }
 ```
 
-Kody wyjścia: `0` (stan policzony), `2` (błąd wejścia, np. niepoprawny JSON), `64` (złe argumenty). Kod inny niż `0` traktuj jak awarię ticka: wypisz stderr skryptu, nie startuj żadnej sesji i zakończ turę linią `SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0`.
+Kody wyjścia: `0` (stan policzony), `2` (błąd wejścia - niepoprawny JSON ticketów, zły kształt ticketu, albo `claude agents --json --all` nie działa), `64` (złe argumenty). Kod inny niż `0` traktuj jak awarię ticka: wypisz stderr skryptu, nie startuj żadnej sesji i zakończ turę linią `SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0`.
 
 Werdykty i to, co z nimi robisz:
 
@@ -310,11 +285,13 @@ Sesje `waiting` żyją i trzymają worktree, więc liczą się do zajętości ta
 mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY>")
 ```
 
-**Start sesji** dla każdego wybranego ticketu:
+**Start sesji** dla każdego wybranego ticketu, z wartościami **literalnymi** z wyjścia preflightu (`SPRINT_MODEL`, `PERMISSION_MODE` - KROK 1), nie jako `${...}`:
 
 ```bash
-claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>-${MONOLYNX_SPRINT_MODEL:-opus}" --model "${MONOLYNX_SPRINT_MODEL:-opus}" --permission-mode "${MONOLYNX_SPRINT_PERMISSION_MODE:-bypassPermissions}" "/monolynx:work <KEY>"
+claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>-<SPRINT_MODEL>" --model "<SPRINT_MODEL>" --permission-mode "<PERMISSION_MODE>" "/monolynx:work <KEY>"
 ```
+
+**Start odrzucony przez uprawnienia**: gdy to wywołanie zostanie odrzucone przez klasyfikator trybu automatycznego (komunikat w rodzaju "Blocked by classifier" albo "Permission ... denied") - nie ponawiaj, nie zmieniaj `PERMISSION_MODE` na inny, nie szukaj obejścia. Gdy `MODE=interactive`: wypisz użytkownikowi gotową komendę startu dla każdego nieuruchomionego ticketu (z prefiksem `!`, do wklejenia wprost w tej sesji) i rekomendację uruchomienia pętli przez `sprint_run.sh` (patrz KROK 5). Gdy `MODE=batch`: odnotuj to samo w raporcie ticku, nikt tam i tak komendy nie wklei. W obu przypadkach taki ticket **nie** wchodzi do `S`.
 
 Odczytaj identyfikator sesji: weź go z wyjścia komendy, a gdy go tam nie ma, dociągnij po nazwie:
 
@@ -336,9 +313,9 @@ Komentarz z identyfikatorem sesji jest jedynym trwałym śladem, po którym czł
 
 **Zapamiętaj `S`**: liczbę sesji, które faktycznie wystartowały w tym kroku. Liczysz wyłącznie te potwierdzone wpisem o nazwie `<PROJECT_SLUG>-<KEY>-<MODEL>` w `claude agents --json --all`, a nie liczbę prób startu. `S` wchodzi do korekty linii statusu w KROK 5.
 
-Sesja w tle startuje z trybem uprawnień wpisanym w komendę startu powyżej; `MONOLYNX_SPRINT_PERMISSION_MODE` nadpisuje tam wartość domyślną. WHY: worktree tworzony przez `claude --bg --worktree` zawiera wyłącznie pliki śledzone przez gita, a `.claude/settings.local.json` jest ignorowany, więc ani `permissions`, ani flagi AUTO* z niego nie docierają do sesji roboczej i sesja bez człowieka zawisłaby na pierwszym pytaniu o zgodę. Granicą jest wtedy hook `bash_guard.py` (deny na git write, lint, testy i `glab mr create` dla subagentów) oraz kontrakt autonomii skilla `work`, a nie dialog uprawnień. Flagi trybu w tle muszą leżeć w **śledzonym** `.claude/settings.json` (pole `env`) albo w środowisku procesu odpalającego tick: `sprint_run.sh` je eksportuje, a `claude --bg` dziedziczy środowisko.
+Sesja w tle startuje z trybem uprawnień `PERMISSION_MODE` z wyjścia preflightu (domyślnie `bypassPermissions`, nadpisywalne przez `MONOLYNX_SPRINT_PERMISSION_MODE` w środowisku procesu ticku). WHY: worktree tworzony przez `claude --bg --worktree` zawiera wyłącznie pliki śledzone przez gita, a `.claude/settings.local.json` jest ignorowany, więc ani `permissions`, ani flagi AUTO* z niego nie docierają do sesji roboczej i sesja bez człowieka zawisłaby na pierwszym pytaniu o zgodę. Granicą jest wtedy hook `bash_guard.py` (deny na git write, lint, testy i `glab mr create` dla subagentów) oraz kontrakt autonomii skilla `work`, a nie dialog uprawnień. Flagi trybu w tle muszą leżeć w **śledzonym** `.claude/settings.json` (pole `env`) albo w środowisku procesu odpalającego tick: `sprint_run.sh` je eksportuje, a `claude --bg` dziedziczy środowisko.
 
-Model sesji roboczej też jest wpisany w komendę startu: `${MONOLYNX_SPRINT_MODEL:-opus}`. Nie usuwaj `--model` i nie zastępuj go modelem tej sesji dyspozytora. WHY: sesja w tle bez `--model` bierze domyślny model konta, a ten bywa najdroższy (Fable); jeden sprint na nim kosztuje wielokrotność przebiegu na Opusie. Droższy model dla koordynatora ticketu włącza się świadomie, ustawiając `MONOLYNX_SPRINT_MODEL` w środowisku procesu odpalającego tick albo w śledzonym `.claude/settings.json`. Subagenci sesji `work` dostają model według sekcji „Model subagentów” skilla `work` (i `work-simple`), niezależnie od modelu koordynatora.
+Model sesji roboczej to `SPRINT_MODEL` z wyjścia preflightu (domyślnie `opus`, nadpisywalne przez `MONOLYNX_SPRINT_MODEL`). Nie usuwaj `--model` i nie zastępuj go modelem tej sesji dyspozytora. WHY: sesja w tle bez `--model` bierze domyślny model konta, a ten bywa najdroższy (Fable); jeden sprint na nim kosztuje wielokrotność przebiegu na Opusie. Droższy model dla koordynatora ticketu włącza się świadomie, ustawiając `MONOLYNX_SPRINT_MODEL` w środowisku procesu odpalającego tick albo w śledzonym `.claude/settings.json`. Subagenci sesji `work` dostają model według sekcji „Model subagentów” skilla `work` (i `work-simple`), niezależnie od modelu koordynatora.
 
 Po starcie sesji **nie czekaj** na jej wynik i nie zaglądaj do jej logu. Tick kończy się teraz, wynik zbierze następny.
 
@@ -362,13 +339,7 @@ Wiersz, którego `reason` mówi o nieznanym stanie sesji (`nieznany stan '<x>'`,
 
 Ten blok wypisuj wtedy, gdy `MODE` z KROK 1 **nie jest** `batch`, czyli w trybie interaktywnym. W trybie `batch` go pomiń: pętla i tak go nie przeczyta, a zaśmieca log.
 
-Najpierw rozwiń absolutną ścieżkę skryptu:
-
-```bash
-echo "${MONOLYNX_SKILL_DIR}/scripts/sprint_run.sh"
-```
-
-Wypisz tę ścieżkę, a potem trzy sposoby uruchomienia pętli. W komendach **podstaw rozwiniętą ścieżkę** w miejsce `<ścieżka>` (pełna ścieżka pliku, wraz z `sprint_run.sh`) - użytkownik ma dostać wiersz gotowy do wklejenia w terminalu. Nie zostawiaj w nich zmiennej `${MONOLYNX_SKILL_DIR}`: została przypisana lokalnie przez agenta, więc terminal użytkownika może jej nie znać.
+Podstaw ścieżkę **literalnie**: `<katalog skilla>/scripts/sprint_run.sh` (katalog skilla to ten ustalony na początku tego dokumentu) - bez `echo "${MONOLYNX_SKILL_DIR}/..."`, tick w `claude -p` nie ma reguły na `echo`. Wypisz tę ścieżkę, a potem trzy sposoby uruchomienia pętli. W komendach **podstaw tę samą literalną ścieżkę** w miejsce `<ścieżka>` (pełna ścieżka pliku, wraz z `sprint_run.sh`) - użytkownik ma dostać wiersz gotowy do wklejenia w terminalu. Nie zostawiaj w nich zmiennej `${MONOLYNX_SKILL_DIR}`: to lokalna zmienna tej sesji, terminal użytkownika jej nie zna.
 
 - **W tej sesji**, bez żadnego skryptu:
 
@@ -420,3 +391,4 @@ Format samej linii jest bez zmian: to kontrakt z `sprint_run.sh`, który po niej
 4. **Nie zmieniasz statusów ticketów.** Statusy przestawia `/monolynx:work` w swojej sesji. Ty tylko czytasz je i komentujesz.
 5. **Nazwy sesji są zamrożone**: `<PROJECT_SLUG>-<KEY>-<MODEL>` dla pracy (rozpoznawana także bez sufiksu modelu), `<PROJECT_SLUG>-sprint-run-<MODEL>` dla ticka. Inne narzędzia po nich rozpoznają sesje sprintu.
 6. **Język raportu: polski.** Komentarze w ticketach też.
+7. **Preflight i stan sesji idą tylko przez skrypt, zero `printenv`/`env`.** `scripts/sprint_run_tick.py` (`preflight`, `state`) jest jedynym sposobem sprawdzenia środowiska (KROK 1) i policzenia stanu sesji (KROK 2) - żadnych ręcznych `claude agents`/`claude logs`/`mktemp`/potoków obok niego w tych dwóch krokach. KROK 4 nadal woła `claude agents --json --all` wprost, żeby odczytać `id` świeżo wystartowanej sesji i potwierdzić `S` - to jedyne miejsce w tym skillu, gdzie ta komenda idzie bezpośrednio. Nigdy `printenv`, `env`, `set`, `export -p`, `declare -x` ani `echo` zmiennej spoza `MONOLYNX_*`: incydent 18.09 wypisał tak sekrety (klucz OpenAI, token GitLaba) do transkryptu i logu pętli.
