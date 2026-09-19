@@ -32,16 +32,39 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 templates.env.globals["ga_measurement_id"] = settings.GA_MEASUREMENT_ID
 
 
+def _protected_resource_metadata(resource: str) -> dict[str, object]:
+    """Zbuduj payload RFC 9728 dla danego `resource`.
+
+    Dzielone przez dokument rootowy i dokument /mcp (MON-193) -- oba maja
+    identyczna strukture, rozni je tylko wartosc `resource`.
+    """
+    return {
+        "resource": resource,
+        "authorization_servers": [settings.APP_URL],
+        "bearer_methods_supported": ["header"],
+    }
+
+
 @router.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource() -> JSONResponse:
-    """RFC 9728 -- metadata chronionego zasobu (MCP server)."""
-    return JSONResponse(
-        {
-            "resource": settings.APP_URL,
-            "authorization_servers": [settings.APP_URL],
-            "bearer_methods_supported": ["header"],
-        }
-    )
+    """RFC 9728 -- metadata chronionego zasobu (MCP server).
+
+    `resource` to goly settings.APP_URL -- dla klientow podpietych pod
+    mount "/" (np. Claude Desktop), ktorzy nie znaja sciezki /mcp.
+    """
+    return JSONResponse(_protected_resource_metadata(settings.APP_URL))
+
+
+@router.get("/.well-known/oauth-protected-resource/mcp")
+async def oauth_protected_resource_mcp() -> JSONResponse:
+    """RFC 9728 -- metadata chronionego zasobu dla mountu /mcp (MON-193).
+
+    `resource` wskazuje na {APP_URL}/mcp, nie goly host. Klient MCP
+    podpiety pod endpoint /mcp (plugin Claude Code) wiaze serwer pod
+    ten URI -- bez tego dokumentu dostawal resource rootowy i reconnect
+    konczyl sie "MCP endpoint not found at https://monolynx.com" (bez /mcp).
+    """
+    return JSONResponse(_protected_resource_metadata(f"{settings.APP_URL}/mcp"))
 
 
 @router.get("/.well-known/oauth-authorization-server")

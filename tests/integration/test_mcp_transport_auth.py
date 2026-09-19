@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from monolynx.config import settings
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.user import User
@@ -399,3 +400,69 @@ class TestMcpOAuthDiscoveryPublic:
 
         # Endpoint publiczny - moze zwrocic blad walidacji, ale nie 401
         assert resp.status_code != 401
+
+
+@pytest.mark.integration
+class TestMcpWwwAuthenticateResourceMetadataByMount:
+    """MON-193: WWW-Authenticate 401 musi wskazywac dokument dopasowany do mountu.
+
+    Przed fixem _send_401 zwracal zawsze ten sam resource_metadata (dokument
+    rootowy), niezaleznie czy request trafil na mount "/mcp" czy na mount "/".
+    Klient podpiety pod /mcp dostawal resource_metadata bez sciezki /mcp,
+    wiazal serwer pod goly host i reconnect konczyl sie "MCP endpoint not
+    found at https://monolynx.com" (bez /mcp).
+    """
+
+    async def test_mcp_mount_401_points_to_mcp_resource_metadata(self, client):
+        """POST /mcp bez tokenu -> WWW-Authenticate wskazuje dokument /mcp."""
+        resp = await client.post(
+            "/mcp",
+            json=_TOOLS_LIST_PAYLOAD,
+            headers=_MCP_HEADERS,
+        )
+
+        assert resp.status_code == 401
+        expected = f'Bearer resource_metadata="{settings.APP_URL}/.well-known/oauth-protected-resource/mcp"'
+        assert resp.headers.get("www-authenticate") == expected
+
+    async def test_root_mount_401_points_to_root_resource_metadata(self, client):
+        """POST / bez tokenu -> WWW-Authenticate wskazuje dokument rootowy (bez /mcp).
+
+        Regresja: Claude Desktop i inni klienci podpieci pod goly host musza
+        dostac dokument rootowy, nie ten dedykowany dla /mcp.
+        """
+        resp = await client.post(
+            "/",
+            json=_TOOLS_LIST_PAYLOAD,
+            headers=_MCP_HEADERS,
+        )
+
+        assert resp.status_code == 401
+        expected = f'Bearer resource_metadata="{settings.APP_URL}/.well-known/oauth-protected-resource"'
+        assert resp.headers.get("www-authenticate") == expected
+
+    async def test_mcp_discovery_chain_resource_matches_mcp_path(self, client):
+        """Odtworzenie sciezki klienta MCP: 401 na /mcp -> discovery -> resource == {APP_URL}/mcp.
+
+        Klient MCP po 401 czyta resource_metadata z WWW-Authenticate, robi GET
+        na ten adres i wiaze serwer pod pole "resource" zwrocone w dokumencie.
+        To jest test end-to-end calego mechanizmu discovery dla mountu /mcp.
+        """
+        resp = await client.post(
+            "/mcp",
+            json=_TOOLS_LIST_PAYLOAD,
+            headers=_MCP_HEADERS,
+        )
+        assert resp.status_code == 401
+
+        www_authenticate = resp.headers.get("www-authenticate", "")
+        assert 'resource_metadata="' in www_authenticate
+        resource_metadata_url = www_authenticate.split('resource_metadata="', 1)[1].rstrip('"')
+
+        # Dokument jest publiczny (bez tokenu), jak wymaga RFC 9728
+        discovery_path = resource_metadata_url.removeprefix(settings.APP_URL)
+        discovery_resp = await client.get(discovery_path)
+        assert discovery_resp.status_code == 200
+
+        discovery_data = discovery_resp.json()
+        assert discovery_data["resource"] == f"{settings.APP_URL}/mcp"
