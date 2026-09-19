@@ -166,13 +166,13 @@ claude agents --json --all > "$AGENTS"
 
 **Identyfikator sesji to pole `id`, nie `sessionId`.** W wyjściu `claude agents --json --all` każdy wpis ma oba. `id` jest krótki (8 znaków) i występuje wyłącznie dla wpisów o `kind` równym `background`; `sessionId` to UUID wątku i żadna komenda go nie przyjmuje. `claude logs`, `claude attach` i `claude rm` działają **tylko** na `id`. Wszędzie dalej w tym skillu `<session_id>` oznacza właśnie to krótkie `id`: tak nazywasz plik ogona logu, tak wpisujesz identyfikator do komentarza ticketu i taki podajesz człowiekowi w komendzie `claude attach`. Pole `session_id` w JSON-ie ze skryptu stanu niesie tę samą wartość.
 
-Dla każdej sesji, której nazwa pasuje do `<PROJECT-SLUG>-<KEY>` z dowolnym sufiksem modelu (gdzie `<KEY>` to klucz ticketu ze sprintu; reguła dopasowania pod kontraktem nazw), zrzuć ostatnie 20 linii logu do katalogu logów. Plik nazywa się `<id>.log`, bo tego pliku szuka skrypt stanu:
+Dla każdej sesji, której nazwa pasuje do `<PROJECT-SLUG>-<KEY>` z dowolnym sufiksem modelu (gdzie `<KEY>` to klucz ticketu ze sprintu; reguła dopasowania pod kontraktem nazw), zrzuć ostatnie 60 linii logu do katalogu logów. Plik nazywa się `<id>.log`, bo tego pliku szuka skrypt stanu:
 
 ```bash
-claude logs "<session_id>" | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' | tr '\r' '\n' | tail -n 20 > "$LOGS/<session_id>.log"
+claude logs "<session_id>" | sed -e 's/\x1b\[[0-9]*[CG]/ /g' -e 's/\x1b\[[0-9;?]*[A-Za-z]//g' | tr '\r' '\n' | tail -n 60 > "$LOGS/<session_id>.log"
 ```
 
-`claude logs` zwraca **render terminala**, nie czysty tekst: kody ANSI, `\r` zamiast `\n` w roli separatora linii i przerysowania spinnera. Skrypt stanu zdejmuje sekwencje sterujące sam, ale `sed` i `tr` w potoku dają plik czytelny dla człowieka, który potem ogląda ten ogon w komentarzu ticketu.
+`claude logs` zwraca **render terminala**, nie czysty tekst: kody ANSI, `\r` zamiast `\n` w roli separatora linii i przerysowania spinnera. Między słowami w długiej linii `claude logs` czasem wstawia skok kolumny (`\x1b[NG`/`\x1b[NC`) zamiast literalnej spacji - pierwsze `sed -e` zamienia te skoki na spację PRZED zdjęciem reszty kodów ANSI, inaczej sklejone słowa (np. marker `SPRINT-RUN STOP:`) stają się nieczytelne (MON-191). Skrypt stanu normalizuje ogon sam, więc dla klasyfikacji ten potok nie jest krytyczny - ale plik czyta też człowiek (ogon trafia do komentarza przy `needs_human`), więc ma być czytelny. Na macOS (BSD `sed`) `\x1b` nie jest rozpoznawane i potok zostawia kody ANSI w pliku - to nie psuje klasyfikacji (skrypt stanu i tak normalizuje samodzielnie), tylko czytelność podglądu dla człowieka.
 
 `claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching". Plik z takiej próby klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
 
@@ -252,13 +252,13 @@ Przejdź po ticketach z werdyktem innym niż `free` i `running`.
 
 ### Werdykt `needs_human`
 
-1. Wklej ostatnie 20 linii logu do komentarza ticketu, żeby ślad przetrwał zamknięcie sesji:
+1. Wklej ostatnie 60 linii logu (całą treść `$LOGS/<session_id>.log`) do komentarza ticketu, żeby ślad przetrwał zamknięcie sesji:
 
    ```
    mcp__monolynx__add_comment(
      project_slug="<PROJECT-SLUG>",
      ticket_id="<KEY>",
-     content="**Sprint-run** - sesja `<session_id>` zakończyła się bez domknięcia ticketu. Ogon logu:\n\n```\n<ostatnie 20 linii>\n```"
+     content="**Sprint-run** - sesja `<session_id>` zakończyła się bez domknięcia ticketu. Ogon logu:\n\n```\n<ostatnie 60 linii>\n```"
    )
    ```
 

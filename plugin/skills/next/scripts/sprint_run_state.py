@@ -92,6 +92,30 @@ _ANSI_RE = re.compile(
     r"|\x1b."
 )
 
+# CSI Cursor Horizontal Absolute (\x1b[NG) i Cursor Forward (\x1b[NC) - w realnym
+# renderze `claude logs` (tests/fixtures/claude/logs-stop-tui.2.1.278.txt, komenda
+# `claude logs 20a4496b`, claude 2.1.278) sluza do wyrownania kolumn miedzy slowami
+# zamiast literalnej spacji, np. "SPRINT-RUN\x1b[14GSTOP:". Zdjecie ich ogolnym
+# _ANSI_RE (bez podmiany) sklejaloby slowa w "SPRINT-RUNSTOP:" i marker przestawalby
+# pasowac (MON-191). Trzeba je zamienic na POJEDYNCZA spacje PRZED ogolnym strip -
+# _ANSI_RE dopasowalby te same sekwencje (G/C sa w [A-Za-z]), wiec kolejnosc ma
+# znaczenie: ten regex idzie pierwszy w read_log_tail.
+_CSI_CURSOR_GAP_RE = re.compile(r"\x1b\[[0-9]*[CG]")
+
+# Marker odporny na zgubiona spacje miedzy "SPRINT-RUN" i "STOP:" (MON-191) - render
+# TUI czasem zjada spacje mimo podmiany powyzej (inne warianty przesuniecia kursora),
+# wiec dopasowanie dopuszcza zero albo wiecej bialych znakow miedzy czlonami. Dwukropek
+# po STOP zostaje wymagany, zeby proza tylko wspominajaca marker (np. tresc komentarza
+# cytujaca go) nie dawala falszywego "waiting".
+_STOP_MARKER_RE = re.compile(r"SPRINT-RUN\s*STOP:")
+
+# Dlugosc ogona logu czytanego przez build_report (nie domyslne n=5 samego
+# read_log_tail). Blok odpowiedzi asystenta miedzy kotwica "⏺" a koncem moze byc
+# dluzszy niz 5 linii przez linie spinnera/statusu/promptu miedzy nimi - w fixture
+# logs-stop-tui.2.1.278.txt marker jest 17. niepusta linia od konca. 60 to margines
+# ponad zaobserwowana dlugosc, nie wyliczona dokladna wartosc.
+_LOG_TAIL_LINES = 60
+
 
 class _UsageError(Exception):
     """Blad parsowania argumentow CLI (mapowany na kod wyjscia 64)."""
@@ -182,6 +206,9 @@ def read_log_tail(logs_dir: Path | str, session_id: str, n: int = 5) -> list[str
     if not log_path.is_file():
         return []
     text = log_path.read_text(errors="replace")
+    # Podmiana skokow kolumny na spacje MUSI isc przed ogolnym _ANSI_RE - patrz
+    # komentarz WHY przy _CSI_CURSOR_GAP_RE (MON-191).
+    text = _CSI_CURSOR_GAP_RE.sub(" ", text)
     text = _ANSI_RE.sub("", text)
     text = text.replace("\r", "\n")
     lines = [line.strip() for line in text.split("\n")]
@@ -203,6 +230,13 @@ def classify(ticket_status: str, session_state_value: str, log_tail: list[str]) 
     """Wyznacz (werdykt, uzasadnienie) na podstawie stanu ticketu i sesji.
 
     session_state_value to "none" (brak dopasowanej sesji), "running" albo "exited".
+
+    Dla "running" oknem klasyfikacji jest ostatni blok odpowiedzi asystenta: od
+    OSTATNIEJ linii zaczynajacej sie od "⏺" (poczatek bloku w renderze TUI) do konca
+    ogona - linie spinnera/statusu/promptu ("Symbioting…", "| ctx:...", "❯") miedzy
+    kotwica a markerem/pytaniem wypychalyby je poza stale okno 5 linii (MON-191,
+    tests/fixtures/claude/logs-stop-tui.2.1.278.txt). Brak kotwicy w ogonie -> stare
+    zachowanie sprzed MON-191, okno to ostatnie 5 linii.
     """
     if session_state_value == "none":
         if ticket_status == "todo":
@@ -223,12 +257,26 @@ def classify(ticket_status: str, session_state_value: str, log_tail: list[str]) 
         )
 
     # session_state_value == "running"
-    window = log_tail[-5:]
-    if any("SPRINT-RUN STOP:" in line for line in window):
+    anchor_indices = [i for i, line in enumerate(log_tail) if line.startswith("⏺")]
+    if anchor_indices:
+        window = log_tail[anchor_indices[-1] :]
+    else:
+        window = log_tail[-5:]
+
+    if any(_STOP_MARKER_RE.search(line) for line in window):
         return "waiting", "Log zawiera marker SPRINT-RUN STOP - sesja czeka na decyzje czlowieka."
-    last_nonempty = next((line for line in reversed(window) if line.strip()), None)
-    if last_nonempty is not None and last_nonempty.rstrip().endswith("?"):
-        return "waiting", "Ostatnia linia logu to pytanie - sesja czeka na odpowiedz czlowieka."
+
+    if anchor_indices:
+        # Kotwica: sprawdzamy KAZDA linie bloku, nie tylko ostatnia niepusta - po
+        # pytaniu w renderze TUI ida linie spinnera/statusu/promptu, wiec ostatnia
+        # niepusta linia calego ogona to prawie nigdy samo pytanie (MON-191).
+        if any(line.rstrip().endswith("?") for line in window if line.strip()):
+            return "waiting", "Blok odpowiedzi zawiera pytanie - sesja czeka na odpowiedz czlowieka."
+    else:
+        last_nonempty = next((line for line in reversed(window) if line.strip()), None)
+        if last_nonempty is not None and last_nonempty.rstrip().endswith("?"):
+            return "waiting", "Ostatnia linia logu to pytanie - sesja czeka na odpowiedz czlowieka."
+
     return "running", "Sesja w tle dziala, log nie sygnalizuje oczekiwania na czlowieka."
 
 
@@ -267,7 +315,7 @@ def build_report(slug: str, tickets: list[dict[str, Any]], agents: list[Any], lo
             session_name = session.get("name")
             sess_state = session_state(session)
             state_reason = session_state_reason(session)
-            log_tail = read_log_tail(logs_dir, session_id) if session_id else []
+            log_tail = read_log_tail(logs_dir, session_id, n=_LOG_TAIL_LINES) if session_id else []
 
         verdict, reason = classify(ticket_status, sess_state, log_tail)
         if session is not None and sess_state == "running" and waits_for_permission(session):
