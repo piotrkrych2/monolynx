@@ -562,7 +562,7 @@ Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkc
 
 ## Changelog
 
-### Unreleased
+### 1.16.0
 
 - MON-190: tick `sprint-run` w `claude -p` dostaje uprawnienia od `sprint_run.sh`: `--allowedTools` z listą domyślną (`Bash(claude:*)`, `Bash(python3:*)`, `Read(~/.claude/plugins/**)`, trzy prefiksy serwera MCP Monolynx; `Read` zawężony do skryptów pluginu, bo gołe `Read` otwierało cały dysk łącznie z `~/.ssh`), nadpisywaną przez nową zmienną `MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS`, oraz `--permission-prompts none`, więc odmowa jest natychmiastowa i widoczna w logu. Incydent 18.09: tick w `--permission-mode acceptEdits` miał odrzucane komendy Bash i nie wystartował żadnej sesji.
 - **Nowy skrypt `sprint_run_tick.py`** zastępuje inline bash w skillu: `preflight` sprawdza git, `claude --version` i `claude agents --json --all`, poprawność JSON i struktury `permissions` / `env` w `.claude/settings.json` i `.claude/settings.local.json` (tryb `-p` po cichu pomija niepoprawny plik razem z `env`, hookami i modelem) oraz flagi AUTO* w środowisku procesu; `state` zapisuje listę ticketów, sesje i ogony logów w `.git/monolynx/tick/` zamiast `mktemp -d` w `/tmp` i zwraca JSON werdyktów z `sprint_run_state.py`.

@@ -157,7 +157,7 @@ Zbuduj z ticketów listę JSON w kształcie, którego oczekuje skrypt stanu (klu
 python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT-SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>'
 ```
 
-Podstaw `<katalog skilla>` i JSON ticketów literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, zdjęcie ANSI, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`.
+Podstaw `<katalog skilla>` i JSON ticketów literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, zdjęcie ANSI, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
 
 `claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching" - podkomenda `state` i tak zapisuje to, co dostała (bez przerywania), a taki przypadek klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
 
