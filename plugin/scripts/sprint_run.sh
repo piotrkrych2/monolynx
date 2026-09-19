@@ -23,6 +23,10 @@
 #
 # Wymagania: uruchom z katalogu projektu (repo git z .claude/settings.json ustawiajacym
 # MONOLYNX_PROJECT_SLUG), zalogowany `claude`, plugin monolynx >= 1.8.0.
+# Uprawnienia ticku (MON-190): ten skrypt przekazuje `--allowedTools` i
+# `--permission-prompts none` do kazdego wywolania `claude -p`, wiec swiezy
+# projekt bez recznych regul w `.claude/settings.json` (`permissions.allow`)
+# rowniez odpala tick poprawnie - patrz TICK_ALLOWED_TOOLS nizej.
 # Tryb -p nie odpowie na zadne pytanie, dlatego skrypt wymusza flagi AUTO*
 # i MONOLYNX_SPRINT_RUN=1 (MON-165). Kazda z nich mozna nadpisac w srodowisku.
 # Skrypt eksportuje tez MONOLYNX_SPRINT_RUN_MODE=batch (stala kontraktu, NIE do
@@ -51,7 +55,7 @@ while [ $# -gt 0 ]; do
     --max-ticks) [ $# -ge 2 ] || { echo "sprint_run: --max-ticks wymaga wartosci" >&2; exit 64; }; MAX_TICKS="$2"; shift 2 ;;
     --close) CLOSE=1; shift ;;
     --once) ONCE=1; shift ;;
-    -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "sprint_run: nieznany argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -100,6 +104,21 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TE
 TICK_MODEL="${MONOLYNX_SPRINT_TICK_MODEL:-opus}"
 export MONOLYNX_SPRINT_MODEL="${MONOLYNX_SPRINT_MODEL:-opus}"
 
+# Uprawnienia ticku - jeden serwer MCP w formie mcp__<serwer> pokrywa wszystkie
+# jego narzedzia; trzy prefiksy bo zaleza od sposobu instalacji (plugin, MCP
+# bezposrednio, .mcp.json). Nadpisywalne calosciowo (nie doklejane), zeby
+# projekt z innymi narzedziami mogl podac wlasna liste. Nadpisanie NIE trafia
+# do logu startu w calosci (patrz ponizej) - tylko incydent 18.09: printenv
+# wypisal sekrety do transkryptu, wiec zadna lista narzedzi/flag nie jest tu
+# drukowana w calosci.
+if [ -n "${MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS:-}" ]; then
+  TICK_ALLOWED_TOOLS="$MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS"
+  ALLOWED_TOOLS_LABEL="custom"
+else
+  TICK_ALLOWED_TOOLS="Bash(claude:*),Bash(python3:*),Read(~/.claude/plugins/**),mcp__monolynx,mcp__claude_ai_Monolynx,mcp__plugin_monolynx_monolynx"
+  ALLOWED_TOOLS_LABEL="default"
+fi
+
 STATE_DIR="$GIT_DIR/monolynx"
 mkdir -p "$STATE_DIR"
 LOG="$STATE_DIR/sprint-run.log"
@@ -120,15 +139,19 @@ log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; 
 run_claude() {
   # $1 = nazwa sesji bez modelu, $2 = prompt. Swiezy proces per wywolanie; wynik na stdout i do logu.
   # Model dopisywany tu, w jednym miejscu: kazda nazwa sesji konczy sie modelem, na ktorym dziala.
+  # --allowedTools daje tickowi uprawnienia bez recznych regul w settings projektu (MON-190);
+  # --permission-prompts none odrzuca natychmiast kazde pytanie o zgode, ktore i tak nie ma kto odebrac w -p.
   claude -p "$2" \
     --name "$1-$TICK_MODEL" \
     --model "$TICK_MODEL" \
     --permission-mode acceptEdits \
+    --allowedTools "$TICK_ALLOWED_TOOLS" \
+    --permission-prompts none \
     --max-turns "${MONOLYNX_SPRINT_RUN_MAX_TURNS:-80}" \
     --output-format text 2>&1 | tee -a "$LOG"
 }
 
-log "start: slug=$SLUG slots=$SLOTS interval=$INTERVAL close=$CLOSE once=$ONCE tick_model=$TICK_MODEL work_model=$MONOLYNX_SPRINT_MODEL dir=$PROJECT_DIR"
+log "start: slug=$SLUG slots=$SLOTS interval=$INTERVAL close=$CLOSE once=$ONCE tick_model=$TICK_MODEL work_model=$MONOLYNX_SPRINT_MODEL dir=$PROJECT_DIR allowed_tools=$ALLOWED_TOOLS_LABEL"
 
 tick=0
 errors=0

@@ -359,3 +359,63 @@ class TestSprintRunSh:
         assert "--name testslug-sprint-run-opus" in calls[0]
         assert "--name testslug-sprint-end-opus" in calls[1]
         assert "--name testslug-retro-opus" in calls[2]
+
+    def test_run_claude_gets_allowed_tools_and_permission_prompts_none(self, sandbox):
+        """MON-190: tick w `claude -p` startuje w swiezym projekcie bez recznych
+        regul permissions.allow -- uprawnienia daje `--allowedTools` przekazywane
+        przez sprint_run.sh, a `--permission-prompts none` odrzuca natychmiast i
+        widocznie w logu (nikt nie odpowie na prompt w trybie -p)."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [])
+
+        assert result.returncode == 0
+        calls = arg_lines(sandbox)
+        assert len(calls) == 1
+        call = calls[0]
+        assert "--allowedTools" in call
+        assert "Bash(claude:*)" in call
+        assert "Bash(python3:*)" in call
+        assert "mcp__monolynx" in call
+        assert "mcp__claude_ai_Monolynx" in call
+        assert "mcp__plugin_monolynx_monolynx" in call
+        assert "--permission-prompts none" in call
+
+    def test_allowed_tools_overridable_via_env(self, sandbox):
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [], env_overrides={"MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS": "Read"})
+
+        assert result.returncode == 0
+        calls = arg_lines(sandbox)
+        call = calls[0]
+        assert "--allowedTools Read" in call
+        assert "Bash(claude:*)" not in call
+
+    def test_start_log_does_not_dump_full_allowed_tools_list(self, sandbox):
+        """Log startu opisuje tylko czy lista jest wlasna czy domyslna -- nie
+        wypisuje jej w calosci (MON-190 KROK 1 - zakaz drukowania calego env/listy
+        narzedzi do transkryptu i logu petli, patrz tez incydent printenv 18.09)."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [])
+
+        assert result.returncode == 0
+        log_path = sandbox.git_dir / "monolynx" / "sprint-run.log"
+        start_lines = [line for line in log_path.read_text().splitlines() if "start:" in line]
+        assert start_lines
+        assert "mcp__monolynx" not in start_lines[0]
+        assert "Bash(claude:*)" not in start_lines[0]
+        assert "allowed_tools=default" in start_lines[0]
+
+    def test_start_log_marks_custom_allowed_tools_without_printing_them(self, sandbox):
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [], env_overrides={"MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS": "Read"})
+
+        assert result.returncode == 0
+        log_path = sandbox.git_dir / "monolynx" / "sprint-run.log"
+        start_lines = [line for line in log_path.read_text().splitlines() if "start:" in line]
+        assert start_lines
+        assert "Read" not in start_lines[0]
+        assert "allowed_tools=custom" in start_lines[0]

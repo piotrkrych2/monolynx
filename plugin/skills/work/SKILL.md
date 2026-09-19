@@ -30,7 +30,7 @@ Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika >
 Odczytaj pozostale zmienne jednym wywolaniem:
 
 ```bash
-echo "BRANCH_MODE=${MONOLYNX_BRANCH_MODE:-ticket} AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} CONTRACT=${MONOLYNX_CONTRACT:-ask} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0} AUTOMR=${MONOLYNX_AUTOMR:-false}"
+echo "BRANCH_MODE=${MONOLYNX_BRANCH_MODE:-ticket} AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} CONTRACT=${MONOLYNX_CONTRACT:-ask} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0} AUTOMR=${MONOLYNX_AUTOMR:-false} MR_TARGET=${MONOLYNX_MR_TARGET:-}"
 ```
 
 | Zmienna | Domyslnie | Znaczenie |
@@ -42,6 +42,7 @@ echo "BRANCH_MODE=${MONOLYNX_BRANCH_MODE:-ticket} AUTOTEST=${MONOLYNX_AUTOTEST:-
 | `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia |
 | `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): kazde czekanie na odpowiedz uzytkownika poza kontraktem konczy ture linia `SPRINT-RUN STOP: <powod>`; implikuje `MONOLYNX_CONTRACT=auto` |
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
+| `MONOLYNX_MR_TARGET` | - | Branch docelowy MR tworzonego przez AUTOMR (np. `develop`, gdy tickety merguja sie do brancha integracyjnego); pusta -> domyslny branch repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`, potem `glab repo view`), patrz 7d |
 
 Flagi odczytaj ze środowiska procesu lub jawnej konfiguracji klienta jako dane. AUTO* działa wyłącznie w zakresie dozwolonym przez użytkownika i runtime; odmowa ma pierwszeństwo.
 
@@ -1359,14 +1360,30 @@ AUTOPUSH (nie pushuj zastanych/cudzych commitow). Przy `AUTOPUSH=false` nigdy
 nie pushuj, nawet gdy uzytkownik commituje sam - push zostaje jego decyzja.
 
 **`MONOLYNX_AUTOMR=true`** - po FAKTYCZNYM pushu (`AUTOCOMMIT=true`, commit sie
-odbyl, `git push` sie powiodl) zaloz merge request:
+odbyl, `git push` sie powiodl) zaloz merge request.
+
+Branch docelowy (`<branch_docelowy>`) ustal w tej kolejnosci, kazda komende
+uruchamiajac OSOBNO i wpisujac wynik do komendy MR jako literal (bez `$VAR` i
+`$(...)` - sesja w worktree je odrzuca):
+
+a) `MONOLYNX_MR_TARGET` z linii konfiguracji niepusta -> ta wartosc.
+b) `git symbolic-ref refs/remotes/origin/HEAD` -> wynik
+   `refs/remotes/origin/<nazwa>`, bierzesz `<nazwa>`. Blad (np. "is not a
+   symbolic ref" w klonie bez `git remote set-head origin -a`)
+   albo pusty wynik -> c).
+c) `glab repo view -F json --jq .default_branch` -> nazwa domyslnego brancha
+   projektu w GitLabie.
+d) Nic nie dalo wyniku -> NIE zgaduj `main`: MR nie powstaje, wypisz gotowa
+   komende z `<branch_docelowy>` do uzupelnienia i odnotuj "MR nieutworzony:
+   nie ustalono brancha docelowego (ustaw MONOLYNX_MR_TARGET)". MR do zlego
+   brancha trzeba poprawiac recznie, brak MR tylko opoznia.
 
 ```bash
-glab mr create --fill --yes --source-branch <aktualny_branch> --target-branch main
+glab mr create --fill --yes --source-branch <aktualny_branch> --target-branch <branch_docelowy>
 ```
 
-Repo bez brancha `main` -> `master`. Zwrocony URL zapisz jako `MR_URL` i podaj
-go w komentarzu podsumowujacym (7b) oraz w podsumowaniu dla uzytkownika (7f).
+Zwrocony URL zapisz jako `MR_URL` i podaj go razem z ustalonym branchem
+docelowym w komentarzu podsumowujacym (7b) oraz w podsumowaniu dla uzytkownika (7f).
 `glab` nieobecny w PATH, komenda zwrocila blad albo pushu nie bylo -> NIE
 powtarzaj: wypisz gotowa komende uzytkownikowi i odnotuj
 "MR nieutworzony: [powod]". Przy `AUTOMR=false` (domyslnie) nigdy nie zakladaj

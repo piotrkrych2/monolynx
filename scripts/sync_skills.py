@@ -17,7 +17,7 @@ TARGET_DIR = ROOT / "src" / "monolynx" / "static" / "skills"
 TARGET_PREFIX = "monolynx-"
 SCRIPT_RESOURCES = {
     "next": ("sprint_run_state.py", "mr_queue_state.py"),
-    "sprint-run": ("sprint_run_state.py", "sprint_run.sh"),
+    "sprint-run": ("sprint_run_state.py", "sprint_run.sh", "sprint_run_tick.py"),
     "mr-queue": ("mr_queue_state.py",),
     "mutation-check": ("mutation_report.py",),
     "create-mutation-ci-script": ("mutation_report.py", "mutation_baseline.py"),

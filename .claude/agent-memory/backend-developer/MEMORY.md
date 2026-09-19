@@ -9,3 +9,4 @@
 ## Reguly z review krytyka
 
 - MON-167: Gdy zewnętrzne narzędzie identyfikuje ten sam obiekt dwoma polami (np. `claude agents --json`: `id` 8 znaków vs `sessionId` UUID), w kodzie używaj wyłącznie tego, którym wołasz to narzędzie (`claude logs|attach|rm <id>`), i tej samej wartości w nazwach plików pośrednich (`<id>.log`); rozjazd jest cichy i objawia się brakiem wyniku, nie błędem. Wejście z pliku generowanego przez LLM/skill to granica systemu: waliduj kształt (dict, wymagane klucze) i zwracaj kod 2 z komunikatem, nie traceback.
+- MON-190: Każda wartość z wyjścia zewnętrznego narzędzia i każdy wyjątek subprocessu (także `subprocess.TimeoutExpired`, który nie dziedziczy po OSError) jest obsłużony przed użyciem zgodnie z obiecanym kodem wyjścia, nigdy tracebackiem.
