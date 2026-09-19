@@ -8,6 +8,7 @@ import uuid
 import pytest
 from sqlalchemy.exc import ProgrammingError
 
+from monolynx.config import settings
 from monolynx.models.user import User
 from monolynx.models.user_api_token import UserApiToken
 from monolynx.services.auth import hash_password
@@ -57,6 +58,18 @@ class TestOAuthMetadata:
         assert data["authorization_servers"][0] == data["resource"]
         assert data["bearer_methods_supported"] == ["header"]
 
+    async def test_protected_resource_endpoint_resource_is_app_url(self, client):
+        """MON-193: resource rootowego dokumentu to goly settings.APP_URL (bez /mcp).
+
+        Klienci podpieci pod mount "/" (Claude Desktop) uzywaja tego dokumentu
+        bez znajomosci sciezki /mcp -- resource musi pozostac hostem aplikacji.
+        """
+        response = await client.get("/.well-known/oauth-protected-resource")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["resource"] == settings.APP_URL
+        assert data["authorization_servers"] == [settings.APP_URL]
+
     async def test_metadata_endpoint(self, client):
         """GET /.well-known/oauth-authorization-server zwraca poprawny JSON."""
         response = await client.get("/.well-known/oauth-authorization-server")
@@ -70,6 +83,42 @@ class TestOAuthMetadata:
         assert "refresh_token" in data["grant_types_supported"]
         assert data["code_challenge_methods_supported"] == ["S256"]
         assert data["token_endpoint_auth_methods_supported"] == ["none"]
+
+
+@pytest.mark.integration
+class TestOAuthProtectedResourceMcp:
+    """MON-193: dedykowany dokument RFC 9728 dla mountu "/mcp".
+
+    Reconnect po /mcp konczyl sie bledem "MCP endpoint not found at
+    https://monolynx.com" (bez /mcp), bo rootowy dokument RFC 9728
+    zwracal `resource` bez sciezki /mcp -- klient MCP wiazal serwer
+    pod goly host zamiast pod endpoint /mcp. Nowy dokument publiczny
+    pod /.well-known/oauth-protected-resource/mcp naprawia to dla
+    klientow podpietych pod mount "/mcp" (plugin Claude Code).
+    """
+
+    async def test_protected_resource_mcp_endpoint_returns_200(self, client):
+        """GET /.well-known/oauth-protected-resource/mcp bez tokenu -> 200."""
+        response = await client.get("/.well-known/oauth-protected-resource/mcp")
+        assert response.status_code == 200
+
+    async def test_protected_resource_mcp_resource_points_to_mcp_path(self, client):
+        """resource dokumentu /mcp musi wskazywac na {APP_URL}/mcp, nie goly host."""
+        response = await client.get("/.well-known/oauth-protected-resource/mcp")
+        data = response.json()
+        assert data["resource"] == f"{settings.APP_URL}/mcp"
+
+    async def test_protected_resource_mcp_authorization_servers(self, client):
+        """authorization_servers dokumentu /mcp to nadal goly host (serwer autoryzacji)."""
+        response = await client.get("/.well-known/oauth-protected-resource/mcp")
+        data = response.json()
+        assert data["authorization_servers"] == [settings.APP_URL]
+
+    async def test_protected_resource_mcp_bearer_methods(self, client):
+        """bearer_methods_supported dokumentu /mcp to ["header"], jak w dokumencie rootowym."""
+        response = await client.get("/.well-known/oauth-protected-resource/mcp")
+        data = response.json()
+        assert data["bearer_methods_supported"] == ["header"]
 
 
 @pytest.mark.integration

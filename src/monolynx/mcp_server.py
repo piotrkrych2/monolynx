@@ -269,27 +269,49 @@ class _MCPBearerAuthMiddleware:
             raw_token = auth_header[7:]
 
         if not raw_token:
-            await _send_401(send)
+            await _send_401(send, scope)
             return
 
         try:
             await _verify_token(raw_token)
         except Exception:
-            await _send_401(send)
+            await _send_401(send, scope)
             return
 
         await self.app(scope, receive, send)
 
 
-async def _send_401(send: Send) -> None:
+def _resource_metadata_url(scope: Scope) -> str:
+    """Wybierz dokument RFC 9728 dopasowany do mountu, ktory obsluzyl request.
+
+    _mcp_http_app jest zamontowany pod DWOMA sciezkami w main.py (`/mcp`
+    i `/`), wiec ten sam middleware widzi oba mounty. Mount w Starlette NIE
+    modyfikuje scope["path"] (zawsze pelna sciezka requestu) -- modyfikuje
+    tylko scope["root_path"], a Mount("/mcp") dopasowuje wylacznie z
+    koncowym "/" (regex "/mcp/{path:path}"), wiec bare "POST /mcp" bez
+    slasha trafia w mount "/" i tak samo widzi pelna sciezke "/mcp" w
+    scope["path"]. Dlatego liczy sie scope["path"], nie root_path: request
+    pod /mcp (z lub bez koncowego slasha) musi dostac dokument wskazujacy
+    resource={APP_URL}/mcp (MON-193), inaczej klient wiaze serwer pod
+    goly host i reconnect konczy sie "MCP endpoint not found".
+    """
+    path = scope.get("path", "")
+    if path == "/mcp" or path.startswith("/mcp/"):
+        return f"{app_settings.APP_URL}/.well-known/oauth-protected-resource/mcp"
+    return f"{app_settings.APP_URL}/.well-known/oauth-protected-resource"
+
+
+async def _send_401(send: Send, scope: Scope) -> None:
     """Wyslij odpowiedz HTTP 401 z naglowkiem WWW-Authenticate.
 
-    Naglowek niesie resource_metadata (RFC 9728) wskazujace na
-    .well-known/oauth-protected-resource. To sygnal ktorego klienci MCP
-    (m.in. claude.ai) uzywaja zeby odpalic OAuth flow i pokazac "Connect"
-    zamiast traktowac serwer jako publiczny.
+    Naglowek niesie resource_metadata (RFC 9728) dopasowane do mountu,
+    pod ktorym przyszedl request (patrz _resource_metadata_url) -- klient
+    podpiety pod /mcp musi dostac dokument, ktorego "resource" to /mcp,
+    inaczej wiaze serwer pod goly host (MON-193). To sygnal ktorego
+    klienci MCP (m.in. claude.ai) uzywaja zeby odpalic OAuth flow i
+    pokazac "Connect" zamiast traktowac serwer jako publiczny.
     """
-    resource_metadata = f"{app_settings.APP_URL}/.well-known/oauth-protected-resource"
+    resource_metadata = _resource_metadata_url(scope)
     www_authenticate = f'Bearer resource_metadata="{resource_metadata}"'
     body = json.dumps({"error": "unauthorized", "error_description": "Bearer token required"}).encode()
     await send(
