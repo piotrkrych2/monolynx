@@ -510,7 +510,7 @@ Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkc
 
 ## Changelog
 
-### Unreleased
+### 1.16.1
 
 - MON-191: `sprint_run_state.py` odporny na zgubioną spację w markerze `SPRINT-RUN STOP:` - `claude logs` czasem przesuwa kursor między słowami skokiem kolumny (`\x1b[NG`/`\x1b[NC`) zamiast wypisywać spację, więc marker przychodził jako `SPRINT-RUNSTOP:` i nie pasował. Skoki kolumny są teraz zamieniane na spację przed zdjęciem reszty ANSI, a dopasowanie markera toleruje zero albo więcej białych znaków między `SPRINT-RUN` i `STOP:`. Okno klasyfikacji (marker i heurystyka pytania) kotwiczy się do ostatniego bloku odpowiedzi asystenta (od ostatniej linii `⏺` do końca), nie do stałych 5 linii - `build_report` czyta ogon logu 60 linii zamiast 5, bo linie spinnera/statusu/promptu między kotwicą a treścią odpowiedzi potrafią być dłuższe niż to stałe okno. Skill `sprint-run` zrzuca teraz ostatnie 60 linii logu (zamiast 20) i zamienia skoki kolumny na spację w tym samym potoku `sed`.
 
