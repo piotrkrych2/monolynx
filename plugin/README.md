@@ -316,6 +316,7 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia |
 | `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): każde czekanie na odpowiedź użytkownika poza kontraktem kończy turę linią `SPRINT-RUN STOP: <powód>`; implikuje `MONOLYNX_CONTRACT=auto` |
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (działa TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
+| `MONOLYNX_MR_TARGET` | - | Branch docelowy MR tworzonego przez `MONOLYNX_AUTOMR` w `work` i `work-simple`, np. `develop`, gdy tickety mergują się do brancha integracyjnego. Pusta -> domyślny branch repozytorium: `git symbolic-ref refs/remotes/origin/HEAD`, a gdy ref nie istnieje (klon bez ustawionego `origin/HEAD`, np. bez `git remote set-head origin -a`) - `glab repo view -F json --jq .default_branch`. Gdy nic nie da wyniku, MR nie powstaje (skill nie zgaduje `main`) |
 | `MONOLYNX_SPRINT_RUN_MODE` | - | Tryb ticka dyspozytora. `batch` ustawia sam `sprint_run.sh`; skill `sprint-run` traktuje brak zmiennej (i każdą inną wartość) jako tryb interaktywny |
 | `MONOLYNX_SPRINT_PERMISSION_MODE` | wartość z komendy startu sesji w skillu `sprint-run` | Tryb uprawnień sesji roboczych `--bg` startowanych przez dyspozytora (patrz KROK 4 tego skilla) |
 | `MONOLYNX_SPRINT_MODEL` | `opus` | Model sesji roboczych `--bg` (`/monolynx:work <KEY>`) startowanych przez dyspozytora (patrz sekcja Modele) |
@@ -463,7 +464,7 @@ Tryb `-p` nie odpowie na żadne pytanie, dlatego sesje w tle muszą mieć komple
 }
 ```
 
-`AUTOTEST`, `AUTOCOMMIT` i `AUTOPUSH` są wymagane - bez nich preflight dyspozytora zatrzymuje tick i nie startuje żadnej sesji. `AUTOMR` jest zalecane: bez niego branch jest wypchnięty, ale merge request tworzysz ręcznie. Skrypt `sprint_run.sh` ustawia te flagi sam dla procesów, które uruchamia; każdą można nadpisać w środowisku. Poza nimi eksportuje też `MONOLYNX_SPRINT_RUN_MODE=batch` (tick wie, że jego raportu nikt nie przeczyta) i `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (domyślnie `1`).
+`AUTOTEST`, `AUTOCOMMIT` i `AUTOPUSH` są wymagane - bez nich preflight dyspozytora zatrzymuje tick i nie startuje żadnej sesji. `AUTOMR` jest zalecane: bez niego branch jest wypchnięty, ale merge request tworzysz ręcznie. Projekt, który merguje tickety do innego brancha niż domyślny branch repozytorium (np. `develop`), ustawia też `MONOLYNX_MR_TARGET`. Skrypt `sprint_run.sh` ustawia te flagi sam dla procesów, które uruchamia; każdą można nadpisać w środowisku. Poza nimi eksportuje też `MONOLYNX_SPRINT_RUN_MODE=batch` (tick wie, że jego raportu nikt nie przeczyta) i `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (domyślnie `1`).
 
 Plik z flagami musi być **śledzony przez gita**. Sesja robocza dostaje worktree utworzony przez `claude --bg --worktree`, a w worktree trafia tylko to, co git zna: `.claude/settings.local.json` jest ignorowany, więc ani uprawnienia, ani flagi AUTO* z niego nie docierają do sesji w tle. Druga poprawna droga to środowisko procesu, który odpala tick - `sprint_run.sh` eksportuje flagi sam, a `claude --bg` dziedziczy środowisko.
 
@@ -561,6 +562,10 @@ Definicje `plugin/agents/` dotyczą Claude Code. W każdym kliencie skille spraw
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.16.1
+
+- MON-192: `MONOLYNX_AUTOMR` w `work` i `work-simple` nie tworzy już MR na sztywno do `main`. Branch docelowy pochodzi z nowej zmiennej `MONOLYNX_MR_TARGET` (np. `develop`), a bez niej z domyślnego brancha repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`, potem `glab repo view`); gdy nie da się go ustalić, MR nie powstaje, a skill wypisuje gotową komendę.
 
 ### 1.16.0
 
