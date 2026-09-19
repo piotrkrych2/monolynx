@@ -302,7 +302,7 @@ def _clean_stale_logs(logs_dir: Path) -> None:
 
 
 def _write_session_log(logs_dir: Path, session_id: str) -> None:
-    """Uruchom `claude logs <session_id>`, zdejmij ANSI/\\r i zapisz ostatnie 20 linii."""
+    """Uruchom `claude logs <session_id>`, zdejmij ANSI/\\r i zapisz ostatnie 60 niepustych linii."""
     try:
         result = subprocess.run(["claude", "logs", session_id], capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
         raw = result.stdout + result.stderr
@@ -314,10 +314,14 @@ def _write_session_log(logs_dir: Path, session_id: str) -> None:
         # oczekiwania na czlowieka).
         raw = str(exc)
 
-    text = sprint_run_state._ANSI_RE.sub("", raw)
+    # Skoki kolumny na spacje przed ogolnym strip ANSI, a ogon tak dlugi jak okno
+    # build_report - inaczej plik zapisany tutaj skleja "SPRINT-RUN STOP:" i ucina
+    # blok odpowiedzi asystenta ponizej kotwicy (MON-191).
+    text = sprint_run_state._CSI_CURSOR_GAP_RE.sub(" ", raw)
+    text = sprint_run_state._ANSI_RE.sub("", text)
     text = text.replace("\r", "\n")
     lines = [line.strip() for line in text.split("\n")]
-    nonempty = [line for line in lines if line][-20:]
+    nonempty = [line for line in lines if line][-sprint_run_state._LOG_TAIL_LINES :]
     log_path = logs_dir / f"{session_id}.log"
     log_path.write_text("\n".join(nonempty) + ("\n" if nonempty else ""))
 

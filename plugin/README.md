@@ -563,6 +563,10 @@ Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkc
 
 ## Changelog
 
+### 1.16.2
+
+- MON-191: `sprint_run_state.py` odporny na zgubioną spację w markerze `SPRINT-RUN STOP:` - `claude logs` czasem przesuwa kursor między słowami skokiem kolumny (`\x1b[NG`/`\x1b[NC`) zamiast wypisywać spację, więc marker przychodził jako `SPRINT-RUNSTOP:` i nie pasował. Skoki kolumny są teraz zamieniane na spację przed zdjęciem reszty ANSI, a dopasowanie markera toleruje zero albo więcej białych znaków między `SPRINT-RUN` i `STOP:`. Okno klasyfikacji (marker i heurystyka pytania) kotwiczy się do ostatniego bloku odpowiedzi asystenta (od ostatniej linii `⏺` do końca), nie do stałych 5 linii - `build_report` czyta ogon logu 60 linii zamiast 5, bo linie spinnera/statusu/promptu między kotwicą a treścią odpowiedzi potrafią być dłuższe niż to stałe okno. Podkomenda `state` w `sprint_run_tick.py` (MON-190) zapisuje ostatnie 60 niepustych linii logu (zamiast 20) i zamienia skoki kolumny na spację przed zdjęciem ANSI, tak samo jak `sprint_run_state.py`.
+
 ### 1.16.1
 
 - MON-192: `MONOLYNX_AUTOMR` w `work` i `work-simple` nie tworzy już MR na sztywno do `main`. Branch docelowy pochodzi z nowej zmiennej `MONOLYNX_MR_TARGET` (np. `develop`), a bez niej z domyślnego brancha repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`, potem `glab repo view`); gdy nie da się go ustalić, MR nie powstaje, a skill wypisuje gotową komendę.

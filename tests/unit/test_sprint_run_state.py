@@ -382,6 +382,45 @@ class TestReadLogTail:
         verdict, _ = state.classify("in_progress", "running", tail)
         assert verdict == "running"
 
+    def test_real_stop_fixture_restores_space_between_sprint_run_and_stop(self, tmp_path):
+        """MON-191: `claude logs` przesuwa kursor miedzy 'SPRINT-RUN' i 'STOP:' sekwencja
+        \\x1b[NG (skok kolumny), NIE spacja -- po zdjeciu samych sekwencji CSI marker
+        sklejalby sie w 'SPRINT-RUNSTOP:' i przestawal pasowac. read_log_tail musi
+        zamienic \\x1b[NG/\\x1b[NC (przesuniecie kursora w poziomie) na spacje PRZED
+        zdjeciem reszty ANSI. Patrz tests/fixtures/claude/logs-stop-tui.2.1.278.txt
+        (naglowek pliku: komenda `claude logs 20a4496b`, `claude 2.1.278`, 2026-09-19).
+
+        Asercja celuje w KONKRETNA linie odpowiedzi asystenta (zaczyna sie od
+        'SPRINT-RUN STOP:'), nie w dowolne wystapienie substringu -- fixture zawiera
+        tez echo promptu sondy ('Druga linia: SPRINT-RUN STOP: fixture probe...')
+        ktore ma marker ze zwykla spacja JUZ w surowym tekscie (bez udzialu
+        \\x1b[NG), wiec samo `"SPRINT-RUN STOP:" in line` przechodziloby nawet gdyby
+        zamiana kursor->spacja byla wylaczona (nie zabijaloby mutanta)."""
+        fixture_path = FIXTURES_DIR / "logs-stop-tui.2.1.278.txt"
+        copy_path = tmp_path / "sid-stop.log"
+        copy_path.write_bytes(fixture_path.read_bytes())
+        tail = state.read_log_tail(tmp_path, "sid-stop", n=60)
+        assert any(line.startswith("SPRINT-RUN STOP: fixture probe MON-191 - czekam na decyzję człowieka") for line in tail)
+        assert all("\x1b" not in line for line in tail)
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "waiting"
+
+    def test_cursor_forward_g_and_c_sequences_become_space(self, tmp_path):
+        """Test syntetyczny celowany wprost w normalizacje kursora (MON-191, niezalezny
+        od fixture realnego, ktory uzywa wylacznie wariantu G): \\x1b[<n>G (ustawienie
+        kolumny kursora) i \\x1b[<n>C (przesuniecie kursora w prawo) musza obie zostac
+        zamienione na POJEDYNCZA spacje PRZED zdjeciem reszty ANSI -- inaczej marker
+        sklejony bez spacji przechodzi obecny (goly) regex CSI bez sladu."""
+        log_file_g = tmp_path / "sid-g.log"
+        log_file_g.write_bytes(b"SPRINT-RUN\x1b[14GSTOP: przyklad g\n")
+        tail_g = state.read_log_tail(tmp_path, "sid-g", n=5)
+        assert tail_g == ["SPRINT-RUN STOP: przyklad g"]
+
+        log_file_c = tmp_path / "sid-c.log"
+        log_file_c.write_bytes(b"SPRINT-RUN\x1b[2CSTOP: przyklad c\n")
+        tail_c = state.read_log_tail(tmp_path, "sid-c", n=5)
+        assert tail_c == ["SPRINT-RUN STOP: przyklad c"]
+
 
 # ---------------------------------------------------------------------------
 # classify
@@ -464,6 +503,125 @@ class TestClassify:
                 verdict, reason = state.classify(status, sess_state, [])
                 assert isinstance(verdict, str) and verdict
                 assert isinstance(reason, str) and reason
+
+
+# ---------------------------------------------------------------------------
+# classify -- marker STOP odporny na zgubiona spacje (MON-191)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestClassifyStopMarkerWhitespace:
+    """MON-191: `claude logs` gubi spacje w dlugich liniach (kursor skacze kolumna
+    zamiast wypisac spacje), wiec marker przychodzi czasem jako 'SPRINT-RUNSTOP:'.
+    Dopasowanie tolerancyjne na biale znaki miedzy 'SPRINT-RUN' i 'STOP:', ale
+    dwukropek po STOP jest nadal wymagany -- inaczej proza wspominajaca marker
+    (np. tresc komentarza na tickecie) falszywie dawalaby "waiting"."""
+
+    def test_marker_without_space_is_waiting(self):
+        tail = ["robie rzeczy", "SPRINT-RUNSTOP: brak toolchain"]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "waiting"
+
+    def test_marker_with_space_is_still_waiting(self):
+        tail = ["robie rzeczy", "SPRINT-RUN STOP: brak toolchain"]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "waiting"
+
+    def test_no_marker_is_running(self):
+        tail = ["robie rzeczy", "kontynuuje prace"]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "running"
+
+    def test_prose_mentioning_marker_without_colon_is_not_waiting(self):
+        """Proza bez dwukropka po STOP (np. komentarz na tickecie cytujacy marker)
+        nie ma wygladac jak zakonczenie tury."""
+        tail = ["dodalem komentarz SPRINT-RUN STOP na tickecie", "kontynuuje"]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "running"
+
+
+# ---------------------------------------------------------------------------
+# classify -- okno z kotwica "⏺" (ostatni blok odpowiedzi asystenta, MON-191)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestClassifyAnchorWindow:
+    """Gdy log_tail zawiera linie zaczynajaca sie od '⏺' (poczatek bloku odpowiedzi
+    asystenta w renderze TUI), oknem klasyfikacji jest ostatni taki blok (od OSTATNIEJ
+    linii '⏺' do konca), nie ostatnie 5 linii -- inaczej linie spinnera/statusu/znaku
+    zachety promptu ('Symbioting...', '| ctx:...', znak zachety) wypychaja marker albo
+    pytanie poza stale okno 5."""
+
+    def test_marker_in_anchor_block_after_spinner_and_status_lines_is_waiting(self):
+        """Marker jest 3. linia bloku, ale linie spinnera/statusu/promptu po nim jest
+        tyle, ze wypada poza dotychczasowe stale okno ostatnich 5 linii -- tylko
+        okno kotwiczone do '⏺' go widzi."""
+        tail = [
+            "stara tresc sprzed bloku",
+            "⏺",
+            "SPRINT-RUN STOP: czekam na decyzje czlowieka",
+            "Symbioting…",
+            "✽ Symbioting… 113 tokens",
+            "| ctx:24% | limit sesji:13% | limit tyg:15%",
+            "Symbioting… 38",
+            "Symbioting… 63",
+            "\u276f",
+        ]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "waiting"
+
+    def test_marker_in_older_block_with_newer_anchor_without_marker_is_running(self):
+        """Regresja z briefu MON-191: marker STOP z WCZESNIEJSZEGO bloku, po ktorym
+        sesja zostala wznowiona i ma NOWY blok '⏺' bez markera -- ma liczyc sie jako
+        running, nie jako wciaz czekajaca na starej decyzji."""
+        tail = [
+            "⏺",
+            "SPRINT-RUN STOP: stara decyzja",
+            "\u276f",
+            "⏺",
+            "kontynuuje prace po wznowieniu",
+            "Symbioting…",
+        ]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "running"
+
+    def test_no_anchor_falls_back_to_last_5_lines(self):
+        """Bez linii '⏺' w ogonie zachowanie jak dotychczas (MON-172): okno to
+        ostatnie 5 linii -- marker na 6. linii od konca nie wplywa na werdykt."""
+        tail = ["SPRINT-RUN STOP: stare", "b", "c", "d", "e", "f"]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "running"
+
+
+@pytest.mark.unit
+class TestClassifyAnchorQuestionMark:
+    """Heurystyka pytania z kotwica '⏺': waiting gdy KTORAKOLWIEK linia bloku (po
+    rstrip) konczy sie '?', nie tylko ostatnia niepusta linia calego ogona -- w
+    renderze TUI po pytaniu ida linie spinnera/statusu/promptu, wiec ostatnia
+    niepusta linia calego ogona to prawie nigdy samo pytanie."""
+
+    def test_question_inside_anchor_block_with_trailing_spinner_lines_is_waiting(self):
+        tail = [
+            "⏺",
+            "Czy chcesz kontynuowac migracje bazy danych?",
+            "Symbioting…",
+            "| ctx:10% | limit sesji:5%",
+            "\u276f",
+        ]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "waiting"
+
+    def test_question_outside_anchor_block_is_running(self):
+        """Pytanie sprzed ostatniego bloku '⏺' nie wplywa na werdykt nowego bloku."""
+        tail = [
+            "Czy chcesz kontynuowac?",
+            "⏺",
+            "kontynuuje inna prace, bez pytania",
+        ]
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "running"
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +787,38 @@ class TestBuildReport:
         assert row["verdict"] == "running"
         assert "nieznany stan" in row["reason"]
         assert "compacting" in row["reason"]
+
+
+@pytest.mark.unit
+class TestBuildReportRealStopFixture:
+    """MON-191: build_report musi czytac ogon dluzszy niz 5 linii, zeby caly blok
+    odpowiedzi asystenta (kotwica '⏺' ... marker STOP ... linie spinnera/statusu/
+    promptu) zmiescil sie w oknie klasyfikacji. Fixture:
+    tests/fixtures/claude/logs-stop-tui.2.1.278.txt (naglowek: komenda, wersja CLI,
+    data przechwycenia). Marker jest 17. niepusta linia od konca (po znormalizowaniu
+    ANSI/\\r), a stale okno 5 linii z poprzedniej wersji go nie widzi."""
+
+    def test_running_session_with_real_stop_fixture_log_is_waiting(self, tmp_path):
+        tickets = [{"key": "MON-1", "status": "in_progress", "assignee": None}]
+        agents = [
+            bg_agent(
+                "monolynx-MON-1",
+                agent_id="a1111111",
+                session_id="uuid-mon-1",
+                agent_state="running",
+            )
+        ]
+        fixture_path = FIXTURES_DIR / "logs-stop-tui.2.1.278.txt"
+        log_file = tmp_path / "a1111111.log"
+        log_file.write_bytes(fixture_path.read_bytes())
+
+        report = state.build_report("monolynx", tickets, agents, tmp_path)
+
+        row = report["tickets"][0]
+        assert row["session_id"] == "a1111111"
+        assert row["session_state"] == "running"
+        assert row["verdict"] == "waiting"
+        assert report["summary"]["waiting"] == 1
 
 
 # ---------------------------------------------------------------------------
