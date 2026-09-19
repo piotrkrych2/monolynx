@@ -563,6 +563,10 @@ Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkc
 
 ## Changelog
 
+### 1.17.0
+
+- MON-196: `mr-queue` domyka ticket przy zielonym CI brancha docelowego. Nowa podkomenda `mr_queue_state.py ticket-key --source-branch B --title T` wyznacza klucz ticketu (`[A-Z]+-[0-9]+`, branch źródłowy ma pierwszeństwo przed tytułem MR/PR). KROK 3a skilla `mr-queue`, gałąź `target-ci` = `success`: rozpoznany klucz przełącza ticket na `done` (`update_ticket` + `add_comment` z merge SHA i id pipeline'u brancha docelowego), z read-before-write, żeby nie dublować komentarza przy ticketach już `done`; brak klucza zostawia ticket nietknięty i jest odnotowany w raporcie ticka. Guard prefiksu projektu: `get_ticket` porównuje kod projektu w odpowiedzi z `<key>` - rozjazd (klucz z innego repo/projektu) traktowany jest jak brak klucza, bo `_resolve_ticket_uuid` dopasowuje ticket tylko po numerze i inaczej cicho przestawiłby cudzy, tak samo ponumerowany ticket. To wciąż jedno działanie na tick - `queue-update --status done` domyka pozycję kolejki dopiero po ticketcie.
+
 ### 1.16.1
 
 - MON-192: `MONOLYNX_AUTOMR` w `work` i `work-simple` nie tworzy już MR na sztywno do `main`. Branch docelowy pochodzi z nowej zmiennej `MONOLYNX_MR_TARGET` (np. `develop`), a bez niej z domyślnego brancha repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`, potem `glab repo view`); gdy nie da się go ustalić, MR nie powstaje, a skill wypisuje gotową komendę.

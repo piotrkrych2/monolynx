@@ -414,3 +414,66 @@ class TestCli:
         result = run_cli("queue-set", "--queue-file", queue_file, *order)
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["next"] == "!70"
+
+
+@pytest.mark.unit
+class TestTicketKey:
+    """Klucz ticketu (regex [A-Z]+-[0-9]+, re.search, pierwsze dopasowanie) z brancha zrodlowego
+    albo tytulu MR. Branche wziete z realnej historii tego repo (git log: 'worktree-MON-192',
+    'MON-190-sprint-run-fixes'); tytul MR wziety z fixture'a mr-view-merged."""
+
+    def test_source_branch_with_worktree_prefix_needs_search_not_match(self):
+        """'worktree-MON-192' nie zaczyna sie od klucza - re.match (kotwiczony na starcie) by go nie zlapal."""
+        result = run_cli("ticket-key", "--source-branch", "worktree-MON-192")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"key": "MON-192"}
+
+    def test_source_branch_with_ticket_key_prefix(self):
+        result = run_cli("ticket-key", "--source-branch", "MON-190-sprint-run-fixes")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"key": "MON-190"}
+
+    def test_title_from_real_mr_fixture(self):
+        mr = glab("mr-view-merged")
+        result = run_cli("ticket-key", "--title", mr["title"])
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"key": "MON-152"}
+
+    def test_source_branch_takes_precedence_over_different_title_key(self):
+        mr = glab("mr-view-merged")
+        result = run_cli(
+            "ticket-key",
+            "--source-branch",
+            "worktree-MON-192",
+            "--title",
+            mr["title"],
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"key": "MON-192"}
+
+    def test_source_branch_without_key_falls_back_to_title(self):
+        """Odroznia fallback ('brak w branchu -> szukaj w tytule') od twardej precedencji
+        ('jesli podano branch, uzyj wylacznie jego wyniku, nawet null')."""
+        source_branch = glab("mr-view-opened-pipeline-running")["source_branch"]
+        title = glab("mr-view-merged")["title"]
+        result = run_cli("ticket-key", "--source-branch", source_branch, "--title", title)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"key": "MON-152"}
+
+    def test_no_key_in_source_branch_or_title(self):
+        """feat/sprint-model-selection i jego tytul - realny przypadek bez klucza ticketu."""
+        mr = glab("mr-view-opened-pipeline-running")
+        result = run_cli(
+            "ticket-key",
+            "--source-branch",
+            mr["source_branch"],
+            "--title",
+            mr["title"],
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"key": None}
+
+    def test_no_arguments_returns_null_key(self):
+        result = run_cli("ticket-key")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"key": None}
