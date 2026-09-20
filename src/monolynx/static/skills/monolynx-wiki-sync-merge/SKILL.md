@@ -21,16 +21,26 @@ Realizujesz **post-merge INGEST** metody LLM Wiki: bierzesz zamknięte tickety (
 
 Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT-SLUG>`.
 
-## Warunek wstępny: tylko branch main/master
+## Warunek wstępny: branch integracyjny z konfiguracji
 
-Zapis do wiki wykonuj wyłącznie z brancha `main` lub `master`. Sprawdź aktualny branch:
+Zapis do wiki wykonuj wyłącznie z brancha integracyjnego projektu, nie z literału `main`/`master`.
+
+Ustal branch integracyjny (`<branch_integracyjny>`) w tej kolejności, każdą komendę uruchamiając OSOBNO i wpisując wynik do kolejnych komend jako literał (bez `$VAR` i `$(...)` - sesja w worktree je odrzuca):
+
+a) `MONOLYNX_BASE_BRANCH` z linii konfiguracji niepusta -> ta wartość.
+b) `MONOLYNX_MR_TARGET` niepusta -> ta wartość. Branch integracyjny jest domyślnie też bazowym - jedna konfiguracja zamiast dwóch.
+c) `git symbolic-ref refs/remotes/origin/HEAD` -> wynik `refs/remotes/origin/<nazwa>`, bierzesz `<nazwa>`. Błąd (np. "is not a symbolic ref" w klonie bez `git remote set-head origin -a`) albo pusty wynik -> d).
+d) `glab repo view -F json --jq .default_branch` -> nazwa domyślnego brancha projektu w GitLabie.
+e) Nic nie dało wyniku - NIE zgaduj `main`. Potraktuj to jak "jesteś poza branchem integracyjnym" (bezpieczny default: nie zapisuj) i **zakończ** z komunikatem: _"Nie udało się ustalić brancha integracyjnego. Ustaw `MONOLYNX_BASE_BRANCH` albo `MONOLYNX_MR_TARGET` i uruchom ponownie."_
+
+Gdy `<branch_integracyjny>` jest ustalony, sprawdź aktualny branch:
 
 ```bash
 git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
 ```
 
-- **Branch `main` lub `master`** - kontynuuj normalnie.
-- **Inny branch** - NIE zapisuj automatycznie. Poinformuj użytkownika: _"Jesteś na branchu `<branch>`, nie na main/master. Uruchom skill ponownie po merge do main."_ i **zakończ** bez zapisu.
+- **Branch równy `<branch_integracyjny>`** - kontynuuj normalnie.
+- **Inny branch** - NIE zapisuj automatycznie. Poinformuj użytkownika: _"Jesteś na branchu `<branch>`, nie na branchu integracyjnym `<branch_integracyjny>`. Uruchom skill ponownie po merge."_ i **zakończ** bez zapisu.
 
 ---
 
@@ -171,7 +181,7 @@ Na koniec pokaż:
 ## Ważne zasady
 
 1. **Gating jest twardy** - jeśli `wiki_llm_enabled=false`, skill kończy się bez żadnych zapisów.
-2. **Tylko main/master** - żaden zapis do wiki na branchu feature.
+2. **Tylko branch integracyjny** - żaden zapis do wiki na branchu feature.
 3. **Plain `[[slug]]` zawsze** - nigdy `[[slug|label]]` (MON-74 niezakończony).
 4. **Aktualizuj, nie duplikuj** - zawsze szukaj istniejących stron przed tworzeniem nowych.
 5. **Jedno źródło dotyka wielu stron** - nie poprzestawaj na samej stronie `źródło`.
