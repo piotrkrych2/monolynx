@@ -36,6 +36,18 @@ zawiera `\x1b` ani `\r`") sprawdza, ze sprint_run_tick.py zdejmuje to PRZED
 zapisem na dysk, analogicznie do juz istniejacego
 sprint_run_state.read_log_tail; fixture logs-tui.2.1.270.txt to realny zrzut
 takiego renderu (patrz tests/fixtures/claude/logs-tui.2.1.270.txt).
+
+MON-197 (`TestBaseBranchResolution`): fake `git` rozszerzony o `symbolic-ref
+refs/remotes/origin/HEAD`, `rev-parse --abbrev-ref HEAD`, `fetch origin
+<branch>` i `rev-parse origin/<branch>`, sterowalne zmiennymi
+FAKE_GIT_ORIGIN_HEAD_BRANCH / FAKE_GIT_CURRENT_BRANCH / FAKE_GIT_FETCH_EXIT /
+FAKE_GIT_LOCAL_SHA / FAKE_GIT_REMOTE_SHA -- ta sama konwencja co reszta
+fakebina w tym pliku (kazda galaz sterowana osobna zmienna z sensownym
+defaultem, zeby testy niezwiazane z brancha bazowego mogly jej nie ustawiac).
+`glab` CELOWO nie ma fakebina: obraz Dockera aplikacji go nie instaluje
+(sprawdzone w Dockerfile), wiec brak `glab` w PATH testu odzwierciedla realne
+srodowisko, w ktorym `_run_glab_default_branch` konczy sie FileNotFoundError,
+nie sztucznym stubem.
 """
 
 import json
@@ -55,6 +67,25 @@ case "$*" in
     echo "{project_dir}" ;;
   "-C {project_dir} rev-parse --absolute-git-dir"|"rev-parse --absolute-git-dir")
     echo "{git_dir}" ;;
+  "-C {project_dir} symbolic-ref refs/remotes/origin/HEAD"|"symbolic-ref refs/remotes/origin/HEAD")
+    if [ -n "${{FAKE_GIT_ORIGIN_HEAD_BRANCH:-}}" ]; then
+      echo "refs/remotes/origin/${{FAKE_GIT_ORIGIN_HEAD_BRANCH}}"
+    else
+      echo "git-stub: symbolic-ref refs/remotes/origin/HEAD nieustawiony (symulacja testu)" >&2
+      exit 128
+    fi ;;
+  "-C {project_dir} rev-parse --abbrev-ref HEAD"|"rev-parse --abbrev-ref HEAD")
+    echo "${{FAKE_GIT_CURRENT_BRANCH:-main}}" ;;
+  "-C {project_dir} fetch origin "*)
+    exit_code="${{FAKE_GIT_FETCH_EXIT:-0}}"
+    if [ "$exit_code" != "0" ]; then
+      echo "git-stub: fetch nie dziala (symulacja testu)" >&2
+    fi
+    exit "$exit_code" ;;
+  "-C {project_dir} rev-parse HEAD")
+    echo "${{FAKE_GIT_LOCAL_SHA:-sha-local}}" ;;
+  "-C {project_dir} rev-parse origin/"*)
+    echo "${{FAKE_GIT_REMOTE_SHA:-sha-remote}}" ;;
   *)
     echo "git-stub: nieobslugiwane argumenty: $*" >&2
     exit 128 ;;
@@ -464,6 +495,92 @@ class TestPreflight:
         )
 
         assert result.returncode == 64
+
+
+@pytest.mark.unit
+class TestBaseBranchResolution:
+    """MON-197: preflight ustala BASE_BRANCH (lancuch MONOLYNX_BASE_BRANCH ->
+    MONOLYNX_MR_TARGET -> `git symbolic-ref refs/remotes/origin/HEAD` -> `glab
+    repo view`) i BASE_BRANCH_STALE (rozjazd GLOWNEGO checkoutu dyspozytora
+    wobec tego brancha, nie worktree ticketu). Testy wykonuja realna sciezke
+    `_resolve_base_branch` / `_check_base_branch_stale` przez subprocess -
+    tekstowa obecnosc kluczy w zrodle (test_base_branch.py) nie dowodzi, ze
+    lancuch fallbacku faktycznie dziala."""
+
+    def test_base_branch_from_monolynx_base_branch_env(self, tick_sandbox):
+        env_extra = full_flags_env({"MONOLYNX_BASE_BRANCH": "develop"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "BASE_BRANCH=develop" in result.stdout.splitlines()
+
+    def test_base_branch_takes_priority_over_mr_target(self, tick_sandbox):
+        """Serce lancucha fallbacku: gdy obie zmienne sa ustawione,
+        MONOLYNX_BASE_BRANCH wygrywa - MONOLYNX_MR_TARGET opisuje branch
+        integracyjny MR (MON-192) i nie musi byc tym samym branchem co punkt
+        startu worktree ticketu."""
+        env_extra = full_flags_env({"MONOLYNX_BASE_BRANCH": "develop", "MONOLYNX_MR_TARGET": "release"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        lines = result.stdout.splitlines()
+        assert "BASE_BRANCH=develop" in lines
+        assert "BASE_BRANCH=release" not in lines
+
+    def test_base_branch_falls_back_to_mr_target_when_unset(self, tick_sandbox):
+        env_extra = full_flags_env({"MONOLYNX_MR_TARGET": "release"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "BASE_BRANCH=release" in result.stdout.splitlines()
+
+    def test_base_branch_from_git_symbolic_ref_when_no_env_vars_set(self, tick_sandbox):
+        env_extra = full_flags_env({"FAKE_GIT_ORIGIN_HEAD_BRANCH": "trunk"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "BASE_BRANCH=trunk" in result.stdout.splitlines()
+
+    def test_base_branch_empty_when_no_fallback_available_never_guesses_main(self, tick_sandbox):
+        """Ani MONOLYNX_BASE_BRANCH, ani MONOLYNX_MR_TARGET nie sa ustawione,
+        `git symbolic-ref refs/remotes/origin/HEAD` nie ma czego zwrocic (fake
+        git konczy sie bledem), a `glab` nie jest zainstalowany w PATH testu
+        (tak jak w obrazie Dockera aplikacji) - wynik ma byc pustym stringiem,
+        NIGDY zgadywaniem 'main': repo moze uzywac 'master', 'develop' albo
+        czegokolwiek innego jako galezi glownej."""
+        result = run_preflight(tick_sandbox, env_extra=full_flags_env())
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        lines = result.stdout.splitlines()
+        assert "BASE_BRANCH=" in lines
+        assert "BASE_BRANCH=main" not in lines
+
+    def test_base_branch_stale_true_when_current_branch_differs(self, tick_sandbox):
+        env_extra = full_flags_env({"MONOLYNX_BASE_BRANCH": "main", "FAKE_GIT_CURRENT_BRANCH": "feature-123"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "BASE_BRANCH_STALE=true" in result.stdout.splitlines()
+
+    def test_base_branch_stale_false_when_same_branch_and_matching_sha(self, tick_sandbox):
+        env_extra = full_flags_env(
+            {
+                "MONOLYNX_BASE_BRANCH": "main",
+                "FAKE_GIT_CURRENT_BRANCH": "main",
+                "FAKE_GIT_LOCAL_SHA": "deadbeef",
+                "FAKE_GIT_REMOTE_SHA": "deadbeef",
+            }
+        )
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "BASE_BRANCH_STALE=false" in result.stdout.splitlines()
 
 
 @pytest.mark.unit

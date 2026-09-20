@@ -23,7 +23,7 @@ Jestes **Team Managerem Lite**. Prowadzisz ticket w uproszczonej scieżce: jeden
 ## Konfiguracja skilla
 
 ```bash
-echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} CONTRACT=${MONOLYNX_CONTRACT:-ask} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0} AUTOMR=${MONOLYNX_AUTOMR:-false} MR_TARGET=${MONOLYNX_MR_TARGET:-}"
+echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} CONTRACT=${MONOLYNX_CONTRACT:-ask} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0} AUTOMR=${MONOLYNX_AUTOMR:-false} BASE_BRANCH=${MONOLYNX_BASE_BRANCH:-} MR_TARGET=${MONOLYNX_MR_TARGET:-}"
 ```
 
 | Zmienna | Domyslnie | Znaczenie |
@@ -34,6 +34,7 @@ echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-fal
 | `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia |
 | `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): kazde czekanie na odpowiedz uzytkownika poza kontraktem konczy ture linia `SPRINT-RUN STOP: <powod>`; implikuje `MONOLYNX_CONTRACT=auto` |
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
+| `MONOLYNX_BASE_BRANCH` | - | Punkt startu / branch bazowy sprawdzany przy gate'cie 0.45 (simple flow nie zaklada nowego brancha sam, ale wciaz gate'uje prace na branchu bazowym); pusta -> ustalana lancuchem fallbacku (`MONOLYNX_MR_TARGET`, potem wykrycie domyslnego brancha repozytorium). Rozni sie od `MONOLYNX_BRANCH_MODE` w skillu `work` (waliduje NAZWE brancha roboczego, nie punkt startu) i `MONOLYNX_MR_TARGET` (cel MR, nie punkt startu) |
 | `MONOLYNX_MR_TARGET` | - | Branch docelowy MR tworzonego przez AUTOMR (np. `develop`, gdy tickety merguja sie do brancha integracyjnego); pusta -> domyslny branch repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`, potem `glab repo view`), patrz 4.5 |
 
 Flagi odczytaj ze środowiska procesu lub jawnej konfiguracji klienta jako dane. AUTO* działa wyłącznie w zakresie dozwolonym przez użytkownika i runtime; odmowa ma pierwszeństwo.
@@ -175,10 +176,31 @@ poinformuj uzytkownika i zakoncz.
 git branch --show-current && git rev-parse HEAD && git status --porcelain
 ```
 
-**Twardy gate**: jesli branch to `main`/`master` LUB wynik jest pusty (detached
-HEAD) - zapytaj uzytkownika i poczekaj na odpowiedz. Nigdy nie zaczynaj pracy
-na glownym branchu bez jawnej zgody. Kazdy inny branch jest OK - simple flow
-nie wymusza konwencji nazw.
+Branch bazowy (`<branch_bazowy>`) ustal w tej kolejnosci, kazda komende
+uruchamiajac OSOBNO i wpisujac wynik do kolejnych komend jako literal (bez
+`$VAR` i `$(...)` - sesja w worktree je odrzuca):
+
+a) `MONOLYNX_BASE_BRANCH` z linii konfiguracji niepusta -> ta wartosc.
+b) `MONOLYNX_MR_TARGET` niepusta -> ta wartosc. Branch integracyjny jest
+   domyslnie tez bazowym - jedna konfiguracja zamiast dwoch.
+c) `git symbolic-ref refs/remotes/origin/HEAD` -> wynik
+   `refs/remotes/origin/<nazwa>`, bierzesz `<nazwa>`. Blad (np. "is not a
+   symbolic ref" w klonie bez `git remote set-head origin -a`) albo pusty
+   wynik -> d).
+d) `glab repo view -F json --jq .default_branch` -> nazwa domyslnego brancha
+   projektu w GitLabie.
+e) Nic nie dalo wyniku -> NIE zgaduj `main`: zatrzymaj sie i popros uzytkownika
+   o ustawienie `MONOLYNX_BASE_BRANCH`. Branch roboczy zalozony ze zlego punktu
+   startu trzeba przepiac recznie, wiec brak wyniku blokuje, a nie zgaduje.
+   Przy `MONOLYNX_SPRINT_RUN=1` obsluz to jak kazda inna blokade w tym trybie -
+   linia `SPRINT-RUN STOP: nie ustalono brancha bazowego`.
+
+**Twardy gate**: jesli aktualny branch to ustalony `<branch_bazowy>` (albo, gdy
+brancha bazowego nie udalo sie ustalic, `main` lub `master` jako
+zabezpieczenie) LUB wynik jest pusty (detached HEAD) - zapytaj uzytkownika
+i poczekaj na odpowiedz. Nigdy nie zaczynaj pracy na branchu, ktory jest
+punktem startu dla innych, bez jawnej zgody. Kazdy inny branch jest OK - simple
+flow nie wymusza konwencji nazw.
 
 Zapamietaj `BASELINE_SHA` (rev-parse) i `PLIKI_SPRZED_STARTU` (status) - krytyk
 diffuje wzgledem SHA i wyklucza z oceny pliki brudne przed startem; jesli brudne

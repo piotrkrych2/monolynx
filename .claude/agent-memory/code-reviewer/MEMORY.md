@@ -1,139 +1,16 @@
 # Code Reviewer Memory
 
 ## Topic files
-- [plugin_packaging.md](plugin_packaging.md) — Claude Code plugin (MON-72): structure, `claude plugin validate`, em-dash scope gap, `${user_config.X}`-in-bash bug. MON-72: 88/100 APPROVED.
-- [migration_head_verify.md](migration_head_verify.md) — Alembic review: zawsze sam licz head + sprawdz unikalnosc revision ID, nie wierz ticketowi (MON-73 blocker).
-- [review_history.md](review_history.md) — Historia ocen ticketow MON-* (score/iteracje/znaleziska per ticket). MON-84 pokrycie scrum.py: 92/100 APPROVED. MON-196 mr-queue -> ticket done: 100/100.
-- [wiki_llm_method.md](wiki_llm_method.md) — Metoda LLM Wiki (MON-73): sygnatury wiki/wiki_lint/wiki_bootstrap, marker sprzecznosci regex, RESERVED_SLUGS, patch MinIO gotcha (wiki_lint ma wlasny import get_markdown).
-- [bash_guard.md](bash_guard.md) — Hook pluginu (MON-144/147): jak probowac hooka pod aktywnym guardem, PRE-EXISTING luka DESTRUCTIVE na flagi dlugie (`rm --recursive` = ALLOW), granice `is_tmp_cleanup`.
-- [graphify_sync.md](graphify_sync.md) — Graf graphify->Monolynx (MON-115/116/118): kontrakt replace_graph (pola/typy/limity), mapowanie taksonomii, transport MCP wzorzec, em-dash pitfall w SKILL.md. MON-118: 87/100 APPROVED.
+- [review_method.md](review_method.md) — jak dowodzic znalezisk: sam odpalaj gate'y spojnosci, mutant zamiast deklaracji autora, guard Bash, coverage crash, adres `team-lead`.
+- [codebase_patterns.md](codebase_patterns.md) — wzorce Monolynx: serwisy, MCP (auth, formaty, transport), tokeny, testy, powracajace wady, konwencje plugin/skills.
+- [review_history.md](review_history.md) — historia ocen ticketow MON-* (score/iteracje/znaleziska per ticket).
+- [plugin_packaging.md](plugin_packaging.md) — plugin Claude Code (MON-72): struktura, `claude plugin validate`, em-dash, `${user_config.X}` w bashu.
+- [migration_head_verify.md](migration_head_verify.md) — Alembic: sam licz head + sprawdz unikalnosc revision ID, nie wierz ticketowi (MON-73).
+- [wiki_llm_method.md](wiki_llm_method.md) — metoda LLM Wiki (MON-73): sygnatury, marker sprzecznosci, RESERVED_SLUGS, patch MinIO gotcha.
+- [bash_guard.md](bash_guard.md) — hook pluginu (MON-144/147): jak probowac hooka, luka DESTRUCTIVE na flagi dlugie, granice `is_tmp_cleanup`.
+- [graphify_sync.md](graphify_sync.md) — graf graphify->Monolynx (MON-115/116/118): kontrakt `replace_graph`, taksonomia, wzorzec transportu MCP.
 
-## Project Patterns Confirmed
-- Services use module-level `logger = logging.getLogger("monolynx.<module>")` pattern
-- `monitoring.py` is a pure utility service (no CRUD, no DB) — just URL checking logic
-- CRUD services (e.g., `services/wiki.py`, `services/sprint.py`) handle DB operations directly
-- Model uses `secrets.token_urlsafe` for token generation with prefixes (e.g., `hb_`, `osk_`)
-- Heartbeat module: model in `models/heartbeat.py`, API ping endpoint in `api/heartbeat.py`, service in `services/heartbeat.py`
-- Heartbeat router registered in `main.py` at `/hb` prefix (unauthenticated ping endpoint)
-- Project relationship: `Project.heartbeats` with `cascade="all, delete-orphan"`
-- Dashboard modules do NOT check ProjectMember — any logged-in user can access any project by slug (established pattern across monitoring, heartbeat, etc.)
-- Error validation in dashboard forms uses single `error` variable that gets overwritten — established but flawed pattern
-- On validation error, dashboard uses `templates.TemplateResponse` directly (skipping `render_project_page` and sidebar badges) — accepted pattern
-
-## Token Patterns
-- MCP tokens: `osk_` prefix + SHA256 hash stored in DB (secure)
-- Heartbeat tokens: `hb_` prefix + plain text stored in DB (accepted tradeoff for narrow scope — ping only)
-
-## Recurring Issues to Watch
-- Hard delete in heartbeat service (`db.delete()`) — accepted for ephemeral resources
-- `check_heartbeat_statuses` bare `except Exception` with rollback — correct per CLAUDE.md
-- Missing `constants.py` entries for heartbeat statuses ("pending", "up", "down")
-- Missing Pydantic schemas for heartbeat CRUD — uses raw `dict[str, Any]`
-- `scalar_one()` vs `scalar_one_or_none()` — services should handle not-found gracefully
-- UniqueConstraint on models requires IntegrityError handling in dashboard — heartbeat has this, monitoring does not
-- Dashboard modules lack per-project resource limits (monitoring has MAX_MONITORS_PER_PROJECT=20, heartbeat has MAX_HEARTBEATS_PER_PROJECT=50, attachments have NO limit)
-- Blocking MinIO calls in async endpoints (wiki.py:532, scrum.py:658) — established pattern, no run_in_executor. MCP tool uses ThreadPoolExecutor correctly.
-- Filename sanitization: scrum.py attachment uses os.path.basename + regex + chr(34)/chr(92) replace for Content-Disposition. Wiki still has no sanitization.
-- Server-side MIME type validation missing on scrum attachment upload — client-side FilePond only. Stored XSS risk via text/html content-type.
-- Constants defined in mcp_server.py instead of constants.py (LABEL_COLOR_PALETTE, ACTIVITY_ENTITY_TYPES) — recurring pattern drift
-- New features added to some ticket tools but not all (labels in list_tickets/get_ticket but not search_tickets/create/update responses) — consistency gap
-- `scalar() or default` anti-pattern: `0 or -1` returns -1 in Python (0 is falsy). When using COALESCE in SQL, don't add Python-side `or` fallback — it breaks on zero values. Seen in MON-53 position calculation.
-
-## Ticket ID Lookup (SPROSTOWANE MON-196)
-- Toole MCP ticketowe (`get_ticket`, `update_ticket`, `add_comment`, `get_ticket_schedule`) przyjmuja w `ticket_id` UUID **albo klucz** typu `MON-20`. Wczesniejszy wpis "tylko UUID, szukaj po tytule" byl BLEDNY.
-- PULAPKA przy review: `_resolve_ticket_uuid` (`src/monolynx/mcp_server.py:799-823`) dopasowuje wylacznie NUMER, prefiks kodu projektu IGNORUJE. Klucz `JIRA-45` podany w projekcie o kodzie `MON` rozwiaze sie na MON-45 i cicho zmodyfikuje cudzy ticket. Kod, ktory wyciaga klucz z danych zewnetrznych (nazwa brancha, tytul MR) i zapisuje po nim, musi sam sprawdzic prefiks - pierwsza linia odpowiedzi `get_ticket` to `<KOD>-<numer> | tytul` (`_format_ticket_detail`, `mcp_server.py:406`), wiec porownanie jest darmowe przy read-before-write.
-
-
-## Test Patterns Confirmed
-- Test fixture: connection-level transaction with rollback, `expire_on_commit=False` — services calling `db.commit()` work on savepoints
-- `_make_project` helper in test_heartbeat.py is better DRY than test_monitoring_dashboard.py (which repeats Project() inline)
-- `secrets.token_urlsafe(16)` produces 22 chars — matches `^hb_[A-Za-z0-9_-]{20,30}$` regex
-- Neo4j async iterator mock pattern: `result_mock.__aiter__ = lambda self: AsyncIterMock(records)` — established in test_graph_service.py, reused in test_format_graph_dsl.py
-- Neo4j driver mock: `_make_mock_graph_driver(session)` sets `__aenter__`/`__aexit__` on `driver.session.return_value` — correct for `async with _driver.session()` pattern
-- MCP tool direct import+await in tests: `from monolynx.mcp_server import get_graph_node; await get_graph_node(ctx, ...)` — works because `@mcp.tool()` preserves callable
-
-## MCP Response Format Inconsistency
-- `list_tickets` returns `list[dict]` with `_meta` as last element — older pattern
-- `search_tickets` returns `dict` with `results`, `total`, `page`, `total_pages` — newer, cleaner pattern
-- Future tools should use the dict pattern; consider migrating list_tickets
-
-## MCP Transport Auth (MON-103)
-- `_MCPBearerAuthMiddleware` (plain ASGI, owija `mcp.streamable_http_app()`) + `build_mcp_http_app()` w mcp_server.py. main.py mountuje TEN SAM owiniety obiekt pod `/mcp` ORAZ `/` (root mount dla Claude Desktop na APP_URL). Oba chronione, bo to ta sama instancja.
-- Bramka reuzywa `_verify_token` (OAuth-first via verify_oauth_access_token, fallback verify_mcp_token dla osk_*). Per-tool `_auth(ctx)` zostaje jako defense-in-depth.
-- OAuth router (api/oauth.py, APIRouter bez prefiksu, include_router) ma priorytet nad mount `/` -> .well-known/register/authorize/token publiczne. Backend swiadomie NIE uzyl FastMCP(auth=) by uniknac podwojnego .well-known pod /mcp.
-- KRYTYCZNA PULAPKA TESTOWA: pod ASGITransport BEZ lifespan (conftest `client` fixture) MCP session manager nie jest zainicjalizowany -> request `/mcp` moze dac 404 ZANIM dotrze do middleware. Testy 401 staja sie FLAKY/order-dependent: wczesniejszy test (np. discovery albo patch _verify_token) inicjalizuje stan i zmienia 404->401. ZAWSZE weryfikuj bramke MCP pod TestClient (lifespan ON) trace'ujac `_MCPBearerAuthMiddleware.__call__` (MW_HITS) + sprawdzajac `/mcp` ORAZ `/mcp/` (trailing slash). Pod poprawnym kodem+lifespan: 401 z WWW-Authenticate:Bearer dla obu.
-- Weryfikacja regresji: usun middleware (build->streamable_http_app) i potwierdz ze test failuje (404) -> dowodzi ze gate ON/OFF jest rozrozniany, test nie jest falszywie zielony.
-
-## PULAPKA: coverage (--cov) crashuje w kontenerze app (numpy double-load)
-- `pytest --cov=...` ORAZ `coverage run` w kontenerze `app` daja `ImportError: numpy cannot load module more than once per process` (instrumentacja coverage pre-importuje modul -> lancuch modeli -> pgvector -> numpy 2.5.1, potem conftest importuje numpy ponownie). `COVERAGE_CORE=sysmon` nie pomaga; pre-import numpy przez sitecustomize -> SEGFAULT. Dotyczy KAZDEGO uruchomienia z coverage. Plain `python -c "import numpy"` dziala (2.5.1), wiec problem tylko pod coverage tracing.
-- Skutek: nie da sie niezaleznie zreprodukowac % coverage w tym env. Weryfikuj JAKOSCIOWO (czy testy trafiaja docelowe endpointy, mock patch-targety, weryfikacja stanu DB) + przebieg testow BEZ --cov. Liczbe z raportu qa akceptuj z zastrzezeniem.
-
-## PULAPKA: nie oceniaj NIEDOKONCZONEJ wersji pliku agenta (monitor stabilnosci)
-- Monitor "plik stabilny przez 60s" MOZE odpalic w czasie dluzszej pauzy agenta miedzy zapisami. Testowanie takiej polowicznej wersji dalo FALSZYWE 24 failures (niekompletny plik). Finalna wersja (wiecej testow) byla zielona (162 passed).
-- Zanim orzekniesz regresje z liczby failures: potwierdz ze plik to FINALNA praca (dluzsze okno stabilnosci ~40-60s + porownaj liczbe testow/hash + `git diff --stat`), a jesli podejrzewasz cross-file pollution - uruchom plik SOLO vs w kombinacji, i baseline (stash) vs z praca agenta.
-- test_scrum session-scope teardown flake: `DROP TABLE work_plan_entries` DBAPIError na OSTATNIM tescie przy uruchomieniu wielu plikow scrum razem (220 passed, 1 error) - pre-existing, nie wina zmian testowych.
-- POTWIERDZONE (MON-85): `DROP TABLE work_plan_entries` DeadlockDetectedError w session-scope teardownie pochodzi od PRE-EXISTING `test_e2e_work_plan.py::test_mcp_schedule_ticket_persists_to_separate_session` (osobny `async_sessionmaker(engine)` + realne commity/delete na work_plan_entries). Uruchomienie SAMYCH 2 pre-existing testow (cross_project + persists_to_separate_session) juz daje `2 passed, 1 error`. Przy ocenie nowych testow work_plan: ten teardown error to NIE regresja - izoluj uruchamiajac same pre-existing testy.
-
-## PULAPKA: git checkout kasuje prace agentow z working tree
-- Agenci w pipeline czesto zostawiaja zmiany NIEZACOMMITOWANE (tylko working tree). `git checkout <plik>` (np. przy cofaniu wlasnego sanity-sed) PRZYWRACA plik do HEAD i KASUJE prace agenta. Objaw: `isinstance` mountowanej app nie zgadza sie z definicja w diffie. Zawsze: przed `git checkout` zrob kopie, albo uzyj `git stash`/odtworz zmiane recznie. Po jakiejkolwiek manipulacji plikami docelowymi - `git diff --stat` musi zgadzac sie z oryginalnym diffem pracy agentow.
-
-## MCP Server Patterns
-- MCP tools use `_get_user_and_project(ctx, slug)` for auth + project access
-- Session via `async_session_factory()` — ORM objects accessed outside session block is established pattern (works for scalar columns, no lazy loads)
-- Monitoring now has full CRUD MCP tools (list/get/create/update/delete); heartbeat has full CRUD
-- `_is_url_safe` imported from `dashboard.monitoring` into `mcp_server.py` — private function cross-module import (code smell, works, no circular import)
-- IntegrityError handling now in both create_project (flush+catch) and update_project (commit+catch)
-- `create_project` description bug fixed in iter2 — now saved to model (mcp_server.py:353)
-- `_auth(ctx)` used for project-level tools (list/create), `_get_user_and_project` for project-scoped tools
-- `_slugify` and `_code_from_slug` are pure helpers in mcp_server.py (could be extracted)
-- `delete_project` uses owner-only check (more restrictive than update_project's owner+admin) — correct for destructive ops
-- `delete_monitor` uses owner/admin check — more restrictive than dashboard (which allows any logged-in user). `delete_heartbeat` has NO role check. Inconsistency across delete tools.
-- `_get_user_and_project` queries ProjectMember but discards role — causes redundant query in every tool that needs role (get_project, update_project, delete_project). Refactoring candidate.
-- `_get_user_member_and_project` added for invite_member — returns (User, ProjectMember, Project) tuple. Used by invite_member and remove_member. Could replace redundant role queries in delete_project etc.
-- Project model lacks `updated_at` column — soft-delete timestamp exists only in MCP response, not persisted
-- Sprint model lacks `updated_at` column — update_sprint returns `created_at` instead
-- `create_sprint` does NOT validate end_date > start_date (update_sprint does) — inconsistency
-- period/grace: MCP API uses minutes, DB stores seconds — conversion `*60` / `//60`
-- ActivityLog model: services/activity.py has log_activity (flush, no commit) + get_activity_log (read-only). log_activity designed to be called within existing transactions.
-- MCP tools sometimes open multiple async_session_factory() sessions in one tool — wasteful, should consolidate
-- Ticket.updated_at has `onupdate=func.now()` — any edit resets it, unreliable for tracking status change dates. Burndown actual line uses this (approximation). Proper fix requires activity log (MON-41) integration.
-
-## Pulapka: dwa identyfikatory sesji `claude` (MON-167)
-`claude agents --json --all` zwraca DWA identyfikatory na wpis: `id` (8 znakow, tylko `kind=background`) i `sessionId` (UUID, zawsze). Komendy `claude logs|attach|stop|rm` przyjmuja WYLACZNIE `id`. Kod raportujacy `sessionId` jako "session_id" albo nazywajacy nim pliki posrednie (`<id>.log`) rozjezdza sie z tym, co tworzy skill. Objaw jest CICHY: plik logu nigdy nie zostaje znaleziony, werdykt zalezny od logu nigdy nie pada, `attach`/`rm` dostaja UUID. Przy review kodu sterujacego sesjami w tle sprawdz, czy pole uzyte w kodzie to to samo, ktorym wola sie CLI.
-
-## Pulapka: `${CLAUDE_PLUGIN_ROOT}` w komendach dla uzytkownika
-Zmienna istnieje tylko w kontekscie Claude Code. Komenda tmux/cron z literalem `${CLAUDE_PLUGIN_ROOT}` wklejona do zwyklego terminala rozwinie sie do pustego stringu i po cichu wskaze zla sciezke. W dokumentacji: najpierw `echo` rozwijajacy sciezke, potem komenda z juz podstawiona sciezka absolutna. Ten sam wzorzec co `${user_config.X}` w bashu (MON-72).
-
-## Granica systemu w skryptach CLI (stdlib)
-Waliduj nie tylko top-level ksztalt JSON (`isinstance(list)`), ale i elementy: `row["key"]` na liscie ze zlym elementem daje traceback i exit 1 zamiast zadeklarowanego exit 2. Kontrakt "zly ksztalt -> exit N" obejmuje elementy, nie tylko korzen.
-
-## Konwencje plugin/skills potwierdzone (MON-167)
-- ToolSearch per krok NIE jest wymagany, gdy krok uzywa tooli zaladowanych wczesniej: `work-simple` laduje hurtem na starcie, `sprint-end` nie ma ToolSearch wcale. Regula `.claude/rules/skill-mcp-calls.md` (max_results=10 + termin na kazde narzedzie) dotyczy krokow, ktore ToolSearch faktycznie wolaja.
-- Regula landing-page-features wyzwala sie na toolu MCP / module dashboardu / widocznym feature. Nowy SKILL pluginu to ANI tool MCP ANI modul - wystarcza i18n w `main.py` + mcp_guide/how-to/agent-bootstrap/llms.txt. Nie odejmuj -25 za brak wpisu w `features.py`.
-- `src/monolynx/static/skills/<nazwa>/SKILL.md` rozni sie od zrodla o transformacje sync_skills.py: dodane `name:` w frontmatterze i `<PROJECT_SLUG>` -> `<PROJECT-SLUG>`. Roznica w diffie NIE oznacza nieaktualnej kopii.
-
-## Pulapka: tekst landingu plynie z main.py, nie tylko z szablonu (MON-170)
-Asercja `"<fraza>" in response.text` na renderze `/` moze byc ZIELONA na baseline, bo teksty marketingowe zyja w `TRANSLATIONS` w `main.py` (np. `skills_what_1`, `skills_sub`) i trafiaja do HTML obok szablonu. Test na obecnosc elementu UI musi celowac w markup (`">/monolynx:sprint-run</code>"`), nie w gola fraze. Weryfikujac czerwonosc TDD na baseline: `git show <baseline>:<plik> | grep -c "<dokladny markup z asercji>"`, nie grep po samym szablonie. Licznik skilli tez siedzi w `main.py`, nie w `landing.html`.
-Chipy komend: KOLEJNOSC bierz z `mcp_guide.html`, ale KLASY zawsze od sasiadow w tym samym pliku - landing ma `bg-white dark:bg-gray-950 border-gray-200/800`, mcp_guide `bg-gray-50 dark:bg-gray-900 border-gray-700`.
-
-## Adresowanie Team Managera w SendMessage
-Adres podany w prompcie jako "ADRES TEAM MANAGERA" (np. `monolynx-MON-170`) bywa nazwa WLASNEJ sesji, nie skrzynki TM - SendMessage zwraca wtedy blad "also addresses this session". Team Manager jest osiagalny jako `team-lead`. Przy bledzie adresowania nie zgaduj wariantow nazwy ticketa, uzyj `team-lead`.
-
-## MON-167 (review): 3 agentow, iteracja 2 -> 100/100
-Backend 75 -> 100 (sessionId zamiast id + KeyError na zlym ksztalcie tickets), qa 100, writer 100. Pelna historia w [review_history.md](review_history.md).
-
-## Metoda review parsera raportow zewnetrznych narzedzi (MON-149)
-Nie wierz komentarzowi "Zaobserwowane w tests/fixtures/X" - PRZELICZ literaly w fixture osobnym skryptem w katalogu tmp joba (`collections.Counter` po statusach) i porownaj ze zbiorami stalych w kodzie. W MON-149 komentarz atrybuowal `Timeout` i `NoCoverage` do fixture'u Strykera, ktory ma wylacznie `Killed`/`Survived`. Wzorzec uczciwej adnotacji stoi w `plugin/scripts/sprint_run_state.py` przy `_DEAD_SESSION_STATES`: rozdziel "zaobserwowany w fixture" od "dodany z definicji". Literal nakazany zamrozonym kontraktem Team Managera nie jest wada sam w sobie - wada jest falszywa atrybucja (-5 za konwencje, nie -25 za regule).
-Druga rzecz do policzenia samemu: galezie, ktorych zaden fixture nie dotyka. W MON-149 zaden z 8 fixture'ow nie mial `total == 0`, wiec galaz `score is null` (osobne kryterium akceptacji) nie byla wykonywana zadnym testem - wychodzi to tylko, gdy samemu poda sie parserowi `{"files": {}}`, `<mutations/>`, `{"outcomes": []}`.
-
-## Pulapka narzedziowa: guard Bash odrzuca zlozone jednolinijkowce
-W worktree guard blokuje komendy, w ktorych program albo argument pythona jest wyliczany w runtime (petla `for` po zmiennych, heredoc z interpolacja, `$S --report "$rep"`) - komunikat mowi o git, ale dotyczy kazdej konstrukcji "too complex to verify". Zamiast walczyc: zapisz skrypt do `$CLAUDE_JOB_DIR/tmp/*.py` z literalnymi sciezkami i odpal `python3 <sciezka>`. Jedna komenda, zero zgadywania.
-
-## Weryfikacja skryptow CLI pod guardem bash (sesja krytyka)
-Hook pluginu blokuje krytykowi trzy klasy komend Bash: nazwe runnera testow w DOWOLNYM miejscu linii (takze w grepie po pliku testowym i w tresci heredoca, wiec nie da sie jej wpisac nawet do notatki), kasowanie plikow z flaga force, oraz kazdy potok / heredoc / podstawienie karmiace `python` (komunikat o "descriptor ... assembled at runtime"). Reczne odpalenie skryptu przechodzi, gdy: (a) kazde wywolanie to osobna prosta komenda, bez lancucha `&&` i bez podstawien, (b) stdin podajesz przekierowaniem z pliku (`prog --summary - < fixture.json`), nie potokiem, (c) plik roboczy zakladasz w nowym podkatalogu `$CLAUDE_JOB_DIR/tmp/<nazwa>` zamiast kasowac stary, (d) plik testowy grepujesz po `def test_` albo `mark.`. Do dopisania notatki z zakazanym slowem uzyj Edit, nie heredoca. Recznego przebiegu nie odpuszczaj - to on wylapuje rzeczy, ktorych testy nie sprawdzaja (MON-151: raport klamie "Nowy baseline zapisany" przy `--dry-run`).
-
-## Pulapka: fixture sondy zawiera literal z promptu (MON-191)
-Sonda `claude logs` przechwycona promptem "odpowiedz linia SPRINT-RUN STOP: ..." niesie ten sam literal w ECHU PROMPTU (ze spacja). Asercja `any("<marker>" in line)` na takim fixture jest pusta - przechodzi bez kodu, ktory test ma chronic. Zawsze odpal mutanta (wylacz nowa linie normalizacji w skrypcie w tmp joba) i sprawdz, czy asercje testu padaja; asercja ma celowac w konkretna linie odpowiedzi.
-
-## Konwencja `plugin/scripts/`: shebang ORAZ bit wykonywalnosci
-Konwencja jest MIESZANA (stan 2026-09-18, `git ls-files -s plugin/scripts/`): 755 maja sprint_run_state.py, mutation_baseline.py, sprint_run.sh; 644 maja mr_queue_state.py, mutation_report.py. Nie punktuj braku bitu jako naruszenia konwencji (w MON-190 odnotowane jako nieblokujace); w MON-151 -5 bylo za niezgodnosc z bezposrednim sasiadem. Ruff tego nie lapie (EXE001 wylaczone).
+## Trzy rzeczy, ktore ratowaly review najczesciej
+1. **Odpal gate'y sam.** Sygnal "wszystko zielone" od TM bywa sprzed ostatniego zapisu developera (MON-197: `sync_skills.py --check` czerwony w chwili review). `ls -lT` zrodla i kopii rozstrzyga w sekunde.
+2. **Dowodz mutantem, nie deklaracja.** Test moze istniec i nie wykonywac ocenianego kodu (grep po literale w pliku zrodlowym, stub narzedzia nieznajacy nowych argumentow, fixture z literalem z echa promptu).
+3. **Zrob swiezy `git diff` per plik.** Snapshot statusu z promptu potrafi przemilczec zmiany unstaged (MON-79); przy stackowanych branchach grepuj symbol w bazie (MON-117).

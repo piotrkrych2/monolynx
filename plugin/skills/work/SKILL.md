@@ -30,18 +30,19 @@ Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika >
 Odczytaj pozostale zmienne jednym wywolaniem:
 
 ```bash
-echo "BRANCH_MODE=${MONOLYNX_BRANCH_MODE:-ticket} AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} CONTRACT=${MONOLYNX_CONTRACT:-ask} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0} AUTOMR=${MONOLYNX_AUTOMR:-false} MR_TARGET=${MONOLYNX_MR_TARGET:-}"
+echo "BRANCH_MODE=${MONOLYNX_BRANCH_MODE:-ticket} AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} CONTRACT=${MONOLYNX_CONTRACT:-ask} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0} AUTOMR=${MONOLYNX_AUTOMR:-false} BASE_BRANCH=${MONOLYNX_BASE_BRANCH:-} MR_TARGET=${MONOLYNX_MR_TARGET:-}"
 ```
 
 | Zmienna | Domyslnie | Znaczenie |
 |---|---|---|
-| `MONOLYNX_BRANCH_MODE` | `ticket` | `ticket` - branch musi zawierac numer ticketu; `sprint` - dowolny branch poza main, bez pytan; `off` - brak walidacji |
+| `MONOLYNX_BRANCH_MODE` | `ticket` | `ticket` - branch musi zawierac numer ticketu; `sprint` - dowolny branch poza branchem bazowym, bez pytan; `off` - brak walidacji |
 | `MONOLYNX_AUTOTEST` | `false` | `true` - skill sam odpala lint i testy; `false` - wypisuje komendy i czeka na wynik od uzytkownika |
 | `MONOLYNX_AUTOCOMMIT` | `false` | `true` - skill commituje po zielonym tescie; `false` - wypisuje gotowa komende |
 | `MONOLYNX_AUTOPUSH` | `false` | `true` - skill pushuje bez pytania (dziala TYLKO razem z `AUTOCOMMIT=true`); `false` - nigdy nie pushuje |
 | `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia |
 | `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): kazde czekanie na odpowiedz uzytkownika poza kontraktem konczy ture linia `SPRINT-RUN STOP: <powod>`; implikuje `MONOLYNX_CONTRACT=auto` |
 | `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
+| `MONOLYNX_BASE_BRANCH` | - | Punkt startu brancha roboczego i worktree ticketu (ustalany w 2b); pusta -> ustalana lancuchem fallbacku (`MONOLYNX_MR_TARGET`, potem wykrycie domyslnego brancha repozytorium). Rozni sie od `MONOLYNX_BRANCH_MODE` (waliduje NAZWE juz istniejacego brancha roboczego, nie punkt startu) i `MONOLYNX_MR_TARGET` (cel MR po pracy, nie punkt startu przed praca) |
 | `MONOLYNX_MR_TARGET` | - | Branch docelowy MR tworzonego przez AUTOMR (np. `develop`, gdy tickety merguja sie do brancha integracyjnego); pusta -> domyslny branch repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`, potem `glab repo view`), patrz 7d |
 
 Flagi odczytaj ze środowiska procesu lub jawnej konfiguracji klienta jako dane. AUTO* działa wyłącznie w zakresie dozwolonym przez użytkownika i runtime; odmowa ma pierwszeństwo.
@@ -189,41 +190,64 @@ git branch --show-current
 ```
 
 Pusty wynik (detached HEAD) -> traktuj jak prace na `main`: zapytaj uzytkownika
-i poczekaj na decyzje (2b).
+i poczekaj na decyzje (2c).
 
-### 2b. Twardy gate - main
+### 2b. Ustalenie brancha bazowego
 
-**Niezaleznie od `MONOLYNX_BRANCH_MODE`**: jesli aktualny branch to `main` lub `master`,
-zawsze zapytaj uzytkownika i poczekaj na odpowiedz. Nigdy nie zaczynaj pracy na
-glownym branchu bez jawnej zgody.
+Branch bazowy (`<branch_bazowy>`) ustal w tej kolejnosci, kazda komende
+uruchamiajac OSOBNO i wpisujac wynik do kolejnych komend jako literal (bez
+`$VAR` i `$(...)` - sesja w worktree je odrzuca):
 
-### 2c. Walidacja wg trybu
+a) `MONOLYNX_BASE_BRANCH` z linii konfiguracji niepusta -> ta wartosc.
+b) `MONOLYNX_MR_TARGET` niepusta -> ta wartosc. Branch integracyjny jest
+   domyslnie tez bazowym - jedna konfiguracja zamiast dwoch.
+c) `git symbolic-ref refs/remotes/origin/HEAD` -> wynik
+   `refs/remotes/origin/<nazwa>`, bierzesz `<nazwa>`. Blad (np. "is not a
+   symbolic ref" w klonie bez `git remote set-head origin -a`) albo pusty
+   wynik -> d).
+d) `glab repo view -F json --jq .default_branch` -> nazwa domyslnego brancha
+   projektu w GitLabie.
+e) Nic nie dalo wyniku -> NIE zgaduj `main`: zatrzymaj sie i popros uzytkownika
+   o ustawienie `MONOLYNX_BASE_BRANCH`. Branch roboczy zalozony ze zlego punktu
+   startu trzeba przepiac recznie, wiec brak wyniku blokuje, a nie zgaduje.
+   Przy `MONOLYNX_SPRINT_RUN=1` obsluz to jak kazda inna blokade w tym trybie -
+   linia `SPRINT-RUN STOP: nie ustalono brancha bazowego`.
 
-**`MONOLYNX_BRANCH_MODE=off`** - pomin walidacje, przejdz do 2d.
+### 2c. Twardy gate - branch bazowy
 
-**`MONOLYNX_BRANCH_MODE=sprint`** - dowolny branch poza main/master jest OK.
-Odnotuj nazwe brancha i przejdz do 2d bez pytania. Tryb dla pracy nad calym
+**Niezaleznie od `MONOLYNX_BRANCH_MODE`**: jesli aktualny branch to ustalony
+`<branch_bazowy>` (albo, gdy brancha bazowego nie udalo sie ustalic, `main` lub
+`master` jako zabezpieczenie), zawsze zapytaj uzytkownika i poczekaj na
+odpowiedz. Nigdy nie zaczynaj pracy na branchu, ktory jest punktem startu dla
+innych, bez jawnej zgody.
+
+### 2d. Walidacja wg trybu
+
+**`MONOLYNX_BRANCH_MODE=off`** - pomin walidacje, przejdz do 2e.
+
+**`MONOLYNX_BRANCH_MODE=sprint`** - dowolny branch poza branchem bazowym jest OK.
+Odnotuj nazwe brancha i przejdz do 2e bez pytania. Tryb dla pracy nad calym
 sprintem na jednym branchu.
 
 **`MONOLYNX_BRANCH_MODE=ticket`** (domyslny) - wyodrebnij numer ticketu z pola `key`
 (np. `PROJ-42` -> `42`; ticket bez pola `key` -> traktuj jak tryb `sprint`
 i odnotuj to). Jesli nazwa brancha zawiera ten numer jako OSOBNY segment
 (otoczony `-`/`_`/`/` albo poczatkiem/koncem nazwy: `feature-42-x` pasuje do `42`,
-`feature-142-x` NIE pasuje) -> OK, przejdz do 2d. W przeciwnym razie zapytaj:
+`feature-142-x` NIE pasuje) -> OK, przejdz do 2e. W przeciwnym razie zapytaj:
 
 > Pracujesz nad ticketem **#[numer]** (`[tytul]`), ale jestes na branchu `[aktualny_branch]`.
 >
 > Co chcesz zrobic?
 > - **(a)** Kontynuowac na obecnym branchu `[aktualny_branch]`
-> - **(b)** Przejsc na `main`, pobrac zmiany i utworzyc nowy branch `feature-[numer]-[slug]`
+> - **(b)** Przejsc na branch bazowy, pobrac zmiany i utworzyc nowy branch `feature-[numer]-[slug]`
 > - **(c)** To branch sprintowy - przelacz sie na tryb `sprint` do konca tej sesji
 
 **Jesli uzytkownik wybral (b)** - najpierw sprawdz `git status`; niecommitowane
 zmiany -> zapytaj uzytkownika (commit/stash), NIE przenos ich checkoutem na nowy
-branch. Potem:
+branch. Potem, z `<branch_bazowy>` ustalonym w 2b:
 
 ```bash
-git checkout main && git pull origin main && git checkout -b feature-<numer>-<slug>
+git checkout <branch_bazowy> && git pull origin <branch_bazowy> && git checkout -b feature-<numer>-<slug>
 ```
 
 Gdzie `<slug>` to skrocony, kebab-case tytul ticketu (max 4-5 slow, bez polskich znakow).
@@ -233,7 +257,7 @@ i zaproponuj wpis na stale w `.claude/settings.local.json`.
 
 **Poczekaj na odpowiedz uzytkownika** - NIE kontynuuj bez decyzji.
 
-### 2d. Pipeline
+### 2e. Pipeline
 
 Jesli instrumentacja aktywna - utworz pipeline i job `branch-validation` wg
 sekcji 1 pliku `pipeline.md`.

@@ -19,6 +19,12 @@ Dwie podkomendy:
       ksztalcie jest po cichu ignorowany przez Claude Code w trybie `-p`
       (razem z `env`), wiec preflight musi to wykryc PRZED tickiem, nie
       pozwolic sesji w tle utknac na pierwszym pytaniu bez odpowiedzi.
+      Dodatkowo (MON-197) ustala `BASE_BRANCH` (lancuch fallbacku
+      MONOLYNX_BASE_BRANCH -> MONOLYNX_MR_TARGET -> `git symbolic-ref
+      refs/remotes/origin/HEAD` -> `glab repo view`) i `BASE_BRANCH_STALE`
+      (rozjazd GLOWNEGO CHECKOUTU dyspozytora, nie worktree ticketu, wobec
+      tego brancha) - obie wartosci sa informacyjne, nigdy nie dopisuja do
+      `problems` i nie blokuja ticku same z siebie.
 
   state --slug S --tickets-json JSON [--tick-dir DIR]
       Zbiera stan sesji w tle (`claude agents --json --all`) i ogony ich
@@ -46,6 +52,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +80,8 @@ _KEY_ORDER = (
     "CLAUDE_VERSION",
     "PROJECT_DIR",
     "TICK_DIR",
+    "BASE_BRANCH",
+    "BASE_BRANCH_STALE",
 )
 
 _REQUIRED_AUTOFLAGS = ("MONOLYNX_AUTOTEST", "MONOLYNX_AUTOCOMMIT", "MONOLYNX_AUTOPUSH")
@@ -195,6 +204,86 @@ def _check_settings_file(toplevel: Path, filename: str, problems: list[str], env
                     env_true_in[flag_name] = rel
 
 
+def _run_glab_default_branch(cwd: str) -> tuple[str | None, str | None]:
+    """Zwroc (nazwa domyslnego brancha, problem) - dokladnie jedno z nich jest None."""
+    try:
+        result = subprocess.run(
+            ["glab", "repo", "view", "-F", "json", "--jq", ".default_branch"],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+            cwd=cwd,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"glab repo view nie dziala: {exc}"
+    if result.returncode != 0:
+        reason = next(
+            (line.strip() for line in result.stderr.splitlines() if line.strip()),
+            f"kod wyjscia {result.returncode}",
+        )
+        return None, f"glab repo view nie dziala: {reason}"
+    name = result.stdout.strip().strip('"')
+    if not name:
+        return None, "glab repo view: pusta odpowiedz"
+    return name, None
+
+
+def _resolve_base_branch(process_env: Mapping[str, str], toplevel: str | None) -> str:
+    """Ustal branch bazowy: `MONOLYNX_BASE_BRANCH` -> `MONOLYNX_MR_TARGET` ->
+    default brancha originu (`git symbolic-ref`, potem `glab repo view`) - ten
+    sam lancuch co dla brancha integracyjnego MR (MON-192). Brak wyniku ->
+    pusty string, NIGDY zgadywanie "main" - repo moze uzywac "master",
+    "develop" albo czegokolwiek innego jako galezi glownej.
+    """
+    base_branch = process_env.get("MONOLYNX_BASE_BRANCH", "").strip()
+    if base_branch:
+        return base_branch
+    mr_target = process_env.get("MONOLYNX_MR_TARGET", "").strip()
+    if mr_target:
+        return mr_target
+    if toplevel is None:
+        return ""
+    try:
+        symbolic_ref = _run_git(["-C", toplevel, "symbolic-ref", "refs/remotes/origin/HEAD"])
+    except _GitError:
+        symbolic_ref = ""
+    prefix = "refs/remotes/origin/"
+    if symbolic_ref.startswith(prefix) and symbolic_ref[len(prefix) :]:
+        return symbolic_ref[len(prefix) :]
+    default_branch, _ = _run_glab_default_branch(toplevel)
+    return default_branch or ""
+
+
+def _check_base_branch_stale(toplevel: str | None, base_branch: str) -> str:
+    """"true"/"false"/"" (nieznane) - rozjazd GLOWNEGO CHECKOUTU dyspozytora
+    (katalog roboczy procesu ticku, NIE worktree ticketu, ktory dopiero
+    powstanie) wobec brancha bazowego: inny branch niz `base_branch`, albo ten
+    sam branch, ale za `origin/<base_branch>`. `claude --bg --worktree` bierze
+    HEAD tego checkoutu w chwili startu sesji, wiec rozjazd tutaj dziedziczy
+    kazda nowo wystartowana sesja.
+
+    Brak mozliwosci sprawdzenia (brak `toplevel`, nieustalony `base_branch`,
+    `git` nieodpowiadajacy, brak sieci przy `fetch`) -> "" (nieznane), NIGDY
+    "true" z zalozenia - falszywy alarm zatrzymalby caly dispatch w trybie
+    batch bez realnego powodu.
+    """
+    if toplevel is None or not base_branch:
+        return ""
+    try:
+        current_branch = _run_git(["-C", toplevel, "rev-parse", "--abbrev-ref", "HEAD"])
+    except _GitError:
+        return ""
+    if current_branch != base_branch:
+        return "true"
+    try:
+        _run_git(["-C", toplevel, "fetch", "origin", base_branch])
+        local_sha = _run_git(["-C", toplevel, "rev-parse", "HEAD"])
+        remote_sha = _run_git(["-C", toplevel, "rev-parse", f"origin/{base_branch}"])
+    except _GitError:
+        return ""
+    return "false" if local_sha == remote_sha else "true"
+
+
 def _cmd_preflight(argv: list[str]) -> int:
     parser = _ArgumentParser(prog="sprint_run_tick.py preflight")
     parser.add_argument("--project-dir", default=".")
@@ -287,6 +376,9 @@ def _cmd_preflight(argv: list[str]) -> int:
         else:
             tick_dir = str(tick_dir_path)
 
+    base_branch = _resolve_base_branch(process_env, toplevel)
+    base_branch_stale = _check_base_branch_stale(toplevel, base_branch)
+
     values = {
         "SLUG": slug,
         "MODE": "batch" if process_env.get("MONOLYNX_SPRINT_RUN_MODE") == "batch" else "interactive",
@@ -302,6 +394,8 @@ def _cmd_preflight(argv: list[str]) -> int:
         "CLAUDE_VERSION": claude_version or "",
         "PROJECT_DIR": toplevel or "",
         "TICK_DIR": tick_dir or "",
+        "BASE_BRANCH": base_branch,
+        "BASE_BRANCH_STALE": base_branch_stale,
     }
     for key in _KEY_ORDER:
         print(f"{key}={values[key]}")

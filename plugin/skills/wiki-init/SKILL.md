@@ -17,16 +17,26 @@ Wlaczasz dla biezacego projektu metode **LLM Wiki** (wg pomyslu Andreja Karpathy
 
 Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika, następnie `MONOLYNX_PROJECT_SLUG` w środowisku procesu, następnie jawnie odczytana konfiguracja klienta lub `.env` projektu. Konfigurację czytaj jako dane, bez `source` i bez wypisywania sekretów. Brak sluga: zapytaj użytkownika i zatrzymaj operacje projektowe; nie zgaduj go. W przykładach MCP używaj `<PROJECT_SLUG>`.
 
-## Warunek wstepny: tylko branch main/master
+## Warunek wstepny: branch integracyjny z konfiguracji
 
-Operacje zapisu do wiki (create / update / delete stron) wykonuj wylacznie z brancha `main` lub `master`. Wiki ma odzwierciedlac stan zmergowany do glownej galezi, a nie prace w toku na branchu feature. Sprawdz aktualny branch:
+Operacje zapisu do wiki (create / update / delete stron) wykonuj wylacznie z brancha integracyjnego projektu, nie z literalu `main`/`master`. Wiki ma odzwierciedlac stan zmergowany do glownej galezi, a nie prace w toku na branchu feature.
+
+Ustal branch integracyjny (`<branch_integracyjny>`) w tej kolejnosci, kazda komende uruchamiajac OSOBNO i wpisujac wynik do kolejnych komend jako literal (bez `$VAR` i `$(...)` - sesja w worktree je odrzuca):
+
+a) `MONOLYNX_BASE_BRANCH` z linii konfiguracji niepusta -> ta wartosc.
+b) `MONOLYNX_MR_TARGET` niepusta -> ta wartosc. Branch integracyjny jest domyslnie tez bazowym - jedna konfiguracja zamiast dwoch.
+c) `git symbolic-ref refs/remotes/origin/HEAD` -> wynik `refs/remotes/origin/<nazwa>`, bierzesz `<nazwa>`. Blad (np. "is not a symbolic ref" w klonie bez `git remote set-head origin -a`) albo pusty wynik -> d).
+d) `glab repo view -F json --jq .default_branch` -> nazwa domyslnego brancha projektu w GitLabie.
+e) Nic nie dalo wyniku - NIE zgaduj `main`. Potraktuj to jak "jestes poza branchem integracyjnym" (bezpieczny default: nie zapisuj) i **zakoncz** z komunikatem: _"Nie udalo sie ustalic brancha integracyjnego. Ustaw `MONOLYNX_BASE_BRANCH` albo `MONOLYNX_MR_TARGET` i uruchom ponownie."_ Nie pytaj o kontynuacje - nie ma z czym porownac aktualnego brancha.
+
+Gdy `<branch_integracyjny>` jest ustalony, sprawdz aktualny branch:
 
 ```bash
 git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(brak repozytorium git)"
 ```
 
-- **Branch `main` lub `master`** - kontynuuj normalnie.
-- **Inny branch albo brak repozytorium git** - NIE zapisuj automatycznie. Zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość): _"Jestes na branchu `<branch>`, nie na main/master. Zapis do wiki zalecany dopiero po merge do main. Kontynuowac mimo to?"_ z opcjami:
+- **Branch rowny `<branch_integracyjny>`** - kontynuuj normalnie.
+- **Inny branch albo brak repozytorium git** - NIE zapisuj automatycznie. Zapytaj uzytkownika (przez dostępne narzędzie pytań albo wiadomość): _"Jestes na branchu `<branch>`, nie na branchu integracyjnym `<branch_integracyjny>`. Zapis do wiki zalecany dopiero po merge. Kontynuowac mimo to?"_ z opcjami:
   - **Nie, przerwij (zalecane)** - zakoncz bez zapisu do wiki.
   - **Tak, kontynuuj mimo to** - przejdz dalej.
 
