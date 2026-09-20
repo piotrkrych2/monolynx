@@ -14,6 +14,10 @@
 
 ## Raportowanie do ticketów (obowiązkowe)
 - Po każdej sesji: komentarz PL (`add_comment`) + log czasu (`log_time`, min 1 min) na tickecie. MCP: `mcp__claude_ai_Monolynx__*`.
+- Raport końcowy do Team Managera wysyłaj przez `SendMessage(to="main")`. Nazwa sesji z promptu (`monolynx-<KEY>-<model>`) adresuje TĘ sesję, nie TM - wysyłka na nią kończy się błędem "no agent reachable". W raporcie napisz, że komentarz i `log_time` już dodałeś, żeby TM nie zalogował czasu drugi raz.
+
+## Changelog pluginu w tickecie
+- Wpis idzie pod `### Unreleased` (reguła `plugin-version-bump.md` pkt 1), ale `check_version_matches_changelog` w `scripts/validate_plugin_consistency.py` porównuje PIERWSZY nagłówek `^###\s*(\S+)` z `version` w `plugin.json`, więc `Unreleased` da naruszenie w CI. Numer nadaje mergujący (pkt 2). Jeśli masz `plugin.json` na liście "nie ruszać", zrób pkt 1 i zgłoś ten konflikt Team Managerowi zamiast bumpować samemu.
 
 ## Reguły z review
 - Nowa integracja dostępna użytkownikowi musi być opisana na landing page w obu obsługiwanych językach (MON-182).
