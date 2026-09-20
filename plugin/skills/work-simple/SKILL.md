@@ -31,25 +31,31 @@ echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-fal
 | `MONOLYNX_AUTOTEST` | `false` | `true` - skill sam odpala lint i testy; `false` - wypisuje komendy i czeka na wynik |
 | `MONOLYNX_AUTOCOMMIT` | `false` | `true` - commit po zielonym tescie; `false` - wypisuje komende |
 | `MONOLYNX_AUTOPUSH` | `false` | `true` - push bez pytania (dziala TYLKO razem z `AUTOCOMMIT=true`); `false` - nigdy nie pushuje |
-| `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia |
-| `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): kazde czekanie na odpowiedz uzytkownika poza kontraktem konczy ture linia `SPRINT-RUN STOP: <powod>`; implikuje `MONOLYNX_CONTRACT=auto` |
-| `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) |
+| `MONOLYNX_CONTRACT` | `ask` | `ask` - kontrakt autonomii czeka na ENTER; `auto` - lista "stop przed" jest wypisywana i zapisywana w komentarzu planu jako KONTRAKT (auto), praca idzie dalej bez potwierdzenia | <!-- shared:flag-contract -->
+| `MONOLYNX_SPRINT_RUN` | `0` | `1` - tryb sesji w tle (dyspozytor `/monolynx:sprint-run`): kazde czekanie na odpowiedz uzytkownika poza kontraktem konczy ture linia `SPRINT-RUN STOP: <powod>`; implikuje `MONOLYNX_CONTRACT=auto` | <!-- shared:flag-sprint-run -->
+| `MONOLYNX_AUTOMR` | `false` | `true` - po faktycznym pushu tworzy merge request przez `glab mr create` (dziala TYLKO razem z `AUTOCOMMIT=true` i `AUTOPUSH=true`) | <!-- shared:flag-automr -->
 | `MONOLYNX_BASE_BRANCH` | - | Punkt startu / branch bazowy sprawdzany przy gate'cie 0.45 (simple flow nie zaklada nowego brancha sam, ale wciaz gate'uje prace na branchu bazowym); pusta -> ustalana lancuchem fallbacku (`MONOLYNX_MR_TARGET`, potem wykrycie domyslnego brancha repozytorium). Rozni sie od `MONOLYNX_BRANCH_MODE` w skillu `work` (waliduje NAZWE brancha roboczego, nie punkt startu) i `MONOLYNX_MR_TARGET` (cel MR, nie punkt startu) |
 | `MONOLYNX_MR_TARGET` | - | Branch docelowy MR tworzonego przez AUTOMR (np. `develop`, gdy tickety merguja sie do brancha integracyjnego); pusta -> domyslny branch repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`, potem `glab repo view`), patrz 4.5 |
 
+<!-- shared:flags-source -->
 Flagi odczytaj ze środowiska procesu lub jawnej konfiguracji klienta jako dane. AUTO* działa wyłącznie w zakresie dozwolonym przez użytkownika i runtime; odmowa ma pierwszeństwo.
+<!-- /shared:flags-source -->
 
+<!-- shared:sprint-run-notice -->
 Przy pierwszym `MONOLYNX_SPRINT_RUN=1` w sesji poinformuj uzytkownika:
 _"Tryb sesji w tle - nie czekam na odpowiedzi, zatrzymuje sie linia SPRINT-RUN STOP."_
 Komplet flag zalecany dla dyspozytora `/monolynx:sprint-run`: `CONTRACT=auto`,
 `SPRINT_RUN=1`, `AUTOTEST=true`, `AUTOCOMMIT=true`, `AUTOPUSH=true`; `AUTOMR`
 opcjonalnie.
+<!-- /shared:sprint-run-notice -->
 
 ---
 
 ## Ustalenie slug projektu
 
+<!-- shared:slug -->
 Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` procesu > jawna konfiguracja klienta lub `.env` projektu czytane jako dane (nigdy `source`). Brak wartości: zapytaj o slug i zatrzymaj działania projektowe, bez zgadywania.
+<!-- /shared:slug -->
 
 
 ## FAZA 0: Inicjalizacja + decyzja scope
@@ -1134,7 +1140,15 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 14. **Przerwanie pracy na dowolnym etapie** (stop uzytkownika, eskalacja, wyczerpany limit) -> domknij otwarte joby (`running` -> `failed`, `pending` -> `skipped`) i `finish_pipeline(status="failed")` (best-effort), zanim zakonczysz.
 15. **Blad toola MCP poza pipeline** (`add_comment`, `log_time`) -> jeden retry, dalej blad -> odnotuj i kontynuuj. Bledy `update_ticket` / `update_acceptance_criterion` dodatkowo zglos uzytkownikowi wprost.
 16. **Kryteria akceptacji obowiazkowe** - dev odhacza swoje (2.3), TM weryfikuje wszystkie i cofa odhaczone na wyrost (4.0).
-17. **Hook pluginu egzekwuje czesc regul** (`hooks/bash_guard.py`, od 1.6.0) - subagentom twardo blokuje `git add/commit/push/reset --hard/rebase` oraz lint/testy; glownej sesji daje "ask" na `git push` i lint/testy, gdy `MONOLYNX_AUTOPUSH`/`MONOLYNX_AUTOTEST` != true. Tak samo traktuje `glab mr create`: subagentowi deny, glownej sesji "ask", dopoki `MONOLYNX_AUTOMR` != true. Deny u subagenta to oczekiwane zachowanie, nie obchodz go. **Hook nie jest gwarantowany**: dziala dopiero po zaladowaniu pluginu i nadaniu mu zaufania w kliencie, a twarde blokady subagentow wymagaja, zeby klient przekazywal identyfikacje subagenta w PreToolUse. Stan sprawdzasz markerem `~/.cache/monolynx/hook-active/<session_id>` (0.45 i 2.4) i raportujesz w 4.8; brak potwierdzenia -> zgody egzekwuje rozmowa z uzytkownikiem. Opcja uzytkownika `MONOLYNX_HOOK_ASK_UNSUPPORTED=true` zamienia `ask` na `deny` dla klientow ignorujacych `ask` - nie ustawiasz jej sam.
+17. **Hook pluginu egzekwuje czesc regul** (`hooks/bash_guard.py`, od 1.6.0) -
+    <!-- shared:hook-core -->
+    subagentom twardo blokuje `git add/commit/push/reset --hard/rebase` oraz lint/testy; glownej sesji daje "ask" na `git push` i lint/testy, gdy `MONOLYNX_AUTOPUSH`/`MONOLYNX_AUTOTEST` != true. Tak samo traktuje `glab mr create`: subagentowi deny, glownej sesji "ask", dopoki `MONOLYNX_AUTOMR` != true.
+    <!-- /shared:hook-core -->
+    Deny u subagenta to oczekiwane zachowanie, nie obchodz go.
+    <!-- shared:hook-guarantee -->
+    **Hook nie jest gwarantowany**: dziala dopiero po zaladowaniu pluginu i nadaniu mu zaufania w kliencie, a twarde blokady subagentow wymagaja, zeby klient przekazywal identyfikacje subagenta w PreToolUse.
+    <!-- /shared:hook-guarantee -->
+    Stan sprawdzasz markerem `~/.cache/monolynx/hook-active/<session_id>` (0.45 i 2.4) i raportujesz w 4.8; brak potwierdzenia -> zgody egzekwuje rozmowa z uzytkownikiem. Opcja uzytkownika `MONOLYNX_HOOK_ASK_UNSUPPORTED=true` zamienia `ask` na `deny` dla klientow ignorujacych `ask` - nie ustawiasz jej sam.
 18. **Prawa decyzyjne ustalane RAZ, na starcie** (2.2) - kontrakt autonomii i STOP CONDITIONS zastepuja sterowanie przez przerywanie. Przerwanie usera w trakcie = kontrakt byl niekompletny; brakujaca pozycje odnotuj w 4.8. Przy `SPRINT_RUN=1` patrz regula 21.
 19. **Tryb defektu** (0.2) - research kodu obowiazkowy, test regresyjny przed fixem, krytyk ocenia nazwany mechanizm, nie znikniecie symptomu.
 20. **Ostatni przebieg lint+test jest pelny** (3.5.3) - iteracja moze testowac obszar, zamkniecie testuje calosc.

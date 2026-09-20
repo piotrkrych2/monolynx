@@ -68,6 +68,17 @@ _COMMAND_NAME_RE = re.compile(r"/monolynx-[A-Za-z0-9-]+")
 _CHANGELOG_HEADING_RE = re.compile(r"^##\s*Changelog\s*$", re.MULTILINE)
 _CHANGELOG_ENTRY_RE = re.compile(r"^###\s*(\S+)", re.MULTILINE)
 
+_SHARED_NAME = r"[a-z0-9][a-z0-9-]*"
+_SHARED_OPEN_ONLY_RE = re.compile(rf"^\s*<!--\s*shared:({_SHARED_NAME})\s*-->\s*$")
+_SHARED_CLOSE_ONLY_RE = re.compile(rf"^\s*<!--\s*/shared:({_SHARED_NAME})\s*-->\s*$")
+_SHARED_LINE_FORM_RE = re.compile(rf"^(.*\S.*)<!--\s*shared:({_SHARED_NAME})\s*-->\s*$")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_shared_content(text: str) -> str:
+    """Collapse whitespace runs to one space - the only agreed normalization (MON-189)."""
+    return _WHITESPACE_RE.sub(" ", text).strip()
+
 
 class ConfigError(Exception):
     """Blad konfiguracji: brakujaca sekcja Changelog albo pole version."""
@@ -245,6 +256,85 @@ def check_runtime_contract(files: dict[str, str]) -> list[str]:
     return violations
 
 
+def check_shared_blocks(files: dict[str, str]) -> list[str]:
+    """Sprawdz spojnosc fragmentow oznaczonych `shared:<nazwa>` miedzy plikami (MON-189).
+
+    Dwie formy znacznika: blokowa (`<!-- shared:x -->` / `<!-- /shared:x -->`,
+    kazdy w osobnej linii - tresc to linie pomiedzy nimi) i liniowa
+    (`<!-- shared:x -->` na koncu linii z trescia - potrzebna w wierszach
+    tabel GFM, gdzie samodzielna linia komentarza HTML konczy tabele).
+    Normalizacja przed porownaniem to wylacznie zwiniecie bialych znakow do
+    pojedynczej spacji + strip - zadnego fuzzy matchingu, bo szersza
+    normalizacja przepuscilaby rozjazd znaczeniowy.
+
+    Znaczniki `runtime:claude-code` nie sa `shared:*` i nie licza sie do
+    zagniezdzenia - przechodza jako zwykla tresc bloku.
+    """
+    violations: list[str] = []
+    occurrences: dict[str, list[tuple[str, str]]] = {}
+
+    for name in sorted(files):
+        content = files[name]
+        stack_names: list[str] = []
+        stack_starts: list[int] = []
+        stack_lines: list[list[str]] = []
+        seen_in_file: set[str] = set()
+
+        for line_number, line in enumerate(content.splitlines(), start=1):
+            open_match = _SHARED_OPEN_ONLY_RE.match(line)
+            if open_match:
+                block_name = open_match.group(1)
+                if stack_names:
+                    violations.append(f"{name}:{line_number}: zagnieżdżony blok 'shared:{block_name}' wewnątrz otwartego 'shared:{stack_names[-1]}'")
+                stack_names.append(block_name)
+                stack_starts.append(line_number)
+                stack_lines.append([])
+                continue
+
+            close_match = _SHARED_CLOSE_ONLY_RE.match(line)
+            if close_match:
+                if not stack_names:
+                    violations.append(f"{name}:{line_number}: znacznik zamykający 'shared:{close_match.group(1)}' bez odpowiadającego otwierającego")
+                    continue
+                block_name = stack_names.pop()
+                stack_starts.pop()
+                block_content = "\n".join(stack_lines.pop())
+                if block_name in seen_in_file:
+                    violations.append(f"{name}: nazwa 'shared:{block_name}' występuje dwukrotnie w tym samym pliku")
+                seen_in_file.add(block_name)
+                occurrences.setdefault(block_name, []).append((name, _normalize_shared_content(block_content)))
+                continue
+
+            if not stack_names:
+                line_match = _SHARED_LINE_FORM_RE.match(line)
+                if line_match:
+                    block_name = line_match.group(2)
+                    if block_name in seen_in_file:
+                        violations.append(f"{name}: nazwa 'shared:{block_name}' występuje dwukrotnie w tym samym pliku")
+                    seen_in_file.add(block_name)
+                    occurrences.setdefault(block_name, []).append((name, _normalize_shared_content(line_match.group(1))))
+                    continue
+
+            for buffer in stack_lines:
+                buffer.append(line)
+
+        for block_name, start_line in zip(stack_names, stack_starts):
+            violations.append(f"{name}:{start_line}: niezamknięty znacznik 'shared:{block_name}' - brak pary zamykającej do końca pliku")
+
+    for block_name in sorted(occurrences):
+        occurrence_list = occurrences[block_name]
+        present_in = {file_name for file_name, _ in occurrence_list}
+        if len(present_in) < 2:
+            only_file = next(iter(present_in))
+            violations.append(f"{only_file}: fragment 'shared:{block_name}' występuje tylko w tym pliku - brak pary w drugim pliku")
+            continue
+        normalized_variants = {norm for _, norm in occurrence_list}
+        if len(normalized_variants) > 1:
+            violations.append(f"shared:{block_name}: rozjazd treści między plikami: {', '.join(sorted(present_in))}")
+
+    return violations
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Walidator spojnosci pluginu Monolynx (referencje krokow, em-dash, nazwy komend, wersja/changelog).")
     parser.add_argument(
@@ -300,6 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     violations.extend(check_em_dash(files))
     violations.extend(check_command_names(files))
     violations.extend(check_runtime_contract(files))
+    violations.extend(check_shared_blocks(files))
 
     try:
         violations.extend(check_version_matches_changelog(plugin_json_text, readme_text))

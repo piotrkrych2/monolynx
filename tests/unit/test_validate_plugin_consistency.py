@@ -442,3 +442,195 @@ class TestRuntimeContract:
 
     def test_unclosed_variant_is_reported(self):
         assert validator.check_runtime_contract(self.files("<!-- runtime:claude-code -->\nToolSearch(query='x')"))
+
+
+# ---------------------------------------------------------------------------
+# check_shared_blocks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCheckSharedBlocks:
+    """Kontrakt (ustalony przez Team Managera dla MON-189):
+
+    check_shared_blocks(files: dict[str, str]) -> list[str]
+
+    Dwie formy znacznika:
+    - blokowa: `<!-- shared:<nazwa> -->` / `<!-- /shared:<nazwa> -->`, kazdy
+      w osobnej linii; tresc to linie pomiedzy nimi.
+    - liniowa: `<!-- shared:<nazwa> -->` na koncu linii z trescia; tresc to
+      ta jedna linia z usunietym znacznikiem (potrzebne w wierszach tabel
+      markdown, bo samodzielna linia komentarza konczy tabele GFM).
+
+    Normalizacja przed porownaniem: zwiniecie ciagow bialych znakow do
+    pojedynczej spacji + strip. Nic wiecej - zadnego fuzzy matchingu.
+    """
+
+    @staticmethod
+    def pair(block_a: str, block_b: str, name_a: str = "work.md", name_b: str = "work-simple.md") -> dict[str, str]:
+        """Buduje dwuplikowy slownik jak przy work.md / work-simple.md."""
+        return {name_a: block_a, name_b: block_b}
+
+    # -- zgodnosc ------------------------------------------------------
+
+    def test_identical_shared_block_content_no_violation(self):
+        files = self.pair(
+            "przed\n<!-- shared:slug -->\nTresc wspolna.\n<!-- /shared:slug -->\npo\n",
+            "co innego\n<!-- shared:slug -->\nTresc wspolna.\n<!-- /shared:slug -->\nkoniec\n",
+        )
+        assert validator.check_shared_blocks(files) == []
+
+    def test_content_matches_despite_different_line_wrapping_and_indentation(self):
+        """Cala uzgodniona normalizacja: zwiniecie bialych znakow, nic wiecej."""
+        files = self.pair(
+            "<!-- shared:slug -->\nKrok pierwszy.\nKrok drugi.\n<!-- /shared:slug -->\n",
+            "<!-- shared:slug -->\n   Krok pierwszy. Krok   drugi.   \n<!-- /shared:slug -->\n",
+        )
+        assert validator.check_shared_blocks(files) == []
+
+    def test_no_shared_markers_at_all_no_violation(self):
+        """Check nie moze alarmowac na plikach bez zadnych znacznikow shared."""
+        files = self.pair(
+            "Zwykly tekst bez zadnych znacznikow shared.\n",
+            "Inny zwykly tekst, tez bez znacznikow.\n",
+        )
+        assert validator.check_shared_blocks(files) == []
+
+    def test_empty_files_dict_no_violation(self):
+        assert validator.check_shared_blocks({}) == []
+
+    # -- rozjazd semantyczny --------------------------------------------
+
+    def test_semantic_drift_between_two_files_is_a_violation(self):
+        files = self.pair(
+            "<!-- shared:slug -->\nWykonaj krok pierwszy.\n<!-- /shared:slug -->\n",
+            "<!-- shared:slug -->\nWykonaj krok drugi.\n<!-- /shared:slug -->\n",
+        )
+        violations = validator.check_shared_blocks(files)
+        assert violations
+        combined = "\n".join(violations)
+        assert "slug" in combined
+        assert "work.md" in combined
+        assert "work-simple.md" in combined
+
+    # -- brak pary --------------------------------------------------------
+
+    def test_name_present_in_only_one_file_is_a_violation(self):
+        files = self.pair(
+            "<!-- shared:only-here -->\nTresc.\n<!-- /shared:only-here -->\n",
+            "Nic tu nie ma.\n",
+        )
+        violations = validator.check_shared_blocks(files)
+        assert len(violations) == 1
+        assert "only-here" in violations[0]
+        assert "work.md" in violations[0]
+
+    # -- wadliwe znaczniki --------------------------------------------------
+
+    def test_unclosed_opening_marker_is_a_violation(self):
+        files = {"work.md": "<!-- shared:slug -->\nTresc bez zamkniecia az do konca pliku.\n"}
+        violations = validator.check_shared_blocks(files)
+        assert violations
+        assert any("slug" in v and "work.md" in v for v in violations)
+
+    def test_closing_marker_without_opening_is_a_violation(self):
+        files = {"work.md": "Tresc przed.\n<!-- /shared:slug -->\n"}
+        violations = validator.check_shared_blocks(files)
+        assert violations
+        assert any("slug" in v and "work.md" in v for v in violations)
+
+    def test_nested_shared_block_is_a_violation(self):
+        nested = (
+            "<!-- shared:outer -->\nTresc zewnetrzna.\n<!-- shared:inner -->\nTresc wewnetrzna.\n<!-- /shared:inner -->\n<!-- /shared:outer -->\n"
+        )
+        # ta sama tresc w obu plikach - izoluje naruszenie od checku "brak pary"
+        files = self.pair(nested, nested)
+        violations = validator.check_shared_blocks(files)
+        assert violations
+        assert any("work.md" in v for v in violations)
+
+    def test_duplicate_name_in_the_same_file_is_a_violation(self):
+        files = self.pair(
+            "<!-- shared:slug -->\nA.\n<!-- /shared:slug -->\nTekst posredni.\n<!-- shared:slug -->\nB.\n<!-- /shared:slug -->\n",
+            "<!-- shared:slug -->\nA.\n<!-- /shared:slug -->\n",
+        )
+        violations = validator.check_shared_blocks(files)
+        assert violations
+        assert any("slug" in v and "work.md" in v for v in violations)
+
+    # -- forma liniowa (wiersze tabel markdown) ------------------------------
+
+    def test_line_form_identical_content_no_violation(self):
+        files = self.pair(
+            "| `/monolynx:work` | Startuje prace nad ticketem. | <!-- shared:row-work -->\n",
+            "| `/monolynx:work` | Startuje prace nad ticketem. | <!-- shared:row-work -->\n",
+        )
+        assert validator.check_shared_blocks(files) == []
+
+    def test_line_form_different_content_is_a_violation(self):
+        files = self.pair(
+            "| `/monolynx:work` | Startuje prace nad ticketem. | <!-- shared:row-work -->\n",
+            "| `/monolynx:work` | Startuje prace, prosty tryb. | <!-- shared:row-work -->\n",
+        )
+        violations = validator.check_shared_blocks(files)
+        assert len(violations) == 1
+        assert "row-work" in violations[0]
+        assert "work.md" in violations[0]
+        assert "work-simple.md" in violations[0]
+
+    # -- koegzystencja ze znacznikami runtime:claude-code --------------------
+
+    def test_runtime_block_inside_shared_is_not_nesting(self):
+        block = (
+            "<!-- shared:slug -->\n"
+            "Tresc wspolna.\n"
+            "<!-- runtime:claude-code -->\n"
+            "Instrukcja specyficzna dla Claude Code.\n"
+            "<!-- /runtime:claude-code -->\n"
+            "<!-- /shared:slug -->\n"
+        )
+        files = self.pair(block, block)
+        assert validator.check_shared_blocks(files) == []
+
+
+# ---------------------------------------------------------------------------
+# check_shared_blocks - integracja z main()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMainCliSharedBlocks:
+    def test_shared_block_mismatch_fails_cli_and_reports_on_stdout(self, tmp_path, capsys):
+        plugin_json = tmp_path / "plugin.json"
+        plugin_json.write_text(json.dumps({"name": "monolynx", "version": "1.5.0"}), encoding="utf-8")
+
+        readme = tmp_path / "README.md"
+        readme.write_text(
+            "# README\n\n## Changelog\n\n### 1.5.0\n- opis zmian\n",
+            encoding="utf-8",
+        )
+
+        # tresc celowo bez KROK/FAZA/sekcja pipeline.md, em-dash ani
+        # /monolynx-<nazwa>, zeby jedynym naruszeniem byl rozjazd shared:slug
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "work.md").write_text(
+            "<!-- shared:slug -->\nWspolny fragment mowi X.\n<!-- /shared:slug -->\n",
+            encoding="utf-8",
+        )
+        (skills_dir / "work-simple.md").write_text(
+            "<!-- shared:slug -->\nWspolny fragment mowi Y.\n<!-- /shared:slug -->\n",
+            encoding="utf-8",
+        )
+
+        argv = [
+            "--plugin-json",
+            str(plugin_json),
+            "--readme",
+            str(readme),
+            "--skills-dir",
+            str(skills_dir),
+        ]
+        assert validator.main(argv) == 1
+        out = capsys.readouterr().out
+        assert "slug" in out
