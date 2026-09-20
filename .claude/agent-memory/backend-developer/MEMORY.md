@@ -6,6 +6,7 @@
 - [patterns_edit_tool.md](patterns_edit_tool.md) — How to reliably use the Edit tool on large files
 - [patterns_xml_comment_double_hyphen.md](patterns_xml_comment_double_hyphen.md) — XML comment with "--" (CLI flags) in provenance header breaks the whole fixture, not just the comment
 - [patterns_yaml_frontmatter_to_toml.md](patterns_yaml_frontmatter_to_toml.md) — copy an already-escaped YAML frontmatter string verbatim into TOML, never json.loads-decode then re-escape (double-escaping bug)
+- [patterns_markdown_marker_parsing.md](patterns_markdown_marker_parsing.md) — stack-based parsing of paired shared:/runtime: HTML-comment markers in SKILL.md, GFM table trailing-content trick, minimal reflow rule, verify-without-running-the-validator trick
 
 ## Reguly z review krytyka
 
