@@ -31,6 +31,12 @@ Podkomendy:
     target-ci    --provider gh --runs-file R
         Stan CI na branchu docelowym dla commita merge.
 
+    ticket-key   [--source-branch B] [--title T]
+        Klucz ticketu ([A-Z]+-[0-9]+, re.search, pierwsze dopasowanie) z brancha
+        zrodlowego albo, gdy tam go nie ma, z tytulu MR/PR. Brak dopasowania w
+        obu polach (albo brak obu argumentow) to poprawny wynik biznesowy -
+        {"key": null}, kod wyjscia 0, nie blad wejscia.
+
 Wejscia:
     --list-file       `glab mr list -F json -P 100` albo
                       `gh pr list --state open -L 100 --json number,createdAt,baseRefName,headRefName,isDraft,url`
@@ -117,6 +123,10 @@ _QUEUE_STATUSES = {"pending", "merging", "done", "closed", "stopped"}
 _REF_RE = re.compile(r"^(?P<sigil>[!#])(?P<number>[1-9][0-9]*)$")
 _GITLAB_URL_RE = re.compile(r"^https?://[^/]+/(?P<repo>.+?)/-/merge_requests/(?P<number>[1-9][0-9]*)/?$")
 _GITHUB_URL_RE = re.compile(r"^https?://github\.com/(?P<repo>[^/]+/[^/]+)/pull/(?P<number>[1-9][0-9]*)/?$")
+
+# Branch typowo nie zaczyna sie od klucza (prefiksy jak "worktree-", "feat/") -
+# re.search, nie re.match. Pierwsze dopasowanie wygrywa (MON-196).
+_TICKET_KEY_RE = re.compile(r"[A-Z]+-[0-9]+")
 
 
 class _UsageError(Exception):
@@ -372,6 +382,24 @@ def target_ci_gh(runs: list[Any]) -> dict[str, str]:
     return {"status": "success", "reason": "wszystkie runy zielone"}
 
 
+# --- ticket-key ---
+
+
+def ticket_key(source_branch: str | None, title: str | None) -> dict[str, Any]:
+    """Klucz ticketu z brancha zrodlowego, a gdy go tam nie ma, z tytulu MR/PR.
+
+    Brak dopasowania w obu polach jest poprawnym wynikiem ({"key": None}), nie
+    bledem wejscia - MR/PR bez klucza w nazwie brancha i tytule to realny
+    przypadek (fixture mr-view-opened-pipeline-running).
+    """
+    for text in (source_branch, title):
+        if text:
+            match = _TICKET_KEY_RE.search(text)
+            if match:
+                return {"key": match.group(0)}
+    return {"key": None}
+
+
 # --- kolejka ---
 
 
@@ -593,6 +621,10 @@ def _build_parser() -> _ArgumentParser:
     p_target.add_argument("--pipelines-file")
     p_target.add_argument("--jobs-file")
     p_target.add_argument("--runs-file")
+
+    p_ticket_key = sub.add_parser("ticket-key")
+    p_ticket_key.add_argument("--source-branch")
+    p_ticket_key.add_argument("--title")
     return parser
 
 
@@ -620,6 +652,8 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         pr = _load_object(args.pr_file, "pr-file")
         _validate_gh_pr(pr)
         return classify_gh(pr, args.user_approved_sha)
+    if args.command == "ticket-key":
+        return ticket_key(args.source_branch, args.title)
     if args.provider == "glab":
         if not args.pipelines_file:
             raise _UsageError("target-ci --provider glab wymaga --pipelines-file")

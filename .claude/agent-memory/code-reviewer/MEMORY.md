@@ -3,7 +3,7 @@
 ## Topic files
 - [plugin_packaging.md](plugin_packaging.md) — Claude Code plugin (MON-72): structure, `claude plugin validate`, em-dash scope gap, `${user_config.X}`-in-bash bug. MON-72: 88/100 APPROVED.
 - [migration_head_verify.md](migration_head_verify.md) — Alembic review: zawsze sam licz head + sprawdz unikalnosc revision ID, nie wierz ticketowi (MON-73 blocker).
-- [review_history.md](review_history.md) — Historia ocen ticketow MON-* (score/iteracje/znaleziska per ticket). MON-84 pokrycie scrum.py: 92/100 APPROVED.
+- [review_history.md](review_history.md) — Historia ocen ticketow MON-* (score/iteracje/znaleziska per ticket). MON-84 pokrycie scrum.py: 92/100 APPROVED. MON-196 mr-queue -> ticket done: 100/100.
 - [wiki_llm_method.md](wiki_llm_method.md) — Metoda LLM Wiki (MON-73): sygnatury wiki/wiki_lint/wiki_bootstrap, marker sprzecznosci regex, RESERVED_SLUGS, patch MinIO gotcha (wiki_lint ma wlasny import get_markdown).
 - [bash_guard.md](bash_guard.md) — Hook pluginu (MON-144/147): jak probowac hooka pod aktywnym guardem, PRE-EXISTING luka DESTRUCTIVE na flagi dlugie (`rm --recursive` = ALLOW), granice `is_tmp_cleanup`.
 - [graphify_sync.md](graphify_sync.md) — Graf graphify->Monolynx (MON-115/116/118): kontrakt replace_graph (pola/typy/limity), mapowanie taksonomii, transport MCP wzorzec, em-dash pitfall w SKILL.md. MON-118: 87/100 APPROVED.
@@ -39,8 +39,9 @@
 - New features added to some ticket tools but not all (labels in list_tickets/get_ticket but not search_tickets/create/update responses) — consistency gap
 - `scalar() or default` anti-pattern: `0 or -1` returns -1 in Python (0 is falsy). When using COALESCE in SQL, don't add Python-side `or` fallback — it breaks on zero values. Seen in MON-53 position calculation.
 
-## Ticket ID Lookup
-- Monolynx MCP uses UUID ticket IDs, not key strings like "MON-20". Must search by title/key first.
+## Ticket ID Lookup (SPROSTOWANE MON-196)
+- Toole MCP ticketowe (`get_ticket`, `update_ticket`, `add_comment`, `get_ticket_schedule`) przyjmuja w `ticket_id` UUID **albo klucz** typu `MON-20`. Wczesniejszy wpis "tylko UUID, szukaj po tytule" byl BLEDNY.
+- PULAPKA przy review: `_resolve_ticket_uuid` (`src/monolynx/mcp_server.py:799-823`) dopasowuje wylacznie NUMER, prefiks kodu projektu IGNORUJE. Klucz `JIRA-45` podany w projekcie o kodzie `MON` rozwiaze sie na MON-45 i cicho zmodyfikuje cudzy ticket. Kod, ktory wyciaga klucz z danych zewnetrznych (nazwa brancha, tytul MR) i zapisuje po nim, musi sam sprawdzic prefiks - pierwsza linia odpowiedzi `get_ticket` to `<KOD>-<numer> | tytul` (`_format_ticket_detail`, `mcp_server.py:406`), wiec porownanie jest darmowe przy read-before-write.
 
 
 ## Test Patterns Confirmed

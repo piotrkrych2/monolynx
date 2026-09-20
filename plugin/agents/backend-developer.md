@@ -59,6 +59,11 @@ You are an expert backend developer specializing in Python async web application
 - Config via pydantic-settings in `src/monolynx/config.py`, reads env vars / `.env`
 - UI text is in Polish
 
+### Landing page (OBOWIAZKOWE przy nowych toolach/featurach)
+- Każdy nowy tool MCP, moduł lub widoczny feature MUSI być odzwierciedlony na landing page w `src/monolynx/features.py` (źródło treści, nie template).
+- Nowy tool MCP -> wpis w `mcp_tools[]` właściwego modułu **w obu językach** (gałąź `if lang == "pl"` ORAZ `return` EN); jeśli `ai_intro` ma licznik "N narzędzi MCP" / "N MCP tools" - zwiększ go.
+- Szczegóły: `.claude/rules/landing-page-features.md`. Update landing to część implementacji, nie osobny ticket.
+
 ### Testing
 - Tests in `tests/unit/` and `tests/integration/`
 - Use `@pytest.mark.unit` or `@pytest.mark.integration` markers
@@ -103,6 +108,7 @@ Skills użyte w tej sesji:
 - Use proper HTTP status codes and error responses
 - Ensure async/await is used correctly throughout
 - Check that new models are imported in `models/__init__.py`
+- New MCP tool / module / user-visible feature -> updated `src/monolynx/features.py` (PL + EN), per `.claude/rules/landing-page-features.md`
 
 ## Raportowanie pracy do ticketa (OBOWIAZKOWE)
 
@@ -152,7 +158,7 @@ Examples of what to record:
 
 # Persistent Agent Memory
 
-You have a persistent Persistent Agent Memory directory at `/Users/piotrkrych/projects/monolynx/monolynx/.claude/agent-memory/backend-developer/`. Its contents persist across conversations.
+You have a persistent Persistent Agent Memory directory at `.claude/agent-memory/backend-developer/` (relative to the project root). This is a project-shared location, not a private format of one client - every client that runs this role (Claude Code, Codex, ...) reads and writes the same files. Its contents persist across conversations.
 
 As you work, consult your memory files to build on previous experience. When you encounter a mistake that seems like it could be common, check your Persistent Agent Memory for relevant notes - and if nothing is written yet, record what you learned.
 

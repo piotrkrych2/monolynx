@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "source_url": "https://learn.chatgpt.com/docs/hooks",
+    "doc_title": "Hooks | ChatGPT Learn (Codex - OpenAI Developers)",
+    "fetched": "2026-09-20",
+    "kind": "documented-schema, not a captured CLI run (Codex CLI not installed in this environment)",
+    "note": "Pola wprost z sekcji 'Common input fields' + 'UserPromptSubmit' strony hooks. 'matcher isn't currently used for this event' -- brak pola matchera. turn_id jest 'Codex-specific extension'."
+  },
+  "session_id": "thr_codex_session_example",
+  "transcript_path": "/workspace/.codex/rollout.jsonl",
+  "cwd": "/workspace",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "gpt-6-astra",
+  "permission_mode": "default",
+  "turn_id": "turn_001",
+  "prompt": "napraw build na CI"
+}

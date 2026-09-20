@@ -49,6 +49,22 @@ echo "MODE=${MONOLYNX_SPRINT_RUN_MODE:-interactive} AUTOPUSH=${MONOLYNX_AUTOPUSH
 
 **Merge i approve pilnuje hook `bash_guard.py`**: `glab mr merge` / `gh pr merge` pyta o zgodę, dopóki `MONOLYNX_AUTOMERGE` nie jest `true` (w trybie w tle `MONOLYNX_SPRINT_RUN=1` pytanie zamienia się w odmowę). `glab mr approve` / `gh pr review --approve` pyta zawsze. Ty nigdy nie zatwierdzasz MR/PR - approve daje człowiek.
 
+**Hook nie jest gwarancją.** Działa dopiero po załadowaniu pluginu i nadaniu mu zaufania w kliencie, a samo pytanie (decyzja `ask`) egzekwuje tylko klient, który tę decyzję obsługuje - klient, który jej nie wspiera, wykonuje komendę mimo hooka. Stan ochrony rozpoznajesz po markerze `~/.cache/monolynx/hook-active/<session_id>`, który hook zapisuje przy każdym wywołaniu PreToolUse (pole `subagent_identification` mówi, czy klient w ogóle identyfikuje subagenta). Po pierwszej komendzie Bash tego skilla odczytaj marker **dwiema osobnymi komendami**, tak samo jak KROK 0 najpierw wypisuje ścieżki, a dopiero potem wstawiasz je literalnie. Najpierw katalog domowy:
+
+```bash
+echo $HOME
+```
+
+Potem `find` po ścieżce wpisanej literalnie - w miejsce `<HOME>` wstaw to, co zwróciła poprzednia komenda (np. `/Users/jan`):
+
+```bash
+find <HOME>/.cache/monolynx/hook-active -type f -mmin -5 -exec cat {} + 2>/dev/null
+```
+
+Żadnej zmiennej ani `$(...)` w tej drugiej komendzie: tick bywa uruchamiany z worktree, a guard izolacji worktree odrzuca komendę, której argument jest wyliczany w runtime - jednolinijkowiec z `"$HOME/..."` w ogóle się nie wykona.
+
+Brak wpisów po pierwszej komendzie Bash: nie zakładaj, że hook zatrzyma merge ani approve. Traktuj zgodę jako **swój** obowiązek - pytasz użytkownika wprost i czekasz na odpowiedź (w trybie `batch`: `MR-QUEUE STOP: <ref> brak potwierdzonej ochrony hooka`), a w podsumowaniu ticku napisz jedną linią, że zgody były egzekwowane rozmową, nie hookiem. Użytkownik może włączyć `MONOLYNX_HOOK_ASK_UNSUPPORTED=true` (opt-in), co zamienia `ask` na odmowę z wyjaśnieniem - wskaż tę opcję, ale nie ustawiaj jej sam.
+
 ## KROK 1: Preflight
 
 ```bash
@@ -105,7 +121,19 @@ Weź element kolejki o refie `next` (pola `provider`, `number`, `repo`, `status`
 
 ### 3a. Status `merging` - czekanie na CI brancha docelowego
 
-MR jest już zmergowany (`merge_sha` ustawione). Sprawdź pipeline commita merge na branchu docelowym (`target_branch` z ostatniego `classify`; gdy go nie znasz, odczytaj go z `glab mr view <n> -F json` / `gh pr view <n> --json baseRefName`):
+MR jest już zmergowany (`merge_sha` ustawione). Odczytaj `target_branch` razem z branchem źródłowym i tytułem - ten sam JSON zasili później klucz ticketu w **Domknięciu na `success`**, niżej, więc czytaj go zawsze na wejściu do 3a, niezależnie od tego, czy `target_branch` znasz skądinąd:
+
+```bash
+glab mr view <n> -F json > "$STATE_DIR/mr.json"   # zwraca m.in. target_branch, source_branch, title (pole gotowe w -F json)
+```
+
+albo dla GitHuba:
+
+```bash
+gh pr view <n> --json baseRefName,headRefName,title > "$STATE_DIR/pr.json"
+```
+
+Sprawdź pipeline commita merge na branchu docelowym. Dla GitLaba:
 
 ```bash
 glab api "projects/:fullpath/pipelines?sha=<merge_sha>&ref=<target_branch>" > "$STATE_DIR/pipelines.json"
@@ -122,12 +150,73 @@ python3 "$SCRIPT" target-ci --provider gh --runs-file "$STATE_DIR/runs.json"
 
 | `status` | Działanie |
 |---|---|
-| `success` | `queue-update --ref <ref> --status done`, potem wróć do KROK 3 z nowym `next` (odczyt jest tani, działanie zostaje jedno) |
+| `success` | patrz niżej: **Domknięcie na `success`** (ticket -> `done` + `queue-update --status done`) |
 | `wait` | nic nie rób, zakończ tick |
 | `failed` | `queue-update --ref <ref> --status stopped`; zaraportuj czerwony pipeline z nazwami jobów. Poprawka na branchu docelowym to nowa praca (ticket albo osobny MR), nie Twój tick. Interaktywnie zapytaj, co dalej; batch: `MR-QUEUE STOP` |
 | `needs_human` | jak `failed`, bez zmiany statusu kolejki |
 
 Komenda `queue-update` w pełnej postaci: `python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status <status>`.
+
+#### Domknięcie na `success`: ticket -> `done` i `queue-update`
+
+Zielone CI brancha docelowego domyka pozycję kolejki **i** (gdy da się rozpoznać powiązany ticket) przełącza ten ticket na `done`. To wciąż **jedno działanie tick** - zmiana statusu ticketu jest częścią tego samego domknięcia pozycji kolejki, nie osobnym krokiem.
+
+**Załaduj narzędzia (raz, przy pierwszym dojściu do tej gałęzi w danej sesji)**:
+
+<!-- runtime:claude-code -->
+```
+ToolSearch(query="+monolynx ticket get update comment", max_results=10)
+```
+<!-- /runtime:claude-code -->
+
+Potrzebne toole: `get_ticket`, `update_ticket`, `add_comment`.
+
+**Prefix tooli - ustal RAZ, nie zgaduj**: nazwy w tym skillu zapisane sa jako
+`mcp__monolynx__<tool>` - to placeholder. Rzeczywisty prefix zalezy od instalacji
+(`mcp__monolynx__*` plugin lokalny, `mcp__claude_ai_Monolynx__*` connector globalny
+claude.ai, w innych runtime'ach inny). Odczytaj prefix z nazw z aktualnego katalogu narzędzi i
+uzywaj go konsekwentnie. Zapytanie z `+monolynx` zwrocilo pusto mimo podpietego connectora
+-> powtorz bez `+`. Runtime bez ToolSearch: sprawdź faktyczny katalog narzędzi i użyj jego discovery oraz aktualnych schematów.
+
+`project_slug` zawsze jako `<PROJECT-SLUG>` (patrz `.claude/rules/skill-md-project-slug.md`) -
+w faktycznym wywolaniu podstaw realny slug projektu, nie zostawiaj placeholdera.
+
+1. **Klucz ticketu - licz go skryptem, nie zgaduj z prozy**:
+
+   ```bash
+   python3 "$SCRIPT" ticket-key --source-branch "<source_branch>" --title "<tytuł MR/PR>"
+   ```
+
+   `source_branch` i `title` bierzesz z `$STATE_DIR/mr.json` (GitLab: pola `source_branch`, `title`) albo `$STATE_DIR/pr.json` (GitHub: pola `headRefName`, `title`) zapisanego wyżej przy odczycie `target_branch` - nie dociągaj nowego zapytania tylko po te dwa pola. Wynik zawsze `{"key": "MON-xxx"}` albo `{"key": null}`, exit 0 w obu przypadkach - brak klucza to poprawny wynik, nie błąd.
+
+2. **`key` jest `null`** - klucza nie rozpoznano. Ticket zostaje **nietknięty**. Wykonaj tylko krok 4 (`queue-update --status done`) i w raporcie ticka jawnie zaznacz, z czego próbowano wyznaczyć klucz i że się nie udało, np.: "ticket nie zaktualizowany - nie rozpoznano klucza z brancha `<source_branch>` ani tytułu `<title>`".
+
+3. **`key` rozpoznany** - najpierw przeczytaj stan ticketu, dopiero potem ewentualnie go zmień (read-before-write, żeby nie dublować komentarza w kolejnym idempotentnym ticku):
+
+   ```
+   mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<key>")
+   ```
+
+   - **Guard prefiksu projektu.** Pierwsza linia wyniku ma kształt `<KOD>-<numer> | tytuł`. Porównaj `<KOD>-<numer>` z `<key>` wyliczonym przez `ticket-key` - muszą być identyczne. Rozjazd (np. klucz `JIRA-45` z brancha innego repo trafia tu jako `<key>`, a projekt Monolynx ma kod `MON`) traktuj **dokładnie jak `key: null`**: ticket zostaje nietknięty, krok 4 wykonuje się mimo to, w raporcie ticka jawnie zaznacz "klucz `<key>` nie należy do tego projektu (`get_ticket` zwrócił `<KOD>-<numer>`)". Sprawdzenie istnieje, bo `_resolve_ticket_uuid` (`src/monolynx/mcp_server.py`) dopasowuje ticket wyłącznie po numerze i ignoruje prefiks kodu projektu - bez tego guardu klucz z cudzego projektu cicho przestawiłby na `done` przypadkowy, tak samo ponumerowany ticket w tym projekcie.
+   - Prefiks się zgadza i druga linia wyniku zaczyna się `Status: done` -> ticket już zamknięty (ręcznie albo w poprzednim ticku). **Nie zmieniaj statusu, nie dodawaj drugiego komentarza.** Odnotuj w raporcie: "ticket `<key>` już `done`, bez zmian" (idempotencja ticka).
+   - Prefiks się zgadza i status inny niż `done` -> zmień na `done` i dopisz komentarz z merge SHA oraz identyfikatorem pipeline'u/runu brancha docelowego, który `target-ci` już ocenił wyżej jako `success` - GitLab: pole `id` najnowszego wpisu w `pipelines.json`; GitHub: `databaseId` runu (albo runów, gdy `runs.json` ma ich kilka) z `runs.json`:
+
+     ```
+     mcp__monolynx__update_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<key>", status="done")
+     mcp__monolynx__add_comment(project_slug="<PROJECT-SLUG>", ticket_id="<key>", content="Merge SHA: <merge_sha> - CI brancha docelowego zielone (pipeline <id>).")
+     ```
+
+   Błąd wywołania MCP (sieć, autoryzacja, projekt bez tego ticketu) **nie blokuje domknięcia pozycji kolejki**: złap go, wykonaj mimo to krok 4, i zaznacz w raporcie ticka "aktualizacja ticketu `<key>` nie powiodła się: `<błąd>`" - obserwacyjna warstwa (ticket) nigdy nie trzyma zakładnika kolejki merge.
+
+4. **Zawsze na końcu, niezależnie od wyniku punktów 2-3**, w tej kolejności - ticket najpierw:
+
+   ```bash
+   python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status done
+   ```
+
+   Ticket zmieniasz **przed** `queue-update`, nie po: `queue-update --status done` zdejmuje pozycję z `next`, więc przerwanie ticka między nimi (crash, koniec kontekstu) po samym `queue-update` zostawiłoby pozycję kolejki trwale domkniętą, a ticket na zawsze w `in_review` - żaden kolejny tick już by na niego nie spojrzał.
+
+   Wróć do KROK 3 z nowym `next` (odczyt jest tani, działanie zostaje jedno).
 
 ### 3b. Status `pending` - werdykt
 
