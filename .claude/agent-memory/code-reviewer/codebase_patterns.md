@@ -62,3 +62,5 @@ metadata:
 
 ## Landing page (MON-170)
 Teksty marketingowe zyja w `TRANSLATIONS` w `main.py`, nie tylko w szablonie - asercja `"<fraza>" in response.text` bywa ZIELONA na baseline. Test elementu UI musi celowac w markup (`">/monolynx:sprint-run</code>"`). Licznik skilli tez siedzi w `main.py`. Chipy komend: KOLEJNOSC z `mcp_guide.html`, ale KLASY od sasiadow w tym samym pliku.
+- Instrukcja w SKILL.md typu "obowiazuje przy KAZDYM X" musi lezec PRZED pierwszym X w pliku - Team Manager wykonuje dokument liniowo, wiec regula dopisana pozniej nie zostanie zastosowana do wczesniejszych wywolan. Sprawdzaj numery linii wystapien, nie tresc deklaracji (MON-187).
+- Formula odejmujaca okno subagenta od czasu TM jest poprawna tylko dla subagentow majacych wlasny `log_time`. W `work-simple` maja go dev i krytyk; Explore z FAZY 1 NIE ma (`references/researcher.md` bez `log_time`, brak odpowiednika KROK 3d z `work`), wiec jego czas zostaje w czasie TM (MON-187).

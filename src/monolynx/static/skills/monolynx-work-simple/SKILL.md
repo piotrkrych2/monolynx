@@ -41,6 +41,9 @@ echo "AUTOTEST=${MONOLYNX_AUTOTEST:-false} AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-fal
 Flagi odczytaj ze środowiska procesu lub jawnej konfiguracji klienta jako dane. AUTO* działa wyłącznie w zakresie dozwolonym przez użytkownika i runtime; odmowa ma pierwszeństwo.
 <!-- /shared:flags-source -->
 
+Przy pierwszym uzyciu `MONOLYNX_AUTOPUSH=true` w sesji poinformuj uzytkownika:
+_"AUTOPUSH włączony w zakresie udzielonych uprawnień; wymagane potwierdzenia użytkownika pozostają w mocy."_
+
 <!-- shared:sprint-run-notice -->
 Przy pierwszym `MONOLYNX_SPRINT_RUN=1` w sesji poinformuj uzytkownika:
 _"Tryb sesji w tle - nie czekam na odpowiedzi, zatrzymuje sie linia SPRINT-RUN STOP."_
@@ -164,7 +167,7 @@ Wybierz zrodla rozpoznania (wpisz litery, np. "wk" lub "wgk"):
 
 Poczekaj na odpowiedz. Zapisz wybor jako `research_sources = {"wiki": bool, "graph": bool, "code_explore": bool}`.
 
-**Uwaga:** Jesli user wybierze `wgk` (wszystkie 3) → Faza 1 dziala identycznie jak w full skill (uruchamiamy pelnego Explore agenta z wiki + graf + kod). Simple zostaje tylko w Fazie 3 (subagenty zamiast Agent Teams).
+**Uwaga:** Jesli user wybierze `wgk` (wszystkie 3) → FAZA 1 dziala identycznie jak w full skill (uruchamiamy pelnego Explore agenta z wiki + graf + kod wg `references/researcher.md`). Uproszczenie simple dotyczy FAZY 2 (dev) i FAZY 3.5 (krytyk) - oba sa zwyklymi subagentami zamiast Agent Teams.
 
 **TRYB = defekt**: `k` jest wymuszone (dopisz je do wyboru usera, nawet gdy
 wpisal `-`) i Explore dostaje dodatkowe zadanie "Mechanizm": reprodukcja
@@ -303,8 +306,9 @@ i kontynuuj (status to metadana, nie gate).
 date +%s && date +%F
 ```
 
-Druga wartosc (`YYYY-MM-DD`) to `date_logged` dla wszystkich `log_time`;
-praca przez polnoc -> zmierz `date +%F` ponownie dla poznych wpisow.
+Pierwsza wartosc zapamietaj jako `T_START_TM` - od niej liczy sie wall-clock
+epizodu (4.2). Druga wartosc (`YYYY-MM-DD`) to `date_logged` dla wszystkich
+`log_time`; praca przez polnoc -> zmierz `date +%F` ponownie dla poznych wpisow.
 
 ### 0.6. Utworz pipeline (instrumentacja - best-effort)
 
@@ -328,14 +332,16 @@ Pomin faze. Przejdz do Fazy 2. TM sam przeczyta 1-3 pliki wymienione wprost w ti
 
 Odczytaj lokalny plik `references/researcher.md` (kopia KROK 3b skilla `work`).
 Uruchom pełnego agenta Explore z zawartym tam promptem, podstawiając dane
-bieżącego ticketu i projektu. Poczekaj na raport.
+bieżącego ticketu i projektu. Model Explore dobierz wg 2.1 "Model subagentow"
+(runtime z wyborem modelu -> `model="sonnet"`; bez tej capability -> dziedzicz).
+Poczekaj na raport.
 
 ### Przypadek C - user wybral subset (np. `wk`, `g`, `wg`)
 
 TM robi research sam:
 - **wiki = true** → `mcp__monolynx__search_wiki(project_slug="<PROJECT-SLUG>", query="<kluczowe slowa>", limit=5)`. Jesli trafione → `get_wiki_page(...)` dla 1-2 najwazniejszych. Zapamietaj page_id dla Fazy 4.
 - **graph = true** → `list_graph_nodes(search="<nazwa>")` + `get_graph_node(node_id, depth=2)` dla max 3 kluczowych.
-- **code_explore = true** → uruchom Explore agenta ograniczonego tylko do kodu (bez wiki/graf w prompcie).
+- **code_explore = true** → uruchom Explore agenta ograniczonego tylko do kodu (bez wiki/graf w prompcie), model wg 2.1 "Model subagentow".
 
 Po researchu dodaj **krotki** komentarz do ticketa (3-5 zdan, nie tabelki):
 
@@ -390,8 +396,10 @@ Wybór modelu zależy od aktualnego schematu delegowania. Używaj obsługiwanych
 
 <!-- runtime:claude-code -->
 **Model subagentow** - obowiazuje przy KAZDYM `Agent()` w tym skillu, takze
-przy re-runie dev (FAZA 3, 3.5.2) i nowym krytyku (3.5.2 pkt 4):
+przy Explore w FAZIE 1 (przypadek B i C), re-runie dev (FAZA 3, 3.5.2)
+i nowym krytyku (3.5.2 pkt 4):
 
+- **Researcher (Explore, FAZA 1)**: `model="sonnet"`.
 - **Dev**: frontmatter wybranego agenta ma pole `model:` -> NIE podawaj
   parametru `model` (frontmatter decyduje); pola brak (agent projektu bez
   `model:`, `general-purpose`) -> `model="sonnet"`.
@@ -465,6 +473,18 @@ Potem utworz job `dev` w stepie `coding` (instrumentacja, best-effort) i zapamie
 ```
 mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<pipeline_id>", step="coding", name="<wybrany-agent>", agent_type="<wybrany-agent>")
 ```
+
+**Pomiar okna subagenta** - obowiazuje przy kazdym wywolaniu dev (tutaj),
+re-runie dev (3.5.2), krytyka (3.5.1) i kazdego kolejnego krytyka: `date +%s`
+PRZED wywolaniem i `date +%s` po powrocie agenta, roznice dodaj do akumulatora
+`CZAS_SUBAGENTOW` (start: 0). Dev i krytyk loguja swoj czas sami, wiec te okna
+odliczasz od wall-clocka TM w 4.2 - inaczej suma roboczogodzin ticketu liczy
+ich prace drugi raz.
+
+Explore z FAZY 1 do `CZAS_SUBAGENTOW` **nie wchodzi**: w tym skillu Researcher
+nie ma wlasnego `log_time` (inaczej niz dev i krytyk), wiec jego czas nie jest
+nigdzie policzony drugi raz - zostaje w czasie Team Managera i tylko tam
+trafia do rozliczenia ticketu.
 
 Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
 
@@ -785,6 +805,16 @@ Po zielonym lincie (lub swiadomym pominieciu) utworz job `code-reviewer` w stepi
 mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<pipeline_id>", step="coding", name="code-reviewer", agent_type="<wybrany-krytyk>")
 ```
 
+Bezposrednio przed wywolaniem krytyka otworz jego job (bez tego job skacze
+z `pending` na `success` i w UI nie ma czasu trwania):
+
+```
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT-SLUG>", job_id="<critic_job_id>", status="running")
+```
+
+Okno spawnu krytyka mierzysz tak samo jak okno dev (2.3, "Pomiar okna
+subagenta") i dodajesz do `CZAS_SUBAGENTOW`.
+
 Krytyk to subagent - NIE zna sciezek do plikow tego skilla. Dlatego przeczytaj
 `review-rubric.md` z katalogu tego skilla (ten sam katalog co SKILL.md) i wklej
 jego PELNA tresc do promptu krytyka w miejsce `[pelna tresc review-rubric.md]`.
@@ -912,7 +942,12 @@ Format zwrotu do TM: `NEEDS WORK [score] | REGULA: [zdanie] | UWAGI: [lista]`."
    i podbij `attempt` (pierwotne wykonanie = 1, pierwsza poprawka = 2):
    `mcp__monolynx__update_pipeline_job(project_slug='<PROJECT-SLUG>', job_id='[dev_job_id]', attempt=[numer], status='running')`
    + doklejenie poprawek przez `append_job_log`.
-6. **Wspolny limit 3 poprawek** - iteracje z FAZY 3 (czerwony lint/test) i z tego
+   To samo dotyczy joba KRYTYKA: przed wywolaniem z punktu 4 podbij jego
+   `attempt` tym samym numerem iteracji i ustaw `status='running'`
+   (job jest juz domkniety po poprzednim review):
+   `mcp__monolynx__update_pipeline_job(project_slug='<PROJECT-SLUG>', job_id='[critic_job_id]', attempt=[numer], status='running')`
+6. **Wspolny limit 3 poprawek** - iteracje z FAZY 3 (czerwony lint/test),
+   odrzucenie raportu w rekoncyliacji (2.4) i z tego
    kroku (score < 82) licza sie do JEDNEGO licznika. Po wyczerpaniu zapytaj usera:
    "Limit 3 poprawek wyczerpany. Co robimy? (a) eskaluj do /monolynx:work,
    (b) akceptuj mimo to, (c) stop".
@@ -958,6 +993,22 @@ Wiki jest aktualizowana po merge do main przez skill `wiki-sync-merge` (semi-aut
 date +%s
 ```
 
+Oblicz czas Team Managera deterministycznie:
+
+```
+czas_TM = (teraz - T_START_TM) - CZAS_SUBAGENTOW
+```
+
+czyli wall-clock epizodu minus zsumowane okna dev i krytyka (TM tylko czekal).
+Minimum 1 minuta. Czas TM to koordynacja, nie idle - dev i krytyk loguja swoj
+czas sami, wiec bez tego odliczenia suma roboczogodzin ticketu liczy ich prace
+podwojnie. Dolicz z powrotem czas, ktory w oknach subagentow faktycznie
+przepracowales sam (oszacowanie wystarczy); lint i testy z FAZY 3 sa poza tymi
+oknami, wiec zostaja w czasie TM. Czas Explore z FAZY 1 tez zostaje w czasie
+TM - Researcher w tym skillu nie loguje wlasnego czasu, wiec odjecie jego okna
+usunieloby research z rozliczenia ticketu zamiast odjac dublet. Brakuje ktoregos
+pomiaru -> przyjmij wall-clock i dopisz `(wall-clock)` w opisie `log_time` (4.4).
+
 ### 4.3. Komentarz podsumowujacy
 
 ```
@@ -989,7 +1040,9 @@ mcp__monolynx__log_time(
 > ```
 
 `PLIKI_SPRZED_STARTU` niepuste? NIE uzywaj `git add -A` - dodaj imiennie tylko
-pliki z pracy dev, inaczej commit wciagnie wczesniejsza/cudza prace.
+pliki z pracy dev, inaczej commit wciagnie wczesniejsza/cudza prace. Jesli
+w 0.45 zrobiono `git stash` - przypomnij uzytkownikowi o `git stash pop`
+w podsumowaniu (4.8).
 
 **`MONOLYNX_AUTOCOMMIT=true`** - wykonaj commit, ale TYLKO po zielonym lincie
 i testach ORAZ werdykcie APPROVED. Lint/testy pominiete za zgoda uzytkownika
@@ -1075,7 +1128,8 @@ Wyswietl zwiezle:
 - Czas TM
 - Status ticketa
 - Merge request: `MR_URL` albo powod, dla ktorego go nie ma
-- Co user ma zrobic manualnie (commit/push jesli flagi na `false`, po merge: `/monolynx:wiki-sync-merge <ticket-id>`)
+- Co user ma zrobic manualnie (commit/push jesli flagi na `false`, po merge: `/monolynx:wiki-sync-merge <ticket-id>`); jesli w 0.45 zrobiono `git stash` -
+  przypomnienie o `git stash pop`
 - Ostatnia linia, zawsze:
 
 > Epizod zamkniety. Kolejny ticket zacznij od `/clear` - stan tego ticketu
@@ -1083,7 +1137,7 @@ Wyswietl zwiezle:
 
 ---
 
-## ESKALACJA (opcja 6a - "scope grew")
+## ESKALACJA (scope grew)
 
 Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 
@@ -1134,7 +1188,7 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 8. **Commit i push tylko za zgoda** - domyslnie skill wypisuje komendy, nie wykonuje. Flagi `MONOLYNX_AUTOCOMMIT` / `MONOLYNX_AUTOPUSH` zmieniaja to swiadomie (AUTOPUSH tylko z AUTOCOMMIT). Twardy gate na `main`/`master` przy starcie (0.45).
 9. **Jezyk komentarzy**: polski, z PELNYMI diakrytykami (ą, ć, ę, ł, ń, ó, ś, ź, ż) - szablony w tym pliku sa technicznie ASCII, generowane tresci maja miec poprawna ortografie.
 10. **Gdy dev sygnalizuje SCOPE GREW** - NIE ignoruj, eskaluj. Celem simple jest szybkie dowozenie malych zmian, nie rozkladanie sie dla duzych. Na sciezce (c) ("kontynuuj simple mimo to") praca leci dalej z flaga `SCOPE_GREW=1` i to jedyny przypadek, w ktorym na koncu FAZA 3 proponujesz przebieg mutacyjny - propozycja, nie automat, i nigdy bramka.
-11. **Wspolny limit 3 poprawek** - czerwony lint/test (FAZA 3) i NEEDS WORK (3.5.2) licza sie do JEDNEGO licznika; dalej user decyduje.
+11. **Wspolny limit 3 poprawek** - czerwony lint/test (FAZA 3), odrzucenie raportu w rekoncyliacji (2.4) i NEEDS WORK (3.5.2) licza sie do JEDNEGO licznika; dalej user decyduje.
 12. **Agentow zawsze dobieramy dynamicznie** - skill nie narzuca konkretnych typow agentow; wybor zalezy od tego, co dostepne w projekcie i czego wymaga ticket.
 13. **Pipeline jest best-effort, nie gate** - instrumentacja pipeline (create_pipeline, joby, append_job_log, finish_pipeline) to warstwa obserwowalnosci. Blad ktoregokolwiek toola pipeline NIGDY nie przerywa pracy nad ticketem - odnotuj i kontynuuj. Jesli toole niedostepne (starszy serwer MCP) - pomin instrumentacje.
 14. **Przerwanie pracy na dowolnym etapie** (stop uzytkownika, eskalacja, wyczerpany limit) -> domknij otwarte joby (`running` -> `failed`, `pending` -> `skipped`) i `finish_pipeline(status="failed")` (best-effort), zanim zakonczysz.
@@ -1152,6 +1206,6 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 18. **Prawa decyzyjne ustalane RAZ, na starcie** (2.2) - kontrakt autonomii i STOP CONDITIONS zastepuja sterowanie przez przerywanie. Przerwanie usera w trakcie = kontrakt byl niekompletny; brakujaca pozycje odnotuj w 4.8. Przy `SPRINT_RUN=1` patrz regula 21.
 19. **Tryb defektu** (0.2) - research kodu obowiazkowy, test regresyjny przed fixem, krytyk ocenia nazwany mechanizm, nie znikniecie symptomu.
 20. **Ostatni przebieg lint+test jest pelny** (3.5.3) - iteracja moze testowac obszar, zamkniecie testuje calosc.
-21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, praca na `main`/`master`, branch bez numeru ticketu, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
+21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, praca na `main`/`master`, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
 22. **Trwale reguly projektowe zyja w repozytorium**, nie w prywatnej pamieci klienta. Dwie lokalizacje, obie liczone od KORZENIA REPOZYTORIUM: `.claude/rules/*.md` (reguly projektu; krytyk czyta je na starcie review, naruszenie to -25) i `.claude/agent-memory/<typ-agenta>/MEMORY.md` (reguly z review per rola, zapisywane w 3.5.2). To zwykle pliki Markdown w repo: czyta je KAZDY klient wykonujacy te instrukcje, wersjonuje je git i widzi je kolejny przebieg niezaleznie od tego, w czym go uruchomiono. Nie zakladaj prywatnego formatu pamieci zadnego klienta i nie migruj tych plikow do niego. Nazwa katalogu `.claude/` jest HISTORYCZNA - katalog jest wspolny dla klientow, nie zastrzezony dla jednego. Kazdy zapis jest ADDYTYWNY: dopisujesz do sekcji, nigdy nie nadpisujesz pliku.
 23. **Fallback solo nie jest niezaleznym review** (2.1) - stosujesz go wylacznie przy faktycznym braku delegacji stwierdzonym po dostepnych narzedziach, nigdy po nazwie klienta, i zawsze z jawna adnotacja o ograniczeniu niezaleznosci w komentarzu planu, komentarzu podsumowujacym i w 4.8.
