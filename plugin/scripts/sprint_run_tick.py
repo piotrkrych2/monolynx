@@ -78,6 +78,11 @@ _KEY_ORDER = (
 _REQUIRED_AUTOFLAGS = ("MONOLYNX_AUTOTEST", "MONOLYNX_AUTOCOMMIT", "MONOLYNX_AUTOPUSH")
 _SETTINGS_FILENAMES = ("settings.json", "settings.local.json")
 
+# MON-195: default zmieniony z "bypassPermissions" na "auto" - patrz check w
+# _cmd_preflight. `claude --permission-mode` (sprawdzone `claude --help`)
+# przyjmuje "auto" jako legalna wartosc.
+_DEFAULT_PERMISSION_MODE = "auto"
+
 
 class _UsageError(Exception):
     """Blad parsowania argumentow CLI (mapowany na kod wyjscia 64)."""
@@ -202,6 +207,26 @@ def _cmd_preflight(argv: list[str]) -> int:
     problems: list[str] = []
     warnings: list[str] = []
 
+    # MON-195: pierwszy check, przed reszta preflightu. `bypassPermissions` (i
+    # rownowazny `--dangerously-skip-permissions` podany wprost jako tryb) w
+    # sesji auto trafia na domyslna regule soft_deny "Create Unsafe Agents" -
+    # tick przechodzil cala reszte preflightu i odpadal dopiero w KROKU 4 bez
+    # startu zadnej sesji (19.09, MON-191/MON-192). Substring, nie rownosc,
+    # bo dopuszczalne jest tez np. "--dangerously-skip-permissions=true".
+    permission_mode_raw = os.environ.get("MONOLYNX_SPRINT_PERMISSION_MODE", _DEFAULT_PERMISSION_MODE)
+    # Nieznana wartosc (literowka, przyszly tryb) przechodzi bez ostrzezenia -
+    # falszywe zatrzymanie wstrzymuje caly sprint, falszywe przepuszczenie
+    # konczy sie jedna odmowa klasyfikatora w KROK 4 (external-tool-output.md
+    # pkt 3): blokujemy wylacznie te dwa znane, niebezpieczne literaly.
+    if permission_mode_raw == "bypassPermissions" or "dangerously-skip-permissions" in permission_mode_raw:
+        problems.append(
+            "MONOLYNX_SPRINT_PERMISSION_MODE="
+            + permission_mode_raw
+            + " blokuje sesje w tle w trybie auto (regula soft_deny \"Create Unsafe Agents\"); "
+            "ustaw MONOLYNX_SPRINT_PERMISSION_MODE=auto w env sledzonego .claude/settings.json "
+            "albo swiadoma regule autoMode.allow w ~/.claude/settings.json"
+        )
+
     # Dalsze kroki zalezne od sciezki repo (pliki .claude/settings*.json, katalog
     # ticku) sa pomijane nizej, gdy ten katalog nie jest repozytorium git.
     toplevel: str | None = None
@@ -267,7 +292,7 @@ def _cmd_preflight(argv: list[str]) -> int:
         "MODE": "batch" if process_env.get("MONOLYNX_SPRINT_RUN_MODE") == "batch" else "interactive",
         "PARALLEL": process_env.get("MONOLYNX_SPRINT_PARALLEL", "2"),
         "SPRINT_MODEL": process_env.get("MONOLYNX_SPRINT_MODEL", "opus"),
-        "PERMISSION_MODE": process_env.get("MONOLYNX_SPRINT_PERMISSION_MODE", "bypassPermissions"),
+        "PERMISSION_MODE": process_env.get("MONOLYNX_SPRINT_PERMISSION_MODE", _DEFAULT_PERMISSION_MODE),
         "AUTOTEST": flag_values["MONOLYNX_AUTOTEST"] or "false",
         "AUTOCOMMIT": flag_values["MONOLYNX_AUTOCOMMIT"] or "false",
         "AUTOPUSH": flag_values["MONOLYNX_AUTOPUSH"] or "false",
