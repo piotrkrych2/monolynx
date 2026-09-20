@@ -460,7 +460,7 @@ Zbuduj liste kandydatow z nazwami `subagent_type`, opisami i specjalizacjami wyn
 1. **Przeanalizuj raport Researchera** - sekcja "Potrzebni agenci" to rekomendacja, ale Team Manager podejmuje ostateczna decyzje
 2. **Jesli ticket wskazuje agentow w tresci** - uzyj wskazanych, o ile sa dostepni
 3. **Jesli NIE wskazuje** - dobierz agentow na podstawie raportu, tresci zadania i dostepnych definicji agentow. Wybierz MINIMALNY zestaw potrzebny do wykonania zadania
-4. **Krytyk jest ZAWSZE w zespole** - wybierz dostepnego agenta pelniacego role recenzenta kodu / quality gate. Nie zakladaj, ze musi nazywac sie `code-reviewer`
+4. **Krytyk jest ZAWSZE w zespole** - wybierz dostepnego agenta pelniacego role recenzenta kodu / quality gate. Nie zakladaj, ze musi nazywac sie `code-reviewer`. Krytyk to ZAWSZE osobne powolanie, nigdy ten sam agent, ktory pisal oceniany kod - niezaleznosc review jest czescia gate'u, nie ozdoba. Jedyny wyjatek to fallback solo (6a), i tam ograniczenie niezaleznosci opisujesz wprost
 5. **TDD** - jesli sekcja "Toolchain" raportu mowi, ze projekt ma testy i stosuje TDD: agent testowy pisze failing testy PRZED developerami i idzie SEKWENCYJNIE, jako pierwszy. Reszta zespolu startuje dopiero po jego zakonczeniu, z testami jako specyfikacja
 
 ### Model subagentow
@@ -617,14 +617,30 @@ Ta roznica zmienia moment startu i prompt krytyka - patrz 6c i KROK 6.6.
 
 <!-- /runtime:claude-code -->
 
-- **Runtime bez subagentow** -> nie ma kogo powolac: wykonaj prace
+- **Runtime bez subagentow (fallback solo)** -> nie ma kogo powolac: wykonaj prace
   SAM, sekwencyjnie, rola po roli wg przydzialu plikow z KROK 5. Review zrob
   jako OSOBNY przebieg w roli krytyka, scisle wg rubryki (pelna tabela odjec,
   bez taryfy ulgowej dla wlasnej pracy) - prog 82 i wspolny limit 3 poprawek
   obowiazuja takze wobec wlasnej pracy per rola. Cala ceremonia (lint/testy,
   komentarze, czas per rola, kryteria akceptacji) obowiazuje bez zmian.
 
-### 6b. Zmierz czas startu zespolu
+  **Kiedy wolno zejsc na solo**: wylacznie gdy w faktycznym katalogu narzedzi
+  NIE MA zadnego mechanizmu delegowania (sprawdzasz capability, tak jak
+  w 6a wyzej). Nazwa klienta, wersja produktu ani brak konkretnego parametru
+  (`name`, `model`) NIE sa dowodem braku delegacji - jest nim wylacznie brak
+  narzedzia, ktorym daloby sie powolac osobnego agenta.
+
+  **Jawne ograniczenie niezaleznosci**: review wykonane przez tego samego
+  agenta, ktory pisal kod, NIE JEST niezaleznym review - ten sam kontekst,
+  te same zalozenia i te same slepe plamy. Rubryka ogranicza dowolnosc oceny,
+  ale nie zastepuje drugiej pary oczu. To ograniczenie zapisujesz w trzech
+  miejscach, zawsze tym samym zdaniem: w komentarzu planu (KROK 5), w
+  komentarzu podsumowujacym do ticketu (7b) i w podsumowaniu dla uzytkownika
+  (7f) - _"Review wykonane w trybie solo przez tego samego agenta co
+  implementacja; to nie jest niezalezne review"_. Nie pisz "krytyk zatwierdzil"
+  ani "APPROVED przez krytyka" bez tej adnotacji.
+
+### 6b. Zmierz czas startu zespolu i sprawdz aktywna ochrone hooka
 
 ```bash
 date +%s
@@ -633,6 +649,65 @@ date +%s
 Zapamietaj timestamp (do rozliczenia czasu TM w 7a). `BASELINE_SHA`
 i `PLIKI_SPRZED_STARTU` masz z KROK 5 (Baseline review) - tu ich nie mierz
 ponownie.
+
+**Sprawdzenie ochrony hooka.** Hook `bash_guard.py` dziala tylko wtedy, gdy
+klient zaladowal plugin i uzytkownik nadal mu zaufanie - sama instalacja nie
+wystarcza. Zeby brak ochrony nie byl cichy, hook przy kazdym wywolaniu
+PreToolUse dotyka markera `~/.cache/monolynx/hook-active/<session_id>`
+(zapis best-effort; tresc to JSON z polem `subagent_identification`, ktore
+mowi, czy TEN payload niosl identyfikacje subagenta). Powyzsze `date +%s` juz
+przeszlo przez hook, wiec marker - jesli hook zyje - istnieje. Odczytaj go
+DWIEMA osobnymi komendami, tak samo jak przy detekcji worktree
+(`git rev-parse --git-dir` i `--git-common-dir` ida osobno). Najpierw katalog
+domowy:
+
+```bash
+echo $HOME
+```
+
+Potem `find` po sciezce wpisanej literalnie - w miejsce `<HOME>` wstaw to, co
+zwrocila poprzednia komenda (np. `/Users/jan`):
+
+```bash
+find <HOME>/.cache/monolynx/hook-active -type f -mmin -5 -exec cat {} + 2>/dev/null
+```
+
+W tej drugiej komendzie nie ma zadnej zmiennej ani `$(...)`: `work` biegnie
+zwykle w worktree, a guard izolacji worktree odrzuca komende, ktorej argument
+jest wyliczany w runtime - jednolinijkowiec z `"$HOME/..."` w ogole sie nie
+wykona i zamiast stanu dostaniesz odmowe.
+
+Trzy stany, rozstrzygasz je po wyniku, nie po nazwie klienta:
+
+| Wynik | Stan | Co to znaczy |
+|---|---|---|
+| jest wpis z `"subagent_identification": true` | **(a) ochrona potwierdzona** | hook zyje i klient przekazuje identyfikacje subagenta - twarde blokady subagentow dzialaja |
+| sa wpisy, ale wszystkie z `false` | **(b) ochrona NIEPELNA** | hook zyje, ale klient nie przekazuje identyfikacji subagenta i moze nie egzekwowac decyzji `ask` |
+| brak wpisow | **(c) brak potwierdzenia** | hook nie zdazyl zadzialac albo nie jest zaladowany/zaufany |
+
+Stan (a) rozpoznasz najwczesniej po pierwszej komendzie Bash subagenta -
+w sesji glownej payload zwykle nie niesie identyfikacji, wiec wynik `false`
+na tym etapie NIE przesadza jeszcze o (b). Dlatego: teraz zapisz wynik
+wstepny (jest marker / nie ma), a po zebraniu raportow developerow (6d)
+powtorz te sama komende i dopiero wtedy ustal stan koncowy.
+
+**Konsekwencje stanow (b) i (c)** - obowiazuja do konca skilla:
+
+- NIE deklarujesz deterministycznej ochrony. W 7f piszesz jedna linia
+  wprost: _"Ochrona hooka: niepelna - klient nie przekazuje identyfikacji
+  subagenta i moze nie egzekwowac zgod"_ albo _"Ochrona hooka: brak
+  potwierdzenia aktywnego hooka"_.
+- NIE omijasz zgod i nie traktujesz ich jako zalatwionych przez hooka. Zgody
+  egzekwujesz rozmowa z uzytkownikiem: przed `git push`, `glab mr create`,
+  lintem i testami przy `AUTOTEST=false` oraz przed kazda operacja
+  z listy "Zatrzymuje sie przed" pytasz jawnie i czekasz na odpowiedz.
+- Przy `MONOLYNX_SPRINT_RUN=1` nikt nie odpowie, a hook nie zablokuje -
+  zamiast udawac, ze blokada dziala, zakoncz ture wg zasady 10
+  (`SPRINT-RUN STOP: brak potwierdzonej ochrony hooka`) w momencie, w ktorym
+  potrzebna bylaby taka zgoda.
+- Uzytkownik ma opcje `MONOLYNX_HOOK_ASK_UNSUPPORTED=true` (opt-in): zamienia
+  decyzje `ask` na `deny` z wyjasnieniem. Mozesz ja wskazac w podsumowaniu,
+  ale NIE ustawiasz jej sam - to zmiana konfiguracji uzytkownika.
 
 ### 6c. Uruchom developerow
 
@@ -887,6 +962,21 @@ w KROK 6.6b ponizej; konsumuje wspolny limit 3 poprawek).
 Developer zglosil `STOP: <powod>` -> to nie porazka i nie konsumuje limitu.
 Rozstrzygnij (sam, jesli kontrakt Ci na to pozwala; inaczej jedno pytanie do
 uzytkownika) i re-run agenta z decyzja.
+
+**Stan koncowy ochrony hooka.** Developerzy wykonali juz swoje komendy Bash,
+wiec markery niosa teraz informacje o identyfikacji subagenta. Powtorz odczyt
+z 6b, znowu z literalna sciezka (`<HOME>` = wynik `echo $HOME` z 6b), tylko
+z szerszym oknem czasowym:
+
+```bash
+find <HOME>/.cache/monolynx/hook-active -type f -mmin -60 -exec cat {} + 2>/dev/null
+```
+
+Ustal stan (a) / (b) / (c) wg tabeli z 6b - to jest wynik, ktory raportujesz
+w 7f i ktory decyduje, czy do konca skilla zgody egzekwujesz hookiem, czy
+rozmowa z uzytkownikiem. Okno czasowe dobierz tak, zeby objelo prace zespolu;
+markery sa wspolne dla maszyny, nie per projekt, wiec przy watpliwosci (np.
+rownolegla sesja w tle) raportuj stan slabszy, nigdy mocniejszy.
 
 ### 6e. Rekoncyliacja raportow - tura decyzyjna przed lintem
 
@@ -1164,9 +1254,12 @@ ticketu - patrz 6.7b i 7f.
 3. **Krytyk dal < 82 jakiemus agentowi** - iteracja poprawkowa TYLKO tego agenta:
    - **Regula do pamieci agenta**: krytyk przy NEEDS WORK zwraca linie
      `REGULA: <zdanie>` (format w `review-rubric.md`). Dopisz ja do
-     `.claude/agent-memory/<subagent_type>/MEMORY.md` w sekcji
+     `.claude/agent-memory/<subagent_type>/MEMORY.md` - sciezka liczona od
+     KORZENIA REPOZYTORIUM (patrz zasada 11: to zwykly plik repo, czytany przez
+     kazdego klienta, nie prywatny format pamieci jednego z nich) - w sekcji
      `## Reguly z review krytyka` (sekcja nie istnieje -> dodaj na koncu pliku;
-     plik nie istnieje -> utworz). Ta sama regula juz tam jest -> nie dubluj,
+     plik nie istnieje -> utworz). Zapis jest ADDYTYWNY: dopisujesz jedna linie
+     do sekcji, nigdy nie nadpisujesz pliku ani nie kasujesz cudzych regul. Ta sama regula juz tam jest -> nie dubluj,
      ale odnotuj w 7f "regula powtorzona" - to sygnal dla `/monolynx:retro`,
      ze korekta wraca i potrzebuje maszynerii (rule w `.claude/rules/`, wiersz
      rubryki), nie kolejnego przypomnienia
@@ -1413,6 +1506,12 @@ pipeline `finish_pipeline` - nie zostawiaj go w `running`.
 
 - Co zostalo zrobione
 - Oceny krytyka dla kazdego agenta
+- **Tryb pracy zespolu** - delegowanie (osobni agenci + osobny krytyk) albo
+  fallback solo; solo -> dopisz zdanie o braku niezaleznosci review (6a)
+- **Ochrona hooka** - jedna linia ze stanem z 6d: potwierdzona / niepelna
+  (klient nie przekazuje identyfikacji subagenta i moze nie egzekwowac zgod) /
+  brak potwierdzenia aktywnego hooka. Stan inny niz potwierdzony -> dopisz, ze
+  zgody byly egzekwowane rozmowa z uzytkownikiem, nie hookiem
 - **Wynik lintu i testow** - i czy ostatni przebieg byl pelny (6.6c)
 - **Mutacje** - linia z kroku mutacji (KROK 6.5); ponizej progu krok sie nie
   pojawia i tej linii nie ma w ogole
@@ -1479,7 +1578,14 @@ ich tutaj. Dodatkowo:
    `MONOLYNX_AUTOPUSH`/`MONOLYNX_AUTOTEST` != true. Tak samo traktuje
    `glab mr create`: subagentowi deny, glownej sesji "ask", dopoki
    `MONOLYNX_AUTOMR` != true. Deny z hooka u subagenta
-   to NIE blad - to oczekiwane zachowanie, nie obchodz go
+   to NIE blad - to oczekiwane zachowanie, nie obchodz go.
+   **Hook nie jest gwarantowany**: dziala dopiero po zaladowaniu pluginu
+   i nadaniu mu zaufania w kliencie, a twarde blokady subagentow wymagaja, zeby
+   klient przekazywal identyfikacje subagenta w PreToolUse. Stan sprawdzasz
+   markerem `~/.cache/monolynx/hook-active/<session_id>` (6b i 6d) i raportujesz
+   go w 7f. Nie ma potwierdzenia -> zgody egzekwuje rozmowa z uzytkownikiem,
+   nie hook. Opcja `MONOLYNX_HOOK_ASK_UNSUPPORTED=true` (opt-in uzytkownika)
+   zamienia `ask` na `deny` dla klientow, ktore `ask` ignoruja
 10. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde
     miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz uzytkownika
     POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego
@@ -1499,3 +1605,19 @@ ich tutaj. Dodatkowo:
     w 7b i 7f, BEZ `SPRINT-RUN STOP`. Linia pojawia sie tylko wtedy, gdy krok
     przeszedl prog; ponizej progu nie ma ani kroku, ani linii.
     `SPRINT_RUN=0` (domyslnie) nie zmienia niczego
+11. **Trwale reguly projektowe zyja w repozytorium**, nie w prywatnej pamieci
+    klienta. Dwie lokalizacje, obie liczone od KORZENIA REPOZYTORIUM:
+    `.claude/rules/*.md` (reguly projektu - krytyk czyta je na starcie review,
+    naruszenie to -25) i `.claude/agent-memory/<typ-agenta>/MEMORY.md` (reguly
+    z review per rola, zapisywane w 6.6b). To zwykle pliki Markdown w repo:
+    czyta je KAZDY klient wykonujacy te instrukcje, wersjonuje je git i widzi
+    je kolejny przebieg niezaleznie od tego, w czym go uruchomiono. Nie
+    zakladaj prywatnego formatu pamieci zadnego klienta i nie migruj tych
+    plikow do niego. Nazwa katalogu `.claude/` jest HISTORYCZNA (tam juz leza
+    dane uzytkownika) - katalog jest wspolny dla klientow, nie zastrzezony dla
+    jednego, i nie zmieniamy jej. Kazdy zapis jest ADDYTYWNY: dopisujesz do
+    sekcji, nigdy nie nadpisujesz pliku - inaczej wczesniejsze reguly gina
+12. **Fallback solo nie jest niezaleznym review** - stosujesz go wylacznie przy
+    faktycznym braku delegacji stwierdzonym po dostepnych narzedziach (6a),
+    nigdy po nazwie klienta, i zawsze z jawna adnotacja o ograniczeniu
+    niezaleznosci w komentarzu planu, komentarzu podsumowujacym i w 7f

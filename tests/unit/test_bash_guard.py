@@ -6,6 +6,7 @@ Claude Code. Zero zaleznosci od DB / fixture'ow conftest.
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ from pathlib import Path
 import pytest
 
 HOOK_PATH = Path(__file__).resolve().parents[2] / "plugin" / "hooks" / "bash_guard.py"
+CODEX_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "codex"
 
 # Twardy fail (nie skip) jesli hooka nie ma w obrazie -- to ma byc GLOSNE,
 # zeby nikt nie przeoczyl brakujacego pliku w Dockerze.
@@ -41,6 +43,40 @@ def run_hook(payload, env_extra=None):
     if result.stdout.strip():
         decision = json.loads(result.stdout)
     return result.returncode, decision
+
+
+def run_hook_with_home(payload, home, env_extra=None):
+    """Jak run_hook, ale z jawnie ustawionym HOME -- wymagane do testowania
+    markera aktywnego hooka (AC6), zeby test nie pisal do prawdziwego
+    ~/.cache dewelopera. Zwraca (exit_code, decision_dict_or_None)."""
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(home)}
+    if env_extra:
+        env.update(env_extra)
+    stdin_data = payload if isinstance(payload, str) else json.dumps(payload)
+    result = subprocess.run(
+        [sys.executable, str(HOOK_PATH)],
+        input=stdin_data,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=10,
+    )
+    decision = None
+    if result.stdout.strip():
+        decision = json.loads(result.stdout)
+    return result.returncode, decision
+
+
+def hook_active_marker_path(home, session_id):
+    """Sciezka markera zgodna z konwencja brief_guard.py (sanitizacja identyczna
+    jak marker.parent / re.sub(r"[^A-Za-z0-9_-]", "_", session_id) w brief_guard.py:68)."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)
+    return Path(home) / ".cache" / "monolynx" / "hook-active" / safe
+
+
+def load_codex_fixture(name):
+    with (CODEX_FIXTURES_DIR / name).open(encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def bash_payload(command, agent_id=None, agent_type=None):
@@ -710,3 +746,261 @@ class TestFlagHelperTrueFalsyValues:
         payload = bash_payload("git push origin main")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_ask(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestAskUnsupportedFlag:
+    """MONOLYNX_HOOK_ASK_UNSUPPORTED=true: escape hatch dla klientow, ktore nie
+    egzekwuja decyzji "ask" (np. Codex CLI parsuje hooka jako failed i mimo to
+    wykonuje komende -- fail-open, patrz tests/fixtures/codex/README.md,
+    Znalezisko 2). Kazde "ask" zamienia sie wtedy w "deny", zeby operacja nie
+    przeszla po cichu. Semantyka aktywacji jest identyczna z reszta flag
+    pliku (funkcja flag() w bash_guard.py) -- aktywuje wylacznie dokladnie
+    "true" po strip().lower(), tak samo jak MONOLYNX_AUTOPUSH w
+    TestFlagHelperTrueFalsyValues.
+    """
+
+    @pytest.mark.parametrize("value", ["true", "TRUE", " true ", "True"], ids=["lower", "upper", "padded", "mixed_case"])
+    def test_true_variants_convert_ask_to_deny(self, value):
+        payload = bash_payload("git push origin main")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_HOOK_ASK_UNSUPPORTED": value})
+        assert_deny(exit_code, decision, reason_substr="MONOLYNX_HOOK_ASK_UNSUPPORTED")
+
+    @pytest.mark.parametrize("value", ["1", "", "false", "yes"], ids=["one", "empty", "false", "yes"])
+    def test_falsy_variants_keep_ask(self, value):
+        payload = bash_payload("git push origin main")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_HOOK_ASK_UNSUPPORTED": value})
+        assert_ask(exit_code, decision)
+
+    def test_original_reason_is_preserved_alongside_flag_name(self):
+        """Powod nie ginie przy przepisaniu decyzji -- nazwa flagi i pierwotny
+        powod (tu: wzmianka o AUTOPUSH z galezi git push) wspolistnieja w tym
+        samym permissionDecisionReason."""
+        payload = bash_payload("git push origin main")
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_HOOK_ASK_UNSUPPORTED": "true"})
+        assert exit_code == 0
+        reason = decision["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "MONOLYNX_HOOK_ASK_UNSUPPORTED" in reason
+        assert "AUTOPUSH" in reason
+
+    @pytest.mark.parametrize("cmd", ["git status", "ls -la /tmp"], ids=["git_status", "ls"])
+    def test_allow_decisions_are_not_changed_by_flag(self, cmd):
+        payload = bash_payload(cmd)
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_HOOK_ASK_UNSUPPORTED": "true"})
+        assert_allow(exit_code, decision)
+
+    def test_deny_decisions_are_not_changed_by_flag(self):
+        """Subagent + git commit -> deny niezaleznie od flagi (decyzja juz jest
+        "deny", galaz ASK_UNSUPPORTED dziala tylko na "ask"); powod identyczny
+        z/bez flagi -- flaga nic tu nie dopisuje."""
+        payload = bash_payload("git commit -m 'x'", **SUBAGENT)
+        exit_code_flag, decision_flag = run_hook(payload, env_extra={"MONOLYNX_HOOK_ASK_UNSUPPORTED": "true"})
+        exit_code_plain, decision_plain = run_hook(payload, env_extra={})
+        assert_deny(exit_code_flag, decision_flag, reason_substr="subagent")
+        assert exit_code_plain == 0
+        reason_flag = decision_flag["hookSpecificOutput"]["permissionDecisionReason"]
+        reason_plain = decision_plain["hookSpecificOutput"]["permissionDecisionReason"]
+        assert reason_flag == reason_plain
+
+    def test_combines_with_sprint_run_mode_without_reverting_to_ask(self):
+        """MONOLYNX_SPRINT_RUN=1 juz zamienia "ask" w "deny" (MON-173) zanim
+        galaz ASK_UNSUPPORTED zdazy zadzialac (decide() sprawdza SPRINT_RUN
+        jako pierwsze) -- obie flagi razem nadal daja "deny", nigdy "ask"."""
+        payload = bash_payload("git push origin main")
+        exit_code, decision = run_hook(
+            payload,
+            env_extra={
+                **MAIN_SESSION,
+                "MONOLYNX_SPRINT_RUN": "1",
+                "MONOLYNX_HOOK_ASK_UNSUPPORTED": "true",
+            },
+        )
+        assert_deny(exit_code, decision, reason_substr="SPRINT-RUN STOP")
+
+
+@pytest.mark.unit
+class TestHookActiveMarker:
+    """AC6 (MON-184): bash_guard.py ma przy KAZDYM wywolaniu, ktore konczy sie
+    jawna decyzja (allow/ask/deny), dotykac best-effort markera aktywnego hooka
+    pod ``~/.cache/monolynx/hook-active/<session_id>`` -- analogicznie do
+    ``~/.cache/monolynx/brief-guard/<session_id>`` w brief_guard.py.
+
+    Funkcjonalnosc jest zaimplementowana w ``touch_hook_active_marker()``
+    (plugin/hooks/bash_guard.py) -- wywolywana dla kazdej sciezki, ktora
+    konczy sie jawna decyzja allow/ask/deny.
+
+    Sciezke markera dopasowuje ``hook_active_marker_path()`` (ta sama
+    sanitizacja identyfikatora sesji co brief_guard.py: znaki spoza
+    ``[A-Za-z0-9_-]`` -> ``_``). Katalog jest konfigurowalny przez zmienna
+    srodowiskowa HOME dokladnie tak samo jak w brief_guard.py -- Path.home()
+    czyta $HOME, wiec nie jest potrzebna zadna dodatkowa zmiana w kodzie
+    zrodlowym, zeby test mogl podmienic lokalizacje.
+    """
+
+    def test_marker_created_on_allow_decision(self, tmp_path):
+        payload = bash_payload("git status")
+        payload["session_id"] = "sess-allow"
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+        assert hook_active_marker_path(tmp_path, "sess-allow").exists()
+
+    def test_marker_created_on_ask_decision(self, tmp_path):
+        payload = bash_payload("git push origin main")
+        payload["session_id"] = "sess-ask"
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+        assert hook_active_marker_path(tmp_path, "sess-ask").exists()
+
+    def test_marker_created_on_deny_decision(self, tmp_path):
+        payload = bash_payload("git commit -m 'x'", **SUBAGENT)
+        payload["session_id"] = "sess-deny"
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+        assert hook_active_marker_path(tmp_path, "sess-deny").exists()
+
+    def test_marker_created_on_destructive_deny_for_subagent(self, tmp_path):
+        payload = bash_payload("rm -rf /home/user/foo", **SUBAGENT)
+        payload["session_id"] = "sess-destructive"
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+        assert hook_active_marker_path(tmp_path, "sess-destructive").exists()
+
+    def test_missing_session_id_does_not_crash_and_creates_no_marker(self, tmp_path):
+        """Brak session_id w payloadzie: hook dziala normalnie (nie wywraca sie),
+        ale nie ma czego sanitizowac na nazwe pliku -- marker nie powstaje."""
+        payload = bash_payload("git status")  # brak session_id
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+        marker_root = tmp_path / ".cache" / "monolynx" / "hook-active"
+        assert not marker_root.exists() or not any(marker_root.iterdir())
+
+    def test_empty_session_id_does_not_crash_and_creates_no_marker(self, tmp_path):
+        payload = bash_payload("git status")
+        payload["session_id"] = ""
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+        marker_root = tmp_path / ".cache" / "monolynx" / "hook-active"
+        assert not marker_root.exists() or not any(marker_root.iterdir())
+
+    def test_marker_write_io_error_is_fail_open_and_does_not_change_decision(self, tmp_path):
+        """Katalog docelowy markera jest zablokowany plikiem o tej samej nazwie
+        (hook-active istnieje jako PLIK, nie katalog) -> mkdir/open rzuci OSError.
+        Hook ma to polknac best-effort (fail-open, jak brief_guard.py:69-75) i
+        mimo to zwrocic normalna decyzje, bez wyjatku/tracebacku na stderr."""
+        cache_dir = tmp_path / ".cache" / "monolynx"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "hook-active").write_text("not a directory", encoding="utf-8")
+        payload = bash_payload("git push origin main")
+        payload["session_id"] = "sess-io-error"
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    def test_marker_write_io_error_does_not_raise_for_subagent_deny(self, tmp_path):
+        cache_dir = tmp_path / ".cache" / "monolynx"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "hook-active").write_text("not a directory", encoding="utf-8")
+        payload = bash_payload("git commit -m 'x'", **SUBAGENT)
+        payload["session_id"] = "sess-io-error-2"
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    def test_marker_session_id_is_sanitized_like_brief_guard(self, tmp_path):
+        """Identyfikator z separatorami sciezki/znakami specjalnymi nie moze
+        stworzyc pliku poza katalogiem hook-active (path traversal) ani
+        wywrocic hooka -- ta sama sanitizacja co brief_guard.py."""
+        payload = bash_payload("git status")
+        payload["session_id"] = "../../etc/sess"
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+        marker_root = tmp_path / ".cache" / "monolynx" / "hook-active"
+        if marker_root.exists():
+            for created in marker_root.rglob("*"):
+                assert created.resolve().is_relative_to(marker_root.resolve())
+
+
+@pytest.mark.unit
+class TestCodexClientContract:
+    """Kontrakt wejscia Codex CLI dla PreToolUse -- zweryfikowany wobec
+    dokumentacji producenta (https://learn.chatgpt.com/docs/hooks, pobrane
+    2026-09-20; cytaty i uzasadnienie w tests/fixtures/codex/README.md).
+    Codex CLI nie jest zainstalowany w tym srodowisku, wiec fixture opisuje
+    udokumentowany ksztalt JSON, nie przechwycony realny output procesu.
+
+    Zamiast zgadywac format wlasciwy tylko Codex (np. dedykowane pole
+    subagenta), testy pokrywaja WYLACZNIE zachowanie degradacyjne, ktore
+    wynika wprost z dokumentacji: (1) tool_name "Bash" jest wspolny dla
+    klasycznej powloki i exec_command (unified exec) w Codex, wiec istniejacy
+    filtr dziala bez zmian; (2) PreToolUse w Codex NIE wysyla agent_id/
+    agent_type (potwierdzone w README.md, Znalezisko 1) -- kazde wywolanie
+    jest wiec traktowane jak sesja glowna, tak samo jak payload Claude Code
+    bez tych pol; (3) nieznane/dodatkowe pola specyficzne dla Codex (turn_id,
+    model, permission_mode, transcript_path) nie wywracaja hooka; (4) hook
+    nigdy nie zwraca "allow" dla komendy destrukcyjnej tylko dlatego, ze nie
+    rozpoznal pol specyficznych dla klienta.
+    """
+
+    def test_codex_shaped_payload_with_readonly_command_allows(self):
+        """Pelny, udokumentowany ksztalt payloadu Codex (fixture), tool_name
+        'Bash' (identyczne dla shell i exec_command wg dokumentacji), komenda
+        nieszkodliwa -> allow, bez wyjatku mimo dodatkowych pol Codex."""
+        payload = load_codex_fixture("pretooluse_bash.json")
+        payload.pop("_meta")
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_codex_payload_without_agent_fields_is_treated_as_main_session(self):
+        """PreToolUse w Codex nigdy nie wysyla agent_id/agent_type (README.md,
+        Znalezisko 1) -- destrukcyjna komenda dostaje wiec 'ask' (traktowanie
+        sesji glownej wg bash_guard.py), NIE twardy 'deny' subagenta, mimo ze
+        fizycznie komenda mogla zostac wywolana przez subagenta Codex.
+        Ten test dokumentuje istniejaca luke, nie jest to pozadane zachowanie
+        docelowe -- patrz README.md, Znalezisko 1."""
+        payload = load_codex_fixture("pretooluse_bash.json")
+        payload.pop("_meta")
+        payload["tool_input"]["command"] = "git push --force origin main"
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    def test_codex_extra_fields_do_not_bypass_destructive_check(self):
+        """Obecnosc pol specyficznych dla Codex (turn_id/model/permission_mode/
+        transcript_path) nie moze sprawic, ze destrukcyjna komenda zostanie
+        cicho dopuszczona -- hook nigdy nie zwraca allow tylko dlatego, ze nie
+        rozpoznaje klienta wywolujacego."""
+        payload = load_codex_fixture("pretooluse_bash.json")
+        payload.pop("_meta")
+        payload["tool_input"]["command"] = "rm -rf /etc/foo"
+        payload["cwd"] = "/workspace"
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert exit_code == 0
+        assert decision is not None
+        assert decision["hookSpecificOutput"]["permissionDecision"] in ("ask", "deny")
+        assert decision["hookSpecificOutput"]["permissionDecision"] != "allow"
+
+    @pytest.mark.parametrize(
+        "tool_name",
+        ["apply_patch", "mcp__fs__read", "update_plan", "exec_command"],
+    )
+    def test_unknown_or_non_bash_codex_tool_names_do_not_crash(self, tool_name):
+        """Nazwy narzedzi udokumentowane dla Codex, inne niz 'Bash' (apply_patch,
+        nazwy MCP, funkcje lokalne), a takze literalna nazwa wewnetrznego
+        toola 'exec_command' (ktora w praktyce NIGDY nie trafia do hooka jako
+        tool_name -- Codex raportuje ja jako 'Bash', patrz README.md) nie
+        powoduja wyjatku ani nieoczekiwanej decyzji: hook po prostu przepuszcza,
+        bo dopasowuje tylko tool_name == 'Bash'."""
+        payload = {
+            "tool_name": tool_name,
+            "tool_input": {"command": "rm -rf /etc/foo"},
+            "session_id": "sess-unknown-tool",
+        }
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_codex_shaped_userpromptsubmit_fixture_is_not_a_bash_payload(self):
+        """Kontrola spojnosci: fixture UserPromptSubmit (inny event) nie ma
+        tool_name/tool_input, wiec podany do bash_guard.py (ktory czyta tylko
+        payloady PreToolUse tool_name=='Bash') zawsze przechodzi bez decyzji --
+        potwierdza, ze hook nie zaklada blednie obecnosci pol z innego eventu."""
+        payload = load_codex_fixture("userpromptsubmit.json")
+        payload.pop("_meta")
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)

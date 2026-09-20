@@ -17,3 +17,4 @@
 
 ## Reguły z review
 - Nowa integracja dostępna użytkownikowi musi być opisana na landing page w obu obsługiwanych językach (MON-182).
+- Komendę, którą skill ma faktycznie wykonać, uruchamiasz w tym samym tickecie w środowisku docelowym (dla `work`/`work-simple` to sesja w git worktree) i piszesz ją bez `$VAR` i `$(...)` - guard izolacji worktree odrzuca każdy argument wyliczany w runtime (MON-184). Wzorzec obejścia (potwierdzony wykonaniem): osobna komenda `echo $HOME` (albo `git rev-parse ...`) wypisuje ścieżkę, druga komenda używa jej literalnie. `echo $VAR` przechodzi, `find "$HOME/..."` już nie. Ten sam wzorzec jest w regule `.claude/rules/docs-commands-verified.md` pkt 3.

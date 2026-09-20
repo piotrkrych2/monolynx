@@ -49,6 +49,22 @@ echo "MODE=${MONOLYNX_SPRINT_RUN_MODE:-interactive} AUTOPUSH=${MONOLYNX_AUTOPUSH
 
 **Merge i approve pilnuje hook `bash_guard.py`**: `glab mr merge` / `gh pr merge` pyta o zgodę, dopóki `MONOLYNX_AUTOMERGE` nie jest `true` (w trybie w tle `MONOLYNX_SPRINT_RUN=1` pytanie zamienia się w odmowę). `glab mr approve` / `gh pr review --approve` pyta zawsze. Ty nigdy nie zatwierdzasz MR/PR - approve daje człowiek.
 
+**Hook nie jest gwarancją.** Działa dopiero po załadowaniu pluginu i nadaniu mu zaufania w kliencie, a samo pytanie (decyzja `ask`) egzekwuje tylko klient, który tę decyzję obsługuje - klient, który jej nie wspiera, wykonuje komendę mimo hooka. Stan ochrony rozpoznajesz po markerze `~/.cache/monolynx/hook-active/<session_id>`, który hook zapisuje przy każdym wywołaniu PreToolUse (pole `subagent_identification` mówi, czy klient w ogóle identyfikuje subagenta). Po pierwszej komendzie Bash tego skilla odczytaj marker **dwiema osobnymi komendami**, tak samo jak KROK 0 najpierw wypisuje ścieżki, a dopiero potem wstawiasz je literalnie. Najpierw katalog domowy:
+
+```bash
+echo $HOME
+```
+
+Potem `find` po ścieżce wpisanej literalnie - w miejsce `<HOME>` wstaw to, co zwróciła poprzednia komenda (np. `/Users/jan`):
+
+```bash
+find <HOME>/.cache/monolynx/hook-active -type f -mmin -5 -exec cat {} + 2>/dev/null
+```
+
+Żadnej zmiennej ani `$(...)` w tej drugiej komendzie: tick bywa uruchamiany z worktree, a guard izolacji worktree odrzuca komendę, której argument jest wyliczany w runtime - jednolinijkowiec z `"$HOME/..."` w ogóle się nie wykona.
+
+Brak wpisów po pierwszej komendzie Bash: nie zakładaj, że hook zatrzyma merge ani approve. Traktuj zgodę jako **swój** obowiązek - pytasz użytkownika wprost i czekasz na odpowiedź (w trybie `batch`: `MR-QUEUE STOP: <ref> brak potwierdzonej ochrony hooka`), a w podsumowaniu ticku napisz jedną linią, że zgody były egzekwowane rozmową, nie hookiem. Użytkownik może włączyć `MONOLYNX_HOOK_ASK_UNSUPPORTED=true` (opt-in), co zamienia `ask` na odmowę z wyjaśnieniem - wskaż tę opcję, ale nie ustawiaj jej sam.
+
 ## KROK 1: Preflight
 
 ```bash

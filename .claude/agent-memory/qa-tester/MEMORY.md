@@ -46,3 +46,4 @@
 ## Reguly z review krytyka
 
 - Asercja testu na fixture musi padać po usunięciu kodu, który test chroni. Jeśli fixture zawiera ten sam literał w innym miejscu (np. echo promptu), asercja celuje w konkretną linię, nie w "jakąkolwiek linię z markerem" (MON-191).
+- Każda rozpakowana krotka w nowym teście używa wszystkich swoich elementów albo asertuje je jawnie - `exit_code, decision = run_hook(...)` bez użycia `exit_code` to `RUF059`, a lint jest bramką przed review (MON-184; ta sama wada wróciła w tym samym tickecie po deklaracji, że plik został przejrzany - sprawdzaj wzorzec programowo po KAŻDEJ dopisanej klasie, nie raz na koniec rundy).
