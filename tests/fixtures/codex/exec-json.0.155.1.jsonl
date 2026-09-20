@@ -1,0 +1,6 @@
+{"_meta": {"command": "codex exec --json --sandbox read-only --skip-git-repo-check -C /tmp/codexprobe \"Reply with exactly the word PONG and nothing else. Do not use any tools.\"", "tool_version": "codex-cli 0.155.1", "captured": "2026-09-20", "exit_code": 0, "captured_by": "Team Manager", "note": "Realne przechwycenie stdout `codex exec --json` (dokladnie 5 linii JSONL ponizej, bez zmian). Ta linia (_meta) NIE jest czescia realnego wyjscia narzedzia - testy pomijaja pierwsza linie pliku przed parsowaniem. stderr (ANSI, NIE jest JSONL) jest osobnym strumieniem opisanym w tests/fixtures/codex/README.md, celowo nie wlaczonym do tego pliku."}}
+{"type":"thread.started","thread_id":"01a0bfd0-dc52-7430-936f-8b7e86639558"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"PONG"}}
+{"type":"turn.completed","usage":{"input_tokens":23782,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":6,"reasoning_output_tokens":0}}

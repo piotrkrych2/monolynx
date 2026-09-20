@@ -11,7 +11,7 @@ przenosi sie tutaj.
 
 Dwie podkomendy:
 
-  preflight [--project-dir DIR]
+  preflight [--project-dir DIR] [--runtime claude|codex]
       Sprawdza srodowisko procesu (nie shella wywolujacego) przed startem
       jakiejkolwiek sesji w tle: git, `claude --version`, `claude agents
       --json --all`, ksztalt `.claude/settings*.json` i flagi MONOLYNX_* w
@@ -26,23 +26,73 @@ Dwie podkomendy:
       tego brancha) - obie wartosci sa informacyjne, nigdy nie dopisuja do
       `problems` i nie blokuja ticku same z siebie.
 
-  state --slug S --tickets-json JSON [--tick-dir DIR]
-      Zbiera stan sesji w tle (`claude agents --json --all`) i ogony ich
-      logow (`claude logs <id>`), zapisuje je w TICK_DIR (`.git/monolynx/
-      tick/`, NIGDY w /tmp) i deleguje klasyfikacje werdyktow do
-      `sprint_run_state.build_report` (logika werdyktow poza zakresem tego
-      ticketu - MON-191).
+      `--runtime` (MON-185, domyslnie "claude") wybiera backend sesji. Dla
+      "codex" preflight deleguje do `sprint_run_backend.preflight("codex",
+      ...)` (`codex --version` + `codex login status`) i NIGDY nie czyta
+      `.claude/settings*.json` ani MONOLYNX_SPRINT_PERMISSION_MODE (MON-183:
+      to pojecie jest specyficzne dla Claude Code permission modes). Flagi
+      AUTOTEST/AUTOCOMMIT/AUTOPUSH i rozwiazanie brancha bazowego pozostaja
+      wspolne dla obu runtime - gatuja dzialania samego ticku (git/testy),
+      niezaleznie od tego, ktory backend prowadzi sesje robocza.
+
+  state --slug S --tickets-json JSON [--tick-dir DIR] [--backend claude|codex]
+      Zbiera stan sesji w tle i ogony ich logow, zapisuje je w TICK_DIR
+      (`.git/monolynx/tick/`, NIGDY w /tmp) i deleguje klasyfikacje werdyktow
+      do `sprint_run_state.build_report`/`sprint_run_backend.classify_normalized`
+      (logika werdyktow poza zakresem tego ticketu - MON-191).
+
+      `--backend` (MON-185, domyslnie "claude") wybiera zrodlo stanu. Dla
+      "claude" zachowanie jest dokladnie dzisiejsze (`claude agents --json
+      --all` + `claude logs <id>`). Dla "codex" zrodlem jest WYLACZNIE rejestr
+      wlasny dyspozytora (`sprint_run_backend`, plik `sessions.json` w
+      TICK_DIR) - `codex exec` nie ma odpowiednika `claude agents --json
+      --all`, wiec ta sciezka nigdy nie wywoluje binarki `claude`.
+
+  start --backend claude|codex --slug S --key K --model M --prompt P [--cwd DIR] [--tick-dir DIR]
+      Punkt wejscia, ktorego adapterowi `sprint_run_backend` brakowalo do
+      MON-190/MON-191 (iteracja 1 z 3, MON-185): bez tej podkomendy
+      `sprint_run_backend.start()` nie jest wolany przez nic poza testami i
+      zadna sesja Codex nigdy nie startuje.
+
+      `--backend claude` konczy sie kodem 64 bez zadnego efektu - sesje
+      Claude startuja bezposrednio w KROK 4 skilla (`claude --bg --worktree
+      ...`), zeby przejsc przez system uprawnien Claude Code; wywolanie
+      `claude --bg` z wnetrza TEGO skryptu (subprocess procesu tick)
+      omijaloby te uprawnienia (MON-191/MON-192).
+
+      `--backend codex`: preflight (`sprint_run_backend.preflight("codex",
+      ...)`) idzie PRZED jakimkolwiek dotknieciem dysku (tick-dir, rejestr) -
+      awaria preflightu (kod 2) nie zostawia zadnego sladu, nawet gdy rejestr
+      juz istnieje. Nastepnie best-effort `claude agents --json --all` (brak
+      binarki `claude` NIE jest bledem - `claude_agents=None`) i sprawdzenie
+      rejestru: zywy wpis (po `<slug>:<KEY>`, niezaleznie od modelu i
+      backendu) -> `ALREADY-RUNNING <identity> <runtime_id>`, kod 0, zero
+      nowych procesow. W przeciwnym razie `sprint_run_backend.start()` spawnuje
+      proces, zapisuje rejestr i wypisuje `STARTED <identity> <runtime_id>
+      <pid>`, kod 0.
+
+  stop --backend claude|codex --slug S --key K [--tick-dir DIR]
+      Usuwa wlasny wpis rejestru (SIGTERM do wlasnego PID, inne wpisy
+      nietkniete) i wypisuje `STOPPED <identity>` (kod 0) albo, gdy wpisu nie
+      ma, `NOT-FOUND <identity>` (rowniez kod 0 - brak sesji do zatrzymania
+      nie jest bledem uzycia).
+
+      Wyjscia `start`/`stop` (`STARTED ...`, `ALREADY-RUNNING ...`, `STOPPED
+      ...`, `NOT-FOUND ...`) sa zamrozonym kontraktem asertowanym doslownie w
+      testach - nie zmieniac formatu bez rownoczesnej zmiany testow.
 
 Bezpieczenstwo: `preflight` wypisuje na stdout WYLACZNIE klucze z ustalonej
 listy (patrz `_KEY_ORDER` nizej) - nigdy calego `env`, ani wartosci zmiennych
 spoza tej listy. Incydent 18.09: `printenv` w ticku wypisal do transkryptu i
 logu petli klucz OpenAI i token GitLaba.
 
-Kody wyjscia (obie podkomendy):
-    0  - sukces.
+Kody wyjscia (wszystkie podkomendy):
+    0  - sukces (start: rowniez ALREADY-RUNNING; stop: rowniez NOT-FOUND).
     2  - blad wejscia/srodowiska (preflight: problemy znalezione; state: zly
-         JSON, zly ksztalt ticketow, `claude agents` nie dziala).
-    64 - blad uzycia CLI (brak/nieznana podkomenda, brak wymaganego argumentu).
+         JSON, zly ksztalt ticketow, `claude agents` nie dziala; start: preflight
+         codex nieudany, katalog ticku niedostepny).
+    64 - blad uzycia CLI (brak/nieznana podkomenda, brak wymaganego argumentu,
+         nieznany --backend, start --backend claude).
 """
 
 from __future__ import annotations
@@ -58,6 +108,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import sprint_run_backend
 import sprint_run_state
 
 _SUBPROCESS_TIMEOUT = 30
@@ -82,6 +133,7 @@ _KEY_ORDER = (
     "TICK_DIR",
     "BASE_BRANCH",
     "BASE_BRANCH_STALE",
+    "RUNTIME",
 )
 
 _REQUIRED_AUTOFLAGS = ("MONOLYNX_AUTOTEST", "MONOLYNX_AUTOCOMMIT", "MONOLYNX_AUTOPUSH")
@@ -99,6 +151,19 @@ class _UsageError(Exception):
 
 class _GitError(Exception):
     """Katalog nie jest repozytorium git albo `git` nie odpowiada."""
+
+
+def _resolve_tick_dir(tick_dir_arg: str | None) -> Path:
+    """`--tick-dir` jawny -> uzyj go wprost; inaczej `<absolutny-git-dir>/monolynx/tick`
+    (ten sam katalog, ktory `_cmd_preflight` tworzy jako `TICK_DIR`). Wspolne
+    dla `state`/`start`/`stop`, zeby wszystkie trzy podkomendy patrzyly na ten
+    sam rejestr `sessions.json` bez trzech osobnych implementacji tej samej
+    sciezki. Rzuca `_GitError`, gdy katalog nie jest repozytorium git.
+    """
+    if tick_dir_arg:
+        return Path(tick_dir_arg)
+    git_dir = _run_git(["rev-parse", "--absolute-git-dir"])
+    return Path(git_dir) / "monolynx" / "tick"
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -287,6 +352,7 @@ def _check_base_branch_stale(toplevel: str | None, base_branch: str) -> str:
 def _cmd_preflight(argv: list[str]) -> int:
     parser = _ArgumentParser(prog="sprint_run_tick.py preflight")
     parser.add_argument("--project-dir", default=".")
+    parser.add_argument("--runtime", default="claude", choices=list(sprint_run_backend._SUPPORTED_BACKENDS))
     try:
         args = parser.parse_args(argv)
     except _UsageError as exc:
@@ -296,25 +362,31 @@ def _cmd_preflight(argv: list[str]) -> int:
     problems: list[str] = []
     warnings: list[str] = []
 
-    # MON-195: pierwszy check, przed reszta preflightu. `bypassPermissions` (i
-    # rownowazny `--dangerously-skip-permissions` podany wprost jako tryb) w
-    # sesji auto trafia na domyslna regule soft_deny "Create Unsafe Agents" -
-    # tick przechodzil cala reszte preflightu i odpadal dopiero w KROKU 4 bez
-    # startu zadnej sesji (19.09, MON-191/MON-192). Substring, nie rownosc,
-    # bo dopuszczalne jest tez np. "--dangerously-skip-permissions=true".
-    permission_mode_raw = os.environ.get("MONOLYNX_SPRINT_PERMISSION_MODE", _DEFAULT_PERMISSION_MODE)
-    # Nieznana wartosc (literowka, przyszly tryb) przechodzi bez ostrzezenia -
-    # falszywe zatrzymanie wstrzymuje caly sprint, falszywe przepuszczenie
-    # konczy sie jedna odmowa klasyfikatora w KROK 4 (external-tool-output.md
-    # pkt 3): blokujemy wylacznie te dwa znane, niebezpieczne literaly.
-    if permission_mode_raw == "bypassPermissions" or "dangerously-skip-permissions" in permission_mode_raw:
-        problems.append(
-            "MONOLYNX_SPRINT_PERMISSION_MODE="
-            + permission_mode_raw
-            + " blokuje sesje w tle w trybie auto (regula soft_deny \"Create Unsafe Agents\"); "
-            "ustaw MONOLYNX_SPRINT_PERMISSION_MODE=auto w env sledzonego .claude/settings.json "
-            "albo swiadoma regule autoMode.allow w ~/.claude/settings.json"
-        )
+    # MON-185: MONOLYNX_SPRINT_PERMISSION_MODE i .claude/settings*.json sa
+    # pojeciami specyficznymi dla Claude Code (MON-183) - ta galaz ich w ogole
+    # nie sprawdza dla --runtime codex, zeby unikniecie tych plikow bylo
+    # kompletne, nie tylko "nie blokujace".
+    if args.runtime == "claude":
+        # MON-195: pierwszy check, przed reszta preflightu. `bypassPermissions`
+        # (i rownowazny `--dangerously-skip-permissions` podany wprost jako
+        # tryb) w sesji auto trafia na domyslna regule soft_deny "Create Unsafe
+        # Agents" - tick przechodzil cala reszte preflightu i odpadal dopiero w
+        # KROKU 4 bez startu zadnej sesji (19.09, MON-191/MON-192). Substring,
+        # nie rownosc, bo dopuszczalne jest tez np. "--dangerously-skip-permissions=true".
+        permission_mode_raw = os.environ.get("MONOLYNX_SPRINT_PERMISSION_MODE", _DEFAULT_PERMISSION_MODE)
+        # Nieznana wartosc (literowka, przyszly tryb) przechodzi bez
+        # ostrzezenia - falszywe zatrzymanie wstrzymuje caly sprint, falszywe
+        # przepuszczenie konczy sie jedna odmowa klasyfikatora w KROK 4
+        # (external-tool-output.md pkt 3): blokujemy wylacznie te dwa znane,
+        # niebezpieczne literaly.
+        if permission_mode_raw == "bypassPermissions" or "dangerously-skip-permissions" in permission_mode_raw:
+            problems.append(
+                "MONOLYNX_SPRINT_PERMISSION_MODE="
+                + permission_mode_raw
+                + " blokuje sesje w tle w trybie auto (regula soft_deny \"Create Unsafe Agents\"); "
+                "ustaw MONOLYNX_SPRINT_PERMISSION_MODE=auto w env sledzonego .claude/settings.json "
+                "albo swiadoma regule autoMode.allow w ~/.claude/settings.json"
+            )
 
     # Dalsze kroki zalezne od sciezki repo (pliki .claude/settings*.json, katalog
     # ticku) sa pomijane nizej, gdy ten katalog nie jest repozytorium git.
@@ -326,21 +398,28 @@ def _cmd_preflight(argv: list[str]) -> int:
     except _GitError:
         problems.append(f"katalog {args.project_dir} nie jest repozytorium git")
 
-    claude_version, version_problem = _run_claude_version()
-    if version_problem:
-        problems.append(version_problem)
-
-    # Wynik samej listy agentow nie jest tu potrzebny - liczy sie tylko, ze
-    # komenda dziala; podkomenda `state` uzywa go pozniej osobnym wywolaniem.
-    _, agents_problem = _run_claude_agents()
-    if agents_problem:
-        problems.append(agents_problem)
-
+    claude_version: str | None = None
     env_true_in: dict[str, str] = {}
-    if toplevel is not None:
-        toplevel_path = Path(toplevel)
-        for filename in _SETTINGS_FILENAMES:
-            _check_settings_file(toplevel_path, filename, problems, env_true_in)
+    if args.runtime == "claude":
+        claude_version, version_problem = _run_claude_version()
+        if version_problem:
+            problems.append(version_problem)
+
+        # Wynik samej listy agentow nie jest tu potrzebny - liczy sie tylko, ze
+        # komenda dziala; podkomenda `state` uzywa go pozniej osobnym wywolaniem.
+        _, agents_problem = _run_claude_agents()
+        if agents_problem:
+            problems.append(agents_problem)
+
+        if toplevel is not None:
+            toplevel_path = Path(toplevel)
+            for filename in _SETTINGS_FILENAMES:
+                _check_settings_file(toplevel_path, filename, problems, env_true_in)
+    else:
+        # codex: brak claude/agents/settings - delegacja do adaptera wspolnego
+        # (codex --version + codex login status), bez skutkow ubocznych.
+        _, codex_problems = sprint_run_backend.preflight("codex", env=os.environ)
+        problems.extend(codex_problems)
 
     # os.environ, nie zawartosc pliku settings - to jest to, co faktycznie
     # widzi TEN proces (plik odrzucony przez Claude Code w trybie -p dalej
@@ -396,6 +475,7 @@ def _cmd_preflight(argv: list[str]) -> int:
         "TICK_DIR": tick_dir or "",
         "BASE_BRANCH": base_branch,
         "BASE_BRANCH_STALE": base_branch_stale,
+        "RUNTIME": args.runtime,
     }
     for key in _KEY_ORDER:
         print(f"{key}={values[key]}")
@@ -445,11 +525,54 @@ def _write_session_log(logs_dir: Path, session_id: str) -> None:
     log_path.write_text("\n".join(nonempty) + ("\n" if nonempty else ""))
 
 
+def _state_codex(slug: str, tickets: list[Any], tick_dir: Path) -> dict[str, Any]:
+    """Raport stanu z rejestru wlasnego dyspozytora (sprint_run_backend) - `codex
+    exec` nie ma odpowiednika `claude agents --json --all`, wiec ta sciezka
+    NIGDY nie wywoluje binarki `claude` (MON-185).
+
+    Rejestr jest najpierw odswiezony przez status() dla kazdego wpisu codex i
+    zapisany z powrotem - analogicznie do tego, jak podkomenda `state` dla
+    claude zawsze pobiera swiezy `claude agents --json --all` przed
+    klasyfikacja, zeby kolejny start() (find_active_session) widzial aktualny
+    stan, a nie ten sprzed poprzedniego ticku.
+    """
+    registry_path = tick_dir / "sessions.json"
+    registry = sprint_run_backend.load_registry(registry_path)
+
+    refreshed: dict[str, dict[str, Any]] = {}
+    for identity, record in registry.items():
+        refreshed[identity] = sprint_run_backend.status(record) if record.get("backend") == "codex" else record
+    sprint_run_backend.save_registry(registry_path, refreshed)
+
+    rows = []
+    for ticket in tickets:
+        key = ticket["key"]
+        ticket_status = ticket["status"]
+        identity = sprint_run_backend.session_identity(slug, key)
+        record = refreshed.get(identity)
+        log_tail = sprint_run_backend.logs(record, n=60) if record else []
+        verdict, reason = sprint_run_backend.classify_normalized(ticket_status, record, log_tail)
+        rows.append(
+            {
+                "key": key,
+                "session_id": record.get("runtime_id") if record else None,
+                "session_name": record.get("name") if record else None,
+                "session_state": record.get("state") if record else "none",
+                "ticket_status": ticket_status,
+                "verdict": verdict,
+                "reason": reason,
+                "backend": "codex",
+            }
+        )
+    return {"slug": slug, "tickets": rows, "summary": sprint_run_state.summarize(rows)}
+
+
 def _cmd_state(argv: list[str]) -> int:
     parser = _ArgumentParser(prog="sprint_run_tick.py state")
     parser.add_argument("--slug", required=True)
     parser.add_argument("--tickets-json", required=True)
     parser.add_argument("--tick-dir", default=None)
+    parser.add_argument("--backend", default="claude", choices=list(sprint_run_backend._SUPPORTED_BACKENDS))
     try:
         args = parser.parse_args(argv)
     except _UsageError as exc:
@@ -471,20 +594,21 @@ def _cmd_state(argv: list[str]) -> int:
         print(f"sprint_run_tick: {ticket_error}", file=sys.stderr)
         return 2
 
-    if args.tick_dir:
-        tick_dir = Path(args.tick_dir)
-    else:
-        try:
-            git_dir = _run_git(["rev-parse", "--absolute-git-dir"])
-        except _GitError as exc:
-            print(f"sprint_run_tick: nie mozna ustalic katalogu ticku: {exc}", file=sys.stderr)
-            return 2
-        tick_dir = Path(git_dir) / "monolynx" / "tick"
+    try:
+        tick_dir = _resolve_tick_dir(args.tick_dir)
+    except _GitError as exc:
+        print(f"sprint_run_tick: nie mozna ustalic katalogu ticku: {exc}", file=sys.stderr)
+        return 2
     try:
         tick_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         print(f"sprint_run_tick: nie mozna utworzyc katalogu ticku {tick_dir}: {exc}", file=sys.stderr)
         return 2
+
+    if args.backend == "codex":
+        report = _state_codex(args.slug, tickets, tick_dir)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
 
     agents, agents_problem = _run_claude_agents()
     if agents_problem:
@@ -522,16 +646,135 @@ def _cmd_state(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_start(argv: list[str]) -> int:
+    parser = _ArgumentParser(prog="sprint_run_tick.py start")
+    parser.add_argument("--backend", required=True, choices=list(sprint_run_backend._SUPPORTED_BACKENDS))
+    parser.add_argument("--slug", required=True)
+    parser.add_argument("--key", required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--prompt", required=True)
+    parser.add_argument("--cwd", default=".")
+    parser.add_argument("--tick-dir", default=None)
+    try:
+        args = parser.parse_args(argv)
+    except _UsageError as exc:
+        print(f"sprint_run_tick: {exc}", file=sys.stderr)
+        return 64
+
+    if args.backend == "claude":
+        # MON-191/MON-192: sesje Claude startuja bezposrednio w KROK 4 skilla
+        # (`claude --bg --worktree ...`), zeby przejsc przez system uprawnien
+        # Claude Code - wywolanie `claude --bg` z wnetrza tego skryptu
+        # (subprocess procesu tick) omijaloby te uprawnienia. Zero efektow.
+        print(
+            "sprint_run_tick: start --backend claude nie jest wspierany - sesje Claude startuje "
+            "bezposrednio KROK 4 skilla (`claude --bg --worktree ...`), zeby przejsc przez system "
+            "uprawnien Claude Code; wywolanie `claude --bg` z wnetrza tego skryptu (subprocess) "
+            "omijaloby je (MON-191/MON-192).",
+            file=sys.stderr,
+        )
+        return 64
+
+    identity = sprint_run_backend.session_identity(args.slug, args.key)
+
+    # Preflight PRZED jakimkolwiek dotknieciem dysku (tick-dir, rejestr) - awaria
+    # nie zostawia sladu nawet gdy rejestr juz istnieje (MON-185 iteracja 2, pkt 6).
+    ok, problems = sprint_run_backend.preflight("codex", env=os.environ)
+    if not ok:
+        for problem in problems:
+            print(f"sprint_run_tick: {problem}", file=sys.stderr)
+        return 2
+
+    try:
+        tick_dir = _resolve_tick_dir(args.tick_dir)
+    except _GitError as exc:
+        print(f"sprint_run_tick: nie mozna ustalic katalogu ticku: {exc}", file=sys.stderr)
+        return 2
+    try:
+        tick_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"sprint_run_tick: nie mozna utworzyc katalogu ticku {tick_dir}: {exc}", file=sys.stderr)
+        return 2
+
+    registry_path = tick_dir / "sessions.json"
+
+    # Best-effort - brak binarki `claude` (albo jej awaria) NIE jest bledem
+    # tutaj (AC4): find_active_session traktuje None jak "zrodlo niedostepne"
+    # i spada na sam rejestr wlasny dyspozytora.
+    agents, agents_problem = _run_claude_agents()
+    claude_agents = agents if agents_problem is None else None
+
+    registry = sprint_run_backend.load_registry(registry_path)
+    existing = sprint_run_backend.find_active_session(
+        slug=args.slug, key=args.key, registry=registry, claude_agents=claude_agents
+    )
+    if existing is not None:
+        print(f"ALREADY-RUNNING {identity} {existing.get('runtime_id', '')}")
+        return 0
+
+    record = sprint_run_backend.start(
+        "codex",
+        slug=args.slug,
+        key=args.key,
+        model=args.model,
+        prompt=args.prompt,
+        cwd=args.cwd,
+        registry_path=registry_path,
+        claude_agents=claude_agents,
+    )
+    print(f"STARTED {identity} {record['runtime_id']} {record['pid']}")
+    return 0
+
+
+def _cmd_stop(argv: list[str]) -> int:
+    parser = _ArgumentParser(prog="sprint_run_tick.py stop")
+    parser.add_argument("--backend", required=True, choices=list(sprint_run_backend._SUPPORTED_BACKENDS))
+    parser.add_argument("--slug", required=True)
+    parser.add_argument("--key", required=True)
+    parser.add_argument("--tick-dir", default=None)
+    try:
+        args = parser.parse_args(argv)
+    except _UsageError as exc:
+        print(f"sprint_run_tick: {exc}", file=sys.stderr)
+        return 64
+
+    identity = sprint_run_backend.session_identity(args.slug, args.key)
+
+    try:
+        tick_dir = _resolve_tick_dir(args.tick_dir)
+    except _GitError as exc:
+        print(f"sprint_run_tick: nie mozna ustalic katalogu ticku: {exc}", file=sys.stderr)
+        return 2
+
+    registry_path = tick_dir / "sessions.json"
+    registry = sprint_run_backend.load_registry(registry_path)
+    # Dopasowanie WYLACZNIE po tozsamosci (slug:key) - na (slug,key) moze
+    # istniec najwyzej jeden zywy wpis rejestru niezaleznie od backendu, wiec
+    # --backend sluzy tu tylko walidacji CLI/symetrii, nie filtrowaniu.
+    entry = registry.get(identity)
+    if entry is None:
+        print(f"NOT-FOUND {identity}")
+        return 0
+
+    sprint_run_backend.stop(entry, registry_path=registry_path)
+    print(f"STOPPED {identity}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if not argv:
-        print("sprint_run_tick: brak podkomendy (preflight|state)", file=sys.stderr)
+        print("sprint_run_tick: brak podkomendy (preflight|state|start|stop)", file=sys.stderr)
         return 64
     subcommand, rest = argv[0], argv[1:]
     if subcommand == "preflight":
         return _cmd_preflight(rest)
     if subcommand == "state":
         return _cmd_state(rest)
-    print(f"sprint_run_tick: nieznana podkomenda '{subcommand}' (preflight|state)", file=sys.stderr)
+    if subcommand == "start":
+        return _cmd_start(rest)
+    if subcommand == "stop":
+        return _cmd_stop(rest)
+    print(f"sprint_run_tick: nieznana podkomenda '{subcommand}' (preflight|state|start|stop)", file=sys.stderr)
     return 64
 
 

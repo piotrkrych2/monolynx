@@ -17,7 +17,7 @@ Po odczycie kontraktu runtime wyświetl poniższą mapę użytkownikowi i zakoń
 
 **Nowy projekt? `/monolynx:setup`** - checklista konfiguracji, zanim weźmiesz pierwszy ticket.
 
-Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runtime.md). Mapa pokazuje nazwy Claude Code. W Codex wybierz potwierdzoną nazwę w katalogu skilli lub odczytaj dostarczony plik instrukcji. `sprint-run` nadal wymaga CLI `claude` i jego sesji; natywne subagenty Codex nie są zamiennikiem tego backendu. `/loop` proponuj wyłącznie tam, gdzie istnieje.
+Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runtime.md). Mapa pokazuje nazwy Claude Code. W Codex wybierz potwierdzoną nazwę w katalogu skilli lub odczytaj dostarczony plik instrukcji. `sprint-run` prowadzi tick i sesje robocze własnym backendem, wybieranym przez `MONOLYNX_SPRINT_RUNTIME` (`claude` albo `codex`); natywne subagenty Codex nie są zamiennikiem tego backendu. `/loop` proponuj wyłącznie tam, gdzie istnieje.
 
 ## Setup
 

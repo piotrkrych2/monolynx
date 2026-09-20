@@ -41,25 +41,50 @@ Slug jest częścią kontraktu nazw: sesja robocza ticketu nazywa się `<PROJECT
 
 Sesję ticketu rozpoznajesz po nazwie równej `<PROJECT-SLUG>-<KEY>` albo zaczynającej się od `<PROJECT-SLUG>-<KEY>-`, z dowolnym modelem na końcu. WHY: po zmianie `MONOLYNX_SPRINT_MODEL` między tickami (i dla sesji nazwanych przed dodaniem modelu do nazwy) żywa sesja musi nadal zajmować ticket, inaczej tick wystartuje drugą. Myślnik po kluczu jest obowiązkowy: `monolynx-MON-1-` nie łapie `monolynx-MON-10-opus`.
 
+Nazwa sesji jest kontraktem wyłącznie dla procesów `claude`. `codex exec` nie ma odpowiednika `--name` ani `--bg` (potwierdzone `codex exec --help`, `codex-cli 0.155.1`), więc sesje prowadzone przez adapter Codeksa rozpoznaje się po tożsamości `<PROJECT-SLUG>:<KEY>` w rejestrze dyspozytora, nie po nazwie procesu.
+
+---
+
+## Ustalenie backendu (runtime)
+
+Dyspozytor ma dwa backendy: `claude` (domyślny) i `codex`. Wybiera je `MONOLYNX_SPRINT_RUNTIME`, którą czyta `sprint_run.sh` i uruchamia tick w odpowiedniej binarce. **Nie odczytujesz tej zmiennej osobną komendą** - tick w `claude -p` nie ma reguły na `echo`, a przy Codeksie ten odczyt i tak nic by nie zmienił. Backend poznajesz po kliencie, w którym wykonujesz ten skill:
+
+- **Claude Code** - backend `claude`. Preflight (KROK 1) i stan (KROK 2) wołasz bez dodatkowych flag: domyślną wartością obu jest `claude`. To ścieżka niezmieniona od poprzednich wydań.
+- **Codex** - backend `codex`. Preflight wołasz z `--runtime codex` (KROK 1), stan z `--backend codex` (KROK 2), a sesje robocze prowadzisz komendami z KROKU 4 dla tego backendu.
+
+Backend rozstrzyga **czym sprawdzasz środowisko, skąd bierzesz stan sesji i czym startujesz sesje robocze**. Nie zmienia ani algorytmu ticku, ani werdyktów (`free`, `running`, `waiting`, `done`, `needs_human`), ani brzmienia linii `SPRINT-RUN: remaining=<n> running=<m> waiting=<k> done=<d>` i `SPRINT-RUN STOP: <powód>` - te są zamrożone i identyczne dla obu.
+
+Jeden backend na tick: nie mieszaj `--runtime claude` z `--backend codex` ani odwrotnie. Stan policzony z niewłaściwego źródła pokaże żywe tickety jako `free` i KROK 4 wystartuje drugą sesję do tej samej pracy.
+
 ---
 
 ## KROK 1: Preflight
 
-Dyspozytor nadal wymaga Claude CLI także uruchomiony z innego klienta. Nie zastępuj go backendem agentów bieżącego runtime. AUTO* i tryb uprawnień nie uchylają instrukcji użytkownika ani odmowy runtime; brak wymaganych zgód zatrzymuje dispatch.
+Dyspozytor prowadzi sesje robocze przez własny backend (`claude` albo `codex`, patrz sekcja wyżej). Nie zastępuj go natywnym mechanizmem subagentów bieżącego klienta ani sesją, której nie widzi w swoim źródle stanu. AUTO* i tryb uprawnień nie uchylają instrukcji użytkownika ani odmowy runtime; brak wymaganych zgód zatrzymuje dispatch.
 
 Sprawdź środowisko jednym wywołaniem skryptu ticku. Bez tego tick w tle utknie na pierwszym pytaniu, na które nikt nie odpowie.
+
+Backend `claude` (Claude Code):
 
 ```bash
 python3 "<katalog skilla>/scripts/sprint_run_tick.py" preflight
 ```
 
-Podstaw `<katalog skilla>` literalnie (rozwiniętą absolutną ścieżkę) - bez `${MONOLYNX_SKILL_DIR}`. To jest **jedyna** komenda tego kroku.
+Backend `codex` (ten skill wykonuje się w Codeksie):
+
+```bash
+python3 "<katalog skilla>/scripts/sprint_run_tick.py" preflight --runtime codex
+```
+
+Podstaw `<katalog skilla>` literalnie (rozwiniętą absolutną ścieżkę) - bez `${MONOLYNX_SKILL_DIR}`. Wołasz **jeden** z tych dwóch wariantów, zgodnie z sekcją "Ustalenie backendu (runtime)", i jest to **jedyna** komenda tego kroku.
 
 **Jawny zakaz**: nigdy `printenv`, `env`, `set`, `export -p`, `declare -x` ani `echo` zmiennej spoza `MONOLYNX_*` - w tym kroku ani nigdzie indziej w tym skillu. WHY: 18.09 `printenv` wypisał do transkryptu i logu pętli klucz API OpenAI i token GitLaba zamiast samego statusu flag. Żadnych innych komend Bash w KROK 1 poza wywołaniem powyżej.
 
-Skrypt sam sprawdza, jako pierwszy check, że `MONOLYNX_SPRINT_PERMISSION_MODE` nie jest `bypassPermissions` ani nie zawiera `dangerously-skip-permissions` (ten tryb w sesji auto odrzuca domyślna reguła soft_deny "Create Unsafe Agents" - bez tego checku tick przechodził cały preflight i odpadał dopiero w KROKU 4 bez startu żadnej sesji), potem `claude --version`, `claude agents --json --all`, repozytorium git, kształt `.claude/settings.json` i `.claude/settings.local.json`, flagi `MONOLYNX_*` w środowisku procesu oraz `BASE_BRANCH`/`BASE_BRANCH_STALE` (MON-197: lancuch fallbacku `MONOLYNX_BASE_BRANCH` -> `MONOLYNX_MR_TARGET` -> `git symbolic-ref refs/remotes/origin/HEAD` -> `glab repo view`, i rozjazd głównego checkoutu dyspozytora wobec tego brancha), i wypisuje na stdout wyłącznie linie `KLUCZ=wartość` (`SLUG`, `MODE`, `PARALLEL`, `SPRINT_MODEL`, `PERMISSION_MODE`, `AUTOTEST`, `AUTOCOMMIT`, `AUTOPUSH`, `AUTOMR`, `CONTRACT`, `SPRINT_RUN`, `CLAUDE_VERSION`, `PROJECT_DIR`, `TICK_DIR`, `BASE_BRANCH`, `BASE_BRANCH_STALE`), potem ewentualne `WARN: ...`, potem `ERROR: ...`, a na końcu dokładnie jedną linię `PREFLIGHT: ok` albo `PREFLIGHT: failed problems=<n>`. Nigdy nie wypisuje wartości zmiennych spoza tej listy ani całego `env` pliku settings - nie próbuj tego obejść dociąganiem pliku ręcznie. `BASE_BRANCH` i `BASE_BRANCH_STALE` są informacyjne - puste/nieznane nigdy nie trafiają do `problems`, więc same z siebie nie blokują ticku (blokadę dla `BASE_BRANCH_STALE=true` w trybie `batch` robi dopiero KROK 4).
+Zakres checków zależy od wybranego backendu. Przy `--runtime codex` skrypt **w ogóle nie czyta** `.claude/settings.json` ani `.claude/settings.local.json`, ignoruje `MONOLYNX_SPRINT_PERMISSION_MODE` i nie woła `claude --version` ani `claude agents --json --all`; zamiast tego sprawdza `codex --version` oraz `codex login status` (wymaga napisu `Logged in` w wyjściu). Wspólne dla obu backendów zostają: repozytorium git, `MONOLYNX_PROJECT_SLUG`, flagi `MONOLYNX_AUTOTEST` / `AUTOCOMMIT` / `AUTOPUSH` (wymagane `true`), ostrzeżenie o `MONOLYNX_AUTOMR` oraz `BASE_BRANCH`/`BASE_BRANCH_STALE` - one gatują działania samego ticku, niezależnie od tego, który klient go prowadzi. W wyjściu dochodzi klucz `RUNTIME=<claude|codex>`; przy `codex` `CLAUDE_VERSION` jest puste, a `PERMISSION_MODE` wypisane tylko informacyjnie.
 
-**`PREFLIGHT: ok`** (kod wyjścia `0`): przejdź do KROK 2. Weź `SLUG` (patrz "Ustalenie slug projektu"), `PARALLEL` jako domyślną liczbę slotów, `SPRINT_MODEL` i `PERMISSION_MODE` do KROK 4, `MODE` do KROK 5, `BASE_BRANCH` i `BASE_BRANCH_STALE` do sprawdzenia na początku KROK 4. Każdą linię `WARN:` (np. brak `MONOLYNX_AUTOMR`) dopisz do raportu jako ostrzeżenie, bez zatrzymywania ticku.
+Przy `--runtime claude` skrypt sprawdza, jako pierwszy check, że `MONOLYNX_SPRINT_PERMISSION_MODE` nie jest `bypassPermissions` ani nie zawiera `dangerously-skip-permissions` (ten tryb w sesji auto odrzuca domyślna reguła soft_deny "Create Unsafe Agents" - bez tego checku tick przechodził cały preflight i odpadał dopiero w KROKU 4 bez startu żadnej sesji), potem `claude --version`, `claude agents --json --all`, repozytorium git, kształt `.claude/settings.json` i `.claude/settings.local.json`, flagi `MONOLYNX_*` w środowisku procesu oraz `BASE_BRANCH`/`BASE_BRANCH_STALE` (MON-197: lancuch fallbacku `MONOLYNX_BASE_BRANCH` -> `MONOLYNX_MR_TARGET` -> `git symbolic-ref refs/remotes/origin/HEAD` -> `glab repo view`, i rozjazd głównego checkoutu dyspozytora wobec tego brancha), i wypisuje na stdout wyłącznie linie `KLUCZ=wartość` (`SLUG`, `MODE`, `PARALLEL`, `SPRINT_MODEL`, `PERMISSION_MODE`, `AUTOTEST`, `AUTOCOMMIT`, `AUTOPUSH`, `AUTOMR`, `CONTRACT`, `SPRINT_RUN`, `CLAUDE_VERSION`, `PROJECT_DIR`, `TICK_DIR`, `BASE_BRANCH`, `BASE_BRANCH_STALE`, `RUNTIME`), potem ewentualne `WARN: ...`, potem `ERROR: ...`, a na końcu dokładnie jedną linię `PREFLIGHT: ok` albo `PREFLIGHT: failed problems=<n>`. Nigdy nie wypisuje wartości zmiennych spoza tej listy ani całego `env` pliku settings - nie próbuj tego obejść dociąganiem pliku ręcznie. `BASE_BRANCH` i `BASE_BRANCH_STALE` są informacyjne - puste/nieznane nigdy nie trafiają do `problems`, więc same z siebie nie blokują ticku (blokadę dla `BASE_BRANCH_STALE=true` w trybie `batch` robi dopiero KROK 4).
+
+**`PREFLIGHT: ok`** (kod wyjścia `0`): przejdź do KROK 2. Weź `SLUG` (patrz "Ustalenie slug projektu"), `PARALLEL` jako domyślną liczbę slotów, `SPRINT_MODEL` i `PERMISSION_MODE` do KROK 4, `MODE` do KROK 5, `BASE_BRANCH` i `BASE_BRANCH_STALE` do sprawdzenia na początku KROK 4, a `RUNTIME` jako potwierdzenie backendu, z którym pracujesz w tym ticku (wypisz go w raporcie KROK 5). Każdą linię `WARN:` (np. brak `MONOLYNX_AUTOMR`) dopisz do raportu jako ostrzeżenie, bez zatrzymywania ticku.
 
 **`PREFLIGHT: failed problems=<n>`** (kod wyjścia `2`): wypisz użytkownikowi dosłownie każdą linię `ERROR:` i zakończ turę **bez startowania jakiejkolwiek sesji**. Pokaż gotową konfigurację do wklejenia:
 
@@ -157,6 +182,14 @@ Zbuduj z ticketów listę JSON w kształcie, którego oczekuje skrypt stanu (klu
 python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT-SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>'
 ```
 
+Backend `codex` - ta sama komenda z jawną flagą:
+
+```bash
+python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT-SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>' --backend codex
+```
+
+Domyślną wartością `--backend` jest `claude`, więc w Claude Code flagi nie dopisujesz. Wariant `codex` bierze stan **wyłącznie** z rejestru dyspozytora (`sessions.json` w `TICK_DIR`), odświeżanego przed klasyfikacją, i nie woła binarki `claude` ani razu - `codex exec` nie ma odpowiednika `claude agents --json --all`. Ogon logu pochodzi wtedy z JSONL sesji (`codex-logs/<PROJECT-SLUG>-<KEY>-<runtime_id>.jsonl`), a nie z `claude logs`.
+
 Podstaw `<katalog skilla>` i JSON ticketów literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, zdjęcie ANSI, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Kolejność ma znaczenie: między słowami w długiej linii `claude logs` czasem wstawia skok kolumny zamiast literalnej spacji, więc zdjęcie go razem z resztą ANSI skleja słowa (marker `SPRINT-RUN STOP:` przychodził jako `SPRINT-RUNSTOP:`), a ogon 60 linii mieści cały ostatni blok odpowiedzi asystenta (od ostatniej linii `⏺`), w którym klasyfikator szuka markera i pytania (MON-191). Plik czyta też człowiek (ogon trafia do komentarza przy `needs_human`), więc ma być czytelny. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
 
 `claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching" - podkomenda `state` i tak zapisuje to, co dostała (bez przerywania), a taki przypadek klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
@@ -217,7 +250,7 @@ Przejdź po ticketach z werdyktem innym niż `free` i `running`.
 
    Branch i URL merge requestu weź z ogona logu sesji. Gdy ich tam nie ma, wpisz `brak` - nie zgaduj i nie buduj URL-a z szablonu.
 
-2. Sprzątnij sesję:
+2. Sprzątnij sesję. Backend `claude`:
 
    ```bash
    claude rm "<session_id>"
@@ -225,9 +258,19 @@ Przejdź po ticketach z werdyktem innym niż `free` i `running`.
 
    **Bez** `--discard-unpushed` i **bez** `--force-remove-worktree`. Te flagi kasują pracę, której nikt jeszcze nie widział. Gdy `claude rm` odmówi (najczęściej: niewypchnięte zmiany w worktree), zostaw sesję w spokoju i odnotuj to w raporcie jako pozycję do ręcznego sprzątnięcia.
 
+   Backend `codex`:
+
+   ```bash
+   python3 "<katalog skilla>/scripts/sprint_run_tick.py" stop --backend codex --slug "<PROJECT-SLUG>" --key "<KEY>"
+   ```
+
+   `STOPPED <identity>` (kod 0) - wpis usunięty z rejestru. Przy werdykcie `done` stan rekordu jest terminalny (`success` albo `failure`) i **żaden sygnał nie leci**: proces Codeksa już nie żyje, a jego PID mógł w międzyczasie przypaść komuś innemu. `SIGTERM` idzie wyłącznie pod sesję żywą **i wciąż istniejącą w systemie**, przerywaną świadomie, i wyłącznie pod jej własny PID. `NOT-FOUND <identity>` (również kod 0) - w rejestrze nie było takiego wpisu, czyli nie ma czego zatrzymywać; to nie jest błąd i nie ponawiasz. Ta komenda rusza **tylko** własny wpis dyspozytora: nie kasuje worktree, nie dotyka niewypchniętych zmian ani cudzych procesów. Katalog roboczy sesji i jej log (`codex-logs/<PROJECT-SLUG>-<KEY>-<runtime_id>.jsonl`) zostają na dysku do wglądu.
+
 ### Werdykt `needs_human`
 
-1. Wklej ostatnie 60 linii logu (całą treść `$LOGS/<session_id>.log`) do komentarza ticketu, żeby ślad przetrwał zamknięcie sesji:
+1. Zostaw w tickecie ślad, który przetrwa zamknięcie sesji.
+
+   Backend `claude` - wklej ostatnie 60 linii logu (całą treść `$LOGS/<session_id>.log`):
 
    ```
    mcp__monolynx__add_comment(
@@ -236,6 +279,18 @@ Przejdź po ticketach z werdyktem innym niż `free` i `running`.
      content="**Sprint-run** - sesja `<session_id>` zakończyła się bez domknięcia ticketu. Ogon logu:\n\n```\n<ostatnie 60 linii>\n```"
    )
    ```
+
+   Backend `codex` - pliku `$LOGS/<session_id>.log` tu nie ma i nie szukaj go: katalog `logs/` zapisuje wyłącznie ścieżka claude, a przebieg sesji Codeksa leży w logu JSONL w katalogu ticku. Identyfikatorem jest `runtime_id` z rejestru (pole `session_id` w raporcie z KROKU 2), a śladem dla człowieka dwie ścieżki: log sesji i osobno `.stderr.log` tej samej sesji, w którym ląduje render klienta i błędy poza turą:
+
+   ```
+   mcp__monolynx__add_comment(
+     project_slug="<PROJECT-SLUG>",
+     ticket_id="<KEY>",
+     content="**Sprint-run** - sesja Codex `<runtime_id>` zakończyła się bez domknięcia ticketu (`<reason>`). Log: `<TICK_DIR>/codex-logs/<PROJECT-SLUG>-<KEY>-<runtime_id>.jsonl`, stderr: `<TICK_DIR>/codex-logs/<PROJECT-SLUG>-<KEY>-<runtime_id>.stderr.log`"
+   )
+   ```
+
+   `<reason>` bierzesz z pola `reason` wiersza tego ticketu w raporcie z KROKU 2. Ogona logu nie wklejasz: JSONL Codeksa to zapis zdarzeń tury, nie tekst do czytania w komentarzu, a plik zostaje na dysku pod podaną ścieżką.
 
 2. Sprawdź, czy ten ticket dostał już auto-wznowienie:
 
@@ -253,17 +308,31 @@ Przejdź po ticketach z werdyktem innym niż `free` i `running`.
      )
      ```
 
+     Dla backendu `codex` ten sam komentarz bez nazwy sesji i bez nazwy worktree, tak samo jak przy pierwszym starcie w KROKU 4 - Codex nie nadaje nazwy sesji, a worktree tworzy i nazywa sam, więc obu wartości nie znasz i ich nie zgadujesz:
+
+     ```
+     mcp__monolynx__add_comment(
+       project_slug="<PROJECT-SLUG>",
+       ticket_id="<KEY>",
+       content="**Sprint-run** - auto-wznowienie: uruchomiono sesję Codex `<runtime_id>`, log `<TICK_DIR>/codex-logs/<PROJECT-SLUG>-<KEY>-<runtime_id>.jsonl`"
+     )
+     ```
+
+     `<runtime_id>` to wartość z linii `STARTED` nowego wywołania `start`, nie identyfikator sesji, która właśnie padła.
+
    - **Komentarz już jest** - to drugie podejście, więc nie wznawiaj. Ticket zostaje dla człowieka; wymień go w raporcie w sekcji "Czekają na człowieka".
 
    Jedno auto-wznowienie na ticket to celowy limit: druga porażka pod rząd prawie zawsze znaczy, że problem jest w tickecie albo w projekcie, a nie w sesji, i kolejne restarty tylko palą czas.
 
 ### Werdykt `waiting`
 
-Nie rusz sesji. Nie wznawiaj jej, nie kasuj i nie odpowiadaj za człowieka na pytanie z logu. Wypisz w raporcie ticket, powód z pola `reason` i gotową komendę:
+Nie rusz sesji. Nie wznawiaj jej, nie kasuj i nie odpowiadaj za człowieka na pytanie z logu. Wypisz w raporcie ticket, powód z pola `reason` i gotową komendę dla backendu `claude`:
 
 ```bash
 claude attach "<session_id>"
 ```
+
+Dla backendu `codex` takiej komendy nie ma - `codex exec` nie udostępnia sesji do podłączenia się w trakcie. Zamiast niej podaj człowiekowi ścieżkę logu: `<TICK_DIR>/codex-logs/<PROJECT-SLUG>-<KEY>-<runtime_id>.jsonl` (`TICK_DIR` z wyjścia preflightu), a przy diagnozie błędów klienta także plik `.stderr.log` obok niego.
 
 ---
 
@@ -303,9 +372,32 @@ mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<KEY>")
 claude --bg --worktree "<KEY>" --name "<PROJECT-SLUG>-<KEY>-<SPRINT_MODEL>" --model "<SPRINT_MODEL>" --permission-mode "<PERMISSION_MODE>" "/monolynx:work <KEY>"
 ```
 
+Powyższa komenda dotyczy **backendu `claude`**. Dla **backendu `codex`** sesję startuje podkomenda `start` skryptu ticku - jedno samodzielne wywołanie `python3`, z wartościami literalnymi:
+
+```bash
+python3 "<katalog skilla>/scripts/sprint_run_tick.py" start --backend codex --slug "<PROJECT-SLUG>" --key "<KEY>" --model "<SPRINT_MODEL>" --prompt '$monolynx:work <KEY>'
+```
+
+Prompt w **apostrofach**, nie w cudzysłowie: w cudzysłowie powłoka rozwinęłaby `$monolynx` do pustego napisu i Codex dostałby `:work <KEY>` zamiast nazwy skilla. Prefiks `$monolynx:` jest poprawny - Codex zna skille pod taką nazwą (MON-182). `--cwd` jest opcjonalny (domyślnie katalog bieżący); podaj go literalnie tylko wtedy, gdy proces ticku nie stoi w katalogu projektu, biorąc wartość z `PROJECT_DIR` wyjścia preflightu.
+
+Wyjście `start` to jedna linia na stdout albo komunikat na stderr; format linii jest **zamrożonym kontraktem**:
+
+| Wyjście | Kod | Twoje działanie |
+|---|---|---|
+| `STARTED <identity> <runtime_id> <pid>` | `0` | sesja wystartowała. `<identity>` to `<PROJECT-SLUG>:<KEY>`, a `<runtime_id>` jest identyfikatorem sesji, którego używasz dalej zamiast `<session_id>`. Ticket wchodzi do `S`, dopisz komentarz |
+| `ALREADY-RUNNING <identity> <runtime_id>` | `0` | żywa sesja tego ticketu już istnieje (rejestr albo `claude agents`); żaden proces nie powstał. Ticket **nie** wchodzi do `S`, komentarza nie dopisujesz - to normalny wynik idempotentnego ticku, nie błąd |
+| komunikat na stderr | `2` | preflight Codeksa nieudany albo katalog ticku niedostępny. Żaden proces ani wpis rejestru nie powstał: wypisz stderr, nie ponawiaj startu w tym ticku, ticket nie wchodzi do `S` |
+| komunikat na stderr | `64` | błąd użycia (brak wymaganego argumentu albo `--backend claude`) |
+
+`start --backend claude` **celowo** kończy się kodem 64 i niczego nie robi. WHY: sesje Claude startują komendą `claude --bg` wprost z tego kroku, żeby przejść przez system uprawnień Claude Code; to samo wywołanie puszczone przez `subprocess` skryptu ticku ominęłoby te uprawnienia (MON-191/MON-192). Nie próbuj obejść tego kodu 64.
+
+Sesja Codeksa dostaje **świeży worktree na ticket**, tak jak sesja Claude - z jedną różnicą, którą masz uwzględnić w raporcie: katalog tworzy i nazywa sam Codex (`codex exec --worktree` jest przełącznikiem bez wartości), a nie dyspozytor. Nie znasz jego ścieżki i nie zgaduj jej: w komentarzu ticketu dla backendu `codex` podaj identyfikator sesji i ścieżkę logu, a pole „worktree `<KEY>`” zostaw wyłącznie dla backendu `claude`.
+
+Nie startuj sesji Codeksa gołym `codex exec`. Sesja założona poza rejestrem dyspozytora nie jest przez niego widziana, więc następny tick uznałby ticket za wolny i wystartował drugą.
+
 **Start odrzucony przez uprawnienia**: gdy to wywołanie zostanie odrzucone przez klasyfikator trybu automatycznego (komunikat w rodzaju "Blocked by classifier" albo "Permission ... denied") - nie ponawiaj, nie zmieniaj `PERMISSION_MODE` na inny, nie szukaj obejścia. Gdy `MODE=interactive`: wypisz użytkownikowi gotową komendę startu dla każdego nieuruchomionego ticketu (z prefiksem `!`, do wklejenia wprost w tej sesji) i rekomendację uruchomienia pętli przez `sprint_run.sh` (patrz KROK 5). Gdy `MODE=batch`: odnotuj to samo w raporcie ticku, nikt tam i tak komendy nie wklei. W obu przypadkach taki ticket **nie** wchodzi do `S`.
 
-Odczytaj identyfikator sesji: weź go z wyjścia komendy, a gdy go tam nie ma, dociągnij po nazwie:
+Odczytaj identyfikator sesji. Dla backendu `codex` jest nim `<runtime_id>` z linii `STARTED` - masz go od razu, żadnej dodatkowej komendy nie wołasz. Dla backendu `claude` weź identyfikator z wyjścia komendy startu, a gdy go tam nie ma, dociągnij po nazwie:
 
 ```bash
 claude agents --json --all
@@ -321,9 +413,21 @@ mcp__monolynx__add_comment(
 )
 ```
 
+Dla backendu `codex` ten sam komentarz bez nazwy sesji i bez nazwy worktree (Codex nie nadaje pierwszej, a drugą tworzy sam), za to ze ścieżką logu, bo to jedyne miejsce, w którym człowiek zobaczy przebieg tej sesji:
+
+```
+mcp__monolynx__add_comment(
+  project_slug="<PROJECT-SLUG>",
+  ticket_id="<KEY>",
+  content="**Sprint-run** - uruchomiono sesję Codex `<runtime_id>`, log `<TICK_DIR>/codex-logs/<PROJECT-SLUG>-<KEY>-<runtime_id>.jsonl`"
+)
+```
+
 Komentarz z identyfikatorem sesji jest jedynym trwałym śladem, po którym człowiek trafi do właściwej sesji następnego dnia. Nie pomijaj go, nawet gdy sesja wystartowała bez problemów.
 
-**Zapamiętaj `S`**: liczbę sesji, które faktycznie wystartowały w tym kroku. Liczysz wyłącznie te potwierdzone wpisem o nazwie `<PROJECT-SLUG>-<KEY>-<MODEL>` w `claude agents --json --all`, a nie liczbę prób startu. `S` wchodzi do korekty linii statusu w KROK 5.
+**Zapamiętaj `S`**: liczbę sesji, które faktycznie wystartowały w tym kroku, a nie liczbę prób startu. Dla backendu `claude` liczysz wyłącznie te potwierdzone wpisem o nazwie `<PROJECT-SLUG>-<KEY>-<MODEL>` w `claude agents --json --all`; dla backendu `codex` wyłącznie te, które dały linię `STARTED` (`ALREADY-RUNNING`, kod 2 i kod 64 nie liczą się do `S`). `S` wchodzi do korekty linii statusu w KROK 5.
+
+Poniższe akapity o trybie uprawnień i modelu dotyczą backendu `claude`. Sesja Codeksa nie ma trybu uprawnień Claude Code ani modelu w komendzie: jej granicą jest sandbox (`MONOLYNX_SPRINT_CODEX_SANDBOX`, domyślnie `workspace-write`), a `--model` z komendy `start` służy tożsamości i nazewnictwu, bo `codex exec` nie przyjmuje aliasów `opus`/`sonnet`. Flagi AUTO* i `MONOLYNX_SPRINT_RUN=1` działają tak samo dla obu - sesja dziedziczy środowisko procesu ticku.
 
 Sesja w tle startuje z trybem uprawnień `PERMISSION_MODE` z wyjścia preflightu (domyślnie `auto`, nadpisywalne przez `MONOLYNX_SPRINT_PERMISSION_MODE` w środowisku procesu ticku - preflight w KROK 1 blokuje tick, zanim wystartuje jakąkolwiek sesję, jeśli ta zmienna jest ustawiona na `bypassPermissions` albo `--dangerously-skip-permissions`). WHY: worktree tworzony przez `claude --bg --worktree` zawiera wyłącznie pliki śledzone przez gita, a `.claude/settings.local.json` jest ignorowany, więc ani `permissions`, ani flagi AUTO* z niego nie docierają do sesji roboczej i sesja bez człowieka zawisłaby na pierwszym pytaniu o zgodę. Granicą jest wtedy hook `bash_guard.py` (deny na git write, lint, testy i `glab mr create` dla subagentów) oraz kontrakt autonomii skilla `work`, a nie dialog uprawnień. Flagi trybu w tle muszą leżeć w **śledzonym** `.claude/settings.json` (pole `env`) albo w środowisku procesu odpalającego tick: `sprint_run.sh` je eksportuje, a `claude --bg` dziedziczy środowisko. Dodatkowo (MON-197): `claude --bg --worktree` tworzy worktree ticketu z **HEAD głównego checkoutu dyspozytora w chwili startu sesji** - stąd sprawdzenie `BASE_BRANCH`/`BASE_BRANCH_STALE` na początku KROK 4, zanim ten krok wystartuje jakąkolwiek sesję.
 
@@ -377,6 +481,8 @@ Podstaw ścieżkę **literalnie**: `<katalog skilla>/scripts/sprint_run.sh` (kat
   bash "<ścieżka>" --help
   ```
 
+Dopisz jedno zdanie o backendzie: `sprint_run.sh` bierze go z `MONOLYNX_SPRINT_RUNTIME` w środowisku procesu, który uruchamia pętlę (`claude` domyślnie, `codex` prowadzi tick przez `codex exec`; wartość spoza tych dwóch kończy skrypt kodem 64, brak binarki wybranego runtime kodem 69). Nie wpisuj tej zmiennej do komend wyżej - użytkownik ustawia ją tam, gdzie trzyma resztę flag `MONOLYNX_*`.
+
 Powiedz wprost: **ten skill niczego nie kopiuje ani nie instaluje**. Ścieżka wskazuje skrypt dołączony do zainstalowanego pluginu albo skilla standalone. Po aktualizacji lokalizacja może się zmienić, więc rozwiń ją ponownie, zamiast trzymać starą w notatkach albo w crontabie na stałe.
 
 ### Ostatnia linia
@@ -399,8 +505,9 @@ Format samej linii jest bez zmian: to kontrakt z `sprint_run.sh`, który po niej
 
 1. **Nigdy nie pracujesz nad ticketem sam.** Żadnej edycji plików, żadnego commita, żadnego lintu. Widzisz coś do naprawienia w kodzie - to materiał na ticket, nie na Twoją turę.
 2. **Tick jest idempotentny.** Przed startem sesji sprawdzasz, czy taka nazwa już nie żyje; przed auto-wznowieniem sprawdzasz komentarze. Dwa ticki pod rząd nie mogą zdublować sesji ani komentarza.
-3. **Nie kasujesz sesji bez werdyktu `done`.** `claude rm` tylko po tym, jak ticket jest w `in_review` albo `done`. Sesja `waiting` czeka na człowieka i musi go doczekać.
+3. **Nie kasujesz sesji bez werdyktu `done`.** `claude rm` (backend `claude`) i `sprint_run_tick.py stop` (backend `codex`) tylko po tym, jak ticket jest w `in_review` albo `done`. Sesja `waiting` czeka na człowieka i musi go doczekać.
 4. **Nie zmieniasz statusów ticketów.** Statusy przestawia `/monolynx:work` w swojej sesji. Ty tylko czytasz je i komentujesz.
 5. **Nazwy sesji są zamrożone**: `<PROJECT-SLUG>-<KEY>-<MODEL>` dla pracy (rozpoznawana także bez sufiksu modelu), `<PROJECT-SLUG>-sprint-run-<MODEL>` dla ticka. Inne narzędzia po nich rozpoznają sesje sprintu.
 6. **Język raportu: polski.** Komentarze w ticketach też.
-7. **Preflight i stan sesji idą tylko przez skrypt, zero `printenv`/`env`.** `scripts/sprint_run_tick.py` (`preflight`, `state`) jest jedynym sposobem sprawdzenia środowiska (KROK 1) i policzenia stanu sesji (KROK 2) - żadnych ręcznych `claude agents`/`claude logs`/`mktemp`/potoków obok niego w tych dwóch krokach. KROK 4 nadal woła `claude agents --json --all` wprost, żeby odczytać `id` świeżo wystartowanej sesji i potwierdzić `S` - to jedyne miejsce w tym skillu, gdzie ta komenda idzie bezpośrednio. Nigdy `printenv`, `env`, `set`, `export -p`, `declare -x` ani `echo` zmiennej spoza `MONOLYNX_*`: incydent 18.09 wypisał tak sekrety (klucz OpenAI, token GitLaba) do transkryptu i logu pętli.
+7. **Backend nie zmienia kontraktu.** Wybór `claude`/`codex` zmienia komendy (KROK 1, 2 i 4), nie kontrakt: linia `SPRINT-RUN: ...`, `SPRINT-RUN STOP: ...`, werdykty i reguła jednej żywej sesji na ticket są wspólne. Jeden backend na tick, bez mieszania flag. Czego Codex nie umie (nazwa sesji, tryb w tle, natywny sygnał "czeka na zgodę", model w `codex exec`), tego nie zastępujesz obejściem - wypisujesz to w raporcie. Jedynym sygnałem oczekiwania na człowieka pod Codeksem jest marker `SPRINT-RUN STOP:` w treści logu sesji.
+8. **Preflight i stan sesji idą tylko przez skrypt, zero `printenv`/`env`.** `scripts/sprint_run_tick.py` (`preflight`, `state`) jest jedynym sposobem sprawdzenia środowiska (KROK 1) i policzenia stanu sesji (KROK 2) - żadnych ręcznych `claude agents`/`claude logs`/`mktemp`/potoków obok niego w tych dwóch krokach. KROK 4 przy backendzie `claude` nadal woła `claude agents --json --all` wprost, żeby odczytać `id` świeżo wystartowanej sesji i potwierdzić `S` - to jedyne miejsce w tym skillu, gdzie ta komenda idzie bezpośrednio; przy backendzie `codex` identyfikator przychodzi w linii `STARTED` i tej komendy nie wołasz w ogóle. Nigdy `printenv`, `env`, `set`, `export -p`, `declare -x` ani `echo` zmiennej spoza `MONOLYNX_*`: incydent 18.09 wypisał tak sekrety (klucz OpenAI, token GitLaba) do transkryptu i logu pętli.

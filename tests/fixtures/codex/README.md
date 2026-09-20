@@ -134,3 +134,49 @@ fields and this hook-specific shape: { hookSpecificOutput: { hookEventName:
 - `pretooluse_bash.json` - syntetyczny payload PreToolUse zbudowany z pol
   udokumentowanych wyzej (nie przechwycony z realnego CLI, patrz `_meta`).
 - `userpromptsubmit.json` - jw. dla UserPromptSubmit.
+- `exec-json.0.155.1.jsonl` - **pierwszy plik w tym katalogu, ktory JEST
+  realnym przechwyceniem** (w odroznieniu od dwoch powyzszych, ktore sa
+  syntetyczne/z dokumentacji, patrz uwagi przy kazdym). Przechwycone przez
+  Team Managera 2026-09-20, sandbox `read-only`, katalog poza repo
+  (`/tmp/codexprobe`), `codex-cli 0.155.1`, kod wyjscia `0`. Komenda:
+  `codex exec --json --sandbox read-only --skip-git-repo-check -C
+  /tmp/codexprobe "Reply with exactly the word PONG and nothing else. Do not
+  use any tools."`. Plik ma naglowek `_meta` jako pierwsza linia (komenda,
+  wersja, data, `captured_by`) - ta linia NIE jest czescia realnego wyjscia
+  `codex exec --json`, testy pomijaja ja przed parsowaniem. Pozostale 5 linii
+  to doslowne stdout (JSONL: `thread.started`, `turn.started`,
+  `item.completed` typu `error` - ostrzezenie o skroconych opisach skilli,
+  nie fatalny blad turn - `item.completed` typu `agent_message` z tekstem
+  `"PONG"`, `turn.completed`). stderr tego samego przebiegu (ANSI, NIE jest
+  JSONL: `rmcp::transport::worker` fatal `Transport channel closed` przy
+  `AuthRequired`) jest osobnym strumieniem i CELOWO nie wchodzi do tego
+  pliku - parser `parse_codex_jsonl` (MON-185, `plugin/scripts/
+  sprint_run_backend.py`) czyta wylacznie stdout. Uzyty w
+  `tests/unit/test_sprint_run_backend.py`.
+- `exec-plain.0.155.1.stdout.txt` i `exec-plain.0.155.1.stderr.txt` - **drugie realne
+  przechwycenie**, tym razem `codex exec` BEZ `--json`, czyli sciezka, ktorej uzywa
+  petla `plugin/scripts/sprint_run.sh` (grep po zamrozonej linii statusu). Przechwycone
+  przez Team Managera 2026-09-20, `codex-cli 0.155.1`, sandbox `read-only`, katalog poza
+  repo (`/tmp/codexprobe2`), stdin z `/dev/null`, kod wyjscia `0`. Komenda:
+  `codex exec --sandbox read-only --skip-git-repo-check -C /tmp/codexprobe2 "<prompt
+  proszacy o jedna linie SPRINT-RUN>" < /dev/null`. Oba pliki to doslowne strumienie,
+  bez naglowka `_meta` (stdout ma byc parsowalny 1:1 tak, jak widzi go skrypt).
+  Wnioski utrwalone przez te fixture:
+  - **stdout to sama finalna odpowiedz agenta**: jedna linia zakonczona `\n`, ZERO kodow
+    ANSI i zero prefiksow. Zamrozona linia `SPRINT-RUN: remaining=... running=...
+    waiting=... done=...` przechodzi przez `grep -E` bez zdejmowania ANSI - inaczej niz
+    `claude logs`, ktore jest renderem TUI (pkt 4 reguly `external-tool-output.md`).
+  - **stderr to render sesji**: naglowek (`workdir`, `model`, `sandbox`, `session id`),
+    kody ANSI, linie hookow, echo promptu, szum klienta MCP i `tokens used`. NIE jest
+    parsowalny i zaden kod go nie parsuje. Z `2>&1` (jak w skrypcie) linia statusu
+    pojawia sie dwa razy i NIE bierze sie to z echa promptu: echo zaczyna sie od tresci
+    promptu, wiec kotwica `^` w `grep -E '^SPRINT-RUN: ...'` go nie lapie. Powod jest
+    inny - codex renderuje **finalna odpowiedz agenta takze na stderr**, pod znacznikiem
+    `codex` (linia 22 tego fixture'u). Dlatego drugie trafienie wystapi rowniez wtedy,
+    gdy prompt nie zawiera linii statusu, i dlatego `tail -1` jest konieczny, a nie
+    wygodny. Prostuje to docstring testu
+    `test_stderr_alone_also_matches_because_codex_renders_final_answer_there_too`
+    (znalezisko krytyka, MON-185 ponowne review).
+  - **`codex exec` czyta stdin**: nawet przy `< /dev/null` wypisuje `Reading additional
+    input from stdin...`. Wywolanie ze stdin-em bedacym otwartym pipe czeka na EOF, wiec
+    kazde uruchomienie w tle wymaga jawnego `< /dev/null`.

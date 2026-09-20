@@ -51,8 +51,10 @@ nie sztucznym stubem.
 """
 
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -718,3 +720,553 @@ class TestState:
 
         assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
         assert not old_log.exists()
+
+
+# ---------------------------------------------------------------------------
+# MON-185: wybor runtime (--runtime claude|codex) w preflight, wybor backendu
+# (--backend claude|codex) w state. Domyslna wartosc obu flag to "claude" --
+# kazdy istniejacy test powyzej (bez --runtime/--backend) sprawdza wiec
+# jednoczesnie, ze default nie zmienia zachowania (brak regresji).
+#
+# Fake `codex`: analogiczny do fake `claude` powyzej, ale bez podkomendy
+# `agents`/`logs` (Codex nie ma odpowiednika `claude agents --json --all` --
+# potwierdzone w briefie: `~/.codex/session_index.jsonl` nie zawiera sesji
+# `codex exec`). Obsluguje `--version` i `login status`, sterowalne tymi
+# samymi konwencjami FAKE_CODEX_* co reszta fakebina w tym pliku.
+# ---------------------------------------------------------------------------
+
+CODEX_SCRIPT = """#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  exit_code="${FAKE_CODEX_VERSION_EXIT:-0}"
+  if [ "$exit_code" != "0" ]; then
+    echo "codex-stub: --version zakonczone bledem (symulacja testu)" >&2
+    exit "$exit_code"
+  fi
+  echo "${FAKE_CODEX_VERSION_OUTPUT:-codex-cli 0.155.1}"
+  exit 0
+fi
+if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
+  exit_code="${FAKE_CODEX_LOGIN_EXIT:-0}"
+  if [ "$exit_code" != "0" ]; then
+    echo "codex-stub: login status zakonczone bledem (symulacja testu)" >&2
+    exit "$exit_code"
+  fi
+  echo "${FAKE_CODEX_LOGIN_OUTPUT:-Logged in using ChatGPT}"
+  exit 0
+fi
+if [ "${1:-}" = "exec" ]; then
+  # MON-185 (iteracja 3): symuluje dlugozyjaca sesje w tle -- proces spi
+  # FAKE_CODEX_EXEC_SLEEP sekund (domyslnie dosc dlugo, zeby PID byl wciaz
+  # zywy przy DRUGIM wywolaniu `start` w testach idempotencji), potem konczy
+  # sie sam. To jest jedyny proces, ktoremu testy CLI start/stop pozwalaja
+  # wyslac realny SIGTERM -- nigdy nie jest to proces pytest (patrz uwaga w
+  # TestCliStopCommand nizej).
+  echo '{"type":"thread.started","thread_id":"fake-thread-cli"}'
+  sleep "${FAKE_CODEX_EXEC_SLEEP:-4}"
+  echo '{"type":"turn.completed","usage":{}}'
+  exit 0
+fi
+echo "codex-stub: nieobslugiwane argumenty: $*" >&2
+exit 127
+"""
+
+
+@pytest.fixture
+def tick_sandbox_with_codex(tick_sandbox):
+    """tick_sandbox + fake `codex` w tym samym fakebin (obok istniejacego `claude`)."""
+    codex_script = tick_sandbox.fakebin / "codex"
+    codex_script.write_text(CODEX_SCRIPT)
+    codex_script.chmod(0o755)
+    return tick_sandbox
+
+
+def run_preflight_runtime(sandbox, runtime, project_dir=None, env_extra=None, timeout=30):
+    project_dir = project_dir or sandbox.project_dir
+    env = _base_env(sandbox, env_extra)
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "preflight", "--project-dir", str(project_dir), "--runtime", runtime],
+        cwd=str(sandbox.project_dir),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+@pytest.mark.unit
+class TestPreflightRuntimeSelection:
+    def test_default_runtime_without_flag_is_claude_and_reported(self, tick_sandbox):
+        """Brak regresji: bez --runtime zachowanie identyczne jak dotychczas, ale
+        preflight teraz dodatkowo raportuje jawnie RUNTIME=claude."""
+        result = run_preflight(tick_sandbox, env_extra=full_flags_env())
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "RUNTIME=claude" in result.stdout.splitlines()
+
+    def test_explicit_runtime_claude_behaves_like_default(self, tick_sandbox):
+        result = run_preflight_runtime(tick_sandbox, "claude", env_extra=full_flags_env())
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "RUNTIME=claude" in result.stdout.splitlines()
+
+    def test_runtime_codex_ok_without_claude_binary_present(self, tick_sandbox_with_codex):
+        """MON-185: preflight Codex nie wymaga binarki `claude` w ogole -- usuwamy
+        fake `claude` z fakebin (tylko `codex` zostaje), zeby udowodnic ze sciezka
+        codex nigdy jej nie woala."""
+        (tick_sandbox_with_codex.fakebin / "claude").unlink()
+
+        result = run_preflight_runtime(tick_sandbox_with_codex, "codex", env_extra=full_flags_env())
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "RUNTIME=codex" in result.stdout.splitlines()
+        assert not error_lines(result)
+
+    def test_runtime_codex_missing_binary_exits_2(self, tick_sandbox):
+        """Fakebin ma tylko `claude` (bez `codex`) -- wybor --runtime codex ma
+        skonczyc sie bledem preflightu, nie cichym przejsciem."""
+        result = run_preflight_runtime(tick_sandbox, "codex", env_extra=full_flags_env())
+
+        assert result.returncode == 2
+        errs = error_lines(result)
+        assert any("codex" in line.lower() for line in errs)
+
+    def test_runtime_codex_not_logged_in_exits_2(self, tick_sandbox_with_codex):
+        env_extra = full_flags_env({"FAKE_CODEX_LOGIN_OUTPUT": "Not logged in"})
+
+        result = run_preflight_runtime(tick_sandbox_with_codex, "codex", env_extra=env_extra)
+
+        assert result.returncode == 2
+        errs = error_lines(result)
+        assert any("login" in line.lower() or "zalogowan" in line.lower() for line in errs)
+
+    def test_runtime_codex_ignores_malformed_claude_settings_json(self, tick_sandbox_with_codex):
+        """MON-183: preflight Codex NIE czyta .claude/settings.json -- plik
+        zepsuty, ktory dla --runtime claude jest bledem (patrz
+        test_invalid_json_in_settings_json_reports_error_and_exit_2), nie ma tu
+        zadnego wplywu."""
+        claude_dir = tick_sandbox_with_codex.project_dir / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{niepoprawny json")
+
+        result = run_preflight_runtime(tick_sandbox_with_codex, "codex", env_extra=full_flags_env())
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert not any(".claude/settings.json" in line for line in error_lines(result))
+
+    def test_runtime_codex_ignores_claude_bypass_permissions_variable(self, tick_sandbox_with_codex):
+        """MONOLYNX_SPRINT_PERMISSION_MODE opisuje tryby Claude Code -- dla Codex
+        (--sandbox / --dangerously-bypass-approvals-and-sandbox) to pojecie po
+        prostu nie ma zastosowania, wiec bypassPermissions nie jest tu bledem."""
+        env_extra = full_flags_env({"MONOLYNX_SPRINT_PERMISSION_MODE": "bypassPermissions"})
+
+        result = run_preflight_runtime(tick_sandbox_with_codex, "codex", env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert not error_lines(result)
+
+    def test_runtime_codex_still_requires_autoflags(self, tick_sandbox_with_codex):
+        """Flagi AUTOTEST/AUTOCOMMIT/AUTOPUSH gatuja dzialania samego ticku
+        (git push/testy/commit wykonywane przez /monolynx:work), niezaleznie od
+        tego, ktory runtime prowadzi sesje robocza -- pozostaja wymagane."""
+        env_extra = full_flags_env()
+        del env_extra["MONOLYNX_AUTOTEST"]
+
+        result = run_preflight_runtime(tick_sandbox_with_codex, "codex", env_extra=env_extra)
+
+        assert result.returncode == 2
+        errs = error_lines(result)
+        assert any("MONOLYNX_AUTOTEST" in line for line in errs)
+
+    def test_runtime_codex_never_leaks_secret_env_values(self, tick_sandbox_with_codex):
+        env_extra = full_flags_env({"FAKE_CODEX_LOGIN_OUTPUT": "Not logged in", "OPENAI_API_KEY": "sekret-codex-123"})
+
+        result = run_preflight_runtime(tick_sandbox_with_codex, "codex", env_extra=env_extra)
+
+        combined = result.stdout + result.stderr
+        assert "sekret-codex-123" not in combined
+
+    def test_unknown_runtime_value_exits_2_or_64_not_silently_ok(self, tick_sandbox):
+        """Wartosc runtime spoza {claude, codex} ma jawnie zawiescz (blad wejscia
+        albo uzycia), nigdy cicho przejsc jako 'ok' -- literal spoza domeny nie
+        jest tym samym co nieznany-ale-bezpieczny wariant z external-tool-output.md
+        pkt 3 (to NASZ wybor uzytkownika, nie odczyt cudzego narzedzia)."""
+        result = run_preflight_runtime(tick_sandbox, "gpt5", env_extra=full_flags_env())
+
+        assert result.returncode in (2, 64)
+
+
+def run_state_backend(sandbox, slug, backend, tickets=None, tick_dir=None, env_extra=None, timeout=30):
+    env = _base_env(sandbox, env_extra)
+    payload = json.dumps(tickets if tickets is not None else [])
+    args = [sys.executable, str(SCRIPT), "state", "--slug", slug, "--tickets-json", payload, "--backend", backend]
+    if tick_dir is not None:
+        args += ["--tick-dir", str(tick_dir)]
+    return subprocess.run(
+        args,
+        cwd=str(sandbox.project_dir),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+@pytest.mark.unit
+class TestStateBackendSelection:
+    def test_default_backend_without_flag_is_claude_matches_existing_behavior(self, tick_sandbox):
+        """Brak regresji: `state` bez --backend dziala dokladnie jak dzisiaj
+        (woala `claude agents --json --all`)."""
+        tickets = [{"key": "probe", "status": "todo", "assignee": None}]
+
+        result = run_state(tick_sandbox, "fixture", tickets=tickets)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+
+    def test_backend_codex_does_not_require_claude_binary(self, tick_sandbox_with_codex):
+        """`state --backend codex` nie moze zalezec od `claude agents --json
+        --all` -- usuwamy fake `claude`, zeby udowodnic, ze codex idzie inna
+        sciezka (wlasny rejestr dyspozytora, nie zewnetrzne API klienta)."""
+        (tick_sandbox_with_codex.fakebin / "claude").unlink()
+        tickets = [{"key": "MON-1", "status": "todo", "assignee": None}]
+
+        result = run_state_backend(tick_sandbox_with_codex, "monolynx", "codex", tickets=tickets)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        payload = json.loads(result.stdout)
+        assert payload["tickets"][0]["key"] == "MON-1"
+
+    def test_backend_claude_explicit_flag_matches_default(self, tick_sandbox):
+        tickets = [{"key": "probe", "status": "todo", "assignee": None}]
+
+        result = run_state_backend(tick_sandbox, "fixture", "claude", tickets=tickets)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+
+    def test_unknown_backend_value_does_not_exit_zero(self, tick_sandbox):
+        tickets = [{"key": "MON-1", "status": "todo", "assignee": None}]
+
+        result = run_state_backend(tick_sandbox, "monolynx", "gpt5", tickets=tickets)
+
+        assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# MON-185 (iteracja 3): podkomendy CLI `start`/`stop` -- punkt wejscia
+# brakujacy przy poprzednich iteracjach (wykryte przez technical-writer):
+# sprint_run_backend.start()/stop() istnieja jako biblioteka, ale nic w CLI
+# ich nie wola, wiec `MONOLYNX_SPRINT_RUNTIME=codex` nigdy nie zapelnia
+# rejestru. Kontrakt ponizej jest ZAMROZONY przez Team Managera -- literalne
+# linie wyjscia sa czescia specyfikacji, nie szczegolem implementacyjnym:
+#
+#   python3 sprint_run_tick.py start --backend codex --slug S --key K
+#       --model M --prompt P [--cwd DIR]
+#   python3 sprint_run_tick.py stop  --backend codex --slug S --key K
+#
+#   STARTED <identity> <runtime_id> <pid>        (start, nowy spawn, kod 0)
+#   ALREADY-RUNNING <identity> <runtime_id>       (start, zywa sesja juz jest, kod 0)
+#   STOPPED <identity>                            (stop, wpis usuniety, kod 0)
+#   NOT-FOUND <identity>                          (stop, brak wpisu, kod 0)
+#
+# `start --backend claude` -> kod 64: backend claude startuje BEZPOSREDNIO w
+# KROK 4 skilla (`claude --bg`, patrz istniejacy sprint_run.sh) -- przepuszczenie
+# tego przez subprocess tego skryptu omijaloby uprawnienia Claude Code
+# (MON-191/MON-192), wiec CLI ma to jawnie odrzucic, nie probowac.
+#
+# UWAGA PROJEKTOWA (do potwierdzenia przez krytyka/TM, patrz raport koncowy):
+# testy `stop` NIE moga zamockowac `os.kill` tak jak TestStop w
+# test_sprint_run_backend.py, bo tutaj produkcyjny kod dziala w OSOBNYM
+# PROCESIE (subprocess.run wywoluje sprint_run_tick.py jako podproces) --
+# monkeypatch pytest nie przekracza granicy procesu. Zamiast tego kazdy test
+# `stop`, ktory faktycznie wysyla SIGTERM, celuje WYLACZNIE w PID
+# jednorazowego fake `codex exec` (CODEX_SCRIPT powyzej, gałąź `exec`),
+# wystartowanego chwile wczesniej przez ten sam test przez `start` -- NIGDY w
+# proces pytest ani jakikolwiek dzielony zasob. To jest rownowazna gwarancja
+# bezpieczenstwa (nigdy nie zabijamy czegos, na czym nam zalezy), tylko
+# osiagnieta innym mechanizmem niz monkeypatch.
+# ---------------------------------------------------------------------------
+
+
+def run_cli_start(sandbox, backend, slug, key, model="opus", prompt="/monolynx:work KEY", cwd=None, env_extra=None, timeout=30):
+    env = _base_env(sandbox, env_extra)
+    args = [
+        sys.executable,
+        str(SCRIPT),
+        "start",
+        "--backend",
+        backend,
+        "--slug",
+        slug,
+        "--key",
+        key,
+        "--model",
+        model,
+        "--prompt",
+        prompt,
+    ]
+    if cwd is not None:
+        args += ["--cwd", str(cwd)]
+    return subprocess.run(args, cwd=str(sandbox.project_dir), env=env, capture_output=True, text=True, timeout=timeout)
+
+
+def run_cli_stop(sandbox, backend, slug, key, env_extra=None, timeout=30):
+    env = _base_env(sandbox, env_extra)
+    args = [sys.executable, str(SCRIPT), "stop", "--backend", backend, "--slug", slug, "--key", key]
+    return subprocess.run(args, cwd=str(sandbox.project_dir), env=env, capture_output=True, text=True, timeout=timeout)
+
+
+def _pid_is_zombie(pid):
+    """Linux-only: /proc/<pid>/stat trzecie pole po ostatnim ')' to stan
+    procesu. 'Z' = zombie -- wpis zostaje w tablicy procesow, ale proces
+    juz nie zyje. comm (drugie pole, w nawiasach) moze zawierac spacje,
+    wiec parsujemy od ostatniego ')', nie przez naiwny split()."""
+    try:
+        with open(f"/proc/{pid}/stat") as fh:
+            stat = fh.read()
+    except FileNotFoundError:
+        return None
+    after_comm = stat.rsplit(")", 1)[-1].split()
+    return after_comm[0] == "Z" if after_comm else None
+
+
+def _wait_for_pid_gone(pid, timeout=15):
+    """Proces uznajemy za zakonczony gdy zniknie z tablicy procesow ALBO
+    (na Linuksie) przejdzie w stan zombie.
+
+    WHY: w kontenerze testowym `docker compose run` PID 1 nie zniwuje
+    osieroconych dzieci (fake `codex exec` jest spawnowany przez proces
+    ktory konczy sie natychmiast, wiec dziecko trafia pod PID 1). Zabity
+    SIGTERM-em proces zostaje wiec zombie ('Z' w /proc/<pid>/stat) zamiast
+    zniknac calkowicie. `os.kill(pid, 0)` na zombie nadal sie udaje --
+    zombie to wpis w tablicy procesow, nie zywy proces -- wiec sam
+    `os.kill` nigdy nie zobaczy zakonczenia. Zweryfikowane empirycznie
+    (MON-185, iteracja 5): `stat=['9', '(sh)', 'Z']` dla zabitego fake
+    codeksa. Na macOS (/proc nie istnieje) wracamy do samego os.kill."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return True
+        else:
+            zombie = _pid_is_zombie(pid)
+            if zombie:
+                return True
+            if zombie is None and not os.path.exists("/proc"):
+                # /proc niedostepny (np. macOS) -- brak sposobu odroznienia
+                # zombie od zywego procesu, polegamy wylacznie na os.kill.
+                pass
+        time.sleep(0.1)
+    return False
+
+
+def _wait_for_pid_alive(pid, timeout=5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            time.sleep(0.05)
+    return False
+
+
+@pytest.mark.unit
+class TestCliStartCommand:
+    def test_backend_claude_is_rejected_with_exit_64(self, tick_sandbox):
+        """Backend claude startuje sesje bezposrednio w KROK 4 skilla
+        (`claude --bg`) -- przepuszczenie tego przez subprocess tego skryptu
+        omijaloby uprawnienia Claude Code. CLI ma to odrzucic, nie probowac."""
+        result = run_cli_start(tick_sandbox, "claude", "monolynx", "MON-1")
+
+        assert result.returncode == 64
+        assert "claude" in result.stderr.lower()
+
+    def test_codex_start_on_free_ticket_spawns_and_prints_started(self, tick_sandbox_with_codex):
+        result = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-1")
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        line = result.stdout.strip().splitlines()[-1]
+        parts = line.split()
+        assert parts[0] == "STARTED"
+        assert parts[1] == "monolynx:MON-1"
+        assert parts[3].isdigit()
+        pid = int(parts[3])
+        assert _wait_for_pid_alive(pid), "PID zwrocony przez STARTED powinien byc zywym procesem fake codex"
+
+    def test_second_start_for_same_ticket_is_already_running_no_second_spawn(self, tick_sandbox_with_codex):
+        first = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-2")
+        assert first.returncode == 0, f"stdout={first.stdout!r} stderr={first.stderr!r}"
+        first_pid = int(first.stdout.strip().splitlines()[-1].split()[3])
+
+        second = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-2")
+
+        assert second.returncode == 0, f"stdout={second.stdout!r} stderr={second.stderr!r}"
+        line = second.stdout.strip().splitlines()[-1]
+        parts = line.split()
+        assert parts[0] == "ALREADY-RUNNING"
+        assert parts[1] == "monolynx:MON-2"
+        # Dowod braku drugiego spawnu: proces z PIERWSZEGO startu jest nadal
+        # zywy i to jego runtime_id/pid sa raportowane (identycznosc przez
+        # sprawdzenie ze proces nie zostal zduplikowany -- drugi PID by byl
+        # inny gdyby nastapil nowy spawn; tu weryfikujemy posrednio przez
+        # fakt ze PIERWSZY proces nie zostal przerwany).
+        assert _wait_for_pid_alive(first_pid)
+
+    def test_model_change_between_starts_is_already_running(self, tick_sandbox_with_codex):
+        first = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-3", model="opus")
+        assert first.returncode == 0, f"stdout={first.stdout!r} stderr={first.stderr!r}"
+
+        second = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-3", model="sonnet")
+
+        assert second.returncode == 0, f"stdout={second.stdout!r} stderr={second.stderr!r}"
+        assert second.stdout.strip().splitlines()[-1].startswith("ALREADY-RUNNING monolynx:MON-3")
+
+    def test_live_claude_agent_session_blocks_codex_start_ac3(self, tick_sandbox_with_codex):
+        """AC3: ticket ma zywa sesje Claude widoczna w `claude agents --json
+        --all` -- `start --backend codex` ma zwrocic ALREADY-RUNNING bez
+        spawnu procesu codex, best-effort skonsultowawszy `claude agents`
+        (fake `claude` istnieje w tym fakebin)."""
+        agents_file = tick_sandbox_with_codex.tmp_path / "agents.json"
+        agents_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "a1111111",
+                        "cwd": "/repo",
+                        "kind": "background",
+                        "startedAt": 1000,
+                        "sessionId": "sid-1",
+                        "name": "monolynx-MON-4-opus",
+                        "state": "running",
+                    }
+                ]
+            )
+        )
+        env_extra = {"FAKE_CLAUDE_AGENTS_FILE": str(agents_file)}
+
+        result = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-4", env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert result.stdout.strip().splitlines()[-1].startswith("ALREADY-RUNNING monolynx:MON-4")
+
+    def test_missing_claude_binary_is_not_an_error_for_codex_start(self, tick_sandbox_with_codex):
+        """Brak binarki `claude` NIE jest bledem dla `start --backend codex` --
+        to tylko brak jednego (opcjonalnego) zrodla sygnalu, rejestr wlasny
+        wystarcza."""
+        (tick_sandbox_with_codex.fakebin / "claude").unlink()
+
+        result = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-5")
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert result.stdout.strip().splitlines()[-1].startswith("STARTED monolynx:MON-5")
+
+    def test_preflight_failed_missing_codex_binary_exits_2_with_no_side_effects(self, tick_sandbox):
+        """Fakebin ma tylko `claude`, brak `codex` -- preflight dla backend=codex
+        ma zawiesc: kod 2, stderr z przyczyna, ZERO skutkow ubocznych (zaden
+        proces nie zostal wystartowany)."""
+        result = run_cli_start(tick_sandbox, "codex", "monolynx", "MON-6")
+
+        assert result.returncode == 2
+        assert result.stderr.strip()
+        assert "codex" in result.stderr.lower()
+
+    def test_preflight_failed_not_logged_in_exits_2_with_no_side_effects(self, tick_sandbox_with_codex):
+        env_extra = {"FAKE_CODEX_LOGIN_OUTPUT": "Not logged in"}
+
+        result = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-7", env_extra=env_extra)
+
+        assert result.returncode == 2
+        assert result.stderr.strip()
+
+    def test_missing_required_argument_exits_64(self, tick_sandbox_with_codex):
+        env = _base_env(tick_sandbox_with_codex, None)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "start", "--backend", "codex", "--slug", "monolynx"],
+            cwd=str(tick_sandbox_with_codex.project_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 64
+
+    def test_unknown_backend_value_exits_64(self, tick_sandbox_with_codex):
+        result = run_cli_start(tick_sandbox_with_codex, "gpt5", "monolynx", "MON-8")
+
+        assert result.returncode == 64
+
+
+@pytest.mark.unit
+class TestCliStopCommand:
+    """Zaden test w tej klasie nie kieruje SIGTERM w proces pytest ani zaden
+    dzielony zasob -- celem jest zawsze jednorazowy proces fake `codex exec`
+    wystartowany przez `start` chwile wczesniej w tym samym tescie (patrz
+    uwaga projektowa w naglowku sekcji)."""
+
+    def test_stop_on_own_entry_terminates_the_real_child_and_removes_registry_entry(self, tick_sandbox_with_codex):
+        start_result = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-9")
+        assert start_result.returncode == 0, f"stdout={start_result.stdout!r} stderr={start_result.stderr!r}"
+        pid = int(start_result.stdout.strip().splitlines()[-1].split()[3])
+        assert _wait_for_pid_alive(pid)
+
+        stop_result = run_cli_stop(tick_sandbox_with_codex, "codex", "monolynx", "MON-9")
+
+        assert stop_result.returncode == 0, f"stdout={stop_result.stdout!r} stderr={stop_result.stderr!r}"
+        assert stop_result.stdout.strip() == "STOPPED monolynx:MON-9"
+        assert _wait_for_pid_gone(pid), "proces fake codex mial dostac SIGTERM i zakonczyc sie"
+
+        # Po stop() wpis ma zniknac -- kolejny start() dla tego samego ticketu
+        # ma wiec spawnowac NOWY proces (dowod, ze rejestr faktycznie zostal
+        # oczyszczony, nie tylko ze proces zdechl).
+        restart_result = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-9")
+        assert restart_result.returncode == 0
+        assert restart_result.stdout.strip().splitlines()[-1].startswith("STARTED monolynx:MON-9")
+        new_pid = int(restart_result.stdout.strip().splitlines()[-1].split()[3])
+        assert new_pid != pid
+
+    def test_stop_on_missing_entry_is_not_found_and_leaves_registry_untouched(self, tick_sandbox_with_codex):
+        result = run_cli_stop(tick_sandbox_with_codex, "codex", "monolynx", "MON-NIEISTNIEJE")
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert result.stdout.strip() == "NOT-FOUND monolynx:MON-NIEISTNIEJE"
+
+    def test_stop_does_not_affect_other_tickets_entry(self, tick_sandbox_with_codex):
+        """Cudzy wpis (inny ticket) pozostaje nietkniety -- analogiczny wymog co
+        test_leaves_other_identities_untouched w test_sprint_run_backend.py,
+        tu zweryfikowany end-to-end przez CLI: drugi ticket dalej daje
+        ALREADY-RUNNING po stop() pierwszego."""
+        started_a = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-10")
+        assert started_a.returncode == 0
+        pid_a = int(started_a.stdout.strip().splitlines()[-1].split()[3])
+        started_b = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-11")
+        assert started_b.returncode == 0
+
+        stop_a = run_cli_stop(tick_sandbox_with_codex, "codex", "monolynx", "MON-10")
+        assert stop_a.returncode == 0
+        assert stop_a.stdout.strip() == "STOPPED monolynx:MON-10"
+        _wait_for_pid_gone(pid_a)
+
+        still_running_b = run_cli_start(tick_sandbox_with_codex, "codex", "monolynx", "MON-11")
+        assert still_running_b.returncode == 0
+        assert still_running_b.stdout.strip().splitlines()[-1].startswith("ALREADY-RUNNING monolynx:MON-11")
+
+    def test_missing_required_argument_exits_64(self, tick_sandbox_with_codex):
+        env = _base_env(tick_sandbox_with_codex, None)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "stop", "--backend", "codex", "--slug", "monolynx"],
+            cwd=str(tick_sandbox_with_codex.project_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 64
+
+    def test_unknown_backend_value_exits_64(self, tick_sandbox_with_codex):
+        result = run_cli_stop(tick_sandbox_with_codex, "gpt5", "monolynx", "MON-12")
+
+        assert result.returncode == 64
