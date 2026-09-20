@@ -27,6 +27,9 @@ REFERENCE_RESOURCES = {
     "work-simple": ("work", "### 3b.", "### 3c.", "researcher.md"),
     "graph-sync": ("create-graph-ci-script", "## KROK 3:", "## KROK 4:", "graph-mapper.md"),
 }
+WHOLE_FILE_RESOURCES = {
+    "work-simple": (("work/review-rubric.md", "review-rubric.md"),),
+}
 
 
 def render(raw: str, skill_name: str, is_skill_md: bool, *, prefix: str = TARGET_PREFIX) -> str:
@@ -76,6 +79,8 @@ def bundled_resources(name: str) -> dict[str, str]:
         if match is None:
             raise ValueError(f"Missing section markers {start!r}, {end!r} in {source_path}")
         resources[f"references/{filename}"] = match.group().rstrip() + "\n"
+    for source_rel, target_name in WHOLE_FILE_RESOURCES.get(name, ()):
+        resources[target_name] = (SOURCE_DIR / source_rel).read_text(encoding="utf-8")
     resources["references/runtime.md"] = (SOURCE_DIR.parent / "references" / "runtime.md").read_text(encoding="utf-8")
     return resources
 

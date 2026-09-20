@@ -268,6 +268,12 @@ Treść ról ma jedno źródło - `plugin/agents/*.md`. Kopie w `.claude/agents/
 
 Skille nie zakładają z góry żadnego zestawu agentów: przed startem zespołu sprawdzają faktycznie dostępny mechanizm delegowania i role zdefiniowane w projekcie, a agenci pluginu są fallbackiem. Niezmienne są trzy rzeczy, niezależnie od klienta: rozłączny przydział plików per agent, raport od każdego agenta i **osobny krytyk** - recenzję zawsze wykonuje inne powołanie niż to, które pisało kod. Gdy w katalogu narzędzi nie ma żadnego delegowania, skille schodzą na tryb solo (jeden agent, rola po roli, review jako osobny przebieg według tej samej rubryki) i zapisują wprost, że **review nie jest niezależne** - w komentarzu planu, w komentarzu podsumowującym do ticketu i w podsumowaniu dla użytkownika. Tryb solo wybiera się wyłącznie po braku capability, nigdy po nazwie klienta.
 
+### Rubryka krytyka
+
+Krytyk nie ocenia "na wyczucie": punktuje według rubryki z twardymi odjęciami i progiem zaliczenia. Rubryka ma **jedno źródło** - `plugin/skills/work/review-rubric.md` - i jest **wspólna dla `work` i `work-simple`**: oba skille czytają plik `review-rubric.md` z katalogu własnego skilla i wklejają jego pełną treść do promptu krytyka. Ta sama rubryka obowiązuje w trybie solo, gdy runtime nie ma delegowania.
+
+Kopia dla `work-simple` (`plugin/skills/work-simple/review-rubric.md` oraz dystrybucja w katalogu `monolynx-work-simple` w `src/monolynx/static/skills/`) jest generowana przez `python3 scripts/sync_skills.py` (`make sync-skills`); `--check` wykrywa rozjazd, więc edycja samej kopii nie przejdzie. Nowy wiersz rubryki (np. z `/monolynx:retro`) dopisuje się **wyłącznie** do źródła w `work`, a synchronizacja rozwozi go dalej.
+
 ### Reguły i pamięć projektu
 
 Trwałe reguły żyją w repozytorium, jako zwykłe pliki Markdown pod kontrolą gita, a nie w prywatnej pamięci któregoś klienta:
@@ -586,7 +592,9 @@ install_monolynx_skills(project_slug="moj-projekt", target="codex")
 install_monolynx_skills(project_slug="moj-projekt", skill_names=["monolynx-work"], target="codex")
 ```
 
-Narzędzie zwraca `skills: [{name, files: [{relative_path, content}]}]`. **Zapisz wszystkie pliki z listy `files`** - skill może mieć pliki towarzyszące obok `SKILL.md` (np. `monolynx-work` ma `pipeline.md` i `review-rubric.md`); pominięcie ich okroi skill o część instrukcji.
+Narzędzie zwraca `skills: [{name, files: [{relative_path, content}]}]`. **Zapisz wszystkie pliki z listy `files`** - skill może mieć pliki towarzyszące obok `SKILL.md` (np. `monolynx-work` ma `pipeline.md` i `review-rubric.md`, a `monolynx-work-simple` własną kopię `review-rubric.md`); pominięcie ich okroi skill o część instrukcji.
+
+Kopia rubryki w `monolynx-work-simple` jest **generowana** ze źródła `plugin/skills/work/review-rubric.md` (patrz sekcja „Rubryka krytyka”), więc instalacja samego `work-simple` - bez `work` - zawiera pełną rubrykę i nie zależy ani od innych skilli, ani od zmiennej `CLAUDE_PLUGIN_ROOT` (poza Claude Code jest pusta).
 
 Serwer MCP podłącza się poza skillami:
 
@@ -600,6 +608,12 @@ Definicje `plugin/agents/` (i ich kopie w `.claude/agents/`) są formatem Claude
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.19.1
+
+- MON-186: **jedna rubryka krytyka dla `work` i `work-simple`**. `plugin/skills/work/review-rubric.md` jest jedynym źródłem; `work-simple` nie ma już własnej, uboższej tabeli wklejonej w SKILL.md (8 wierszy zamiast 10, bez wiersza o zmianie pliku poza przydziałem i bez wiersza o komentarzach opisujących CO robi kod, plus martwe odwołanie do wiersza, którego ta tabela nie miała). Skill czyta teraz `review-rubric.md` z katalogu własnego skilla i wkleja pełną treść do promptu krytyka w miejsce `[pełna treść review-rubric.md]` - tak samo jak `work`. Kopie (`plugin/skills/work-simple/review-rubric.md` i dystrybucja w katalogu `monolynx-work-simple` w `src/monolynx/static/skills/`) generuje `scripts/sync_skills.py`, a `--check` pilnuje ich aktualności, więc instalacja samego `work-simple` zawiera rubrykę i nie zależy od `CLAUDE_PLUGIN_ROOT` (poza Claude Code zmienna jest pusta).
+- Rubryka jest neutralna wobec obu trybów: wiersz o zmianie pliku poza przydziałem czyta przydział z listy zespołu **albo** z `ZAKRES PRACY DEV` jednego developera (wykrywanie przez `git diff --stat <BASELINE_SHA>` + `git status --porcelain` zostaje), a toolchain projektu bierze z sekcji "Toolchain" raportu Researchera **albo** z treści strony wiki `toolchain` wklejonej wprost do promptu - krytyk nadal nie pobiera wiki sam. Wiersze trybu defektu odwołujące się do researchu obowiązują tylko wtedy, gdy research w ogóle był. Wartości odjęć, próg 82 i format odpowiedzi bez zmian.
+- `/monolynx:retro` wskazuje jedno miejsce edycji rubryki (`plugin/skills/work/review-rubric.md`) i mówi wprost, że ręczne wklejanie wiersza do `work-simple` jest błędem, bo kopia powstaje automatycznie.
 
 ### 1.19.0
 

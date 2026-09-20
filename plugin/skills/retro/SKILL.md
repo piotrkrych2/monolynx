@@ -12,7 +12,8 @@ Przed wykonaniem kroków obowiązkowo odczytaj [Kontrakt runtime](references/run
 Ta sama uwaga krytyka powtorzona w trzech ticketach to nie trzy przypomnienia,
 tylko brakujaca regula. Ten skill znajduje takie powtorzenia i zamienia je
 w cos, co egzekwuje sie samo: regule w `.claude/rules/` (krytyk punktuje -25),
-wiersz rubryki (`review-rubric.md` w pluginie), wpis w stronie wiki
+wiersz rubryki (`plugin/skills/work/review-rubric.md` w pluginie - jedno zrodlo
+dla `work` i `work-simple`), wpis w stronie wiki
 `constitution` (Researcher laduje ja do kazdego ticketu) albo hook.
 
 ---
@@ -154,7 +155,7 @@ Dla kazdej grupy dobierz cel wg tego, KTO ma egzekwowac:
 | Wzorzec | Cel | Dlaczego |
 |---|---|---|
 | wada kodu, sprawdzalna w diffie (commit, obsluga bledu, konwencja) | `.claude/rules/<slug>.md` | krytyk czyta te pliki na starcie review, naruszenie = -25 |
-| wada procesu widoczna w raporcie (brak testu regresyjnego, brak mechanizmu, plik poza przydzialem) | wiersz `review-rubric.md` | rubryka jest w pluginie - skill wypisuje gotowy wiersz do wklejenia, nie edytuje pluginu z cudzego projektu |
+| wada procesu widoczna w raporcie (brak testu regresyjnego, brak mechanizmu, plik poza przydzialem) | wiersz `plugin/skills/work/review-rubric.md` (jedyne zrodlo rubryki, wspolne dla `work` i `work-simple`) | rubryka jest w pluginie - skill wypisuje gotowy wiersz do wklejenia, nie edytuje pluginu z cudzego projektu |
 | zalozenie architektoniczne / konwencja projektu, ktora agenci lamia z niewiedzy | strona wiki `constitution` | Researcher laduje ja do kazdego ticketu jako project-level context |
 | regula istnieje w tekscie i nadal jest lamana | hook (`.claude/hooks/` / `settings.json` PreToolUse) | tekst nie egzekwuje - hook tak; skill opisuje, co hook ma blokowac, nie pisze go sam |
 | korekta uzytkownika bez tresci ("zle") | brak maszynerii - wpis do raportu | to sygnal, ze oczekiwanie nie zostalo nazwane; maszyneria to `/monolynx:brief` na starcie, nie regula |
@@ -194,8 +195,10 @@ Dla kazdego wybranego numeru, wg celu:
   z ta sekcja. Frontmatter wg regulaminu wiki, jesli LLM Wiki wlaczona
   (`get_wiki_config`).
 - **rubryka** -> wypisz gotowy wiersz tabeli w bloku kodu z instrukcja
-  "wklej do `plugin/skills/work/review-rubric.md` i tabeli w `work-simple`" -
-  nie edytuj pluginu (moze byc zainstalowany z marketplace, poza repo).
+  "wklej do `plugin/skills/work/review-rubric.md` - to JEDYNE miejsce edycji
+  rubryki; kopia w `work-simple` powstaje automatycznie przez
+  `scripts/sync_skills.py`, wiec recznie nic tam nie wklejaj" - nie edytuj
+  pluginu sam (moze byc zainstalowany z marketplace, poza repo).
 - **hook** -> wypisz specyfikacje: co blokowac, deny czy ask, dla kogo
   (subagent / sesja glowna). Implementacja to osobny ticket - zaproponuj
   `/monolynx:ticket-create` z ta specyfikacja.
