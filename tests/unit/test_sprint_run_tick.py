@@ -190,6 +190,15 @@ def warn_lines(result):
     return [line for line in result.stdout.splitlines() if line.startswith("WARN:")]
 
 
+def _assert_permission_mode_fix_hint(line):
+    """Kontrakt MON-195 (nie doslowne brzmienie zdania - formulacja moze sie
+    zmienic bez psucia testu): ERROR wskazuje nazwe zmiennej z sugerowana
+    wartoscia `auto` oraz wzmianke o regule `autoMode.allow`."""
+    assert "MONOLYNX_SPRINT_PERMISSION_MODE" in line
+    assert "PERMISSION_MODE=auto" in line
+    assert "autoMode.allow" in line
+
+
 def write_agents_list_fixture(tmp_path, fixture_path):
     """Rozpakuj klucz "agents" z pelnego zrzutu fixture do osobnego pliku.
 
@@ -333,6 +342,77 @@ class TestPreflight:
 
         assert result.returncode == 0
         assert "MODE=interactive" in result.stdout.splitlines()
+
+    def test_permission_mode_defaults_to_auto_and_passes_preflight(self, tick_sandbox):
+        """MON-195: domyslny tryb startu sesji zmienia sie z `bypassPermissions`
+        na `auto` -- ten pierwszy byl odrzucany w sesji auto domyslna regula
+        soft_deny "Create Unsafe Agents", wiec tick przechodzil caly preflight
+        i odpadal dopiero w KROKU 4 bez startu zadnej sesji."""
+        result = run_preflight(tick_sandbox, env_extra=full_flags_env())
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        lines = result.stdout.splitlines()
+        assert lines[-1] == "PREFLIGHT: ok"
+        assert "PERMISSION_MODE=auto" in lines
+        assert not error_lines(result)
+
+    def test_permission_mode_bypass_permissions_blocks_preflight_first_and_with_fix_hint(self, tick_sandbox):
+        """Rozstrzygniecie Team Managera: nowy check jest PIERWSZYM elementem
+        listy `problems`, wiec przy kilku jednoczesnych problemach jego ERROR:
+        jest zawsze pierwsza linia ERROR: w wyjsciu (tu razem z brakiem
+        MONOLYNX_AUTOTEST, zeby faktycznie wymusic kolejnosc, a nie tylko
+        jedyny mozliwy problem w danym przebiegu)."""
+        env_extra = full_flags_env({"MONOLYNX_SPRINT_PERMISSION_MODE": "bypassPermissions"})
+        del env_extra["MONOLYNX_AUTOTEST"]
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 2
+        lines = result.stdout.splitlines()
+        assert lines[-1].startswith("PREFLIGHT: failed problems=")
+        errs = error_lines(result)
+        assert len(errs) >= 2, f"oczekiwano co najmniej 2 problemow (permission mode + brak AUTOTEST): {errs}"
+        _assert_permission_mode_fix_hint(errs[0])
+
+    def test_permission_mode_auto_explicit_passes_preflight(self, tick_sandbox):
+        """Jawne nadpisanie bezpieczna wartoscia dalej dziala (default nie jest
+        wymuszony na sztywno)."""
+        env_extra = full_flags_env({"MONOLYNX_SPRINT_PERMISSION_MODE": "auto"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        lines = result.stdout.splitlines()
+        assert lines[-1] == "PREFLIGHT: ok"
+        assert "PERMISSION_MODE=auto" in lines
+
+    def test_permission_mode_dangerously_skip_permissions_blocks_preflight(self, tick_sandbox):
+        """Blokada obejmuje nie tylko literal `bypassPermissions`, ale kazda
+        wartosc zawierajaca `dangerously-skip-permissions` (np. flaga CLI
+        przekazana wprost jako tryb)."""
+        env_extra = full_flags_env({"MONOLYNX_SPRINT_PERMISSION_MODE": "--dangerously-skip-permissions"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 2
+        lines = result.stdout.splitlines()
+        assert lines[-1].startswith("PREFLIGHT: failed problems=")
+        errs = error_lines(result)
+        assert errs
+        _assert_permission_mode_fix_hint(errs[0])
+
+    def test_permission_mode_override_with_accept_edits_passes_preflight(self, tick_sandbox):
+        """Nadpisanie innym legalnym trybem (nie tylko `auto`) przechodzi bez
+        zmian -- zmienna nadal nadpisuje default, blokowana jest tylko
+        wartosc bypass/dangerously-skip."""
+        env_extra = full_flags_env({"MONOLYNX_SPRINT_PERMISSION_MODE": "acceptEdits"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        lines = result.stdout.splitlines()
+        assert lines[-1] == "PREFLIGHT: ok"
+        assert "PERMISSION_MODE=acceptEdits" in lines
 
     def test_never_leaks_secret_env_values_in_output(self, tick_sandbox):
         claude_dir = tick_sandbox.project_dir / ".claude"

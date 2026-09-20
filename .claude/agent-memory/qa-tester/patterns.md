@@ -44,3 +44,8 @@ class TestSomeTool:
 - Bad interval_unit: "interval_unit musi byc jednym z"
 - interval_value out of range: "interval_value musi byc liczba od 1 do 60"
 - Monitor limit: "Osiagnieto limit 20 monitorow na projekt"
+
+## sprint_run_tick.py preflight (MON-195)
+- Skrypt wywolywany WYLACZNIE jako subprocess (nigdy import) - odzwierciedla realny kontrakt (`claude -p` ma tylko regule Bash(python3:*)). Fixture `tick_sandbox` + `full_flags_env()` w `tests/unit/test_sprint_run_tick.py` buduje kompletne srodowisko preflightu od zera (nie dziedziczy z pytest).
+- Gdy Team Manager ustala "nowy check jest PIERWSZYM elementem listy problems", test na kolejnosc musi wymusic co najmniej 2 rownoczesne problemy naraz (np. zla wartosc + `del env_extra["MONOLYNX_AUTOTEST"]`) i sprawdzic `error_lines(result)[0]` - z JEDNYM mozliwym bledem test przechodzi przypadkowo nawet bez implementacji kolejnosci.
+- Asercje na komunikat bledu celuja w kontrakt (nazwa zmiennej, sugerowana wartosc jako substring `KEY=value`, nazwa reguly typu `autoMode.allow`), nigdy w doslowne zdanie - formulacja tekstu bledu zmienia sie miedzy iteracjami bez psucia testu.
