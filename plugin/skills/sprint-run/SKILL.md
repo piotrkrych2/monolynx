@@ -151,13 +151,13 @@ Zbuduj z ticketów listę JSON w kształcie, którego oczekuje skrypt stanu (klu
 
 **Identyfikator sesji to pole `id`, nie `sessionId`.** W wyjściu `claude agents --json --all` każdy wpis ma oba. `id` jest krótki (8 znaków) i występuje wyłącznie dla wpisów o `kind` równym `background`; `sessionId` to UUID wątku i żadna komenda go nie przyjmuje. `claude logs`, `claude attach` i `claude rm` działają **tylko** na `id`. Wszędzie dalej w tym skillu `<session_id>` oznacza właśnie to krótkie `id`: tak nazywasz plik ogona logu, tak wpisujesz identyfikator do komentarza ticketu i taki podajesz człowiekowi w komendzie `claude attach`. Pole `session_id` w JSON-ie ze skryptu stanu niesie tę samą wartość.
 
-**Wylicz stan** jednym wywołaniem. Podkomenda `state` sama woła `claude agents --json --all`, dla każdej sesji dopasowanej do ticketu (nazwa `<PROJECT_SLUG>-<KEY>` z dowolnym sufiksem modelu) woła `claude logs <id>`, zdejmuje kody ANSI i zamienia `\r` na `\n` w renderze terminala (`claude logs` nie zwraca czystego tekstu - kolory, ruch kursora, przerysowania spinnera), bierze ostatnie 20 niepustych linii i zapisuje pliki stanu w `TICK_DIR` (`.git/monolynx/tick/`, **nigdy** w `/tmp`):
+**Wylicz stan** jednym wywołaniem. Podkomenda `state` sama woła `claude agents --json --all`, dla każdej sesji dopasowanej do ticketu (nazwa `<PROJECT_SLUG>-<KEY>` z dowolnym sufiksem modelu) woła `claude logs <id>`, zamienia skoki kolumny (`\x1b[NG`/`\x1b[NC`) na spację, zdejmuje pozostałe kody ANSI i zamienia `\r` na `\n` w renderze terminala (`claude logs` nie zwraca czystego tekstu - kolory, ruch kursora, przerysowania spinnera), bierze ostatnie 60 niepustych linii i zapisuje pliki stanu w `TICK_DIR` (`.git/monolynx/tick/`, **nigdy** w `/tmp`):
 
 ```bash
 python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT_SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>'
 ```
 
-Podstaw `<katalog skilla>` i JSON ticketów literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, zdjęcie ANSI, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
+Podstaw `<katalog skilla>` i JSON ticketów literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, zdjęcie ANSI, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Kolejność ma znaczenie: między słowami w długiej linii `claude logs` czasem wstawia skok kolumny zamiast literalnej spacji, więc zdjęcie go razem z resztą ANSI skleja słowa (marker `SPRINT-RUN STOP:` przychodził jako `SPRINT-RUNSTOP:`), a ogon 60 linii mieści cały ostatni blok odpowiedzi asystenta (od ostatniej linii `⏺`), w którym klasyfikator szuka markera i pytania (MON-191). Plik czyta też człowiek (ogon trafia do komentarza przy `needs_human`), więc ma być czytelny. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
 
 `claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching" - podkomenda `state` i tak zapisuje to, co dostała (bez przerywania), a taki przypadek klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
 
@@ -227,13 +227,13 @@ Przejdź po ticketach z werdyktem innym niż `free` i `running`.
 
 ### Werdykt `needs_human`
 
-1. Wklej ostatnie 20 linii logu do komentarza ticketu, żeby ślad przetrwał zamknięcie sesji:
+1. Wklej ostatnie 60 linii logu (całą treść `$LOGS/<session_id>.log`) do komentarza ticketu, żeby ślad przetrwał zamknięcie sesji:
 
    ```
    mcp__monolynx__add_comment(
      project_slug="<PROJECT_SLUG>",
      ticket_id="<KEY>",
-     content="**Sprint-run** - sesja `<session_id>` zakończyła się bez domknięcia ticketu. Ogon logu:\n\n```\n<ostatnie 20 linii>\n```"
+     content="**Sprint-run** - sesja `<session_id>` zakończyła się bez domknięcia ticketu. Ogon logu:\n\n```\n<ostatnie 60 linii>\n```"
    )
    ```
 
