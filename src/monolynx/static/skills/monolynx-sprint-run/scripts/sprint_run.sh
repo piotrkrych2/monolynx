@@ -39,6 +39,19 @@
 # bywa najdrozszy. Tick dyspozytora idzie na MONOLYNX_SPRINT_TICK_MODEL
 # (domyslnie opus), a sesje work startowane przez tick na MONOLYNX_SPRINT_MODEL
 # (domyslnie opus; skrypt eksportuje ja, skill sprint-run wpisuje ja w `claude --bg`).
+#
+# Runtime (MON-185): MONOLYNX_SPRINT_RUNTIME (domyslnie "claude") wybiera
+# binarke, ktora prowadzi TICK dyspozytora (i - poprzez ten sam prompt skilla -
+# executor sprint-end/retro). Jedna zmienna dla calosci (nie osobne pokretlo per
+# etap) - MON-182 dostarczyl skille do Codex jako `.agents/skills`, wiec Codex
+# zna `$monolynx:work`/`$monolynx:sprint-run` tak samo jak Claude zna
+# `/monolynx:...`. `codex exec -m` NIE przyjmuje aliasow opus/sonnet
+# (potwierdzone, plugin/scripts/sprint_run_backend.py) - dla runtime=codex
+# TICK_MODEL/MONOLYNX_SPRINT_MODEL zostaja tylko do logowania/nazewnictwa,
+# nigdy nie trafiaja do argumentow `codex exec`. Sandbox Codex nadpisywalny
+# przez MONOLYNX_SPRINT_CODEX_SANDBOX (domyslnie "workspace-write" - NIGDY
+# domyslnie --dangerously-bypass-approvals-and-sandbox/--approve-for-me, zakaz
+# projektu).
 
 set -u
 
@@ -55,7 +68,7 @@ while [ $# -gt 0 ]; do
     --max-ticks) [ $# -ge 2 ] || { echo "sprint_run: --max-ticks wymaga wartosci" >&2; exit 64; }; MAX_TICKS="$2"; shift 2 ;;
     --close) CLOSE=1; shift ;;
     --once) ONCE=1; shift ;;
-    -h|--help) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "sprint_run: nieznany argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -70,7 +83,15 @@ to_seconds() {
 }
 SLEEP_SECONDS="$(to_seconds "$INTERVAL")"
 
-command -v claude >/dev/null 2>&1 || { echo "sprint_run: brak 'claude' w PATH" >&2; exit 69; }
+# MON-185: wybor runtime. Jedna zmienna obejmuje tick dyspozytora, sesje
+# robocze ticketow (poprzez prompt skilla) i executor sprint-end/retro.
+RUNTIME="${MONOLYNX_SPRINT_RUNTIME:-claude}"
+case "$RUNTIME" in
+  claude|codex) ;;
+  *) echo "sprint_run: MONOLYNX_SPRINT_RUNTIME musi byc 'claude' albo 'codex' (byla: '$RUNTIME')" >&2; exit 64 ;;
+esac
+
+command -v "$RUNTIME" >/dev/null 2>&1 || { echo "sprint_run: brak '$RUNTIME' w PATH" >&2; exit 69; }
 GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || { echo "sprint_run: uruchom z katalogu repozytorium git" >&2; exit 65; }
 PROJECT_DIR="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_DIR" || exit 65
@@ -136,29 +157,58 @@ trap cleanup EXIT
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 
-run_claude() {
-  # $1 = nazwa sesji bez modelu, $2 = prompt. Swiezy proces per wywolanie; wynik na stdout i do logu.
-  # Model dopisywany tu, w jednym miejscu: kazda nazwa sesji konczy sie modelem, na ktorym dziala.
-  # --allowedTools daje tickowi uprawnienia bez recznych regul w settings projektu (MON-190);
-  # --permission-prompts none odrzuca natychmiast kazde pytanie o zgode, ktore i tak nie ma kto odebrac w -p.
-  claude -p "$2" \
-    --name "$1-$TICK_MODEL" \
-    --model "$TICK_MODEL" \
-    --permission-mode acceptEdits \
-    --allowedTools "$TICK_ALLOWED_TOOLS" \
-    --permission-prompts none \
-    --max-turns "${MONOLYNX_SPRINT_RUN_MAX_TURNS:-80}" \
-    --output-format text 2>&1 | tee -a "$LOG"
+run_agent() {
+  # $1 = nazwa sesji bez modelu, $2 = prompt w postaci "/monolynx:<skill> ...".
+  # Swiezy proces per wywolanie; wynik na stdout i do logu. Ktora binarka jest
+  # wolana zalezy od RUNTIME (MON-185) - jeden algorytm dyspozytora, dwa
+  # backendy sesji.
+  if [ "$RUNTIME" = "codex" ]; then
+    # `codex exec -m` nie przyjmuje aliasow opus/sonnet (potwierdzone,
+    # sprint_run_backend.py) - TICK_MODEL NIE trafia do argumentow tego
+    # wywolania, zostaje tylko w logu startu. `codex exec` nie ma flagi
+    # rownowaznej --name, wiec $1 tez nie idzie do argumentow - identyfikacja
+    # ticku w logu petli wystarcza (nazwa procesu Codex nie jest kontraktem
+    # dyspozytora tak jak dla Claude --bg).
+    #
+    # Skille sa dostarczone do Codex jako `.agents/skills` (MON-182), ale pod
+    # postacia `$monolynx:<skill>` (nie `/monolynx:<skill>` jak w Claude Code) -
+    # zamiana prefiksu w miejscu wywolania, zeby kazdy wolajacy run_agent mogl
+    # nadal pisac prompt w jednej, znanej postaci.
+    codex_prompt="\$monolynx:${2#/monolynx:}"
+    # `codex exec` czyta stdin, gdy nie jest terminalem ("Reading additional
+    # input from stdin..." - potwierdzone przez team-lead, wystepuje nawet przy
+    # `< /dev/null`, fixture tests/fixtures/codex/exec-plain.0.155.1.stderr.txt).
+    # Bez przekierowania stdin tick odpalony z otwartym pipe zawiesza sie bez
+    # zadnego wyjscia - `_spawn_codex` w sprint_run_backend.py juz to robi
+    # (stdin=subprocess.DEVNULL), tej petli brakowalo tego samego.
+    codex exec \
+      --sandbox "${MONOLYNX_SPRINT_CODEX_SANDBOX:-workspace-write}" \
+      -C "$PROJECT_DIR" \
+      --skip-git-repo-check \
+      "$codex_prompt" < /dev/null 2>&1 | tee -a "$LOG"
+  else
+    # Model dopisywany tu, w jednym miejscu: kazda nazwa sesji konczy sie modelem, na ktorym dziala.
+    # --allowedTools daje tickowi uprawnienia bez recznych regul w settings projektu (MON-190);
+    # --permission-prompts none odrzuca natychmiast kazde pytanie o zgode, ktore i tak nie ma kto odebrac w -p.
+    claude -p "$2" \
+      --name "$1-$TICK_MODEL" \
+      --model "$TICK_MODEL" \
+      --permission-mode acceptEdits \
+      --allowedTools "$TICK_ALLOWED_TOOLS" \
+      --permission-prompts none \
+      --max-turns "${MONOLYNX_SPRINT_RUN_MAX_TURNS:-80}" \
+      --output-format text 2>&1 | tee -a "$LOG"
+  fi
 }
 
-log "start: slug=$SLUG slots=$SLOTS interval=$INTERVAL close=$CLOSE once=$ONCE tick_model=$TICK_MODEL work_model=$MONOLYNX_SPRINT_MODEL dir=$PROJECT_DIR allowed_tools=$ALLOWED_TOOLS_LABEL"
+log "start: slug=$SLUG slots=$SLOTS interval=$INTERVAL close=$CLOSE once=$ONCE runtime=$RUNTIME tick_model=$TICK_MODEL work_model=$MONOLYNX_SPRINT_MODEL dir=$PROJECT_DIR allowed_tools=$ALLOWED_TOOLS_LABEL"
 
 tick=0
 errors=0
 while :; do
   tick=$((tick + 1))
   log "tick $tick"
-  out="$(run_claude "$SLUG-sprint-run" "/monolynx:sprint-run $SLOTS")"
+  out="$(run_agent "$SLUG-sprint-run" "/monolynx:sprint-run $SLOTS")"
   status_line="$(printf '%s\n' "$out" | grep -E '^SPRINT-RUN: remaining=[0-9]+ running=[0-9]+ waiting=[0-9]+' | tail -1)"
 
   if [ -z "$status_line" ]; then
@@ -181,9 +231,9 @@ while :; do
       log "sprint wykonany"
       if [ "$CLOSE" -eq 1 ]; then
         log "zamykanie: sprint-end"
-        run_claude "$SLUG-sprint-end" "/monolynx:sprint-end" >/dev/null
+        run_agent "$SLUG-sprint-end" "/monolynx:sprint-end" >/dev/null
         log "retro"
-        run_claude "$SLUG-retro" "/monolynx:retro; zapisz wszystkie kandydatury" >/dev/null
+        run_agent "$SLUG-retro" "/monolynx:retro; zapisz wszystkie kandydatury" >/dev/null
       else
         log "nastepny krok: przejrzyj MR-y, zmerguj, potem /monolynx:sprint-end i /monolynx:retro (albo uruchom ponownie z --close)"
       fi

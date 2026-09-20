@@ -1,0 +1,24 @@
+Reading additional input from stdin...
+OpenAI Codex v0.155.1
+--------
+[1mworkdir:[0m /tmp/codexprobe2
+[1mmodel:[0m gpt-6-astra
+[1mprovider:[0m openai
+[1mapproval:[0m never
+[1msandbox:[0m read-only
+[1mreasoning effort:[0m low
+[1mreasoning summaries:[0m none
+[1msession id:[0m 01a0c027-ecc7-70c2-8ab2-20fcd62484c6
+--------
+[36muser[0m
+Reply with exactly this one line and nothing else, no code fences, no commentary: SPRINT-RUN: remaining=2 running=1 waiting=0 done=3
+[2m2026-09-20T18:50:37.993897Z[0m [31mERROR[0m [2mrmcp::transport::worker[0m[2m:[0m worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"GitLab\", scope=\"mcp\", resource_metadata=\"https://gitlab.com/.well-known/oauth-protected-resource/api/v4/mcp\"" })
+[2m2026-09-20T18:50:38.016148Z[0m [31mERROR[0m [2mrmcp::transport::worker[0m[2m:[0m worker quit with fatal: Transport channel closed, when UnexpectedServerResponse("HTTP 404: Not Found")
+[2m2026-09-20T18:50:38.168093Z[0m [31mERROR[0m [2mcodex_rmcp_client::oauth::refresh_transaction[0m[2m:[0m [3merror[0m[2m=[0mfailed to refresh OAuth tokens for server ksef_mcp: OAuth refresh token was rejected: Server returned error response: invalid_grant: Invalid refresh token.
+[1m[33mwarning:[0m[0m Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+[1mhook:[0m [2mUserPromptSubmit[0m
+[1mhook:[0m [2mUserPromptSubmit[0m Completed
+[35m[3mcodex[0m[0m
+SPRINT-RUN: remaining=2 running=1 waiting=0 done=3
+[2mtokens used[0m
+24.623

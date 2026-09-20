@@ -1008,3 +1008,85 @@ class TestMainCli:
         payload = json.loads(capsys.readouterr().out)
         assert payload["tickets"][0]["session_state"] == "running"
         assert payload["tickets"][0]["verdict"] == "running"
+
+
+# ---------------------------------------------------------------------------
+# MON-185: classify()/summarize() sa juz BACKEND-AGNOSTYCZNE z konstrukcji --
+# przyjmuja tylko stringi (session_state_value, log_tail) i dicty z kluczem
+# "verdict", nigdy nie widza "backend"/"runtime". Te testy NIE importuja
+# plugin/scripts/sprint_run_backend.py (jeszcze nie istnieje, patrz
+# tests/unit/test_sprint_run_backend.py, ktory jest wlasciwa specyfikacja
+# adaptera) -- celowo, zeby nie ryzykowac zepsucia calego tego pliku importem
+# modulu, ktorego jeszcze nie ma. Dowodza WPROST na publicznym API
+# sprint_run_state.py, ze classify()/summarize() NIE WYMAGAJA zadnej zmiany
+# dla MON-185: bridge w sprint_run_backend.classify_normalized (patrz jego
+# docstring) tylko mapuje znormalizowany rekord Codex/Claude na te same
+# argumenty, ktore ponizsze testy juz cwicza bezposrednio.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestClassifyBackendAgnostic:
+    """classify(ticket_status, session_state_value, log_tail) nie ma pojecia
+    'backend' -- session_state_value to juz DZIS wspolny 3-stanowy kontrakt
+    ('none'/'running'/'exited'), do ktorego adapter Codex (MON-185) bedzie sie
+    musial zmapowac (running/waiting -> 'running', success/failure ->
+    'exited'). Te testy pokazuja, ze wynik jest identyczny niezaleznie od tego,
+    jaki backend logicznie "wyprodukowal" dany session_state_value/log_tail --
+    czyli ze klasyfikator nie wymaga zadnej zmiany kodu dla MON-185."""
+
+    def test_exited_state_from_codex_success_mapping_matches_claude_exited(self):
+        """Rekord Codex w stanie 'success' bridguje sie do session_state_value
+        'exited' -- identycznie jak martwa sesja Claude. Werdykt (i caly kod
+        classify()) jest wiec juz dzis wspolny dla obu backendow."""
+        verdict_claude, _ = state.classify("in_review", "exited", [])
+        verdict_codex_success, _ = state.classify("in_review", "exited", [])
+        assert verdict_claude == verdict_codex_success == "done"
+
+    def test_running_state_from_codex_waiting_mapping_matches_claude_running(self):
+        """Rekord Codex w stanie adaptera 'waiting' bridguje sie RAZEM z 'running'
+        do session_state_value 'running' (Codex nie ma natywnego sygnalu
+        oczekiwania na zgode -- MON-184; jedyny sygnal 'waiting' dla Codex to
+        marker SPRINT-RUN STOP: w tresci logu, ktory classify() juz dzis
+        wykrywa z log_tail, ponizej)."""
+        log_tail = ["robie rzeczy", "SPRINT-RUN STOP: brak toolchain"]
+        verdict, _ = state.classify("in_progress", "running", log_tail)
+        assert verdict == "waiting"
+
+    def test_stop_marker_verdict_is_waiting_regardless_of_log_origin(self):
+        """SPRINT-RUN STOP: daje werdykt 'waiting' (frozen enum sprint_run_state:
+        free/running/waiting/done/needs_human) -- classify() czyta WYLACZNIE
+        tresc log_tail (stringi), nigdy zadnego pola 'backend', wiec ten sam log
+        pochodzacy z Claude (`claude logs`) albo z Codex (`codex exec --json`,
+        po ekstrakcji tekstu odpowiedzi) daje identyczny werdykt."""
+        log_from_claude_origin = ["kontynuuje prace", "SPRINT-RUN STOP: czekam na decyzje"]
+        log_from_codex_origin = ["kontynuuje prace", "SPRINT-RUN STOP: czekam na decyzje"]
+
+        verdict_a, _ = state.classify("in_progress", "running", log_from_claude_origin)
+        verdict_b, _ = state.classify("in_progress", "running", log_from_codex_origin)
+
+        assert verdict_a == verdict_b == "waiting"
+
+    def test_summarize_counts_rows_regardless_of_extra_backend_key(self):
+        """summarize() czyta WYLACZNIE klucz 'verdict' -- dodatkowe pola w
+        wierszu (np. 'backend': 'codex' dopisane przez bridge) sa dla niej
+        niewidoczne, wiec liczenie slotow jest juz dzis lacznie dla mieszanych
+        backendow bez zadnej zmiany kodu."""
+        rows = [
+            {"key": "MON-1", "verdict": "running", "backend": "claude"},
+            {"key": "MON-2", "verdict": "running", "backend": "codex"},
+            {"key": "MON-3", "verdict": "done", "backend": "codex"},
+            {"key": "MON-4", "verdict": "free", "backend": "claude"},
+        ]
+        summary = state.summarize(rows)
+        assert summary == {"remaining": 1, "running": 2, "waiting": 0, "done": 1, "needs_human": 0}
+
+    def test_needs_human_verdict_reachable_regardless_of_which_backend_finished_the_session(self):
+        """Sesja martwa/zakonczona (session_state_value 'exited', do ktorego
+        bridguje sie zarowno Claude 'exited' jak i Codex 'success'/'failure')
+        z ticketem wciaz w toku -> 'needs_human', niezaleznie od tego, ktory
+        backend prowadzil sesje -- ten sam werdykt co dzisiejszy kontrakt Claude
+        (patrz TestClassify.test_exited_in_progress_is_needs_human)."""
+        verdict, reason = state.classify("in_progress", "exited", [])
+        assert verdict == "needs_human"
+        assert reason

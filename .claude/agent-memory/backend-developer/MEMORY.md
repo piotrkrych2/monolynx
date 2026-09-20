@@ -7,6 +7,10 @@
 - [patterns_xml_comment_double_hyphen.md](patterns_xml_comment_double_hyphen.md) — XML comment with "--" (CLI flags) in provenance header breaks the whole fixture, not just the comment
 - [patterns_yaml_frontmatter_to_toml.md](patterns_yaml_frontmatter_to_toml.md) — copy an already-escaped YAML frontmatter string verbatim into TOML, never json.loads-decode then re-escape (double-escaping bug)
 - [patterns_markdown_marker_parsing.md](patterns_markdown_marker_parsing.md) — stack-based parsing of paired shared:/runtime: HTML-comment markers in SKILL.md, GFM table trailing-content trick, minimal reflow rule, verify-without-running-the-validator trick
+- [patterns_os_kill_self_test_landmine.md](patterns_os_kill_self_test_landmine.md) — os.kill(pid, SIGTERM) na os.getpid() w niemockowanym tescie zabija runner pytest (MON-185)
+- [patterns_cli_entrypoint_gap.md](patterns_cli_entrypoint_gap.md) — adapter module with start()/stop() is dead code without a CLI subcommand calling it; verify the actual call site, not just green tests (MON-185)
+- [feedback_no_self_report_when_team_lead_present.md](feedback_no_self_report_when_team_lead_present.md) — with a team-lead present, don't add_comment/log_time yourself; report via SendMessage CZAS PRACY line only, team-lead logs it centrally (MON-185)
+- [feedback_recheck_before_repeating_flag.md](feedback_recheck_before_repeating_flag.md) — re-check file state (git diff) before repeating a previously-flagged issue in a later round; another agent may have already fixed it (MON-185)
 
 ## Reguly z review krytyka
 
