@@ -85,6 +85,9 @@ plugin-consistency:
   script:
     - python3 scripts/validate_plugin_consistency.py
     - python3 scripts/sync_skills.py --check
+    # Ten job chodzi po pelnym checkoucie, wiec widzi .claude/agents/ - obraz
+    # :dev go nie kopiuje, wiec test integracyjny w clean-code sie pomija.
+    - python3 scripts/sync_agents.py --check
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "develop"

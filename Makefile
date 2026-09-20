@@ -1,4 +1,4 @@
-.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings backfill-backlinks sync-graph sync-graph-dry clear-all-graphs
+.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings backfill-backlinks sync-graph sync-graph-dry clear-all-graphs sync-agents sync-agents-check
 
 # Zaladuj .env, zeby targety hostowe (sync-graph) widzialy MONOLYNX_MCP_TOKEN itd.
 -include .env
@@ -58,6 +58,12 @@ sync-skills: ## Skopiuj plugin/skills -> static/skills (zrodlo dla install_monol
 
 sync-skills-check: ## Sprawdz czy static/skills jest zgodne z plugin/skills (exit 1 gdy nie)
 	python3 scripts/sync_skills.py --check
+
+sync-agents: ## Skopiuj plugin/agents -> .claude/agents (zrodlo tresci rol dla obu klientow)
+	python3 scripts/sync_agents.py
+
+sync-agents-check: ## Sprawdz czy .claude/agents jest zgodne z plugin/agents (exit 1 gdy nie)
+	python3 scripts/sync_agents.py --check
 
 validate-plugin: ## Sprawdz spojnosc plikow pluginu
 	python3 scripts/validate_plugin_consistency.py

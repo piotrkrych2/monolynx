@@ -264,6 +264,21 @@ Plugin dostarcza 7 agentów do delegowania pracy w odpowiednich rolach:
 - **code-reviewer**: recenzja kodu, jakość, bezpieczeństwo.
 - **technical-writer**: dokumentacja (CLAUDE.md, wiki, README, SDK, przewodniki).
 
+Treść ról ma jedno źródło - `plugin/agents/*.md`. Kopie w `.claude/agents/` (czytane przez Claude Code także bez zainstalowanego pluginu) powstają z niego przez `python3 scripts/sync_agents.py`; `--check` wykrywa rozjazd dystrybucji.
+
+Skille nie zakładają z góry żadnego zestawu agentów: przed startem zespołu sprawdzają faktycznie dostępny mechanizm delegowania i role zdefiniowane w projekcie, a agenci pluginu są fallbackiem. Niezmienne są trzy rzeczy, niezależnie od klienta: rozłączny przydział plików per agent, raport od każdego agenta i **osobny krytyk** - recenzję zawsze wykonuje inne powołanie niż to, które pisało kod. Gdy w katalogu narzędzi nie ma żadnego delegowania, skille schodzą na tryb solo (jeden agent, rola po roli, review jako osobny przebieg według tej samej rubryki) i zapisują wprost, że **review nie jest niezależne** - w komentarzu planu, w komentarzu podsumowującym do ticketu i w podsumowaniu dla użytkownika. Tryb solo wybiera się wyłącznie po braku capability, nigdy po nazwie klienta.
+
+### Reguły i pamięć projektu
+
+Trwałe reguły żyją w repozytorium, jako zwykłe pliki Markdown pod kontrolą gita, a nie w prywatnej pamięci któregoś klienta:
+
+| Lokalizacja (od korzenia repo) | Co tam jest | Kto zapisuje |
+|---|---|---|
+| `.claude/rules/*.md` | twarde reguły projektu; krytyk czyta je na starcie review, naruszenie to -25 w rubryce | `/monolynx:retro` po akceptacji użytkownika |
+| `.claude/agent-memory/<typ-agenta>/MEMORY.md`, sekcja `## Reguły z review krytyka` | reguły z review per rola | `work` / `work-simple` po werdykcie NEEDS WORK |
+
+Oba źródła czyta każdy klient wykonujący instrukcje skilli - to zwykły odczyt plików, więc reguła zapisana w jednym przebiegu wraca w kolejnym niezależnie od tego, w czym go uruchomiono. Każdy zapis jest **addytywny** (dopisanie do sekcji, nigdy nadpisanie pliku), żeby wcześniejsze reguły nie ginęły. Nazwa katalogu `.claude/` jest historyczna: to istniejąca lokalizacja z danymi użytkownika, wspólna dla klientów, nie zastrzeżona dla jednego - plugin jej nie migruje. Prywatna pamięć klienta (np. auto-memory Claude Code) pozostaje opcjonalnym, dodatkowym źródłem dla `/monolynx:retro`; jej brak nie blokuje niczego i nie jest przenoszona między klientami.
+
 ### Hooki
 
 Codex wykrywa ten sam `hooks/hooks.json` i udostępnia `CLAUDE_PLUGIN_ROOT` jako alias zgodności. Hooki pluginu wymagają przeglądu i nadania zaufania przez użytkownika; sama instalacja ich nie aktywuje. Instalacja pojedynczego skilla przez MCP nie rejestruje hooków. Obsługa zdarzeń i kontekst subagentów zależą od klienta, więc odczyt manifestu nie stanowi dowodu egzekwowania wszystkich reguł guardów.
@@ -288,7 +303,25 @@ Plugin dostarcza hook PreToolUse na narzędziu Bash (`hooks/hooks.json` → `hoo
 | Sesja główna | operacje destrukcyjne (jw.) oraz `git reset --hard` / `rebase` / `clean -f` | **ask** - zawsze, niezależnie od flag |
 | Sesja główna | `git add` / `git commit` | przechodzi normalnie (zwykły system uprawnień) |
 
-Hook nigdy nie blokuje sesji głównej na twardo - decyzję podejmuje użytkownik. Deny u subagenta to oczekiwane zachowanie workflow, nie błąd. Hook działa w każdej sesji z zainstalowanym pluginem; wymaga `python3` w PATH.
+Hook nigdy nie blokuje sesji głównej na twardo - decyzję podejmuje użytkownik. Deny u subagenta to oczekiwane zachowanie workflow, nie błąd. Hook wymaga `python3` w PATH.
+
+#### Ładowanie, zaufanie i wykrywanie braku ochrony
+
+Hook nie uruchamia się dlatego, że leży w katalogu pluginu. Klient musi go załadować z manifestu (`hooks/hooks.json`, wskazany przez `plugin.json` w Claude Code albo `.codex/hooks.json` w Codex) **i** dostać od użytkownika zaufanie do pluginu. Bez tej decyzji klient w ogóle nie uruchamia procesu hooka, więc żadna reguła z tabeli wyżej nie działa: `deny` i `ask` działają dopiero PO nadaniu zaufania, nie zamiast niego. Instalacja pojedynczego skilla przez `install_monolynx_skills` nie rejestruje hooków w ogóle.
+
+Żeby brak ochrony nie był cichy, hook przy każdym wywołaniu PreToolUse z rozpoznanym `session_id` zapisuje best-effort marker `~/.cache/monolynx/hook-active/<session_id>` (zapis fail-open: błąd IO nigdy nie zmienia decyzji). Treść to JSON: `{"subagent_identification": <bool>, "checked_at": "<ISO 8601>"}`, gdzie pole `subagent_identification` mówi, czy **ten** payload niósł identyfikację subagenta. Skille `work`, `work-simple` i `mr-queue` czytają marker i raportują wynik jako jeden z trzech stanów:
+
+| Stan | Co widać | Znaczenie |
+|---|---|---|
+| **potwierdzona** | marker z `"subagent_identification": true` | hook żyje i klient identyfikuje subagenta - twarde blokady subagentów działają |
+| **niepełna** | marker jest, ale wyłącznie z `false` | hook żyje, ale klient nie przekazuje identyfikacji subagenta w PreToolUse (subagent dostaje traktowanie sesji głównej) i może nie egzekwować decyzji `ask` |
+| **brak potwierdzenia** | brak markera po pierwszej komendzie Bash | hook nie zdążył zadziałać albo nie jest załadowany/zaufany |
+
+Odczyt markera idzie **dwiema osobnymi komendami**: najpierw `echo $HOME`, potem `find <HOME>/.cache/monolynx/hook-active -type f -mmin -5 -exec cat {} +` z podstawioną literalnie ścieżką. Powód jest praktyczny: `work` i `work-simple` biegną zwykle w git worktree, a guard izolacji worktree odrzuca komendę, której argument jest wyliczany w runtime (`$HOME`, `$(...)`) - jednolinijkowiec z `"$HOME/..."` nie wykonałby się wcale i skill zamiast stanu dostałby odmowę.
+
+W stanie innym niż „potwierdzona” skille nie deklarują deterministycznej ochrony: piszą o tym jedną linią w podsumowaniu i egzekwują zgody rozmową z użytkownikiem, a w trybie w tle (`MONOLYNX_SPRINT_RUN=1`) kończą turę linią `SPRINT-RUN STOP` zamiast udawać działającą blokadę.
+
+Zakres egzekwowania zależy od klienta i nie da się go wywnioskować z nazwy produktu: obsługa zdarzeń, identyfikacja subagenta i respektowanie decyzji `ask` to właściwości konkretnego klienta. Klient, który parsuje `ask`, ale mimo to wykonuje komendę (fail-open), zostawia zgody sesji głównej bez egzekucji. Dla takich klientów jest opt-in `MONOLYNX_HOOK_ASK_UNSUPPORTED=true`: hook zamienia wtedy każdą decyzję `ask` na `deny` z wyjaśnieniem, że operację musi wykonać człowiek poza hookiem. Domyślnie wyłączone - to świadomy wybór użytkownika, nie zmiana domyślnej polityki, i nie zastępuje nadania zaufania hookom.
 
 **Wyjątek: sprzątanie własnych plików w `/tmp`.** `rm -f` na pliku `*.log`, `*.txt` lub `*.md` pod `/tmp` albo `/private/tmp` - razem z podkatalogami, więc obejmuje scratchpad sesji (`/private/tmp/claude-<uid>/<projekt>/<sesja>/scratchpad/`) - przechodzi bez promptu, także dla subagenta (glob dozwolony w nazwie pliku i w segmentach katalogu, np. `rm -f /tmp/*.md`, `rm -f /private/tmp/claude-501/*/scratchpad/*.log`) - ma pozwolić agentowi posprzątać własny scratchpad bez pytania użytkownika o każdą operację. Wyjątek jest celowo wąski i fail-closed: bez flagi `-r`/`-R`/`--recursive` (glob z rozszerzeniem mógłby trafić w katalog o takiej nazwie i skasować go rekurencyjnie), bez `..` w ścieżce, bez komend złożonych (`|`, `;`, `&`, `` ` ``, `$(`, nowa linia/CR - shell wykonałby je jako osobne instrukcje), bez argumentów z `$` lub `~` (ekspansja zmiennej/home shella - hook widzi tekst przed ekspansją, więc nie da się bezpiecznie zweryfikować faktycznej ścieżki) , bez ścieżek poza `/tmp`/`/private/tmp` i bez samego katalogu (ścieżka musi kończyć się plikiem o dozwolonym rozszerzeniu, więc `rm -f /tmp/sub/dir` nie przechodzi) - każdy niespełniony warunek wraca do zwykłej reguły destrukcyjnej z tabeli wyżej, która parsuje flagi `rm` (krótki klaster, forma długa i jej jednoznaczny prefiks) zamiast wyliczać ich pisownię, więc łapie też warianty typu `-R`, `--rec` czy `-d`.
 
@@ -326,6 +359,7 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS` | `Bash(claude:*),Bash(python3:*),Read(~/.claude/plugins/**),mcp__monolynx,mcp__claude_ai_Monolynx,mcp__plugin_monolynx_monolynx` | Lista narzędzi (po przecinkach), którą `sprint_run.sh` przekazuje tickowi w `claude -p --allowedTools`. Ustaw w środowisku procesu odpalającego pętlę; zastępuje całą listę domyślną (patrz sekcja „Uprawnienia ticku i preflight”) |
 | `MONOLYNX_MUTATION_BUDGET` | `600` | Budżet czasu przebiegu `/monolynx:mutation-check` w sekundach. Maksimum 600 (limit narzędzia Bash); większa wartość jest skracana do 600 |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goły imperatyw dostaje skill `brief` z propozycją kontraktu; `block` - prompt odrzucony z odesłaniem do `/monolynx:brief`; `off` - wyłączony (patrz sekcja Hooki) |
+| `MONOLYNX_HOOK_ASK_UNSUPPORTED` | `false` | **Wyłącznie wartość `true`** (jak pozostałe flagi tego hooka) - `bash_guard.py` zamienia wtedy każdą decyzję `ask` na `deny` z wyjaśnieniem, że operację musi wykonać człowiek poza hookiem; każda inna wartość (w tym `1`) zostawia domyślne zachowanie. Opt-in dla klientów, które parsują `ask`, ale mimo to wykonują komendę (fail-open) - bez tej flagi zgody sesji głównej w takim kliencie nie są egzekwowane. Nie zmienia zachowania klientów, które `ask` obsługują (patrz sekcja Hooki) |
 
 Domyślne wartości są zachowawcze: skille **wypisują komendy zamiast je wykonywać**.
 Flagi zmieniają to świadomie.
@@ -555,13 +589,21 @@ Serwer MCP podłącza się poza skillami:
 - **Codex**: konfiguracja MCP i logowanie OAuth opisane w sekcji instalacji; token API pozostaje opcją dla konfiguracji ręcznej.
 - **Cursor**: `.cursor/mcp.json` w projekcie lub `~/.cursor/mcp.json` globalnie, klucz `mcpServers` - ten sam kształt co `.mcp.json` pluginu.
 
-Definicje `plugin/agents/` dotyczą Claude Code. W każdym kliencie skille sprawdzają faktycznie dostępne mechanizmy delegowania i role projektu. Sam napis „Codex” nie oznacza braku subagentów ani dostępności określonego modelu. Przeniesienie konfiguracji agentów, pamięci i hooków nie jest częścią kontraktu runtime.
+Definicje `plugin/agents/` (i ich kopie w `.claude/agents/`) są formatem Claude Code. W każdym kliencie skille sprawdzają faktycznie dostępne mechanizmy delegowania i role projektu. Sam napis „Codex” nie oznacza braku subagentów ani dostępności określonego modelu. Przeniesienie konfiguracji agentów i hooków między klientami nie jest częścią kontraktu runtime - każdy klient ładuje je po swojemu i wymaga własnej decyzji o zaufaniu. Nie dotyczy to trwałych reguł projektu: te leżą w repozytorium i czyta je każdy klient (patrz „Reguły i pamięć projektu”), więc niczego nie trzeba migrować.
 
 ### Serwer MCP bez zmian funkcjonalnych
 
 Plugin nie modyfikuje serwera ani nie odwołuje się do jego wewnętrznych funkcji. Deklaruje wyłącznie dostęp (HTTP + OAuth) do **istniejącego** serwera MCP pod adresem `https://monolynx.com/mcp`. Cała logika narzędzi (Scrum, 500ki, Monitoring, Wiki, Połączenia, Plan pracy, w tym samo `install_monolynx_skills`) działa po stronie serwera, niezależnie od tego, czy łączysz się przez plugin, czy w inny sposób.
 
 ## Changelog
+
+### 1.18.0
+
+- MON-184: agenci, reguły i hooki opisane pod oba klienty. `plugin/agents/*.md` jest jedynym źródłem treści ról, a kopie w `.claude/agents/` powstają z niego przez `scripts/sync_agents.py --check`. Skille `work` i `work-simple` dobierają wykonawców po faktycznie dostępnym delegowaniu, zawsze z **osobnym krytykiem**; tryb solo wolno włączyć wyłącznie przy braku capability (nigdy po nazwie klienta) i zawsze z jawną adnotacją, że review nie jest niezależne - w planie, w komentarzu podsumowującym i w podsumowaniu dla użytkownika.
+- **Trwałe reguły mają jedną, projektową lokalizację**: `.claude/rules/*.md` i `.claude/agent-memory/<typ-agenta>/MEMORY.md`, ścieżki od korzenia repozytorium, zapis addytywny (dopisanie do sekcji, nigdy nadpisanie pliku). To zwykłe pliki repo czytane przez każdego klienta wykonującego instrukcje skilli - nie zakładamy prywatnego formatu pamięci żadnego z nich. Nazwa katalogu `.claude/` zostaje jako historyczna i wspólna. Opisane w `work`, `work-simple`, `retro`, `work/review-rubric.md` i w nowej sekcji README „Reguły i pamięć projektu”; w `retro` odczyt pamięci ról wyszedł poza blok specyficzny dla Claude Code, prywatna auto-memory klienta została w nim jako źródło opcjonalne.
+- **Wykrywanie braku aktywnej ochrony hooków**: `bash_guard.py` zapisuje best-effort marker `~/.cache/monolynx/hook-active/<session_id>` z polem `subagent_identification`. `work` (6b, 6d), `work-simple` (0.45, 2.4) i `mr-queue` czytają go i raportują jeden z trzech stanów - ochrona potwierdzona / niepełna / brak potwierdzenia. W dwóch ostatnich skille nie deklarują deterministycznej ochrony, egzekwują zgody rozmową z użytkownikiem, a w trybie w tle kończą turę linią `SPRINT-RUN STOP`. README opisuje wymagane załadowanie i zaufanie do hooków (instalacja ich nie aktywuje).
+- **Nowa zmienna `MONOLYNX_HOOK_ASK_UNSUPPORTED`** (domyślnie wyłączona, opt-in): zamienia decyzję `ask` na `deny` z wyjaśnieniem, dla klientów, które `ask` parsują, ale mimo to wykonują komendę (fail-open). To wybór użytkownika, nie zmiana domyślnej polityki.
+- Wyniki weryfikacji runtime dla tej zmiany: `plugin/runtime-verification.md`, sekcja MON-184.
 
 ### 1.17.0
 

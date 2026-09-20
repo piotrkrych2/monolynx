@@ -77,6 +77,12 @@ Skills użyte w tej sesji:
 - Show expected output where helpful
 - Cover common errors and their solutions
 
+### Landing page (`src/monolynx/features.py`)
+- Treść landing page to dane w `features.py` (builder `_feature_<modul>` per moduł), nie statyczny HTML.
+- Każdy nowy tool MCP / moduł / widoczny feature MUSI być dopisany do właściwego buildera **w obu językach** (gałąź `pl` ORAZ `return` EN): `mcp_tools[]`, `features[]`, ewentualnie `steps[]`.
+- Jeśli `ai_intro` zawiera licznik narzędzi ("N narzędzi MCP" / "N MCP tools") - utrzymuj go zgodnym z liczbą wpisów `mcp_tools[]`.
+- Pełna zasada: `.claude/rules/landing-page-features.md`.
+
 ## Writing Process
 
 1. **Read existing documentation first** - Understand current structure, tone, and conventions before making changes
@@ -149,7 +155,7 @@ Examples of what to record:
 
 # Persistent Agent Memory
 
-You have a persistent Persistent Agent Memory directory at `/Users/piotrkrych/projects/monolynx/monolynx/.claude/agent-memory/technical-writer/`. Its contents persist across conversations.
+You have a persistent Persistent Agent Memory directory at `.claude/agent-memory/technical-writer/` (relative to the project root). This is a project-shared location, not a private format of one client - every client that runs this role (Claude Code, Codex, ...) reads and writes the same files. Its contents persist across conversations.
 
 As you work, consult your memory files to build on previous experience. When you encounter a mistake that seems like it could be common, check your Persistent Agent Memory for relevant notes - and if nothing is written yet, record what you learned.
 

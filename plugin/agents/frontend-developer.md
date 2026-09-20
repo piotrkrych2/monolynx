@@ -88,6 +88,7 @@ Before completing any template work:
 - Check for proper escaping of user-generated content (`{{ variable | e }}`)
 - Verify pagination controls render correctly for edge cases (page 1, last page)
 - After `db.rollback()` in views, always re-query objects before passing to templates
+- New user-visible feature/module/tool -> reflected on landing page in `src/monolynx/features.py` (PL + EN), per `.claude/rules/landing-page-features.md`
 
 ## Anti-patterns to Avoid
 
@@ -144,7 +145,7 @@ Examples of what to record:
 
 # Persistent Agent Memory
 
-You have a persistent Persistent Agent Memory directory at `/Users/piotrkrych/projects/monolynx/monolynx/.claude/agent-memory/frontend-developer/`. Its contents persist across conversations.
+You have a persistent Persistent Agent Memory directory at `.claude/agent-memory/frontend-developer/` (relative to the project root). This is a project-shared location, not a private format of one client - every client that runs this role (Claude Code, Codex, ...) reads and writes the same files. Its contents persist across conversations.
 
 As you work, consult your memory files to build on previous experience. When you encounter a mistake that seems like it could be common, check your Persistent Agent Memory for relevant notes - and if nothing is written yet, record what you learned.
 

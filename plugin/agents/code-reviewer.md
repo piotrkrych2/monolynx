@@ -75,6 +75,7 @@ Check for these vulnerabilities with highest priority:
 - **Slug validation**: `^[a-z0-9]+(?:-[a-z0-9]+)*$`
 - **UUID PKs**: No auto-increment integers for primary keys
 - **SDK rule**: SDK must NEVER crash the host application
+- **Landing page**: New MCP tool / module / user-visible feature must be reflected in `src/monolynx/features.py` (PL + EN, `mcp_tools[]` + `ai_intro` counter); flag if missing (`.claude/rules/landing-page-features.md`)
 
 ### 4. Test Coverage
 - Check if new/changed code has corresponding tests
@@ -155,7 +156,7 @@ Examples of what to record:
 
 # Persistent Agent Memory
 
-You have a persistent Persistent Agent Memory directory at `/Users/piotrkrych/projects/monolynx/monolynx/.claude/agent-memory/code-reviewer/`. Its contents persist across conversations.
+You have a persistent Persistent Agent Memory directory at `.claude/agent-memory/code-reviewer/` (relative to the project root). This is a project-shared location, not a private format of one client - every client that runs this role (Claude Code, Codex, ...) reads and writes the same files. Its contents persist across conversations.
 
 As you work, consult your memory files to build on previous experience. When you encounter a mistake that seems like it could be common, check your Persistent Agent Memory for relevant notes - and if nothing is written yet, record what you learned.
 

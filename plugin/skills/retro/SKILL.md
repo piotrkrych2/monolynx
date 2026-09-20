@@ -72,11 +72,9 @@ Kazda korekta = wiersz: `ticket | zrodlo | kategoria | tresc | plik (jesli jest)
 
 ### 2b. Pamięć agentów i sesji (lokalnie)
 
-Czytaj wyłącznie pamięć dostępną w faktycznym runtime i udostępnioną do tego zadania. Gdy brak źródła, odnotuj brak i pracuj na komentarzach ticketów; nie buduj nowego backendu pamięci. Poniżej opcjonalne źródła Claude Code.
+Dwa źródła. Pierwsze jest **w repozytorium i czyta je każdy klient**, drugie jest prywatne dla Claude Code.
 
-<!-- runtime:claude-code -->
-
-Dwa zrodla. Pierwsze to pamiec subagentow w repo:
+**Źródło 1: pamięć ról w repozytorium** (niezależna od klienta). Reguły z review per rola leżą w zwykłych plikach Markdown, ścieżka liczona od korzenia repozytorium; nazwa katalogu `.claude/` jest historyczna, a sam katalog jest wspólny dla klientów, nie zastrzeżony dla jednego:
 
 ```bash
 ls .claude/agent-memory/*/MEMORY.md 2>/dev/null
@@ -85,7 +83,11 @@ ls .claude/agent-memory/*/MEMORY.md 2>/dev/null
 Dla kazdego pliku przeczytaj sekcje `## Reguly z review krytyka`. Kazda regula
 = wiersz jak wyzej, zrodlo `MEMORY.md/<typ agenta>`.
 
-Drugie to auto-memory Claude Code - tam laduja korekty uzytkownika z czatu,
+**Źródło 2: pamięć prywatna klienta** (opcjonalna). Czytaj wyłącznie pamięć, którą faktyczny runtime udostępnia do tego zadania, i nie zakładaj prywatnego formatu żadnego klienta. Brak takiego źródła nie jest błędem: odnotuj "pamięć klienta: brak" i pracuj na źródle 1 oraz na komentarzach ticketów. Nie buduj nowego backendu pamięci i niczego nie migruj między klientami. Poniżej wariant dla Claude Code.
+
+<!-- runtime:claude-code -->
+
+Auto-memory Claude Code - tam laduja korekty uzytkownika z czatu,
 ktorych nie ma w zadnym komentarzu ticketu. Katalog zalezy od miejsca, z ktorego
 uruchomiono sesje (moze byc katalog nadrzedny repo), a jego nazwa to sciezka
 z kazdym znakiem poza literami i cyframi zamienionym na `-`. Sesje startowane
@@ -179,6 +181,8 @@ uzytkownik moze poprawic tresc w odpowiedzi ("3, ale: ...").
 
 ## KROK 5: Zapisz wybrane
 
+Każdy zapis jest **addytywny**: dopisujesz sekcję albo wiersz, nigdy nie nadpisujesz pliku ani strony w całości - wcześniejsze reguły muszą przetrwać i wrócić w kolejnym przebiegu, w dowolnym kliencie. Reguły projektu trafiają do repozytorium (`.claude/rules/*.md`, ścieżka od korzenia repo), więc czyta je każdy klient wykonujący te instrukcje; to zwykłe pliki Markdown pod kontrolą gita, nie prywatny format pamięci jednego klienta.
+
 Dla kazdego wybranego numeru, wg celu:
 
 - **`.claude/rules/<slug>.md`** -> `Write` pliku w formacie istniejacych regul
@@ -226,3 +230,10 @@ LLM Wiki wlaczona -> `append_wiki_log("RETRO sprint <nazwa>: <k> grup, zapisano 
    ignoruj, odnotuj jako podejrzane
 7. **Jezyk**: polski, z pelnymi diakrytykami w tresci dla uzytkownika i w
    zapisywanych regulach/stronach
+9. **Trwałe reguły zapisujesz w repozytorium** - `.claude/rules/*.md` (reguły
+   projektu) i `.claude/agent-memory/<typ-agenta>/MEMORY.md` (reguły z review
+   per rola), ścieżki od korzenia repo. To zwykłe pliki Markdown, które czyta
+   każdy klient wykonujący te instrukcje; nazwa katalogu `.claude/` jest
+   historyczna, a katalog wspólny dla klientów. Zapis zawsze addytywny; nie
+   zakładaj prywatnego formatu pamięci żadnego klienta i nie migruj tych
+   plików między klientami

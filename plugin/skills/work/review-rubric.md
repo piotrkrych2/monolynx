@@ -50,12 +50,22 @@ przerwij review i zwroc NEEDS WORK bez punktacji.
 
 ## Zasady projektu - skad je brac
 
+Trwale reguly projektu zyja W REPOZYTORIUM, jako zwykle pliki Markdown -
+nie w prywatnej pamieci ktoregokolwiek klienta. Czyta je kazdy klient
+wykonujacy te instrukcje, wersjonuje je git, a nazwa katalogu `.claude/` jest
+HISTORYCZNA (katalog jest wspolny dla klientow, nie zastrzezony dla jednego).
+Sciezki liczysz od KORZENIA REPOZYTORIUM.
+
 Przed ocena przeczytaj:
 
 1. `.claude/rules/*.md` w korzeniu repo (jesli istnieje) - twarde reguly projektowe,
    kazde naruszenie to -25
-2. `CLAUDE.md` / `AGENTS.md` - konwencje architektoniczne
-3. Sekcja "Toolchain" raportu Researchera (masz ja w prompcie) - czy projekt ma
+2. `.claude/agent-memory/<typ-ocenianego-agenta>/MEMORY.md`, sekcja
+   `## Reguly z review krytyka` (jesli istnieje) - reguly z poprzednich review
+   tej roli. Regula stamtad zlamana ponownie to ta sama kategoria co `.claude/rules/`
+   (-25) i zaznacz w raporcie, ze korekta WRACA - to materia dla `/monolynx:retro`
+3. `CLAUDE.md` / `AGENTS.md` - konwencje architektoniczne
+4. Sekcja "Toolchain" raportu Researchera (masz ja w prompcie) - czy projekt ma
    testy, jakim frameworkiem. NIE pobieraj strony wiki sam
 
 Nie zakladaj regul, ktorych nie ma w tych zrodlach. Jesli plik regul nie istnieje -
@@ -88,8 +98,10 @@ Bez odjec -> `100/100, APPROVED`. Nie zanizaj "dla zasady".
 
 **Linia `REGULA:`** - obowiazkowa przy kazdym NEEDS WORK, jedna na agenta:
 jedno zdanie w trybie oznajmujacym, ktore developer tego typu ma zapamietac,
-zeby ta sama wada nie wrocila (Team Manager dopisuje je do
-`.claude/agent-memory/<typ>/MEMORY.md`). Regula opisuje WZORZEC, nie ten
+zeby ta sama wada nie wrocila (Team Manager DOPISUJE je do
+`.claude/agent-memory/<typ>/MEMORY.md` w sekcji `## Reguly z review krytyka` -
+zapis addytywny, nigdy nadpisanie pliku, zeby wczesniejsze reguly zostaly
+i wrocily w kolejnym przebiegu dowolnego klienta). Regula opisuje WZORZEC, nie ten
 konkretny plik ("kazdy zapis konczy sie commitem", nie "dodaj commit
 w pipelines.py:142"). Kilka odjec -> regula dla najwyzszego.
 

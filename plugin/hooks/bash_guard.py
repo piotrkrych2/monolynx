@@ -25,6 +25,23 @@ Zasady:
 
 Wyjscie: brak outputu + exit 0 = przepusc; JSON z permissionDecision
 deny/ask = zablokuj / zapytaj uzytkownika.
+
+Ladowanie i zaufanie (MON-184): ten skrypt jest deklarowany w
+plugin/hooks/hooks.json (matcher PreToolUse/Bash) i uruchamiany przez klienta
+(Claude Code albo Codex CLI, patrz plugin.json / .codex/hooks.json) PRZED
+kazdym wywolaniem Bash - wymaga wiec, zeby uzytkownik zainstalowal/zaufal
+pluginowi Monolynx w danym kliencie; bez tego zaufania klient w ogole nie
+uruchomi tego procesu i zadna z ponizszych regul nie zadziala (deny/ask nie
+zastepuje decyzji o zaufaniu, tylko dziala PO niej). Zeby ten brak aktywnej
+ochrony byl widoczny zamiast cichy, kazde wywolanie z rozpoznanym
+`session_id` dotyka best-effort markera `~/.cache/monolynx/hook-active/
+<session_id>` (patrz `touch_hook_active_marker` nizej) - jego NIEOBECNOSC
+dla biezacej sesji jest sygnalem, ze hook nie zdazyl jeszcze zadzialac albo
+nie jest zaladowany/zaufany. Marker niesie tez, czy ten konkretny payload
+mial pole `agent_id` - Codex CLI nigdy go nie wysyla w PreToolUse (patrz
+tests/fixtures/codex/README.md, Znalezisko 1), wiec seria markerow bez tego
+pola w calej sesji sygnalizuje degradacje ochrony subagenta, nie tylko brak
+hooka. Zapis markera jest fail-open: blad IO nigdy nie zmienia decyzji.
 """
 
 import json
@@ -32,6 +49,43 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def hook_active_marker_path(session_id: str) -> Path:
+    """Sciezka markera aktywnego hooka - ta sama konwencja sanitizacji
+    identyfikatora sesji co marker brief_guard.py (znaki spoza
+    [A-Za-z0-9_-] -> "_"), zeby przetestowac ja identycznie po obu stronach."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)
+    return Path.home() / ".cache" / "monolynx" / "hook-active" / safe
+
+
+def touch_hook_active_marker(session_id: str, agent_fields_present: bool) -> None:
+    """Best-effort marker potwierdzajacy, ze hook zyje i przetworzyl to
+    wywolanie PreToolUse (AC6, MON-184). Fail-open: kazdy blad IO jest
+    polykany i NIGDY nie zmienia decyzji hooka (jak brief_guard.py:69-75).
+    Brak `session_id` -> marker sie nie zapisuje, hook dziala dalej normalnie.
+    `agent_fields_present` niesie, czy TEN payload mial niepuste `agent_id` -
+    to sygnal, czy klient w ogole identyfikuje subagentow w PreToolUse (patrz
+    docstring modulu)."""
+    session_id = (session_id or "").strip()
+    if not session_id:
+        return
+    try:
+        marker = hook_active_marker_path(session_id)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {
+                    "subagent_identification": agent_fields_present,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
 
 def decide(decision: str, reason: str) -> None:
@@ -46,6 +100,20 @@ def decide(decision: str, reason: str) -> None:
             "operacji. Uzyj wariantu nieniszczacego (rm bez -f/-r na pliku, ktory "
             "sam utworzyles; docker stop + docker rm bez -f) albo, jesli operacja "
             "jest niezbedna, zakoncz ture linia 'SPRINT-RUN STOP: <powod>'. "
+            "Pierwotny powod: " + reason
+        )
+    # Escape hatch dla klientow, ktore nie egzekwuja "ask" (np. Codex CLI
+    # oznacza taki hook jako failed i mimo to wykonuje komende - fail-open,
+    # patrz tests/fixtures/codex/README.md, Znalezisko 2). Domyslnie
+    # wylaczone: opt-in, nie nowa polityka. Wzorowane na obsludze
+    # MONOLYNX_SPRINT_RUN powyzej - skoro nikt nie odpowie na "ask", hook
+    # zwraca "deny" zamiast fail-open "allow".
+    if decision == "ask" and flag("MONOLYNX_HOOK_ASK_UNSUPPORTED"):
+        decision = "deny"
+        reason = (
+            "MONOLYNX_HOOK_ASK_UNSUPPORTED=true: ten klient nie egzekwuje "
+            "decyzji 'ask' (parsowane, ale wykonuje komende mimo to - fail-open). "
+            "Operacja wymaga recznego uruchomienia przez czlowieka poza hookiem. "
             "Pierwotny powod: " + reason
         )
     print(
@@ -80,6 +148,11 @@ cmd = (data.get("tool_input") or {}).get("command") or ""
 # traktujemy jak glowna sesje (bezpieczny default: nie blokowac uzytkownika).
 agent_type = (data.get("agent_type") or "").strip()
 is_subagent = bool(data.get("agent_id")) and agent_type not in ("", "main")
+
+# Marker aktywnego hooka: dotyka KAZDE wywolanie Bash, ktore dotrze tu dalej
+# (kazda galaz ponizej konczy sie explicit allow/ask/deny) - patrz docstring
+# modulu i touch_hook_active_marker.
+touch_hook_active_marker(str(data.get("session_id") or "").strip(), bool(data.get("agent_id")))
 
 GIT_WRITE = re.compile(
     r"\bgit\b[^|;&]*?\b(push|commit|add|reset\s+--hard|rebase|clean\s+(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b)"
