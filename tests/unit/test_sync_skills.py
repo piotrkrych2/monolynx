@@ -116,92 +116,109 @@ def test_bundled_resources_requires_runtime_source(tmp_path, monkeypatch):
         sync_skills.bundled_resources("sample")
 
 
-REVIEW_RUBRIC_TABLE = (
-    "# Rubryka oceny krytyka\n\n"
-    "| Naruszenie | Odjecie | Uwagi |\n"
-    "|---|---|---|\n"
-    "| Zapis do DB bez `db.commit()` | -30 | patrz zasady projektu ponizej |\n"
-    "| Brak testu dla nowego kodu | -20 | tylko gdy projekt ma testy |\n"
-)
+# WHOLE_FILE_RESOURCES["work-simple"] jest zrodlem prawdy dla wszystkich testow
+# nizej - kazdy nowy wpis (source_rel, target_name) dostaje pokrycie automatycznie,
+# bez dopisywania kolejnej kopii-wklejki per plik.
+WHOLE_FILE_ENTRIES = sync_skills.WHOLE_FILE_RESOURCES["work-simple"]
+
+
+def _whole_file_content(target_name: str) -> str:
+    return f"# Fixture dla {target_name}\n\nTresc unikalna dla tego pliku: {target_name}.\n"
 
 
 @pytest.fixture
-def rubric_source_tree(tmp_path, monkeypatch):
+def whole_file_source_tree(tmp_path, monkeypatch):
     skills = tmp_path / "plugin/skills"
     work = skills / "work"
     work.mkdir(parents=True)
     (work / "SKILL.md").write_text("---\nname: work\ndescription: Work\n---\nWork\n", encoding="utf-8")
-    (work / "review-rubric.md").write_text(REVIEW_RUBRIC_TABLE, encoding="utf-8")
     work_simple = skills / "work-simple"
     work_simple.mkdir()
     (work_simple / "SKILL.md").write_text("---\nname: work-simple\ndescription: Work simple\n---\nWork simple\n", encoding="utf-8")
     references = skills.parent / "references"
     references.mkdir()
     (references / "runtime.md").write_text("# Runtime\n", encoding="utf-8")
+    for source_rel, target_name in WHOLE_FILE_ENTRIES:
+        source_path = skills / source_rel
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text(_whole_file_content(target_name), encoding="utf-8")
     monkeypatch.setattr(sync_skills, "SOURCE_DIR", skills)
     monkeypatch.setattr(sync_skills, "REFERENCE_RESOURCES", {})
     return skills
 
 
-def test_bundled_resources_returns_full_rubric_table_for_work_simple(rubric_source_tree):
+@pytest.mark.parametrize("source_rel,target_name", WHOLE_FILE_ENTRIES)
+def test_bundled_resources_returns_whole_file_copy_for_work_simple(whole_file_source_tree, source_rel, target_name):
     resources = sync_skills.bundled_resources("work-simple")
-    assert resources["review-rubric.md"] == REVIEW_RUBRIC_TABLE
-    assert "|---|---|---|" in resources["review-rubric.md"]
-    assert "Zapis do DB bez `db.commit()`" in resources["review-rubric.md"]
+    assert resources[target_name] == _whole_file_content(target_name)
 
 
-def test_check_detects_missing_generated_rubric_copy_and_sync_restores_it(rubric_source_tree, tmp_path, monkeypatch):
-    skills = rubric_source_tree
+@pytest.mark.parametrize("source_rel,target_name", WHOLE_FILE_ENTRIES)
+def test_check_detects_missing_generated_whole_file_copy_and_sync_restores_it(whole_file_source_tree, tmp_path, monkeypatch, source_rel, target_name):
+    skills = whole_file_source_tree
     target = tmp_path / "target"
     monkeypatch.setattr(sync_skills, "TARGET_DIR", target)
     monkeypatch.setattr(sys, "argv", ["sync_skills.py"])
     assert sync_skills.main() == 0
-    generated = skills / "work-simple" / "review-rubric.md"
-    static_copy = target / "monolynx-work-simple" / "review-rubric.md"
-    assert generated.read_text(encoding="utf-8") == REVIEW_RUBRIC_TABLE
-    assert static_copy.read_text(encoding="utf-8") == REVIEW_RUBRIC_TABLE
+    generated = skills / "work-simple" / target_name
+    static_copy = target / "monolynx-work-simple" / target_name
+    expected = _whole_file_content(target_name)
+    assert generated.read_text(encoding="utf-8") == expected
+    assert static_copy.read_text(encoding="utf-8") == expected
     generated.unlink()
     monkeypatch.setattr(sys, "argv", ["sync_skills.py", "--check"])
     assert sync_skills.main() == 1
     assert not generated.exists()
     monkeypatch.setattr(sys, "argv", ["sync_skills.py"])
     assert sync_skills.main() == 0
-    assert generated.read_text(encoding="utf-8") == REVIEW_RUBRIC_TABLE
+    assert generated.read_text(encoding="utf-8") == expected
     monkeypatch.setattr(sys, "argv", ["sync_skills.py", "--check"])
     assert sync_skills.main() == 0
 
 
-def test_check_detects_rubric_content_drift_and_sync_restores_it(rubric_source_tree, tmp_path, monkeypatch):
+@pytest.mark.parametrize("source_rel,target_name", WHOLE_FILE_ENTRIES)
+def test_check_detects_whole_file_content_drift_and_sync_restores_it(whole_file_source_tree, tmp_path, monkeypatch, source_rel, target_name):
     target = tmp_path / "target"
     monkeypatch.setattr(sync_skills, "TARGET_DIR", target)
     monkeypatch.setattr(sys, "argv", ["sync_skills.py"])
     assert sync_skills.main() == 0
-    static_copy = target / "monolynx-work-simple" / "review-rubric.md"
-    assert static_copy.read_text(encoding="utf-8") == REVIEW_RUBRIC_TABLE
-    static_copy.write_text("recznie zmieniona tresc rubryki", encoding="utf-8")
+    static_copy = target / "monolynx-work-simple" / target_name
+    expected = _whole_file_content(target_name)
+    assert static_copy.read_text(encoding="utf-8") == expected
+    static_copy.write_text("recznie zmieniona tresc", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["sync_skills.py", "--check"])
     assert sync_skills.main() == 1
-    assert static_copy.read_text(encoding="utf-8") == "recznie zmieniona tresc rubryki"
+    assert static_copy.read_text(encoding="utf-8") == "recznie zmieniona tresc"
     monkeypatch.setattr(sys, "argv", ["sync_skills.py"])
     assert sync_skills.main() == 0
-    assert static_copy.read_text(encoding="utf-8") == REVIEW_RUBRIC_TABLE
+    assert static_copy.read_text(encoding="utf-8") == expected
     monkeypatch.setattr(sys, "argv", ["sync_skills.py", "--check"])
     assert sync_skills.main() == 0
 
 
+@pytest.mark.parametrize("source_rel,target_name", WHOLE_FILE_ENTRIES)
 @pytest.mark.parametrize("check_only", [False, True])
-def test_bundled_resources_rejects_missing_rubric_source(tmp_path, monkeypatch, check_only):
+def test_bundled_resources_rejects_missing_whole_file_source(tmp_path, monkeypatch, check_only, source_rel, target_name):
     source = tmp_path / "source"
+    work = source / "work"
+    work.mkdir(parents=True)
+    (work / "SKILL.md").write_text("---\nname: work\ndescription: Work\n---\nWork\n", encoding="utf-8")
     work_simple = source / "work-simple"
-    work_simple.mkdir(parents=True)
+    work_simple.mkdir()
     (work_simple / "SKILL.md").write_text("---\nname: work-simple\ndescription: Work simple\n---\nWork simple\n", encoding="utf-8")
     references = source.parent / "references"
     references.mkdir()
     (references / "runtime.md").write_text("# Runtime\n", encoding="utf-8")
+    for other_source_rel, other_target_name in WHOLE_FILE_ENTRIES:
+        if other_source_rel == source_rel:
+            continue
+        other_path = source / other_source_rel
+        other_path.parent.mkdir(parents=True, exist_ok=True)
+        other_path.write_text(_whole_file_content(other_target_name), encoding="utf-8")
     monkeypatch.setattr(sync_skills, "SOURCE_DIR", source)
     monkeypatch.setattr(sync_skills, "TARGET_DIR", tmp_path / "target")
     monkeypatch.setattr(sync_skills, "REFERENCE_RESOURCES", {})
     monkeypatch.setattr(sys, "argv", ["sync_skills.py", "--check"] if check_only else ["sync_skills.py"])
     with pytest.raises(FileNotFoundError) as error:
         sync_skills.main()
-    assert Path(error.value.filename) == source / "work" / "review-rubric.md"
+    assert Path(error.value.filename) == source / source_rel

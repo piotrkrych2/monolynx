@@ -34,4 +34,6 @@ Przy bumpie wersji pluginu: nowy wpis changelogu idzie na **poczatek** sekcji, a
 
 `src/monolynx/static/agent-bootstrap.md` ma **mieszana** konwencje diakrytykow: stare wpisy bez ogonkow, nowsze (sprint-run) z pelnymi. Nowy tekst pisz z diakrytykami. `src/monolynx/features.py` ma `E501` w per-file-ignores, `main.py` nie - tam limit 150 znakow obowiazuje.
 
+**Pliki wspolne skilla (`plugin/skills/work/*.md` obok SKILL.md)** maja dwa rodzaje odwolan, nie mieszaj ich: `review-rubric.md` jest WKLEJANY do promptu subagenta ("wklej pelna tresc"), a `lint-test.md` / `commit-mr.md` to instrukcje dla agenta prowadzacego ("przeczytaj i wykonaj opisana tam procedure"). Tresc pliku wspolnego musi byc NEUTRALNA wzgledem flow: zero `KROK N` / `FAZA N` / `7d` / numerow podkrokow, zero odwolan do liczby agentow. Numery krokow, limity poprawek, warunek auto-commita i miejsca raportowania zostaja w kazdym SKILL.md, wokol odwolania. Kopia dla `work-simple` jest generowana przez `WHOLE_FILE_RESOURCES` w `scripts/sync_skills.py` - nie tworz jej recznie. Konwencja diakrytykow: te pliki sa bez ogonkow (jak `review-rubric.md` i przenoszone akapity obu SKILL.md), mimo ze same SKILL.md maja juz mieszana konwencje.
+
 Powiazane: [[konwencje-pisania-pl]]

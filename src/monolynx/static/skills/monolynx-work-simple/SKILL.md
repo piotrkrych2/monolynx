@@ -649,90 +649,31 @@ tani gate przed drogim review.
 
 ## FAZA 3: Lint i testy - gate przed review
 
-Komendy pochodza ze strony wiki `toolchain` (pobranej w 0.45).
+Przeczytaj `lint-test.md` z katalogu tego skilla (ten sam katalog co SKILL.md)
+i wykonaj opisana tam procedure: skad brac komendy, wybor wariantu worktree albo
+glowny checkout, podstawienia w komendzie worktree, wykonanie, tryb defektu
+i decyzja po wyniku. Plik nieosiagalny (niepelna instalacja)? Powiedz to userowi
+i zatrzymaj sie - bez lintu i testow nie zmieniaj statusu ticketu.
 
-**`toolchain_missing = true`** - poinformuj uzytkownika:
+Cztery rzeczy, ktorych plik wspolny nie rozstrzyga, bo naleza do tego flow:
 
-> Projekt nie ma strony wiki `toolchain`, wiec nie znam komend lint/test.
-> Uruchom `/monolynx:project-toolchain` zeby ja utworzyc (jednorazowo).
->
-> Kontynuowac bez lintu i testow? (tak / podam komendy recznie)
-
-Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu.
-
-**Wybor wariantu** (wg `srodowisko` z 0.45):
-
-- **`main`** - komendy z sekcji `## Lint` i `## Test`, jak dotad.
-- **`worktree`** - komendy z sekcji `## Worktree`, pola `lint:` i `test:`.
-  Wartosc `jak wyzej` w ktorymkolwiek polu odsyla do `## Lint` / `## Test`.
-
-**Podstawienia w komendzie worktree**: sekcja `## Worktree` zapisuje komende
-w formie przenosnej, z `"$PWD"`. Przed uruchomieniem podstaw za nia DOSLOWNY
-wynik `pwd` (sciezka absolutna). W komendzie `docker`, ktora faktycznie
-uruchamiasz, nie moze zostac zaden `$VAR` ani `$(...)` - sesja pracujaca
-w worktree odrzuca komendy z wartoscia obliczana w locie. Forma
-`sh -c "a && b && c"` z literalna sciezka przechodzi.
-
-**`srodowisko = worktree` przy `worktree_commands_missing = true`** - poinformuj
-uzytkownika:
-
-> Strona `toolchain` nie ma sekcji `## Worktree`, a praca idzie w git worktree.
-> Komendy z `## Lint` i `## Test` (`make`, `docker compose exec`) sprawdzilyby
-> glowny checkout, nie ten kod.
-> Uruchom `/monolynx:project-toolchain`, zeby ta sekcje dodac.
->
-> Kontynuowac bez lintu i testow? (tak / podam komendy recznie)
-
-Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu. Brak
-sekcji `## Worktree` POZA worktree to stan normalny - zadnego komunikatu.
-
-**`MONOLYNX_AUTOTEST=false`** (domyslnie) - wypisz komendy i poczekaj na wynik:
-
-> Uruchom i wklej wynik:
-> ```
-> [komenda lint wybranego wariantu]
-> [komenda test wybranego wariantu]
-> ```
-
-**`MONOLYNX_AUTOTEST=true`** - odpal komendy sam.
-
-Wariant worktree wymaga podniesionego stacku glownego checkoutu - siec, obraz
-i baza pochodza stamtad. Stack nie stoi -> to brakujace srodowisko, nie blad
-kodu: podnies go albo powiedz o tym uzytkownikowi zamiast raportowac czerwony
-wynik.
-
-**TRYB = defekt** - najpierw czerwony, potem zielony. Dev nie mogl uruchomic
-testu (hook), wiec test regresyjny nigdy nie byl czerwony. Przed pelnym
-przebiegiem (AUTOTEST=false -> wypisz userowi, popros o OBA wyniki):
-
-```bash
-git stash -- <pliki fixu, BEZ pliku testu>
-<komenda testu zawezona do testu regresyjnego>
-git stash pop
-<ta sama komenda>
-```
-
-Oczekiwane: CZERWONY, potem ZIELONY. Zielony bez fixu -> test nie przechodzi
-przez mechanizm: re-run dev z ta informacja (konsumuje limit). Projekt bez
-testow -> kroki reprodukcji z raportu dev przed `stash pop` i po nim. Oba
-wyniki doslownie do loga `lint-test` i do 4.3. `git stash --`, nie
-`git stash push` (hook czyta `push` jak git push).
-
-Decyzja:
-
-- **Zielone** -> FAZA 3.5 (krytyk)
-- **Czerwone** -> spawnuj dev agenta z trescia bledu (ten sam typ, prompt
-  iteracyjny jak w 3.5.2, ale z wynikiem lint/test zamiast feedbacku krytyka).
-  Powtorz lint i testy. Kazda poprawka konsumuje WSPOLNY limit 3 poprawek
-  (jeden licznik z 3.5.2); po wyczerpaniu zapytaj uzytkownika.
-- **Pominiete za zgoda uzytkownika** -> odnotuj w podsumowaniu (4.8) i przekaz
-  krytykowi; lintu i tak nie punktuje, ale -20 za brak testow stosuje nadal
-  (pominiecie URUCHOMIENIA nie znosi obowiazku NAPISANIA)
+- **Srodowisko** - detekcji NIE powtarzasz: masz `srodowisko` (`main` albo
+  `worktree`) z 0.45, razem z oboma kompletami komend.
+- **Zrodlo komend** - strona `toolchain` pobrana w 0.45; `toolchain_missing = true`
+  obsluguj jak "brak strony" w pliku wspolnym, a `srodowisko = worktree` przy
+  `worktree_commands_missing = true` jak "brak sekcji `## Worktree`".
+- **Limit poprawek** - WSPOLNY licznik 3 poprawek (jeden z 3.5.2), bez rozbicia
+  na agentow. Poprawke wykonuje ponownie spawnowany dev agent (ten sam typ,
+  prompt iteracyjny jak w 3.5.2, ale z wynikiem lint/test zamiast feedbacku
+  krytyka). Po wyczerpaniu zapytaj uzytkownika.
+- **Gdzie idzie wynik** - zielone otwiera FAZA 3.5 (krytyk); swiadome pominiecie
+  odnotuj w 4.8 i przekaz krytykowi.
 
 Instrumentacja (best-effort): job `lint-test` w stepie `wrap-up`, status
 `success` / `failed` / `skipped` (skipped takze przy swiadomym pominieciu),
 log z komendami i wynikiem. Przy powtorkach NIE tworz nowego joba - doklejaj
-wynik do istniejacego i aktualizuj status.
+wynik do istniejacego i aktualizuj status. Oba wyniki z trybu defektu ida
+doslownie do tego loga i do 4.3.
 
 ### Mutacje - tylko po eskalacji zakresu
 
@@ -959,14 +900,11 @@ Format zwrotu do TM: `NEEDS WORK [score] | REGULA: [zdanie] | UWAGI: [lista]`."
 
 ### 3.5.3. Pelny przebieg lint+test po OSTATNIEJ zmianie
 
-Zielony wynik z iteracji zawezonej do dotknietego obszaru NIE otwiera FAZY 4.
-Pelny przebieg to wszystkie komendy lint i test WYBRANEGO wariantu (worktree
-albo glowny checkout), bez zawezania. Jesli od ostatniego PELNEGO przebiegu
-toolchain zmienil sie choc jeden plik -
-powtorz pelny przebieg (mechanika FAZA 3; AUTOTEST=false -> user uruchamia
-i wkleja). Czerwony -> jak kazda poprawka (limit obowiazuje). Brak iteracji
-i pelny przebieg z FAZA 3 jest ostatnim zdarzeniem -> krok spelniony. Zapisz
-w logu joba `lint-test` i w 4.8, ktory przebieg byl ostatni i czy pelny.
+Obowiazuje sekcja "Pelny przebieg po OSTATNIEJ zmianie" pliku `lint-test.md`.
+W tym flow: zielony wynik z iteracji zawezonej do dotknietego obszaru NIE otwiera
+FAZY 4; czerwony -> jak kazda poprawka (limit obowiazuje); brak iteracji i pelny
+przebieg z FAZA 3 jest ostatnim zdarzeniem -> krok spelniony. Zapisz w logu joba
+`lint-test` i w 4.8, ktory przebieg byl ostatni i czy pelny.
 
 ---
 
@@ -1033,54 +971,20 @@ mcp__monolynx__log_time(
 
 ### 4.5. Commit
 
-**`MONOLYNX_AUTOCOMMIT=false`** (domyslnie) - wypisz gotowa komende, nie wykonuj:
+Przeczytaj `commit-mr.md` z katalogu tego skilla (ten sam katalog co SKILL.md)
+i wykonaj opisana tam procedure commita, pusha i merge requesta. Plik
+nieosiagalny? Nie commituj i nie pushuj sam - wypisz komendy userowi i odnotuj
+brak pliku.
 
-> ```bash
-> git add -A && git commit -m "[KEY] [tytul ticketu]"
-> ```
+Trzy rzeczy z tego flow, ktore podstawiasz do procedury:
 
-`PLIKI_SPRZED_STARTU` niepuste? NIE uzywaj `git add -A` - dodaj imiennie tylko
-pliki z pracy dev, inaczej commit wciagnie wczesniejsza/cudza prace. Jesli
-w 0.45 zrobiono `git stash` - przypomnij uzytkownikowi o `git stash pop`
-w podsumowaniu (4.8).
-
-**`MONOLYNX_AUTOCOMMIT=true`** - wykonaj commit, ale TYLKO po zielonym lincie
-i testach ORAZ werdykcie APPROVED. Lint/testy pominiete za zgoda uzytkownika
-albo zamkniecie ze score ponizej progu (3.5.2 pkt b) -> nie commituj sam,
-wypisz komende. Imienny `git add` przy brudnym drzewie obowiazuje takze tutaj.
-
-**`MONOLYNX_AUTOPUSH=true`** - dodatkowo `git push`, ale TYLKO gdy
-`AUTOCOMMIT=true` i commit sie odbyl. Przy `AUTOCOMMIT=false` ignoruj AUTOPUSH.
-Przy `AUTOPUSH=false` nigdy nie pushuj.
-
-**`MONOLYNX_AUTOMR=true`** - po FAKTYCZNYM pushu (`AUTOCOMMIT=true`, commit sie
-odbyl, `git push` sie powiodl) zaloz merge request.
-
-Branch docelowy (`<branch_docelowy>`) ustal w tej kolejnosci, kazda komende
-uruchamiajac OSOBNO i wpisujac wynik do komendy MR jako literal (bez `$VAR` i
-`$(...)` - sesja w worktree je odrzuca):
-
-a) `MONOLYNX_MR_TARGET` z linii konfiguracji niepusta -> ta wartosc.
-b) `git symbolic-ref refs/remotes/origin/HEAD` -> wynik
-   `refs/remotes/origin/<nazwa>`, bierzesz `<nazwa>`. Blad (np. "is not a
-   symbolic ref" w klonie bez `git remote set-head origin -a`)
-   albo pusty wynik -> c).
-c) `glab repo view -F json --jq .default_branch` -> nazwa domyslnego brancha
-   projektu w GitLabie.
-d) Nic nie dalo wyniku -> NIE zgaduj `main`: MR nie powstaje, wypisz gotowa
-   komende z `<branch_docelowy>` do uzupelnienia i odnotuj "MR nieutworzony:
-   nie ustalono brancha docelowego (ustaw MONOLYNX_MR_TARGET)". MR do zlego
-   brancha trzeba poprawiac recznie, brak MR tylko opoznia.
-
-```bash
-glab mr create --fill --yes --source-branch <aktualny_branch> --target-branch <branch_docelowy>
-```
-
-Zwrocony URL zapisz jako `MR_URL` i podaj go razem z ustalonym branchem
-docelowym w komentarzu podsumowujacym (4.3) oraz w podsumowaniu dla usera (4.8).
-`glab` nieobecny w PATH, komenda zwrocila blad albo pushu nie bylo -> NIE
-powtarzaj: wypisz gotowa komende userowi i odnotuj "MR nieutworzony: [powod]".
-Przy `AUTOMR=false` (domyslnie) nigdy nie zakladaj merge requesta.
+- **Warunek auto-commita** - `MONOLYNX_AUTOCOMMIT=true` commituje po zielonym
+  lincie i testach ORAZ werdykcie APPROVED. Zamkniecie ze score ponizej progu
+  (3.5.2 pkt b) -> nie commituj sam.
+- **Brudne drzewo** - `PLIKI_SPRZED_STARTU` pochodzi z 0.45; jesli tam zrobiono
+  `git stash`, przypomnienie o `git stash pop` idzie do 4.8.
+- **Gdzie zapisac MR** - ustalony branch docelowy i `MR_URL` trafiaja do
+  komentarza podsumowujacego (4.3) oraz do podsumowania dla usera (4.8).
 
 ### 4.6. Status → in_review
 
