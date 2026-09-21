@@ -28,7 +28,7 @@ REFERENCE_RESOURCES = {
     "graph-sync": ("create-graph-ci-script", "## KROK 3:", "## KROK 4:", "graph-mapper.md"),
 }
 WHOLE_FILE_RESOURCES = {
-    "work-simple": (("work/review-rubric.md", "review-rubric.md"),),
+    "work-simple": (("work/review-rubric.md", "review-rubric.md"), ("work/lint-test.md", "lint-test.md"), ("work/commit-mr.md", "commit-mr.md")),
 }
 
 

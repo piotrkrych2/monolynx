@@ -1046,123 +1046,26 @@ review krytyka.
 **CEL**: krytyk ocenia kod, ktory sie kompiluje i przechodzi testy - tani gate
 przed drogim review. Ticket nie trafia do `in_review` z czerwonymi testami.
 
-### Skad komendy
+Przeczytaj `lint-test.md` z katalogu tego skilla (ten sam katalog co SKILL.md)
+i wykonaj opisana tam procedure: skad brac komendy, wybor wariantu worktree albo
+glowny checkout, podstawienia w komendzie worktree, wykonanie, tryb defektu
+i decyzja po wyniku. Plik nieosiagalny (niepelna instalacja)? Powiedz to
+uzytkownikowi i zatrzymaj sie - bez lintu i testow nie zmieniaj statusu ticketu.
 
-Z sekcji "Toolchain" raportu Researchera (strona wiki `toolchain`).
+Cztery rzeczy, ktorych plik wspolny nie rozstrzyga, bo naleza do tego flow:
 
-**Brak strony `toolchain`** - poinformuj uzytkownika:
-
-> Projekt nie ma strony wiki `toolchain`, wiec nie znam komend lint/test.
-> Uruchom `/monolynx:project-toolchain` zeby ja utworzyc (jednorazowo).
->
-> Kontynuowac bez lintu i testow? (tak / podam komendy recznie)
-
-Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu.
-
-### Wybor wariantu: worktree czy glowny checkout
-
-Strona `toolchain` moze miec dwa komplety komend. Zanim cokolwiek uruchomisz,
-sprawdz NA HOSCIE, gdzie pracujesz (kontener nie ma binarki `git`, a `.git`
-w worktree to plik ze sciezka hosta). Uruchom DWIE zwykle komendy i porownaj
-wyniki sam - jednolinijkowiec z `[ "$(...)" != "$(...)" ]` zostanie odrzucony
-przez guard izolacji worktree:
-
-```bash
-git rev-parse --git-dir
-```
-
-```bash
-git rev-parse --git-common-dir
-```
-
-- **Wyniki rozne** (np. `.../.git/worktrees/MON-166` wobec `.../.git`) - pracujesz
-  w git worktree: komendy z sekcji `## Worktree`, pola `lint:` i `test:`.
-  Wartosc `jak wyzej` w ktorymkolwiek polu odsyla do `## Lint` / `## Test`.
-- **Wyniki identyczne** - glowny checkout: komendy z `## Lint` i `## Test`,
-  jak dotad.
-
-**Podstawienia w komendzie worktree**: sekcja `## Worktree` zapisuje komende
-w formie przenosnej, z `"$PWD"`. Przed uruchomieniem podstaw za nia DOSLOWNY
-wynik `pwd` (sciezka absolutna). W komendzie `docker`, ktora faktycznie
-uruchamiasz, nie moze zostac zaden `$VAR` ani `$(...)` - sesja pracujaca
-w worktree odrzuca komendy z wartoscia obliczana w locie. Forma
-`sh -c "a && b && c"` z literalna sciezka przechodzi.
-
-**Wynik `worktree`, a strona nie ma sekcji `## Worktree`** - poinformuj
-uzytkownika:
-
-> Strona `toolchain` nie ma sekcji `## Worktree`, a praca idzie w git worktree.
-> Komendy z `## Lint` i `## Test` (`make`, `docker compose exec`) sprawdzilyby
-> glowny checkout, nie ten kod.
-> Uruchom `/monolynx:project-toolchain`, zeby ta sekcje dodac.
->
-> Kontynuowac bez lintu i testow? (tak / podam komendy recznie)
-
-Poczekaj na odpowiedz. Bez potwierdzenia nie zmieniaj statusu ticketu. Brak
-sekcji `## Worktree` POZA worktree to stan normalny - zadnego komunikatu,
-pracujesz komendami z `## Lint` i `## Test`.
-
-### Wykonanie
-
-Uruchamiasz komendy WYBRANEGO wariantu.
-
-**`MONOLYNX_AUTOTEST=false`** (domyslnie) - wypisz komendy i poczekaj:
-
-> Uruchom i wklej wynik:
-> ```
-> [komenda lint wybranego wariantu]
-> [komenda test wybranego wariantu]
-> ```
-
-**`MONOLYNX_AUTOTEST=true`** - odpal komendy sam.
-
-Wariant worktree wymaga podniesionego stacku glownego checkoutu - siec, obraz
-i baza pochodza stamtad. Stack nie stoi -> to brakujace srodowisko, nie blad
-kodu: podnies go albo powiedz o tym uzytkownikowi zamiast raportowac czerwony
-wynik.
-
-### TRYB = defekt - najpierw czerwony, potem zielony
-
-Developer nie mogl uruchomic testu (hook blokuje testy subagentom), wiec test
-regresyjny nigdy nie byl czerwony i sam w sobie niczego nie dowodzi. Zanim
-pojdzie pelny przebieg, wykonaj (AUTOTEST=false -> wypisz uzytkownikowi
-z prosba o wklejenie OBU wynikow):
-
-```bash
-git stash -- <pliki fixu, BEZ pliku testu>
-<komenda testu z toolchain zawezona do testu regresyjnego>
-git stash pop
-<ta sama komenda>
-```
-
-Oczekiwane: pierwszy przebieg CZERWONY, drugi ZIELONY. Test zielony takze bez
-fixu -> nie przechodzi przez mechanizm: re-run developera z ta informacja
-(konsumuje limit). Projekt bez testow -> zamiast komendy testu kroki
-reprodukcji z raportu developera, przed `stash pop` i po nim. Oba wyniki
-doslownie do loga joba `lint-test` i do 7b. Uzyj `git stash --`, nie
-`git stash push` - hook czyta `push` jak git push i pyta niepotrzebnie.
-
-### Decyzja
-
-- **Wszystko zielone** -> przejdz do KROK 6.6 (review krytyka)
-- **Cokolwiek czerwone** -> uruchom poprawke agenta odpowiedzialnego za wadliwy
-  obszar z trescia bledu (mechanika re-run jak w 6.6b). Po poprawce powtorz lint
-  i testy. Kazda poprawka konsumuje WSPOLNY limit 3 poprawek na agenta (jeden
-  licznik z KROK 6.6b) - po wyczerpaniu zapytaj uzytkownika.
-- **Uzytkownik swiadomie pominal** -> odnotuj w podsumowaniu (KROK 7f) jako
-  "lint/testy pominiete" i przekaz te informacje krytykowi w KROK 6.6.
-  Krytyk lintu/testow i tak nie punktuje (to gate, nie kategoria rubryki),
-  ale odjecie "-20 brak testu dla nowego kodu" STOSUJE nadal - pominiecie
-  URUCHOMIENIA testow nie znosi obowiazku ich NAPISANIA
+- **Detekcja srodowiska** - wykonujesz ja TUTAJ, dwiema osobnymi komendami
+  `git rev-parse` wg pliku wspolnego; wczesniejsze kroki jej nie robily.
+- **Zrodlo komend** - sekcja "Toolchain" raportu Researchera z KROK 3.
+- **Limit poprawek** - WSPOLNY limit 3 poprawek na agenta (jeden licznik
+  z KROK 6.6b); mechanika re-run jak w 6.6b. Po wyczerpaniu zapytaj uzytkownika.
+- **Gdzie idzie wynik** - zielone otwiera KROK 6.6 (review krytyka); swiadome
+  pominiecie odnotuj w KROK 7f i przekaz krytykowi w KROK 6.6.
 
 Jesli instrumentacja aktywna - zaloguj job `lint-test` (sekcja 6 `pipeline.md`).
 Przy POWTORKACH lintu/testow (iteracje) NIE tworz drugiego joba - doklej wynik
-do loga istniejacego i zaktualizuj jego status.
-
-Blad przecina przydzialy kilku agentow? Poprawia agent, ktorego zmiana
-bezposrednio wywolala blad (czytaj traceback/komunikat); niejednoznaczne ->
-agent z wiekszym udzialem w diffie wadliwego obszaru. Runda konsumuje licznik
-TYLKO poprawianego agenta.
+do loga istniejacego i zaktualizuj jego status. Oba wyniki z trybu defektu ida
+doslownie do loga tego joba i do 7b.
 
 ### Mutacje - propozycja przebiegu diffowego (opcjonalna)
 
@@ -1333,16 +1236,11 @@ ticketu - patrz 6.7b i 7f.
 
 ### 6.6c. Pelny przebieg lint+test po OSTATNIEJ zmianie
 
-Zielony wynik z iteracji, ktora testowala "tylko dotkniety obszar", NIE jest
-podstawa do `in_review`. Jesli od ostatniego PELNEGO przebiegu toolchain
-(wszystkie komendy lint i test WYBRANEGO wariantu, bez zawezania) w repo
-zmienil sie choc jeden plik - powtorz pelny przebieg teraz, wg mechaniki
-KROK 6.5 (AUTOTEST=false -> uzytkownik uruchamia i wkleja). Czerwony ->
-wracasz do 6.6b jak przy kazdej poprawce (limit obowiazuje). Dopiero zielony
-pelny przebieg, po ktorym nikt niczego nie zmienil, otwiera KROK 6.7.
-
-Bez iteracji krok jest spelniony przez pelny przebieg z 6.5. W logu joba
-`lint-test` i w 7f zapisz, ktory przebieg byl ostatni i czy byl pelny.
+Obowiazuje sekcja "Pelny przebieg po OSTATNIEJ zmianie" pliku `lint-test.md`.
+W tym flow: czerwony -> wracasz do 6.6b jak przy kazdej poprawce (limit
+obowiazuje); zielony pelny przebieg, po ktorym nikt niczego nie zmienil, otwiera
+KROK 6.7. Bez iteracji krok jest spelniony przez pelny przebieg z 6.5. W logu
+joba `lint-test` i w 7f zapisz, ktory przebieg byl ostatni i czy byl pelny.
 
 ## KROK 6.7: Komentarze, czas i kryteria akceptacji
 
@@ -1453,64 +1351,21 @@ mcp__monolynx__log_time(
 
 ### 7d. Commit
 
-Zaleznie od konfiguracji:
+Przeczytaj `commit-mr.md` z katalogu tego skilla (ten sam katalog co SKILL.md)
+i wykonaj opisana tam procedure commita, pusha i merge requesta. Plik
+nieosiagalny? Nie commituj i nie pushuj sam - wypisz komendy uzytkownikowi
+i odnotuj brak pliku.
 
-**`MONOLYNX_AUTOCOMMIT=false`** (domyslnie) - wypisz gotowa komende, nie wykonuj:
+Trzy rzeczy z tego flow, ktore podstawiasz do procedury:
 
-> Zmiany gotowe do commita:
-> ```bash
-> git add -A && git commit -m "[PROJ-XX] [tytul ticketu]"
-> ```
-
-`PLIKI_SPRZED_STARTU` niepuste (uzytkownik nie zrobil commit/stash w KROK 5)?
-NIE uzywaj `git add -A` - dodaj imiennie tylko pliki zespolu
-(`git add <pliki z przydzialow>`), inaczej commit ticketu wciagnie cudza/
-wczesniejsza prace. Jesli w KROK 5 zrobiono `git stash` - przypomnij uzytkownikowi
-o `git stash pop` w podsumowaniu (KROK 7f).
-
-**`MONOLYNX_AUTOCOMMIT=true`** - wykonaj commit, ale TYLKO po zielonym lincie
-i testach ORAZ score >= 82 dla kazdego OCENIANEGO agenta (developerzy; krytyk
-nie ma wlasnego score). Zasada imiennego `git add` przy
-niepustych `PLIKI_SPRZED_STARTU` obowiazuje TAKZE tutaj - nigdy `git add -A`
-na brudnym drzewie. Lint/testy pominiete za zgoda
-uzytkownika, ticket zamkniety z czerwonymi testami LUB ze score ponizej progu
-na zadanie uzytkownika (6.6b) -> nie commituj sam: wypisz komende i zostaw
-decyzje uzytkownikowi.
-
-**`MONOLYNX_AUTOPUSH=true`** - dodatkowo `git push`, ale TYLKO gdy
-`AUTOCOMMIT=true` i commit faktycznie sie odbyl. Przy `AUTOCOMMIT=false` ignoruj
-AUTOPUSH (nie pushuj zastanych/cudzych commitow). Przy `AUTOPUSH=false` nigdy
-nie pushuj, nawet gdy uzytkownik commituje sam - push zostaje jego decyzja.
-
-**`MONOLYNX_AUTOMR=true`** - po FAKTYCZNYM pushu (`AUTOCOMMIT=true`, commit sie
-odbyl, `git push` sie powiodl) zaloz merge request.
-
-Branch docelowy (`<branch_docelowy>`) ustal w tej kolejnosci, kazda komende
-uruchamiajac OSOBNO i wpisujac wynik do komendy MR jako literal (bez `$VAR` i
-`$(...)` - sesja w worktree je odrzuca):
-
-a) `MONOLYNX_MR_TARGET` z linii konfiguracji niepusta -> ta wartosc.
-b) `git symbolic-ref refs/remotes/origin/HEAD` -> wynik
-   `refs/remotes/origin/<nazwa>`, bierzesz `<nazwa>`. Blad (np. "is not a
-   symbolic ref" w klonie bez `git remote set-head origin -a`)
-   albo pusty wynik -> c).
-c) `glab repo view -F json --jq .default_branch` -> nazwa domyslnego brancha
-   projektu w GitLabie.
-d) Nic nie dalo wyniku -> NIE zgaduj `main`: MR nie powstaje, wypisz gotowa
-   komende z `<branch_docelowy>` do uzupelnienia i odnotuj "MR nieutworzony:
-   nie ustalono brancha docelowego (ustaw MONOLYNX_MR_TARGET)". MR do zlego
-   brancha trzeba poprawiac recznie, brak MR tylko opoznia.
-
-```bash
-glab mr create --fill --yes --source-branch <aktualny_branch> --target-branch <branch_docelowy>
-```
-
-Zwrocony URL zapisz jako `MR_URL` i podaj go razem z ustalonym branchem
-docelowym w komentarzu podsumowujacym (7b) oraz w podsumowaniu dla uzytkownika (7f).
-`glab` nieobecny w PATH, komenda zwrocila blad albo pushu nie bylo -> NIE
-powtarzaj: wypisz gotowa komende uzytkownikowi i odnotuj
-"MR nieutworzony: [powod]". Przy `AUTOMR=false` (domyslnie) nigdy nie zakladaj
-merge requesta.
+- **Warunek auto-commita** - `MONOLYNX_AUTOCOMMIT=true` commituje po zielonym
+  lincie i testach ORAZ przy score >= 82 dla kazdego OCENIANEGO agenta
+  (developerzy; krytyk nie ma wlasnego score). Zamkniecie ticketu ze score
+  ponizej progu na zadanie uzytkownika (6.6b) -> nie commituj sam.
+- **Brudne drzewo** - `PLIKI_SPRZED_STARTU` pochodzi z KROK 5; jesli tam
+  zrobiono `git stash`, przypomnienie o `git stash pop` idzie do KROK 7f.
+- **Gdzie zapisac MR** - ustalony branch docelowy i `MR_URL` trafiaja do
+  komentarza podsumowujacego (7b) oraz do podsumowania dla uzytkownika (7f).
 
 ### 7e. Zmien status i zamknij pipeline
 

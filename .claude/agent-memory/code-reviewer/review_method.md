@@ -53,3 +53,7 @@ Gdy dwa tickety stoja na tym samym commicie, `git diff <branch-spod>` NIE jest c
 
 ## Snapshot statusu z promptu bywa niepelny (MON-79)
 `git status` podany w prompcie moze nie pokazywac plikow ze zmianami UNSTAGED. Zawsze rob swiezy `git diff <plik>` per docelowy plik.
+
+## Nie ucinaj `head -N` grepowi, ktory ma DOWODZIC BRAKU (MON-188)
+Twierdzenie "zaden test nie pinuje realnej wersji pluginu" oparlem na `grep -rn '1\.19\.\|plugin.json' tests/ | head -10` - dziesiec pierwszych trafien wypelnil jeden plik i `tests/unit/test_plugin_distribution.py` wypadlo poza okno. Test jednak pinowal (rownosc wersji dwoch manifestow), wiec teza byla falszywa.
+**How to apply:** grep dowodzacy nieistnienia konczy sie `| wc -l` albo pelnym wyjsciem, nigdy `head`. Gdy trafien jest duzo, zawez wzorzec (`grep -rln`, lista plikow), a nie liczbe linii.

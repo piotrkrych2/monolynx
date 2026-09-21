@@ -1,12 +1,17 @@
 """Testy regresyjne dla MON-192: AUTOMR musi celowac w branch docelowy projektu, nie na sztywno w 'main'.
 
-Zrodlem prawdy jest tresc skilli `work` i `work-simple` (plus ich wygenerowane
-kopie w `src/monolynx/static/skills/`, ktore serwuje `install_monolynx_skills`).
-Blok AUTOMR w obu skillach mial dotychczas zaszyty literal `--target-branch main`,
-co lamalo projekty mergujace do innego brancha niz `main` (np. plusbus-app ->
-`develop`). Docelowo branch pochodzi z `MONOLYNX_MR_TARGET`, a bez niej z
-wykrycia domyslnego brancha repozytorium (`git symbolic-ref
-refs/remotes/origin/HEAD`, fallback `glab repo view`).
+Zrodlem prawdy dla samej komendy `glab mr create ... --target-branch <...>`
+i lancucha fallbacku brancha docelowego jest plik `commit-mr.md` skilli `work`
+i `work-simple` (po MON-188 wydzielony ze wspolnej tresci SKILL.md), plus jego
+wygenerowane kopie w `src/monolynx/static/skills/`, ktore serwuje
+`install_monolynx_skills`. `SKILL.md` samych skilli wciaz odpowiada za ogolna
+tabele zmiennych i linie startowego `echo` (patrz `test_skill_variable_table_lists_mr_target`
+i `test_skill_config_echo_reports_mr_target`) - to zostalo w miejscu.
+Blok AUTOMR mial dotychczas zaszyty literal `--target-branch main`, co lamalo
+projekty mergujace do innego brancha niz `main` (np. plusbus-app -> `develop`).
+Docelowo branch pochodzi z `MONOLYNX_MR_TARGET`, a bez niej z wykrycia
+domyslnego brancha repozytorium (`git symbolic-ref refs/remotes/origin/HEAD`,
+fallback `glab repo view`).
 """
 
 import re
@@ -26,7 +31,24 @@ STATIC_COPY_PATHS = [
     REPO_ROOT / "src/monolynx/static/skills/monolynx-work-simple/SKILL.md",
 ]
 
-ALL_SKILL_MD_PATHS = SOURCE_SKILL_PATHS + STATIC_COPY_PATHS
+# commit-mr.md to zrodlo prawdy dla komendy MR i jej lancucha fallbacku od MON-188 -
+# SKILL.md samych skilli nie zawiera juz tej tresci (patrz docstring modulu).
+COMMIT_MR_SOURCE_PATHS = [
+    REPO_ROOT / "plugin/skills/work/commit-mr.md",
+    REPO_ROOT / "plugin/skills/work-simple/commit-mr.md",
+]
+
+COMMIT_MR_STATIC_PATHS = [
+    REPO_ROOT / "src/monolynx/static/skills/monolynx-work/commit-mr.md",
+    REPO_ROOT / "src/monolynx/static/skills/monolynx-work-simple/commit-mr.md",
+]
+
+ALL_COMMIT_MR_PATHS = COMMIT_MR_SOURCE_PATHS + COMMIT_MR_STATIC_PATHS
+
+# Wszystkie pliki, w ktorych literal '--target-branch main' moglby wjechac -
+# SKILL.md (zrodla + kopie) ORAZ commit-mr.md (zrodla + kopie), bo to on
+# faktycznie niesie komende MR od MON-188.
+ALL_HARDCODED_MAIN_GUARD_PATHS = SOURCE_SKILL_PATHS + STATIC_COPY_PATHS + ALL_COMMIT_MR_PATHS
 
 MR_CREATE_TARGET_PATTERN = re.compile(r"glab mr create[^\n]*--target-branch\s+(\S+)")
 MR_TARGET_TABLE_ROW_PATTERN = re.compile(r"^\|\s*`MONOLYNX_MR_TARGET`", re.MULTILINE)
@@ -37,9 +59,9 @@ def _rel(path: Path) -> str:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("path", ALL_SKILL_MD_PATHS, ids=_rel)
-def test_skill_md_has_no_hardcoded_target_branch_main(path: Path) -> None:
-    """Zaden plik SKILL.md (zrodlowy ani wygenerowana kopia) nie zawiera juz literalu '--target-branch main'."""
+@pytest.mark.parametrize("path", ALL_HARDCODED_MAIN_GUARD_PATHS, ids=_rel)
+def test_no_hardcoded_target_branch_main(path: Path) -> None:
+    """Zaden plik SKILL.md ani commit-mr.md (zrodlowy ani wygenerowana kopia) nie zawiera literalu '--target-branch main'."""
     content = path.read_text(encoding="utf-8")
     assert "--target-branch main" not in content, (
         f"{_rel(path)} wciaz zawiera literal '--target-branch main' - AUTOMR ma celowac w branch docelowy projektu, nie na sztywno w main."
@@ -47,9 +69,9 @@ def test_skill_md_has_no_hardcoded_target_branch_main(path: Path) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("path", SOURCE_SKILL_PATHS, ids=_rel)
+@pytest.mark.parametrize("path", ALL_COMMIT_MR_PATHS, ids=_rel)
 def test_mr_create_command_targets_resolved_branch_placeholder(path: Path) -> None:
-    """Komenda tworzaca MR uzywa placeholdera brancha docelowego, nie literalu 'main'."""
+    """Komenda tworzaca MR (w commit-mr.md) uzywa placeholdera brancha docelowego, nie literalu 'main'."""
     content = path.read_text(encoding="utf-8")
     match = MR_CREATE_TARGET_PATTERN.search(content)
     assert match is not None, f"Nie znaleziono komendy 'glab mr create ... --target-branch <...>' w {_rel(path)}."
@@ -79,9 +101,16 @@ def test_skill_config_echo_reports_mr_target(path: Path) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("path", SOURCE_SKILL_PATHS, ids=_rel)
+@pytest.mark.parametrize("path", COMMIT_MR_SOURCE_PATHS, ids=_rel)
 def test_skill_documents_target_branch_fallback_chain(path: Path) -> None:
-    """Opis ustalania brancha docelowego wymienia lancuch fallbacku: MONOLYNX_MR_TARGET -> symbolic-ref -> glab repo view."""
+    """Opis ustalania brancha docelowego MR (w commit-mr.md) wymienia lancuch fallbacku: MONOLYNX_MR_TARGET -> symbolic-ref -> glab repo view.
+
+    UWAGA: SKILL.md ma WLASNY, inny lancuch fallbacku - dla brancha BAZOWEGO
+    (`MONOLYNX_BASE_BRANCH`, punkt startu pracy), ktory tez wspomina
+    MONOLYNX_MR_TARGET/symbolic-ref/glab repo view jako swoje fallbacki (2b).
+    To inna funkcja niz branch docelowy MR - test musi czytac commit-mr.md,
+    inaczej przypadkiem zweryfikuje niewlasciwa sekcje (patrz MON-188 review).
+    """
     content = path.read_text(encoding="utf-8")
     assert "MONOLYNX_MR_TARGET" in content, f"{_rel(path)}: brak wzmianki o MONOLYNX_MR_TARGET w opisie AUTOMR."
     assert "git symbolic-ref refs/remotes/origin/HEAD" in content, (
