@@ -562,12 +562,16 @@ def _register_routers() -> None:
     from monolynx.api.heartbeat import router as heartbeat_router
     from monolynx.api.issues import router as issues_router
     from monolynx.api.oauth import router as oauth_router
+    from monolynx.blog import router as blog_router
     from monolynx.dashboard import router as dashboard_router
 
     app.include_router(oauth_router)
     app.include_router(events_router)
     app.include_router(issues_router)
     app.include_router(heartbeat_router)
+    # /blog/{slug} jest niezależny od SKIP_LANDING_PAGE -- ta flaga bramkuje tylko
+    # marketingową stronę landing, blog to treść linkowana z zewnątrz (MON-201).
+    app.include_router(blog_router)
     app.include_router(dashboard_router)
 
 
