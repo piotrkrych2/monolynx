@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -33,6 +34,9 @@ class WikiPage(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "slug", name="uq_wiki_page_project_slug"),
         Index("ix_wiki_pages_project_parent", "project_id", "parent_id"),
+        # Partial unique index (bez project_id) -- slug publicznej strony (/blog/{slug})
+        # musi byc globalnie unikalny, bo publiczny router nie zna project_slug (MON-201).
+        Index("uq_wiki_public_slug", "slug", unique=True, postgresql_where=text("is_public")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -44,6 +48,7 @@ class WikiPage(Base):
     minio_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     is_ai_touched: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     exclude_from_embeddings: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     last_edited_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

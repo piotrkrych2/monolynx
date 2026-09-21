@@ -9,7 +9,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import markdown
+import nh3
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -64,6 +66,70 @@ def render_markdown_html(raw: str) -> str:
         extensions=["fenced_code", "tables", "toc", "nl2br", "sane_lists"],
     )
     return result
+
+
+# Biala lista tagow/atrybutow dla publicznego wyjscia (/blog/{slug}) -- w odroznieniu od
+# render_markdown_html() (dashboard, chroniony sesja + RBAC), treść trafia do nieautoryzowanego
+# czytelnika, wiec sanityzacja jest jedyna linia obrony przed XSS.
+_PUBLIC_ALLOWED_TAGS = {
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "p",
+    "br",
+    "hr",
+    "strong",
+    "em",
+    "b",
+    "i",
+    "u",
+    "s",
+    "del",
+    "ul",
+    "ol",
+    "li",
+    "blockquote",
+    "pre",
+    "code",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
+    "a",
+    "img",
+    "span",
+    "div",
+}
+_PUBLIC_ALLOWED_ATTRIBUTES: dict[str, set[str]] = {
+    "a": {"href", "title"},
+    "img": {"src", "alt", "title"},
+    "code": {"class"},
+}
+_PUBLIC_URL_SCHEMES = {"http", "https", "mailto"}
+
+
+def render_markdown_public(raw: str) -> str:
+    """Renderuj markdown do bezpiecznego HTML dla publicznego /blog/{slug}.
+
+    Markdown -> HTML (te same rozszerzenia co render_markdown_html) -> nh3.clean().
+    Usuwa <script> (wraz z zawartoscia), atrybuty zdarzen (onerror/onclick/onload/...)
+    oraz niebezpieczne schematy URL (np. javascript:). Zachowuje naglowki, listy,
+    kod (inline i blokowy), tabele i bezpieczne linki (http/https/mailto).
+    """
+    html = render_markdown_html(raw)
+    return nh3.clean(
+        html,
+        tags=_PUBLIC_ALLOWED_TAGS,
+        attributes=_PUBLIC_ALLOWED_ATTRIBUTES,
+        url_schemes=_PUBLIC_URL_SCHEMES,
+        link_rel="noopener noreferrer nofollow",
+        clean_content_tags={"script", "style"},
+    )
 
 
 # Wzorzec wikilink [[slug]] lub [[uuid]]
@@ -381,6 +447,7 @@ async def create_wiki_page(
     position: int = 0,
     is_ai: bool = False,
     exclude_from_embeddings: bool = False,
+    is_public: bool = False,
     db: AsyncSession,
 ) -> WikiPage:
     """Utworz strone wiki -- zapis metadanych w DB, tresc w MinIO."""
@@ -405,11 +472,19 @@ async def create_wiki_page(
         minio_path=minio_path,
         is_ai_touched=is_ai,
         exclude_from_embeddings=exclude_from_embeddings,
+        is_public=is_public,
         created_by_id=user_id,
         last_edited_by_id=user_id,
     )
     db.add(page)
-    await db.commit()
+    # uq_wiki_public_slug jest partial unique index GLOBALNY (bez project_id) -- per-projektowe
+    # dedupowanie slugów w _ensure_unique_slug go nie łapie. Kolizja slugu publicznego z innym
+    # projektem musi się skończyć czytelnym błędem, nie 500 (MON-201).
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ValueError(f"Strona publiczna o slugu '{slug}' już istnieje w innym projekcie. Zmień tytuł strony.") from exc
     await db.refresh(page)
 
     # Best-effort embedding generation
@@ -438,6 +513,7 @@ async def update_wiki_page(
     position: int | None = None,
     user_id: uuid.UUID,
     is_ai: bool = False,
+    is_public: bool | None = None,
     db: AsyncSession,
 ) -> WikiPage:
     """Aktualizuj strone wiki."""
@@ -452,11 +528,21 @@ async def update_wiki_page(
     if position is not None:
         page.position = position
 
+    if is_public is not None:
+        page.is_public = is_public
+
     page.last_edited_by_id = user_id
     if is_ai:
         page.is_ai_touched = True
 
-    await db.commit()
+    # Patrz komentarz w create_wiki_page: uq_wiki_public_slug jest partial unique index
+    # globalny, oznaczenie strony jako is_public=True może kolidować ze slugiem z innego
+    # projektu -- czytelny błąd zamiast 500 (MON-201).
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ValueError(f"Strona publiczna o slugu '{page.slug}' już istnieje w innym projekcie. Zmień tytuł strony przed publikacją.") from exc
     await db.refresh(page)
 
     # Best-effort embedding update
@@ -543,6 +629,18 @@ async def get_breadcrumbs(page: WikiPage, db: AsyncSession) -> list[WikiPage]:
 def get_page_content(page: WikiPage) -> str:
     """Pobierz tresc markdown strony z MinIO."""
     return get_markdown(page.minio_path)
+
+
+async def get_public_page_by_slug(slug: str, db: AsyncSession) -> WikiPage | None:
+    """Pobierz publiczną stronę wiki po slugu, niezależnie od projektu.
+
+    Filtruje WikiPage.is_public.is_(True) na poziomie SQL -- prywatna strona nigdy
+    nie trafia do wyniku SELECT. Używane przez GET /blog/{slug} (brak sesji, brak
+    project_slug w URL); nigdy nie rzuca, zwraca None dla strony prywatnej i
+    nieistniejącego sluga (endpoint mapuje None na 404).
+    """
+    result = await db.execute(select(WikiPage).where(WikiPage.slug == slug, WikiPage.is_public.is_(True)))
+    return result.scalar_one_or_none()
 
 
 async def backfill_backlinks(db: AsyncSession) -> int:

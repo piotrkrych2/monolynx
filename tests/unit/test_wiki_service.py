@@ -327,6 +327,53 @@ class TestCreateWikiPage:
 
         assert result.position == 5
 
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_creates_page_with_is_public_true(self, mock_upload, mock_embeddings):
+        """Tworzy strone z flaga is_public=True (MON-201)."""
+        mock_upload.return_value = "proj/id.md"
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        result = await create_wiki_page(
+            project_id=uuid.uuid4(),
+            project_slug="proj",
+            title="Publiczna Strona",
+            content="Content",
+            user_id=uuid.uuid4(),
+            is_public=True,
+            db=mock_db,
+        )
+
+        assert result.is_public is True
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_creates_page_with_is_public_default_false(self, mock_upload, mock_embeddings):
+        """Domyslnie (bez podania is_public) strona jest prywatna (MON-201)."""
+        mock_upload.return_value = "proj/id.md"
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        result = await create_wiki_page(
+            project_id=uuid.uuid4(),
+            project_slug="proj",
+            title="Domyslnie Prywatna",
+            content="Content",
+            user_id=uuid.uuid4(),
+            db=mock_db,
+        )
+
+        assert result.is_public is False
+
 
 @pytest.mark.unit
 class TestUpdateWikiPage:
@@ -476,6 +523,50 @@ class TestUpdateWikiPage:
 
         # Slug nie powinien byc zmieniony
         assert page.slug == "title"
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_update_sets_is_public_true(self, mock_upload):
+        """update_wiki_page(is_public=True) ustawia flage na stronie (MON-201)."""
+        page = MagicMock()
+        page.title = "Title"
+        page.id = uuid.uuid4()
+        page.is_public = False
+
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        await update_wiki_page(
+            page=page,
+            project_slug="proj",
+            is_public=True,
+            user_id=uuid.uuid4(),
+            db=mock_db,
+        )
+
+        assert page.is_public is True
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_update_is_public_none_does_not_change_flag(self, mock_upload):
+        """update_wiki_page(is_public=None) -- partial update, flaga zostaje niezmieniona (MON-201)."""
+        page = MagicMock()
+        page.title = "Title"
+        page.id = uuid.uuid4()
+        page.is_public = True
+
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        await update_wiki_page(
+            page=page,
+            project_slug="proj",
+            user_id=uuid.uuid4(),
+            db=mock_db,
+        )
+
+        # is_public nie podane -> pozostaje wartosc z przed wywolania
+        assert page.is_public is True
 
 
 @pytest.mark.unit
