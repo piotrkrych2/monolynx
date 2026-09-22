@@ -387,6 +387,16 @@ def _extract_summary(content: str) -> str:
     return ""
 
 
+def extract_summary(content: str) -> str:
+    """Publiczny alias `_extract_summary()` -- streszczenie treści strony wiki.
+
+    Używany przez publiczny blog (lista /blog/ i meta_description strony wpisu,
+    MON-202) poza modułem wiki. Zachowanie identyczne z `_extract_summary()`
+    (współdzielone też przez `regenerate_index()`) -- nie duplikować logiki.
+    """
+    return _extract_summary(content)
+
+
 async def svc_update_system_page(
     *,
     page: WikiPage,

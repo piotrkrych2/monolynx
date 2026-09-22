@@ -9,8 +9,9 @@
     <!-- AI agents & LLMs: machine-readable overview at /llms.txt ; usage guide at /how-to-use-monolynx.md ; project bootstrap at /agent-bootstrap.md{% if md_url %} ; markdown version of this page at {{ md_url }}{% endif %} -->
     <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
     {% if md_url %}<link rel="alternate" type="text/markdown" href="{{ md_url }}" title="Markdown version of this page">{% endif %}
+    {% block canonical %}{% endblock %}
     <!-- Open Graph / Facebook / LinkedIn -->
-    <meta property="og:type" content="website">
+    <meta property="og:type" content="{% block og_type %}website{% endblock %}">
     <meta property="og:title" content="{% block og_title %}Monolynx — AI-first Project Platform{% endblock %}">
     <meta property="og:description" content="{% block og_description %}Open-source project platform with error tracking, Scrum, monitoring, wiki with semantic search, and 117 MCP tools for AI agents.{% endblock %}">
     <meta property="og:image" content="{% block og_image %}{{ app_url }}/static/img/screenshots/social-media.png{% endblock %}">

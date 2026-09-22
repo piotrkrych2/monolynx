@@ -18,14 +18,14 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx.config import settings
 from monolynx.database import get_db
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
-from monolynx.services.wiki import get_page_content, get_public_page_by_slug, render_markdown_public
+from monolynx.services.wiki import extract_summary, get_page_content, get_public_page_by_slug, render_markdown_public
 
 logger = logging.getLogger("monolynx.blog")
 
@@ -33,6 +33,21 @@ router = APIRouter(prefix="/blog", tags=["blog"])
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 templates.env.globals["ga_measurement_id"] = settings.GA_MEASUREMENT_ID
+
+_PER_PAGE = 20
+
+
+async def _fetch_summary(page: WikiPage) -> str:
+    """Pobierz treść strony z MinIO (executor, patrz komentarz w public_page) i wyciągnij
+    streszczenie. Błąd storage dla POJEDYNCZEJ strony nie wywraca całej listy /blog/
+    (granica systemu) -- strona ląduje na liście z pustym streszczeniem."""
+    loop = asyncio.get_running_loop()
+    try:
+        content = await loop.run_in_executor(None, get_page_content, page)
+    except Exception:
+        logger.exception("Blad pobierania tresci strony wiki z MinIO dla listy /blog/ (page_id=%s)", page.id)
+        return ""
+    return extract_summary(content)
 
 
 async def _public_breadcrumbs(page: WikiPage, db: AsyncSession) -> list[dict[str, str]]:
@@ -80,6 +95,49 @@ async def _public_backlinks(page: WikiPage, db: AsyncSession) -> list[dict[str, 
     return [{"slug": row.slug, "title": row.title} for row in result.all()]
 
 
+@router.get("/", response_class=HTMLResponse)
+async def public_index(request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> HTMLResponse:
+    """Lista publicznych wpisow bloga (is_public=True), najnowsze najpierw, z paginacja.
+
+    Wzorzec paginacji projektu (dashboard/scrum.py): `page` z try/except -> 1,
+    stala per_page, func.count() + limit/offset, page clampowany do <1, total_pages>.
+    """
+    if lang not in ("en", "pl"):
+        lang = "en"
+
+    try:
+        page_num = max(1, int(request.query_params.get("page", "1")))
+    except (ValueError, TypeError):
+        page_num = 1
+
+    total_count = (await db.execute(select(func.count(WikiPage.id)).where(WikiPage.is_public.is_(True)))).scalar() or 0
+    total_pages = max(1, (total_count + _PER_PAGE - 1) // _PER_PAGE)
+    page_num = min(page_num, total_pages)
+
+    result = await db.execute(
+        select(WikiPage).where(WikiPage.is_public.is_(True)).order_by(WikiPage.updated_at.desc()).limit(_PER_PAGE).offset((page_num - 1) * _PER_PAGE)
+    )
+    pages = list(result.scalars().all())
+
+    # Streszczenia wymagaja N odczytow z MinIO -- rownolegle (asyncio.gather), nie
+    # sekwencyjnie, zeby N wolnych obiektow nie sumowalo sie w czas ladowania listy.
+    summaries = await asyncio.gather(*(_fetch_summary(page) for page in pages))
+
+    return templates.TemplateResponse(
+        request,
+        "blog/index.html",
+        {
+            "lang": lang,
+            "app_url": settings.APP_URL,
+            "posts": [{"title": p.title, "slug": p.slug, "updated_at": p.updated_at, "summary": s} for p, s in zip(pages, summaries, strict=True)],
+            "page": page_num,
+            "total_pages": total_pages,
+            "has_prev": page_num > 1,
+            "has_next": page_num < total_pages,
+        },
+    )
+
+
 @router.get("/{slug}", response_class=HTMLResponse)
 async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> HTMLResponse:
     """Publiczny render strony wiki -- bez sesji, bez RBAC, tylko is_public=True."""
@@ -104,6 +162,7 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
         logger.exception("Blad pobierania tresci strony wiki z MinIO (page_id=%s)", page.id)
         raise HTTPException(status_code=404, detail="Nie znaleziono strony") from None
     content_html = render_markdown_public(content)
+    meta_description = extract_summary(content)
 
     breadcrumbs = await _public_breadcrumbs(page, db)
     children = await _public_children(page, db)
@@ -122,5 +181,7 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
             "children": children,
             "backlinks": backlinks,
             "updated_at": page.updated_at,
+            "created_at": page.created_at,
+            "meta_description": meta_description,
         },
     )
