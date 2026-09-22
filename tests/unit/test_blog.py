@@ -6,10 +6,12 @@ i get_public_page_by_slug jeszcze nie istnieja w monolynx.services.wiki) -- to j
 zamierzone, TDD: testy sa specyfikacja dla backend-developera.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from monolynx.blog import templates as blog_templates
 from monolynx.services.wiki import (
     get_public_page_by_slug,
     render_markdown_html,
@@ -184,3 +186,130 @@ class TestGetPublicPageBySlug:
         await get_public_page_by_slug("dowolny-slug", mock_db)
 
         mock_db.execute.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# MON-202: blok {% block canonical %} w layoucie, og:type=article,
+# article:published_time i meta_description z _extract_summary() dla wpisu.
+#
+# Renderujemy szablony Jinja2 bezposrednio (blog_templates.get_template(...).render(...)),
+# bez klienta HTTP i bez bazy -- to jest test kontraktu szablonu, nie endpointu.
+# Import ponizej (monolynx.blog) juz dzis sie udaje (MON-201 scalone), wiec RED tych
+# testow bierze sie z TRESCI renderu, nie z ImportError: dopoki MON-202 nie jest
+# zaimplementowane, blog/page.html nie ma og:type=article, article:published_time ani
+# meta_description z parametru (zamiast statycznego tekstu "<tytul> - wiki projektu
+# Monolynx") -- ponizsze asercje tresci musza wiec zawodzic.
+# ---------------------------------------------------------------------------
+
+
+def _render_blog_page(**overrides):
+    """Renderuje blog/page.html z minimalnym, kompletnym kontekstem."""
+    context = {
+        "lang": "en",
+        "app_url": "http://localhost:8000",
+        "page_title": "Testowy Wpis MON202",
+        "page_slug": "testowy-wpis-mon202",
+        "content_html": "<p>Tresc testowa.</p>",
+        "breadcrumbs": [],
+        "children": [],
+        "backlinks": [],
+        "updated_at": datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+        "created_at": datetime(2026, 1, 10, 9, 0, tzinfo=UTC),
+        "meta_description": "Streszczenie artykulu testowego MON202 XYZ.",
+    }
+    context.update(overrides)
+    return blog_templates.get_template("blog/page.html").render(context)
+
+
+def _render_landing_layout(**overrides):
+    """Renderuje layouts/landing.html samodzielnie (bez dziedziczenia po nim) --
+    sprawdza wartosci domyslne blokow (og:type, brak canonical), ktore dostaje kazda
+    strona NIE nadpisujaca tych blokow (np. landing, /features/*)."""
+    context = {"lang": "en", "app_url": "http://localhost:8000"}
+    context.update(overrides)
+    return blog_templates.get_template("layouts/landing.html").render(context)
+
+
+@pytest.mark.unit
+class TestBlogPageCanonicalBlock:
+    """Kryterium 2 (+ ochrona przed regresja przy wydzielaniu {% block canonical %}
+    do layoutu): dokladnie jeden rel="canonical" w <head> strony wpisu."""
+
+    def test_canonical_appears_exactly_once(self):
+        result = _render_blog_page()
+
+        assert result.count('rel="canonical"') == 1
+
+    def test_canonical_points_to_app_url_plus_blog_slug(self):
+        result = _render_blog_page(app_url="http://localhost:8000", page_slug="testowy-wpis-mon202")
+
+        assert 'href="http://localhost:8000/blog/testowy-wpis-mon202"' in result
+
+
+@pytest.mark.unit
+class TestBlogPageOgType:
+    """Kryterium: strona wpisu ma og:type=article + article:published_time."""
+
+    def test_og_type_is_article(self):
+        result = _render_blog_page()
+
+        assert 'property="og:type" content="article"' in result
+
+    def test_article_published_time_matches_created_at_isoformat(self):
+        created = datetime(2026, 1, 10, 9, 0, tzinfo=UTC)
+        result = _render_blog_page(created_at=created)
+
+        assert f'property="article:published_time" content="{created.isoformat()}"' in result
+
+
+@pytest.mark.unit
+class TestBlogPageMetaDescriptionFromSummary:
+    """Kryterium 3: og:title/og:description/og:url wpisu biora sie z tresci strony,
+    nie z wartosci domyslnych layoutu. meta_description pochodzi z _extract_summary(),
+    nie ze statycznego tekstu "<tytul> - wiki projektu Monolynx"."""
+
+    def test_meta_description_tag_uses_provided_summary(self):
+        result = _render_blog_page(meta_description="Streszczenie artykulu testowego MON202 XYZ.")
+
+        assert '<meta name="description" content="Streszczenie artykulu testowego MON202 XYZ.">' in result
+
+    def test_og_description_uses_provided_summary(self):
+        result = _render_blog_page(meta_description="Streszczenie artykulu testowego MON202 XYZ.")
+
+        assert 'property="og:description" content="Streszczenie artykulu testowego MON202 XYZ."' in result
+
+    def test_twitter_description_uses_provided_summary(self):
+        result = _render_blog_page(meta_description="Streszczenie artykulu testowego MON202 XYZ.")
+
+        assert 'name="twitter:description" content="Streszczenie artykulu testowego MON202 XYZ."' in result
+
+    def test_static_layout_default_text_is_gone(self):
+        """Regresja: stary staly tekst "<tytul> - wiki projektu Monolynx" / "project wiki"
+        nie moze juz byc zrodlem opisu -- meta_description z parametru go zastepuje."""
+        result = _render_blog_page(meta_description="Streszczenie artykulu testowego MON202 XYZ.")
+
+        assert "wiki projektu Monolynx" not in result
+        assert "Monolynx project wiki" not in result
+
+    def test_og_title_uses_page_title_not_layout_default(self):
+        result = _render_blog_page(page_title="Testowy Wpis MON202")
+
+        assert 'property="og:title" content="Testowy Wpis MON202"' in result
+        assert "AI-first Project Platform" not in result
+
+
+@pytest.mark.unit
+class TestLandingLayoutDefaultsUnaffected:
+    """Regresja: strony NIE nadpisujace blokow og_type/canonical (landing, /features/*)
+    maja nadal og:type=website i brak wlasnego rel="canonical"."""
+
+    def test_og_type_defaults_to_website(self):
+        result = _render_landing_layout()
+
+        assert 'property="og:type" content="website"' in result
+        assert 'property="og:type" content="article"' not in result
+
+    def test_no_canonical_tag_when_not_overridden(self):
+        result = _render_landing_layout()
+
+        assert 'rel="canonical"' not in result

@@ -11,10 +11,12 @@ na WikiPage) -- to jest zamierzone, TDD.
 
 import secrets
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 
+from monolynx.config import settings
 from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.models.wiki_backlink import WikiBacklink
@@ -56,8 +58,22 @@ async def _create_user(db_session, email):
     return user
 
 
-async def _create_wiki_page(db_session, project, user, title, minio_path=None, parent_id=None, is_public=False):
-    """Helper: tworzy strone wiki bezposrednio w DB (bez realnego MinIO)."""
+async def _create_wiki_page(
+    db_session,
+    project,
+    user,
+    title,
+    minio_path=None,
+    parent_id=None,
+    is_public=False,
+    updated_at=None,
+):
+    """Helper: tworzy strone wiki bezposrednio w DB (bez realnego MinIO).
+
+    updated_at: jawne przypisanie PRZED pierwszym flush (INSERT) nadpisuje
+    server_default -- potrzebne do deterministycznego sortowania w testach listy
+    /blog/ (wzorzec MON-87, patrz .claude/agent-memory/qa-tester/MEMORY.md).
+    """
     page = WikiPage(
         project_id=project.id,
         title=title,
@@ -70,6 +86,8 @@ async def _create_wiki_page(db_session, project, user, title, minio_path=None, p
         last_edited_by_id=user.id,
         parent_id=parent_id,
     )
+    if updated_at is not None:
+        page.updated_at = updated_at
     db_session.add(page)
     await db_session.flush()
     return page
@@ -361,3 +379,190 @@ class TestPublicSlugConflict:
                 user_id=user.id,
                 db=db_session,
             )
+
+
+# ---------------------------------------------------------------------------
+# MON-202: GET /blog/ -- lista publicznych wpisow z paginacja (kryterium 1)
+#
+# Endpoint /blog/ jeszcze nie istnieje -- ponizsze testy dzis dostaja 404, wiec sa
+# RED przed implementacja. To jest zamierzone, TDD.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestBlogIndexList:
+    """GET /blog/ -- lista wylacznie stron is_public=True (kryterium 1 i 5)."""
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_index_lists_only_public_pages(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Tresc do streszczenia MON202."
+
+        project = await _create_project(db_session, "blog-idx-pub")
+        user = await _create_user(db_session, "blog-idx-pub@test.com")
+        await _create_wiki_page(db_session, project, user, "Publiczny Wpis Lista MON202", is_public=True)
+        await _create_wiki_page(db_session, project, user, "Prywatny Wpis Lista MON202", is_public=False)
+
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert "Publiczny Wpis Lista MON202" in resp.text
+        assert "Prywatny Wpis Lista MON202" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_index_shows_summary_extracted_from_content(self, mock_get_markdown, client, db_session):
+        """Streszczenie w liscie pochodzi z _extract_summary() tresci strony (pierwsza
+        niepusta linia niebedaca naglowkiem markdown), nie z surowego markdownu 1:1."""
+        mock_get_markdown.return_value = "# Naglowek ktory ma byc pominiety w streszczeniu\n\nStreszczenie widoczne w liscie MON202."
+
+        project = await _create_project(db_session, "blog-idx-summary")
+        user = await _create_user(db_session, "blog-idx-summary@test.com")
+        await _create_wiki_page(db_session, project, user, "Wpis Ze Streszczeniem MON202", is_public=True)
+
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert "Streszczenie widoczne w liscie MON202" in resp.text
+        assert "Naglowek ktory ma byc pominiety w streszczeniu" not in resp.text
+
+    async def test_index_returns_200_with_no_public_pages(self, client, db_session):
+        """Pusta lista (brak publicznych stron w bazie) -- 200, nie 404/500."""
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+
+
+@pytest.mark.integration
+class TestBlogIndexPagination:
+    """GET /blog/ -- paginacja wzorcem projektu (kryterium 1): sortowanie po
+    updated_at malejaco, `page` z clampingiem do <1, total_pages>, bez 500 na zly input.
+
+    Kolejnosc wstawiania (i=0..24) jest CELOWO odwrotna wzgledem oczekiwanej
+    kolejnosci malejacej: i=0 ma NAJSTARSZY updated_at, i=24 NAJNOWSZY. Gdyby
+    implementacja nie sortowala wcale albo sortowala rosnaco, Postgres zwrocilby
+    wiersze w kolejnosci fizycznej = kolejnosci wstawiania (00, 01, 02, ...) i
+    strona 1 zawieralaby "00" zamiast "24" -- ponizsze asercje wtedy PADAJA (w
+    odroznieniu od wczesniejszej wersji tego seeda, gdzie kolejnosc wstawiania
+    pokrywala sie z oczekiwana kolejnoscia malejaca i test przechodzil nawet bez
+    ORDER BY -- MON-202 code review, regula z MON-191/MON-197).
+
+    per_page jest ustalone w blog.py na 20 (wzorcem scrum.py) -- 25 seedowanych
+    stron gwarantuje druga strone.
+    """
+
+    async def _seed_pages(self, db_session, project, user, mock_get_markdown):
+        mock_get_markdown.return_value = "Tresc do streszczenia MON202 paginacja."
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        for i in range(25):
+            await _create_wiki_page(
+                db_session,
+                project,
+                user,
+                f"Wpis Paginacja MON202 {i:02d}",
+                is_public=True,
+                updated_at=base + timedelta(minutes=i),
+            )
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_first_page_has_most_recently_updated_not_oldest(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-page-1")
+        user = await _create_user(db_session, "blog-page-1@test.com")
+        await self._seed_pages(db_session, project, user, mock_get_markdown)
+
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert "Wpis Paginacja MON202 24" in resp.text
+        assert "Wpis Paginacja MON202 00" not in resp.text
+        # Kolejnosc wzgledna w obrebie strony 1 (per_page=20 -> pozycje 24..05):
+        # najnowszy wpis (24) musi byc wyrenderowany PRZED starszym (05).
+        assert resp.text.index("Wpis Paginacja MON202 24") < resp.text.index("Wpis Paginacja MON202 05")
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_page_beyond_total_is_clamped_not_500(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-page-clamp")
+        user = await _create_user(db_session, "blog-page-clamp@test.com")
+        await self._seed_pages(db_session, project, user, mock_get_markdown)
+
+        resp = await client.get("/blog/?page=999")
+
+        assert resp.status_code == 200
+        assert "Wpis Paginacja MON202 00" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_page_zero_falls_back_to_first_page(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-page-zero")
+        user = await _create_user(db_session, "blog-page-zero@test.com")
+        await self._seed_pages(db_session, project, user, mock_get_markdown)
+
+        resp = await client.get("/blog/?page=0")
+
+        assert resp.status_code == 200
+        assert "Wpis Paginacja MON202 24" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_non_numeric_page_falls_back_to_first_page(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-page-nan")
+        user = await _create_user(db_session, "blog-page-nan@test.com")
+        await self._seed_pages(db_session, project, user, mock_get_markdown)
+
+        resp = await client.get("/blog/?page=abc")
+
+        assert resp.status_code == 200
+        assert "Wpis Paginacja MON202 24" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# MON-202: meta_description/og:description z tresci strony, og:type=article,
+# article:published_time (kryterium 3) -- test end-to-end (prawdziwa baza + serwis
+# _extract_summary(), w odroznieniu od tests/unit/test_blog.py, ktory renderuje sam
+# szablon ze zmockowanym kontekstem).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestBlogPageMetaFromContent:
+    """Kryterium 3: og:title/og:description/og:url wpisu biora sie z tresci strony,
+    nie z wartosci domyslnych layoutu."""
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_meta_description_comes_from_extracted_summary(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "# Naglowek pomijany przez _extract_summary\n\nPierwsza-tresciwa-linia-MON202-QRS."
+
+        project = await _create_project(db_session, "blog-meta-summary")
+        user = await _create_user(db_session, "blog-meta-summary@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Meta Summary MON202", is_public=True)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "Pierwsza-tresciwa-linia-MON202-QRS" in resp.text
+        assert "wiki projektu Monolynx" not in resp.text
+        assert "Monolynx project wiki" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_og_type_is_article_and_published_time_matches_created_at(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Tresc artykulu MON202."
+
+        project = await _create_project(db_session, "blog-meta-ogtype")
+        user = await _create_user(db_session, "blog-meta-ogtype@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Og Type MON202", is_public=True)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert 'property="og:type" content="article"' in resp.text
+        assert f'property="article:published_time" content="{page.created_at.isoformat()}"' in resp.text
+
+
+@pytest.mark.integration
+class TestLandingOgTypeStillWebsite:
+    """Regresja: strony spoza /blog/ (np. landing) NADAL maja og:type=website --
+    dodanie og:type=article dla wpisow bloga nie moze zepsuc reszty serwisu."""
+
+    async def test_landing_page_og_type_is_still_website(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "SKIP_LANDING_PAGE", False)
+
+        resp = await client.get("/?lang=en")
+
+        assert resp.status_code == 200
+        assert 'property="og:type" content="website"' in resp.text

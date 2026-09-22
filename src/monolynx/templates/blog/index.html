@@ -1,0 +1,70 @@
+{% extends "layouts/landing.html" %}
+
+{% block title %}{% if lang == "pl" %}Blog - Monolynx{% else %}Blog - Monolynx{% endif %}{% endblock %}
+
+{% block meta_description %}{% if lang == "pl" %}Publiczne wpisy z wiki projektu Monolynx.{% else %}Public posts from the Monolynx project wiki.{% endif %}{% endblock %}
+
+{% block canonical %}<link rel="canonical" href="{{ app_url }}/blog/">{% endblock %}
+{% block og_title %}{% if lang == "pl" %}Blog - Monolynx{% else %}Blog - Monolynx{% endif %}{% endblock %}
+{% block og_description %}{% if lang == "pl" %}Publiczne wpisy z wiki projektu Monolynx.{% else %}Public posts from the Monolynx project wiki.{% endif %}{% endblock %}
+{% block og_url %}{{ app_url }}/blog/{% endblock %}
+
+{% block content %}
+<section class="pt-32 pb-20">
+    <div class="max-w-3xl mx-auto px-6">
+
+        <header class="mb-10 animate-fade-in-up">
+            <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight text-gray-900 dark:text-white">
+                {% if lang == "pl" %}Blog{% else %}Blog{% endif %}
+            </h1>
+        </header>
+
+        {% if posts %}
+        <div class="space-y-6 animate-fade-in-up animate-fade-in-up-delay-1">
+            {% for post in posts %}
+            <a href="/blog/{{ post.slug }}"
+               class="block px-5 py-4 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-lg hover:border-indigo-500/50 transition-colors">
+                <h2 class="text-lg font-bold text-gray-900 dark:text-white">{{ post.title }}</h2>
+                {% if post.updated_at %}
+                <p class="mt-1 text-xs text-gray-500">{{ post.updated_at.strftime('%Y-%m-%d') }}</p>
+                {% endif %}
+                {% if post.summary %}
+                <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{{ post.summary }}</p>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+
+        {% if total_pages > 1 %}
+        <nav class="mt-10 flex items-center justify-between text-sm" aria-label="{% if lang == 'pl' %}Paginacja{% else %}Pagination{% endif %}">
+            {% if has_prev %}
+            <a href="/blog/?page={{ page - 1 }}&amp;lang={{ lang }}" class="text-indigo-600 dark:text-indigo-400 hover:underline">
+                {% if lang == "pl" %}&larr; Poprzednia{% else %}&larr; Previous{% endif %}
+            </a>
+            {% else %}
+            <span></span>
+            {% endif %}
+
+            <span class="text-gray-500 dark:text-gray-400">
+                {% if lang == "pl" %}Strona {{ page }} z {{ total_pages }}{% else %}Page {{ page }} of {{ total_pages }}{% endif %}
+            </span>
+
+            {% if has_next %}
+            <a href="/blog/?page={{ page + 1 }}&amp;lang={{ lang }}" class="text-indigo-600 dark:text-indigo-400 hover:underline">
+                {% if lang == "pl" %}Następna &rarr;{% else %}Next &rarr;{% endif %}
+            </a>
+            {% else %}
+            <span></span>
+            {% endif %}
+        </nav>
+        {% endif %}
+
+        {% else %}
+        <p class="text-gray-500 dark:text-gray-400 animate-fade-in-up animate-fade-in-up-delay-1">
+            {% if lang == "pl" %}Brak opublikowanych wpisów.{% else %}No posts published yet.{% endif %}
+        </p>
+        {% endif %}
+
+    </div>
+</section>
+{% endblock %}

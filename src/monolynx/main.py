@@ -9,14 +9,16 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 
 from monolynx.config import settings
+from monolynx.database import get_db
 
 logger = logging.getLogger("monolynx")
 
@@ -265,6 +267,7 @@ async def robots_txt() -> Response:
     content = (
         "User-agent: *\n"
         "Allow: /\n"
+        "Allow: /blog/\n"
         "Disallow: /dashboard/\n"
         "Disallow: /auth/\n"
         "Disallow: /api/\n"
@@ -279,9 +282,12 @@ async def robots_txt() -> Response:
 
 
 @app.get("/sitemap.xml", include_in_schema=False)
-async def sitemap_xml() -> Response:
-    """Sitemap with the public marketing pages and the AI-facing markdown docs."""
+async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
+    """Sitemap with the public marketing pages, the AI-facing markdown docs, and public wiki posts."""
+    from sqlalchemy import select
+
     from monolynx.features import feature_slugs
+    from monolynx.models.wiki_page import WikiPage
 
     base = settings.APP_URL.rstrip("/")
     urls: list[str] = []
@@ -296,8 +302,16 @@ async def sitemap_xml() -> Response:
         f"{base}/agent-explain.md",
         f"{base}/index.md",
     ]
-    entries = "\n".join(f"  <url><loc>{url.replace('&', '&amp;')}</loc></url>" for url in urls)
-    content = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{entries}\n</urlset>\n'
+    entries = [f"  <url><loc>{url.replace('&', '&amp;')}</loc></url>" for url in urls]
+
+    # Wpisy bloga z bazy (is_public=True) -- filtr w SQL, nigdy w petli Pythona (MON-202).
+    result = await db.execute(select(WikiPage.slug, WikiPage.updated_at).where(WikiPage.is_public.is_(True)))
+    for slug, updated_at in result.all():
+        loc = f"{base}/blog/{slug}".replace("&", "&amp;")
+        entries.append(f"  <url><loc>{loc}</loc><lastmod>{updated_at.isoformat()}</lastmod></url>")
+
+    body = "\n".join(entries)
+    content = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{body}\n</urlset>\n'
     return Response(content=content, media_type="application/xml; charset=utf-8")
 
 
