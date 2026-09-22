@@ -1,5 +1,6 @@
 """Testy integracyjne -- dashboard wiki (drzewo stron, CRUD, upload, wyszukiwanie)."""
 
+import re
 import secrets
 import uuid
 from unittest.mock import patch
@@ -48,7 +49,7 @@ async def _login_and_add_member(client, db_session, project, email):
     return user
 
 
-async def _create_wiki_page(db_session, project, user, title="Test Page", content="# Test", parent_id=None):
+async def _create_wiki_page(db_session, project, user, title="Test Page", content="# Test", parent_id=None, is_public=False):
     """Helper: tworzy strone wiki bezposrednio w DB (bez MinIO)."""
     page = WikiPage(
         project_id=project.id,
@@ -57,6 +58,7 @@ async def _create_wiki_page(db_session, project, user, title="Test Page", conten
         position=0,
         minio_path=f"{project.slug}/{uuid.uuid4()}.md",
         is_ai_touched=False,
+        is_public=is_public,
         created_by_id=user.id,
         last_edited_by_id=user.id,
         parent_id=parent_id,
@@ -1881,3 +1883,215 @@ class TestWikiFileDelete:
 
         result = await db_session.execute(select(WikiFile).where(WikiFile.id == file_id))
         assert result.scalar_one_or_none() is None
+
+
+# ---------------------------------------------------------------------------
+# MON-203: przelacznik publikacji (is_public) w formularzu wiki
+#
+# Zanim implementacja powstanie (pole is_public w page_form.html, obsluga
+# form.get("is_public") is not None w dashboard/wiki.py), wszystkie testy w tej
+# klasie musza zawodzic -- to jest zamierzone, TDD.
+# ---------------------------------------------------------------------------
+
+
+def _extract_is_public_input(html: str) -> str | None:
+    """Wyciaga caly tag <input ... name="is_public" ...> z HTML (niezaleznie od
+    kolejnosci atrybutow), zeby sprawdzic obecnosc/stan atrybutu checked."""
+    match = re.search(r'<input[^>]*name="is_public"[^>]*>', html, re.IGNORECASE)
+    return match.group(0) if match else None
+
+
+@pytest.mark.integration
+class TestWikiPageIsPublicCheckbox:
+    """Kryterium 1 (MON-203): checkbox is_public w formularzu tworzenia/edycji ustawia
+    i zdejmuje flage, a stan jest widoczny po ponownym otwarciu formularza edycji."""
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="mon203-create/fake.md")
+    async def test_create_page_with_is_public_checked_sets_public(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "mon203-create")
+        await _login_and_add_member(client, db_session, project, "mon203-create@test.com")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/create",
+            data={"title": "Strona Publiczna MON203", "content": "# Tresc", "position": "0", "is_public": "on"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(WikiPage).where(WikiPage.project_id == project.id, WikiPage.title == "Strona Publiczna MON203"))
+        page = result.scalar_one()
+        assert page.is_public is True
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="mon203-nocheck/fake.md")
+    async def test_create_page_without_is_public_key_stays_private(self, mock_upload, mock_embeddings, client, db_session):
+        """Niezaznaczony checkbox HTML nie wysyla klucza is_public w ogole -- strona ma
+        zostac prywatna (pulapka z briefu Team Managera dla tego kryterium)."""
+        project = await _create_project(db_session, "mon203-nocheck")
+        await _login_and_add_member(client, db_session, project, "mon203-nocheck@test.com")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/create",
+            data={"title": "Strona Prywatna MON203", "content": "# Tresc", "position": "0"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        result = await db_session.execute(select(WikiPage).where(WikiPage.project_id == project.id, WikiPage.title == "Strona Prywatna MON203"))
+        page = result.scalar_one()
+        assert page.is_public is False
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="mon203-edit-on/fake.md")
+    async def test_edit_page_checking_is_public_makes_page_public(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "mon203-edit-on")
+        user = await _login_and_add_member(client, db_session, project, "mon203-edit-on@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Do Publikacji MON203", is_public=False)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data={"title": "Do Publikacji MON203", "content": "Nowa tresc", "position": "0", "is_public": "on"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        await db_session.refresh(page)
+        assert page.is_public is True
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="mon203-edit-off/fake.md")
+    async def test_edit_page_unchecking_is_public_makes_page_private(self, mock_upload, mock_embeddings, client, db_session):
+        """Kontrakt: brak klucza is_public w POST edit = strona prywatna, nawet gdy
+        wczesniej byla publiczna (odznaczenie checkboxa)."""
+        project = await _create_project(db_session, "mon203-edit-off")
+        user = await _login_and_add_member(client, db_session, project, "mon203-edit-off@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Do Prywatyzacji MON203", is_public=True)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data={"title": "Do Prywatyzacji MON203", "content": "Nowa tresc", "position": "0"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        await db_session.refresh(page)
+        assert page.is_public is False
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_edit_form_shows_checked_checkbox_for_public_page(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "mon203-form-pub")
+        user = await _login_and_add_member(client, db_session, project, "mon203-form-pub@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Publiczna Formularz MON203", is_public=True)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+        assert resp.status_code == 200
+        tag = _extract_is_public_input(resp.text)
+        assert tag is not None, "Formularz edycji nie zawiera pola is_public"
+        assert "checked" in tag.lower()
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_edit_form_shows_unchecked_checkbox_for_private_page(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "mon203-form-priv")
+        user = await _login_and_add_member(client, db_session, project, "mon203-form-priv@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Prywatna Formularz MON203", is_public=False)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+        assert resp.status_code == 200
+        tag = _extract_is_public_input(resp.text)
+        assert tag is not None, "Formularz edycji nie zawiera pola is_public"
+        assert "checked" not in tag.lower()
+
+
+# ---------------------------------------------------------------------------
+# MON-203: kolizja slugu publicznego przy zapisie z UI -- flash, nie 500
+#
+# services/wiki.py (MON-201) juz mapuje IntegrityError partial-unique-index
+# (uq_wiki_public_slug) na ValueError czytelny dla czlowieka. Te testy sprawdzaja,
+# ze warstwa dashboard/wiki.py go LAPIE i pokazuje flash, a nie przepuszcza go jako
+# nieobsluzony wyjatek (co dzis konczy sie 500 / propagacja wyjatku do klienta testowego).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestWikiPagePublicSlugConflictFlash:
+    """Kryterium 2 (MON-203)."""
+
+    @patch("monolynx.services.wiki.sync_backlinks")
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_page_public_slug_conflict_does_not_return_500(self, mock_upload, mock_embeddings, mock_sync, client, db_session):
+        mock_upload.side_effect = lambda project_slug, page_id, content: f"{project_slug}/{page_id}.md"
+
+        project_a = await _create_project(db_session, "mon203-conf-a")
+        project_b = await _create_project(db_session, "mon203-conf-b")
+        user_a = User(email="mon203-conf-a-setup@test.com", password_hash=hash_password("testpass123"))
+        db_session.add(user_a)
+        await db_session.flush()
+
+        from monolynx.services.wiki import create_wiki_page as svc_create_wiki_page
+
+        await svc_create_wiki_page(
+            project_id=project_a.id,
+            project_slug=project_a.slug,
+            title="Konflikt Slug Flash MON203",
+            content="# A",
+            user_id=user_a.id,
+            is_public=True,
+            db=db_session,
+        )
+
+        await _login_and_add_member(client, db_session, project_b, "mon203-conf-b@test.com")
+        resp = await client.post(
+            f"/dashboard/{project_b.slug}/wiki/pages/create",
+            data={"title": "Konflikt Slug Flash MON203", "content": "# B", "position": "0", "is_public": "on"},
+            follow_redirects=False,
+        )
+
+        # dashboard/wiki.py lapie ValueError i re-renderuje TemplateResponse (status 200
+        # domyslny, brak redirectu -- to NIE happy-path 303). Komunikat trafia do sesji przez
+        # flash(request, str(exc), "error") i jest renderowany w TEJ SAME odpowiedzi przez
+        # components/toasts.html (wlaczony w layouts/base.html, ktory rozszerza page_form.html
+        # -- pop z sesji dzieje sie w tym samym request/response, bez przekierowania).
+        # Asercja na sam kod (200/303) nie odrozniby tej sciezki od happy-path i przezylaby
+        # mutanta usuwajacego wywolanie flash() -- stad wymog dokladnego statusu i tresci.
+        assert resp.status_code == 200
+        assert "już istnieje w innym projekcie" in resp.text
+
+    @patch("monolynx.services.wiki.sync_backlinks")
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_edit_page_public_slug_conflict_does_not_return_500(self, mock_upload, mock_embeddings, mock_sync, client, db_session):
+        mock_upload.side_effect = lambda project_slug, page_id, content: f"{project_slug}/{page_id}.md"
+
+        project_a = await _create_project(db_session, "mon203-confe-a")
+        project_b = await _create_project(db_session, "mon203-confe-b")
+        user_a = User(email="mon203-confe-a-setup@test.com", password_hash=hash_password("testpass123"))
+        db_session.add(user_a)
+        await db_session.flush()
+
+        from monolynx.services.wiki import create_wiki_page as svc_create_wiki_page
+
+        await svc_create_wiki_page(
+            project_id=project_a.id,
+            project_slug=project_a.slug,
+            title="Konflikt Slug Edit MON203",
+            content="# A",
+            user_id=user_a.id,
+            is_public=True,
+            db=db_session,
+        )
+
+        user_b = await _login_and_add_member(client, db_session, project_b, "mon203-confe-b@test.com")
+        # Prywatna strona w project_b powstaje z tym samym slugiem (dozwolone -- slug jest
+        # unikalny tylko per-projekt), a proba oznaczenia jej jako publiczna koliduje.
+        private_page = await _create_wiki_page(db_session, project_b, user_b, title="Konflikt Slug Edit MON203", is_public=False)
+
+        resp = await client.post(
+            f"/dashboard/{project_b.slug}/wiki/pages/{private_page.id}/edit",
+            data={"title": "Konflikt Slug Edit MON203", "content": "Nowa tresc", "position": "0", "is_public": "on"},
+            follow_redirects=False,
+        )
+
+        # Ta sama sciezka co w tescie create powyzej -- 200 (re-render, nie redirect) +
+        # komunikat z flash() faktycznie widoczny w HTML tej samej odpowiedzi.
+        assert resp.status_code == 200
+        assert "już istnieje w innym projekcie" in resp.text

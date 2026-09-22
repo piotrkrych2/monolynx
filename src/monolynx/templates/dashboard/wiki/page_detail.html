@@ -43,6 +43,10 @@
             <div class="flex items-start justify-between mb-4">
                 <h2 class="text-xl font-bold text-gray-900 dark:text-white">{{ page.title }}</h2>
                 <div class="flex items-center gap-2 ml-4 flex-shrink-0">
+                    {% if page.is_public %}
+                    <a href="/blog/{{ page.slug }}" target="_blank" rel="noopener"
+                       class="text-sm text-amber-600 dark:text-amber-400 hover:text-amber-500 transition">Zobacz publicznie</a>
+                    {% endif %}
                     <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/edit"
                        class="text-sm text-gray-600 dark:text-gray-400 hover:text-indigo-400 transition">Edytuj</a>
                     <a href="/dashboard/{{ project.slug }}/wiki/pages/{{ page.id }}/create"

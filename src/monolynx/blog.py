@@ -12,19 +12,23 @@ endpointy .md, które też nie są nią bramkowane).
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx.config import settings
 from monolynx.database import get_db
+from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
+from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.wiki import extract_summary, get_page_content, get_public_page_by_slug, render_markdown_public
 
 logger = logging.getLogger("monolynx.blog")
@@ -33,6 +37,12 @@ router = APIRouter(prefix="/blog", tags=["blog"])
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 templates.env.globals["ga_measurement_id"] = settings.GA_MEASUREMENT_ID
+
+# Allow-lista typow dla Content-Disposition: inline (MON-203). Wszystko inne -- w tym
+# image/svg+xml, ktory moze osadzic <script>/onload -- idzie jako attachment, mimo ze
+# zaczyna sie od "image/". Endpoint jest publiczny i bez sesji dashboardu, ale wciaz na
+# tej samej domenie, wiec inline-render zlosliwego SVG/HTML nie jest opcja.
+_PUBLIC_INLINE_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 
 _PER_PAGE = 20
 
@@ -183,5 +193,60 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
             "updated_at": page.updated_at,
             "created_at": page.created_at,
             "meta_description": meta_description,
+        },
+    )
+
+
+@router.get("/{slug}/attachments/{attachment_id}/{filename}", response_model=None)
+async def public_attachment(
+    slug: str,
+    attachment_id: uuid.UUID,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Publiczny zalacznik strony wiki -- bez sesji, tylko is_public=True (MON-203).
+
+    Zapytanie wiaze attachment_id z page.id (page samo jest juz przefiltrowane po
+    is_public=True przez get_public_page_by_slug) -- sam attachment_id nie wystarcza,
+    inaczej kazdy zalacznik w systemie stalby sie publiczny pod tym adresem. Zalacznik
+    nalezacy do INNEJ strony niz {slug} w URL rowniez konczy sie 404 (filtr wiki_page_id).
+
+    X-Content-Type-Options: nosniff na KAZDEJ odpowiedzi, rowniez na 404 -- endpoint jest
+    bez uwierzytelnienia, wiec to jedyna ochrona anonimowego czytelnika przed MIME-sniffing.
+    """
+    nosniff = {"X-Content-Type-Options": "nosniff"}
+
+    page = await get_public_page_by_slug(slug, db)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono strony", headers=nosniff)
+
+    result = await db.execute(
+        select(WikiAttachment).where(
+            WikiAttachment.id == attachment_id,
+            WikiAttachment.wiki_page_id == page.id,
+        )
+    )
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono zalacznika", headers=nosniff)
+
+    # Blokujace IO (MinIO) w handlerze async -- w executorze, ten sam wzorzec co
+    # get_page_content() powyzej. Blad storage nigdy nie moze wyciec jako niezlapany
+    # wyjatek do anonimowego czytelnika -- mapujemy na 404, tak jak brak strony/zalacznika.
+    loop = asyncio.get_running_loop()
+    try:
+        data, content_type = await loop.run_in_executor(None, minio_get_attachment, attachment.storage_path)
+    except Exception:
+        logger.exception("Blad pobierania zalacznika z MinIO (attachment_id=%s)", attachment.id)
+        raise HTTPException(status_code=404, detail="Nie znaleziono zalacznika", headers=nosniff) from None
+
+    disposition = "inline" if content_type in _PUBLIC_INLINE_MIME_TYPES else "attachment"
+    safe_name = attachment.filename.replace('"', "_").replace("\\", "_")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{safe_name}"',
+            "X-Content-Type-Options": "nosniff",
         },
     )

@@ -733,6 +733,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "title": "Markdown rendering",
                     "desc": "render_markdown_html() z Tailwind prose prose-invert. Ten sam renderer używany w ticketach i komentarzach Scrum.",
                 },
+                {
+                    "title": "Publikacja publiczna (blog)",
+                    "desc": (
+                        "Checkbox „strona publiczna” w formularzu wiki wystawia treść bez logowania pod /blog/{slug}. "
+                        "Załączniki wpisu (obrazy, PDF) serwowane bezpiecznie — allow-lista MIME dla inline (PNG/JPEG/GIF/WebP), "
+                        "reszta jako attachment z nagłówkiem X-Content-Type-Options: nosniff."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -817,6 +825,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             {
                 "title": "Markdown rendering",
                 "desc": "render_markdown_html() with Tailwind prose prose-invert. Same renderer used in Scrum tickets and comments.",
+            },
+            {
+                "title": "Public publishing (blog)",
+                "desc": (
+                    'A "public page" checkbox on the wiki form exposes content without login at /blog/{slug}. '
+                    "Page attachments (images, PDFs) are served safely — MIME allow-list for inline (PNG/JPEG/GIF/WebP), "
+                    "everything else as attachment with an X-Content-Type-Options: nosniff header."
+                ),
             },
         ],
         "steps": [
