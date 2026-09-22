@@ -195,6 +195,7 @@ async def wiki_page_create(
     title = str(form.get("title", "")).strip()
     content = str(form.get("content", ""))
     position_raw = str(form.get("position", "0")).strip()
+    is_public = form.get("is_public") is not None
 
     error = None
     if not title:
@@ -215,19 +216,38 @@ async def wiki_page_create(
                 "page": None,
                 "parent": None,
                 "error": error,
-                "form_data": {"title": title, "content": content, "position": position},
+                "form_data": {"title": title, "content": content, "position": position, "is_public": is_public},
             },
         )
 
-    page = await create_wiki_page(
-        project_id=project.id,
-        project_slug=project.slug,
-        title=title,
-        content=content,
-        user_id=user_id,
-        position=position,
-        db=db,
-    )
+    try:
+        page = await create_wiki_page(
+            project_id=project.id,
+            project_slug=project.slug,
+            title=title,
+            content=content,
+            user_id=user_id,
+            position=position,
+            is_public=is_public,
+            db=db,
+        )
+    except ValueError as exc:
+        # Po rollbacku w services/wiki.py obiekt `project` jest expired -- przeladuj go,
+        # zanim trafi do Jinja2 (MissingGreenlet przy leniwym ladowaniu w sync renderze).
+        flash(request, str(exc), "error")
+        project = await _get_project(slug, db)
+        return templates.TemplateResponse(
+            request,
+            "dashboard/wiki/page_form.html",
+            {
+                "project": project,
+                "active_module": "wiki",
+                "page": None,
+                "parent": None,
+                "error": None,
+                "form_data": {"title": title, "content": content, "position": position, "is_public": is_public},
+            },
+        )
 
     flash(request, "Strona wiki zostala utworzona")
     return RedirectResponse(url=f"/dashboard/{slug}/wiki/pages/{page.id}", status_code=303)
@@ -297,6 +317,7 @@ async def wiki_child_create(
     title = str(form.get("title", "")).strip()
     content = str(form.get("content", ""))
     position_raw = str(form.get("position", "0")).strip()
+    is_public = form.get("is_public") is not None
 
     error = None
     if not title:
@@ -317,20 +338,40 @@ async def wiki_child_create(
                 "page": None,
                 "parent": parent,
                 "error": error,
-                "form_data": {"title": title, "content": content, "position": position},
+                "form_data": {"title": title, "content": content, "position": position, "is_public": is_public},
             },
         )
 
-    page = await create_wiki_page(
-        project_id=project.id,
-        project_slug=project.slug,
-        title=title,
-        content=content,
-        user_id=user_id,
-        parent_id=parent.id,
-        position=position,
-        db=db,
-    )
+    try:
+        page = await create_wiki_page(
+            project_id=project.id,
+            project_slug=project.slug,
+            title=title,
+            content=content,
+            user_id=user_id,
+            parent_id=parent.id,
+            position=position,
+            is_public=is_public,
+            db=db,
+        )
+    except ValueError as exc:
+        # Po rollbacku w services/wiki.py obiekty `project`/`parent` sa expired -- przeladuj je,
+        # zanim trafia do Jinja2 (MissingGreenlet przy leniwym ladowaniu w sync renderze).
+        flash(request, str(exc), "error")
+        project = await _get_project(slug, db)
+        parent = await _get_wiki_page(page_id, project.id, db) if project else None
+        return templates.TemplateResponse(
+            request,
+            "dashboard/wiki/page_form.html",
+            {
+                "project": project,
+                "active_module": "wiki",
+                "page": None,
+                "parent": parent,
+                "error": None,
+                "form_data": {"title": title, "content": content, "position": position, "is_public": is_public},
+            },
+        )
 
     flash(request, "Podstrona wiki zostala utworzona")
     return RedirectResponse(url=f"/dashboard/{slug}/wiki/pages/{page.id}", status_code=303)
@@ -424,7 +465,7 @@ async def wiki_page_edit_form(
             "page": page,
             "parent": None,
             "error": None,
-            "form_data": {"title": page.title, "content": raw_content, "position": page.position},
+            "form_data": {"title": page.title, "content": raw_content, "position": page.position, "is_public": page.is_public},
             "attachments": list(page.attachments),
             "can_edit": True,
         },
@@ -457,6 +498,7 @@ async def wiki_page_edit(
     title = str(form.get("title", "")).strip()
     content = str(form.get("content", ""))
     position_raw = str(form.get("position", str(page.position))).strip()
+    is_public = form.get("is_public") is not None
 
     error = None
     if not title:
@@ -477,19 +519,39 @@ async def wiki_page_edit(
                 "page": page,
                 "parent": None,
                 "error": error,
-                "form_data": {"title": title, "content": content, "position": position},
+                "form_data": {"title": title, "content": content, "position": position, "is_public": is_public},
             },
         )
 
-    await update_wiki_page(
-        page=page,
-        project_slug=project.slug,
-        title=title,
-        content=content,
-        position=position,
-        user_id=user_id,
-        db=db,
-    )
+    try:
+        await update_wiki_page(
+            page=page,
+            project_slug=project.slug,
+            title=title,
+            content=content,
+            position=position,
+            user_id=user_id,
+            is_public=is_public,
+            db=db,
+        )
+    except ValueError as exc:
+        # Po rollbacku w services/wiki.py obiekty `project`/`page` sa expired -- przeladuj je,
+        # zanim trafia do Jinja2 (MissingGreenlet przy leniwym ladowaniu w sync renderze).
+        flash(request, str(exc), "error")
+        project = await _get_project(slug, db)
+        page = await _get_wiki_page(page_id, project.id, db) if project else None
+        return templates.TemplateResponse(
+            request,
+            "dashboard/wiki/page_form.html",
+            {
+                "project": project,
+                "active_module": "wiki",
+                "page": page,
+                "parent": None,
+                "error": None,
+                "form_data": {"title": title, "content": content, "position": position, "is_public": is_public},
+            },
+        )
 
     flash(request, "Strona wiki zostala zaktualizowana")
     return RedirectResponse(url=f"/dashboard/{slug}/wiki/pages/{page.id}", status_code=303)

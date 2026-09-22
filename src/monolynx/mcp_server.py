@@ -3726,10 +3726,12 @@ async def create_wiki_page(
     content: str,
     parent_id: str | None = None,
     position: int = 0,
+    is_public: bool = False,
 ) -> dict[str, Any]:
     """Utworz nowa strone wiki. Oznaczana jako is_ai_touched=True.
 
     parent_id -- UUID strony nadrzednej (opcjonalnie, dla podstron).
+    is_public -- czy strona ma byc dostepna publicznie pod /blog/{slug} (bez logowania).
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -3746,6 +3748,7 @@ async def create_wiki_page(
             parent_id=uuid.UUID(parent_id) if parent_id else None,
             position=position,
             is_ai=True,
+            is_public=is_public,
             db=db,
         )
 
@@ -3754,6 +3757,7 @@ async def create_wiki_page(
         "title": page.title,
         "slug": page.slug,
         "is_ai_touched": True,
+        "is_public": page.is_public,
         "message": f"Strona wiki '{page.title}' utworzona",
     }
 
@@ -3766,10 +3770,12 @@ async def update_wiki_page(
     title: str | None = None,
     content: str | None = None,
     position: int | None = None,
+    is_public: bool | None = None,
 ) -> dict[str, Any]:
     """Aktualizuj strone wiki. Oznaczana jako is_ai_touched=True.
 
-    Podaj tylko pola do zmiany.
+    Podaj tylko pola do zmiany. is_public=True/False publikuje/wycofuje strone z /blog/{slug};
+    None (domyslnie) nie zmienia flagi.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -3793,6 +3799,7 @@ async def update_wiki_page(
             position=position,
             user_id=user.id,
             is_ai=True,
+            is_public=is_public,
             db=db,
         )
 
@@ -3800,6 +3807,7 @@ async def update_wiki_page(
         "id": str(page.id),
         "title": page.title,
         "is_ai_touched": True,
+        "is_public": page.is_public,
         "message": f"Strona wiki '{page.title}' zaktualizowana",
     }
 

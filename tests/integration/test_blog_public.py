@@ -19,6 +19,7 @@ import pytest
 from monolynx.config import settings
 from monolynx.models.project import Project
 from monolynx.models.user import User
+from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.auth import hash_password
@@ -56,6 +57,21 @@ async def _create_user(db_session, email):
     db_session.add(user)
     await db_session.flush()
     return user
+
+
+async def _create_attachment(db_session, page, filename="report.pdf", mime_type="application/pdf", storage_path=None, size=100):
+    """Helper: tworzy zalacznik strony wiki bezposrednio w DB (bez realnego MinIO)."""
+    att = WikiAttachment(
+        wiki_page_id=page.id,
+        filename=filename,
+        storage_path=storage_path or f"wiki-attachments/{page.id}/{filename}",
+        mime_type=mime_type,
+        size=size,
+        created_via_ai=False,
+    )
+    db_session.add(att)
+    await db_session.flush()
+    return att
 
 
 async def _create_wiki_page(
@@ -379,6 +395,143 @@ class TestPublicSlugConflict:
                 user_id=user.id,
                 db=db_session,
             )
+
+
+# ---------------------------------------------------------------------------
+# 5. Publiczne zalaczniki wpisu -- GET /blog/{slug}/attachments/{attachment_id}/{filename}
+# (MON-203, kryteria 4, 5, 6)
+#
+# Zalozenie interfejsu: blog.py importuje get_attachment z services/minio_client.py
+# pod aliasem "minio_get_attachment", tak jak juz robi to dashboard/wiki.py (identyczny
+# wzorzec projektowy w tym repo) -- stad patch celuje w "monolynx.blog.minio_get_attachment".
+# Jesli backend-developer wybierze inny alias/import, testy trzeba przemapowac na
+# faktyczna nazwe w blog.py (zgloszone w raporcie koncowym jako punkt koordynacji).
+#
+# Endpoint jeszcze nie istnieje -- wszystkie testy w tej klasie musza dawac 404 z
+# powodu braku routingu (a nie z powodu logiki biznesowej) -- to jest zamierzone, TDD.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestBlogPublicAttachmentServe:
+    """Kryteria 4, 5, 6 (MON-203)."""
+
+    @patch("monolynx.blog.minio_get_attachment", return_value=(b"\x89PNG\r\n\x1a\n", "image/png"))
+    async def test_public_page_attachment_served_without_session(self, mock_get_att, client, db_session):
+        """Kryterium 4: zalacznik strony publicznej pobiera sie BEZ SESJI (goly `client`,
+        bez login_session -- konsekwentnie z reszta tego pliku)."""
+        project = await _create_project(db_session, "blog-att-pub")
+        user = await _create_user(db_session, "blog-att-pub@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Publiczna Z Obrazkiem MON203", is_public=True)
+        att = await _create_attachment(db_session, page, filename="cover.png", mime_type="image/png")
+
+        resp = await client.get(f"/blog/{page.slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 200
+        assert resp.content == b"\x89PNG\r\n\x1a\n"
+        assert resp.headers["content-type"] == "image/png"
+        mock_get_att.assert_called_once_with(att.storage_path)
+
+    async def test_private_page_attachment_returns_404_without_session(self, client, db_session):
+        """Kryterium 4: zalacznik strony prywatnej -> 404 pod tym samym adresem."""
+        project = await _create_project(db_session, "blog-att-priv")
+        user = await _create_user(db_session, "blog-att-priv@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Prywatna Z Obrazkiem MON203", is_public=False)
+        att = await _create_attachment(db_session, page, filename="secret.png", mime_type="image/png")
+
+        resp = await client.get(f"/blog/{page.slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 404
+
+    async def test_nonexistent_page_slug_attachment_returns_404(self, client, db_session):
+        fake_att_id = uuid.uuid4()
+        resp = await client.get(f"/blog/nie-ma-takiej-strony-mon203-att/attachments/{fake_att_id}/file.png")
+        assert resp.status_code == 404
+
+    async def test_nonexistent_attachment_id_returns_404(self, client, db_session):
+        project = await _create_project(db_session, "blog-att-noatt")
+        user = await _create_user(db_session, "blog-att-noatt@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Publiczna Bez Zalacznika MON203", is_public=True)
+        fake_att_id = uuid.uuid4()
+
+        resp = await client.get(f"/blog/{page.slug}/attachments/{fake_att_id}/file.png")
+
+        assert resp.status_code == 404
+
+    async def test_attachment_belonging_to_different_page_returns_404(self, client, db_session):
+        """Kryterium 6: attachment_id istnieje i obie strony sa publiczne, ale zalacznik
+        nalezy do INNEJ strony niz {slug} w URL -> 404."""
+        project = await _create_project(db_session, "blog-att-crosspage")
+        user = await _create_user(db_session, "blog-att-crosspage@test.com")
+        page_a = await _create_wiki_page(db_session, project, user, "Publiczna A MON203", is_public=True)
+        page_b = await _create_wiki_page(db_session, project, user, "Publiczna B MON203", is_public=True)
+        att_of_a = await _create_attachment(db_session, page_a, filename="only-on-a.png", mime_type="image/png")
+
+        resp = await client.get(f"/blog/{page_b.slug}/attachments/{att_of_a.id}/{att_of_a.filename}")
+
+        assert resp.status_code == 404
+
+    @pytest.mark.parametrize("mime_type", ["image/png", "image/jpeg", "image/gif", "image/webp"])
+    async def test_allowlisted_image_mime_served_inline(self, mime_type, client, db_session):
+        """Kryterium 5: typy z allow-listy -> Content-Disposition: inline."""
+        variant = mime_type.split("/")[1]
+        project = await _create_project(db_session, f"blog-att-inline-{variant}")
+        user = await _create_user(db_session, f"blog-att-inline-{variant}@test.com")
+        page = await _create_wiki_page(db_session, project, user, f"Inline {variant} MON203", is_public=True)
+        att = await _create_attachment(db_session, page, filename=f"pic.{variant}", mime_type=mime_type)
+
+        with patch("monolynx.blog.minio_get_attachment", return_value=(b"binary-data", mime_type)):
+            resp = await client.get(f"/blog/{page.slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 200
+        assert resp.headers.get("content-disposition", "").startswith("inline")
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    async def test_non_image_mime_served_as_attachment_with_nosniff(self, client, db_session):
+        """Kryterium 5: typ inny niz obrazkowy (np. PDF) -> Content-Disposition: attachment
+        + naglowek X-Content-Type-Options: nosniff."""
+        project = await _create_project(db_session, "blog-att-pdf")
+        user = await _create_user(db_session, "blog-att-pdf@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Publiczna Z PDF MON203", is_public=True)
+        att = await _create_attachment(db_session, page, filename="doc.pdf", mime_type="application/pdf")
+
+        with patch("monolynx.blog.minio_get_attachment", return_value=(b"%PDF-1.4", "application/pdf")):
+            resp = await client.get(f"/blog/{page.slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 200
+        assert resp.headers.get("content-disposition", "").startswith("attachment")
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    async def test_svg_mime_served_as_attachment_not_inline(self, client, db_session):
+        """Kryterium 5: image/svg+xml NIE jest na allow-liscie (SVG moze wykonac skrypt) ->
+        musi isc jako attachment, nigdy inline, mimo ze zaczyna sie od 'image/'."""
+        project = await _create_project(db_session, "blog-att-svg")
+        user = await _create_user(db_session, "blog-att-svg@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Publiczna Z SVG MON203", is_public=True)
+        att = await _create_attachment(db_session, page, filename="icon.svg", mime_type="image/svg+xml")
+
+        with patch(
+            "monolynx.blog.minio_get_attachment",
+            return_value=(b"<svg onload='alert(1)'></svg>", "image/svg+xml"),
+        ):
+            resp = await client.get(f"/blog/{page.slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 200
+        assert resp.headers.get("content-disposition", "").startswith("attachment")
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    async def test_private_page_attachment_response_still_has_nosniff_header(self, client, db_session):
+        """Kryterium 5 (naglowek na KAZDEJ odpowiedzi tego endpointu) -- rowniez na 404,
+        nie tylko na sukcesie."""
+        project = await _create_project(db_session, "blog-att-nosniff404")
+        user = await _create_user(db_session, "blog-att-nosniff404@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Prywatna Nosniff MON203", is_public=False)
+        att = await _create_attachment(db_session, page, filename="secret.png", mime_type="image/png")
+
+        resp = await client.get(f"/blog/{page.slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 404
+        assert resp.headers.get("x-content-type-options") == "nosniff"
 
 
 # ---------------------------------------------------------------------------
