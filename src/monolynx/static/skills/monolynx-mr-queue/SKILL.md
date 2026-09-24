@@ -239,7 +239,7 @@ Kod inny niż `0` -> wypisz stderr i zakończ tick bez działania.
 
 | Werdykt | Działanie |
 |---|---|
-| `merged` | zmergowany poza kolejką: `queue-update --status done`, wróć do KROK 3 |
+| `merged` | zmergowany poza kolejką: 4c |
 | `closed` | `queue-update --status closed`, wróć do KROK 3 |
 | `wait` | nic nie rób (CI w toku albo GitHub/GitLab liczy mergeability); zakończ tick |
 | `ci_failed` | KROK 5 |
@@ -290,6 +290,22 @@ python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status mergin
 ```
 
 Zakończ tick. CI brancha docelowego sprawdzi następny (3a).
+
+### 4c. `merged` - merge poza kolejką
+
+MR/PR zmergowano ręcznie albo tick przerwano po merge, przed `queue-update`. Pozycja idzie tym samym torem co merge z 4b: `merging` z `merge_sha`, potem 3a (CI brancha docelowego, ticket -> `done`). Ustal `merge_sha`. GitLab: pole `merge_sha` z werdyktu `classify` (KROK 3b). GitHub: werdykt go nie niesie, odczytaj:
+
+```bash
+gh pr view <n> --json mergeCommit -q .mergeCommit.oid
+```
+
+Pusty wynik -> nie zgaduj SHA (`headRefOid` to nie commit na branchu docelowym): traktuj jak werdykt `needs_human` (tabela wyżej) z powodem "PR zmergowany poza kolejką bez mergeCommit - brak SHA na branchu docelowym". Z SHA:
+
+```bash
+python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status merging --merge-sha <merge_sha>
+```
+
+Wróć do KROK 3: pozycja wchodzi w 3a w tym samym ticku. W odróżnieniu od 4b tick nie wykonał jeszcze żadnego działania (merge stał się poza kolejką, tu były same odczyty), więc 3a z ewentualnym domknięciem na `success` jest jego jedynym działaniem.
 
 ## KROK 5: `ci_failed` - poprawka
 
@@ -361,7 +377,7 @@ Potem, jako **ostatnią linię odpowiedzi**, zamrożony format:
 MR-QUEUE: remaining=<n> current=<ref albo -> verdict=<werdykt albo -> done=<d>
 ```
 
-- `remaining` - elementy w statusie `pending` albo `merging`,
+- `remaining` - elementy w statusie `pending` albo `merging` (w `merging` pozycja wchodzi po merge z 4b albo z werdyktu `merged`, 4c),
 - `current` / `verdict` - element obsłużony w tym ticku,
 - `done` - elementy `done`.
 
@@ -375,6 +391,6 @@ Ten format jest kontraktem dla pętli i innych narzędzi. Nie zmieniaj go i nie 
 2. **Nigdy nie zatwierdzasz MR/PR** i nigdy nie mergujesz bez werdyktu `ready` policzonego w tym samym ticku, z blokadą na ten SHA.
 3. **Nigdy `--force`, rebase ani `git reset`** na branchu MR. Konflikt rozwiązuje merge brancha docelowego.
 4. **Checkout użytkownika zostaje nietknięty.** Poprawki tylko w `$STATE_DIR/wt-*`, usuwanym przez `git worktree remove` po pushu.
-5. **Po merge czekasz na zielone CI brancha docelowego**, zanim weźmiesz następny element.
+5. **Po merge czekasz na zielone CI brancha docelowego**, zanim weźmiesz następny element. Dotyczy to także merge'a wykonanego poza kolejką (werdykt `merged`).
 6. **Subagent zawsze z jawnym modelem**: `sonnet` do poprawki CI, `opus` do rozwiązania konfliktu.
 7. **Język raportu: polski.** Komunikaty commitów: konwencja repozytorium.

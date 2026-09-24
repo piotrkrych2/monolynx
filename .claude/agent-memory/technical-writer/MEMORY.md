@@ -5,6 +5,8 @@
 - CLAUDE.md jest w angielskim i używa strzałki `→` jako separatora sekwencji (już występuje w pliku, spójne). UWAGA: CLAUDE.md ma ~100 istniejących em-dash jako separator bulletów `nazwa.py — opis` (cudze, poza zakresem - NIE ruszać). Targetowane edycje: liczy się tylko czy MOJE dodane/nowe linie mają 0 em-dash. Check: `grep -c "—"` przed i po musi być równe (zero netto). Nowe bullety w sekcji Services pisz z hyphenem `-` jako separator, nie kopiuj em-dash z sąsiednich.
 - Wszystkie komendy Pythona przez `docker compose exec app`, nigdy lokalnie.
 - [Konwencje docs pluginu](plugin_docs_conventions.md) — SKILL.md BEZ diakrytyk, README pluginu Z nimi; zero em/en-dash (walidator); static/skills generowane przez sync_skills.py.
+- `bash_guard.py` łapie literał `glab mr create` także w argumencie `grep` (deny dla subagenta). Szukaj fragmentem, np. `-e "mr crea"`. To samo dla `ruff` i `git add`: deny także w treści heredoca `python3 - <<EOF` i w `grep`. Grep: `r[u]ff`; podmiany z tymi słowami rób narzędziem Edit (MON-207).
+- Prompt TM często zakazuje uruchamiania Pythona - wtedy wielokrotne podmiany rób narzędziem Edit (albo `sed -i ''` z literalną ścieżką), nie `python3` heredoc (MON-177: złamany zakaz, zgłoszony w raporcie).
 - W sesji w worktree guard Bash odrzuca komendy złożone (heredoc + `wc` + `grep` w jednym wywołaniu) jako "too complex to verify". Nowe pliki twórz narzędziem Write, weryfikacje odpalaj osobnymi, prostymi komendami.
 
 ## Architektura / dystrybucja
@@ -17,11 +19,17 @@
 - Raport końcowy do Team Managera wysyłaj przez `SendMessage(to="main")`. Nazwa sesji z promptu (`monolynx-<KEY>-<model>`) adresuje TĘ sesję, nie TM - wysyłka na nią kończy się błędem "no agent reachable". W raporcie napisz, że komentarz i `log_time` już dodałeś, żeby TM nie zalogował czasu drugi raz.
 
 ## Changelog pluginu w tickecie
+- Walidator z MON-177 obsługuje `### Unreleased` i wymaga klucza ticketu na początku KAŻDEGO punktu pod nim (`- MON-123: opis`), nie tylko pierwszego (MON-178).
 - Wpis idzie pod `### Unreleased` (reguła `plugin-version-bump.md` pkt 1), ale `check_version_matches_changelog` w `scripts/validate_plugin_consistency.py` porównuje PIERWSZY nagłówek `^###\s*(\S+)` z `version` w `plugin.json`, więc `Unreleased` da naruszenie w CI. Numer nadaje mergujący (pkt 2). Jeśli masz `plugin.json` na liście "nie ruszać", zrób pkt 1 i zgłoś ten konflikt Team Managerowi zamiast bumpować samemu.
 
 ## Reguły z review
 - Nowa integracja dostępna użytkownikowi musi być opisana na landing page w obu obsługiwanych językach (MON-182).
 - Komendę, którą skill ma faktycznie wykonać, uruchamiasz w tym samym tickecie w środowisku docelowym (dla `work`/`work-simple` to sesja w git worktree) i piszesz ją bez `$VAR` i `$(...)` - guard izolacji worktree odrzuca każdy argument wyliczany w runtime (MON-184). Wzorzec obejścia (potwierdzony wykonaniem): osobna komenda `echo $HOME` (albo `git rev-parse ...`) wypisuje ścieżkę, druga komenda używa jej literalnie. `echo $VAR` przechodzi, `find "$HOME/..."` już nie. Ten sam wzorzec jest w regule `.claude/rules/docs-commands-verified.md` pkt 3.
 - W `--help` (clap/argparse) flaga z wartością ma placeholder (`-C, --cd <DIR>`), przełącznik go nie ma (`--worktree`). Sprawdzaj nie tylko ISTNIENIE flagi, ale i to, czy bierze argument - podanie wartości przełącznikowi przesuwa ją na pierwszy argument pozycyjny i narzędzie odrzuca całe wywołanie (MON-185: `codex exec --worktree <KEY>` zjadało prompt). To samo dotyczy cudzego kodu, który powołuje się na moją weryfikację flagi.
+- bash_guard dopasowuje `glab mr create` jako substring: subagent nie uruchomi nawet `glab mr create --help` ani `grep "glab mr create"`. Weryfikację flag zleć TM (główna sesja) od razu na starcie, nie obchodź guarda inną pisownią (MON-178).
 - Prompt skilla Codeksa w komendzie powłoki pisz w APOSTROFACH: `'$monolynx:work <KEY>'`. W cudzysłowie powłoka rozwinie `$monolynx` do pustego napisu i zostanie `:work <KEY>`.
 - Bump wersji pluginu dotyczy DWÓCH manifestów: `plugin/.claude-plugin/plugin.json` i `plugin/.codex-plugin/plugin.json`. `tests/unit/test_plugin_distribution.py` asertuje ich równość, a `scripts/validate_plugin_consistency.py` (stage `lint` w CI) wymaga zgodności wersji z pierwszym wpisem `### X.Y.Z` changelogu - czyli `### Unreleased` oblewa CI, dopóki walidator go nie obsługuje.
+
+## Reguly z review krytyka
+
+- Zmieniając zachowanie skilla, poprawiasz każdą deklarację tego zachowania w plikach, które i tak edytujesz w tym diffie (frontmatter, tabela skilli w README, changelog), po grepie starego sformułowania. (MON-206)

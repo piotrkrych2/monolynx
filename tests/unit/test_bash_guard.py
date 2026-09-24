@@ -580,6 +580,259 @@ class TestTestLintMainSession:
         assert_allow(exit_code, decision)
 
 
+READONLY_RUFF_ALLOWED_CASES = [
+    # MON-207: `ruff check` bez flag NIE jest juz uznawany za bezpieczny -
+    # `pyproject.toml` moze ustawic `fix = true` i wtedy goly `ruff check`
+    # cicho naprawia pliki. Jedyny pewny sygnal read-only to jawne `--no-fix`.
+    pytest.param("ruff check --no-fix tests/", id="ruff_check_dir_only"),
+    pytest.param("ruff check --no-fix tests/unit/test_x.py", id="ruff_check_plain_path"),
+    pytest.param("ruff check --no-fix src/ tests/", id="ruff_check_multiple_paths"),
+    pytest.param("ruff format --check plugin/hooks/bash_guard.py", id="ruff_format_check"),
+    pytest.param("ruff format --diff tests/", id="ruff_format_diff"),
+    pytest.param("docker compose exec -T app ruff check --no-fix src/ tests/", id="docker_compose_exec_dash_t_ruff_check"),
+    pytest.param("docker compose exec app ruff check --no-fix src/", id="docker_compose_exec_ruff_check"),
+    pytest.param("docker compose exec app ruff format --check src/", id="docker_compose_exec_ruff_format_check"),
+    pytest.param("docker compose run --rm app ruff format --check src/", id="docker_compose_run_ruff_format_check"),
+]
+
+
+@pytest.mark.unit
+class TestReadonlyRuffAllowsSubagent:
+    """MON-176/MON-207: `ruff check --no-fix` (jawna flaga, goly `ruff check`
+    NIE wystarcza od MON-207 - patrz komentarz przy READONLY_RUFF_ALLOWED_CASES)
+    i `ruff format --check|--diff` sa odczytem, wiec subagent moze je uruchomic
+    bez posrednictwa Team Managera - takze przez `docker compose exec [-T] app`.
+    `docker run` i `docker compose ... run` maja od MON-207 wlasna, bardziej
+    restrykcyjna sciezke walidacji (patrz TestDockerRunNeverAllowedForRuff i
+    TestDockerComposeRunVolumeAndFlagValidation)."""
+
+    @pytest.mark.parametrize("cmd", [c.values[0] for c in READONLY_RUFF_ALLOWED_CASES], ids=[c.id for c in READONLY_RUFF_ALLOWED_CASES])
+    def test_allows_subagent(self, cmd):
+        payload = bash_payload(cmd, **SUBAGENT)
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestReadonlyRuffMainSessionRequiresAutotest:
+    """MON-207 odwraca czesc MON-176: sesja glowna NIE dostaje juz automatycznego
+    allow dla read-only ruff bez pytania. Code review do MR !98 uznal caly
+    wyjatek read-only-ruff za zbyt szeroki (m.in. bo `ruff check` bez flagi
+    mogl cicho naprawiac plik) - sesja glowna wraca do zwyklej sciezki
+    TEST_LINT: ask bez MONOLYNX_AUTOTEST, allow z MONOLYNX_AUTOTEST=true.
+    Poprzedni kontrakt (allow bez pytania) opisywal test
+    TestReadonlyRuffAllowsMainSessionWithoutAsk z MON-176 - ta klasa go zastepuje."""
+
+    @pytest.mark.parametrize("cmd", [c.values[0] for c in READONLY_RUFF_ALLOWED_CASES], ids=[c.id for c in READONLY_RUFF_ALLOWED_CASES])
+    def test_asks_main_session_without_autotest(self, cmd):
+        payload = bash_payload(cmd)
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+    @pytest.mark.parametrize("cmd", [c.values[0] for c in READONLY_RUFF_ALLOWED_CASES], ids=[c.id for c in READONLY_RUFF_ALLOWED_CASES])
+    def test_allows_main_session_with_autotest_true(self, cmd):
+        payload = bash_payload(cmd)
+        exit_code, decision = run_hook(payload, env_extra={**MAIN_SESSION, "MONOLYNX_AUTOTEST": "true"})
+        assert_allow(exit_code, decision)
+
+
+READONLY_RUFF_DENIED_CASES = [
+    # Zapis / auto-fix - to nie jest odczyt.
+    pytest.param("ruff check --fix tests/", id="ruff_check_fix"),
+    pytest.param("ruff check --unsafe-fixes src/", id="ruff_check_unsafe_fixes"),
+    pytest.param("ruff check --add-noqa src/", id="ruff_check_add_noqa"),
+    pytest.param("ruff format tests/", id="ruff_format_write_no_check"),
+    pytest.param("docker compose exec app ruff check --fix src/", id="docker_compose_exec_ruff_check_fix"),
+    pytest.param("docker compose exec -T app ruff format src/", id="docker_compose_exec_ruff_format_write_no_check"),
+    # Niejednoznaczny prefiks dlugiej flagi (mogloby wygladac jak --fix) -
+    # fail-closed: implementacja NIE moze rozpoznac tego jako read-only na
+    # podstawie samego braku doslownego "--fix" w komendzie (analogicznie do
+    # parsowania flag `rm` z MON-147 - _rm_long_flag_is_destructive).
+    pytest.param("ruff check --fi src/", id="ruff_check_ambiguous_long_flag_prefix"),
+    # Komenda zlozona / ekspansja powloki - hook widzi tekst PRZED ekspansja,
+    # wiec nie moze zweryfikowac faktycznych argumentow (fail-closed jak is_tmp_cleanup).
+    pytest.param("ruff check tests/ && pytest", id="ruff_check_compound_and_pytest"),
+    pytest.param("ruff check tests/ | cat", id="ruff_check_pipe"),
+    pytest.param("ruff check tests/; rm x", id="ruff_check_semicolon_compound"),
+    pytest.param("ruff check $DIR", id="ruff_check_dollar_var_expansion"),
+    pytest.param("ruff check $(pwd)", id="ruff_check_dollar_paren_command_substitution"),
+    pytest.param("ruff check ~/x.py", id="ruff_check_tilde_home_expansion"),
+    pytest.param("ruff check tests/*.py", id="ruff_check_glob"),
+    # Nieznana/niebezpieczna konstrukcja docker run - powloka w kontenerze
+    # moze uruchomic cokolwiek, nie tylko widoczny w argumencie `ruff check`.
+    pytest.param('docker run --rm --entrypoint sh img -c "ruff check src/"', id="docker_run_entrypoint_shell_construction"),
+    # `docker compose ... run` - te same zagrozenia co wyzej, przeniesione na
+    # wariant worktree (decyzja TM, patrz komentarz przy ALLOWED_CASES).
+    pytest.param(
+        'docker compose -p monolynx --profile dev run --rm --no-deps -v /abs/path:/app app sh -c "ruff check src/"',
+        id="docker_compose_run_sh_c_construction",
+    ),
+    pytest.param("docker compose run --rm --entrypoint sh app ruff check src/", id="docker_compose_run_entrypoint_sh_unknown_flag"),
+    pytest.param(
+        "docker compose -p monolynx run --rm -v $PWD:/app app ruff check src/",
+        id="docker_compose_run_dollar_var_expansion_in_volume",
+    ),
+    pytest.param("docker compose run --rm app ruff check --fix src/", id="docker_compose_run_ruff_check_fix"),
+    # Przekierowania strumieni (>, >>, <, 1>) - "read-only" dotyczy TYLKO tego,
+    # co ruff robi z plikami zrodlowymi; przekierowanie stdout/stderr/stdin moze
+    # nadpisac dowolny plik (np. ~/.bashrc) niezaleznie od tego, ze sama
+    # podkomenda ruff jest odczytem. Iteracja 1 (MON-176).
+    pytest.param("ruff check src/ > /home/u/.bashrc", id="ruff_check_redirect_output_bashrc"),
+    pytest.param("ruff check src/ >/etc/hosts", id="ruff_check_redirect_output_no_space_etc_hosts"),
+    pytest.param("ruff format --check src/ 1>/etc/hosts", id="ruff_format_check_redirect_fd1_etc_hosts"),
+    pytest.param("ruff check src/ >> out.txt", id="ruff_check_redirect_append"),
+    pytest.param("ruff check src/ < input.txt", id="ruff_check_redirect_stdin"),
+    pytest.param("docker compose exec -T app ruff check src/ > out.txt", id="docker_compose_exec_dash_t_redirect_output"),
+    # Ekspansja zmiennej WEWNATRZ prefiksu docker (obraz, -p, --profile) - hook
+    # widzi tekst przed ekspansja powloki, wiec nie moze zweryfikowac, jaki
+    # obraz/projekt/profil naprawde sie wykona.
+    pytest.param("docker run --rm $IMG ruff check src/", id="docker_run_dollar_image_expansion"),
+    pytest.param("docker compose -p $X exec app ruff check src/", id="docker_compose_exec_dollar_project_flag_expansion"),
+    pytest.param("docker compose --profile $P run --rm app ruff check src/", id="docker_compose_run_dollar_profile_flag_expansion"),
+    # MON-207: goly `ruff check` (bez `--no-fix`) przestaje byc read-only -
+    # `pyproject.toml` moze ustawic `fix = true`, wiec sama nazwa podkomendy
+    # nie gwarantuje braku zapisu. Odwraca dawne READONLY_RUFF_ALLOWED_CASES.
+    pytest.param("ruff check tests/", id="ruff_check_bare_no_flag_now_denied"),
+    pytest.param("ruff check tests/unit/test_x.py", id="ruff_check_bare_plain_path_now_denied"),
+    pytest.param("ruff check src/ tests/", id="ruff_check_bare_multiple_paths_now_denied"),
+    pytest.param("docker compose exec app ruff check src/", id="docker_compose_exec_ruff_check_bare_now_denied"),
+    pytest.param("docker compose exec -T app ruff check src/ tests/", id="docker_compose_exec_dash_t_ruff_check_bare_now_denied"),
+]
+
+
+@pytest.mark.unit
+class TestReadonlyRuffStillDeniesForSubagent:
+    """Kazdy z tych przypadkow NIE jest rozpoznawany jako read-only ruff, wiec
+    spada do dotychczasowej galezi TEST_LINT: subagent -> deny (MON-176)."""
+
+    @pytest.mark.parametrize("cmd", [c.values[0] for c in READONLY_RUFF_DENIED_CASES], ids=[c.id for c in READONLY_RUFF_DENIED_CASES])
+    def test_denies_subagent(self, cmd):
+        payload = bash_payload(cmd, **SUBAGENT)
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="subagent")
+
+
+@pytest.mark.unit
+class TestReadonlyRuffStillAsksMainSessionWithoutAutotest:
+    """Sesja glowna: te same przypadki nadal pytaja o potwierdzenie
+    (MONOLYNX_AUTOTEST != true), tak jak reszta galezi TEST_LINT."""
+
+    @pytest.mark.parametrize("cmd", [c.values[0] for c in READONLY_RUFF_DENIED_CASES], ids=[c.id for c in READONLY_RUFF_DENIED_CASES])
+    def test_asks_main_session(self, cmd):
+        payload = bash_payload(cmd)
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+
+# MON-207: korzen projektu = cwd z payloadu hooka. Uzywamy syntetycznego
+# katalogu bez repozytorium git (jak PROJ w TestRmTargetPolicy) - `_project_root`
+# nie znajduje `.git` i spada na doslowne cwd, wiec test nie zalezy od tego,
+# gdzie faktycznie stoi checkout repo w CI/Dockerze.
+DOCKER_PROJ = "/srv/proj"
+
+
+def _docker_payload(cmd, cwd=DOCKER_PROJ, **agent):
+    payload = bash_payload(cmd, **agent)
+    payload["cwd"] = cwd
+    return payload
+
+
+@pytest.mark.unit
+class TestDockerRunNeverAllowedForRuff:
+    """MON-207: `docker run` znika z allowlisty read-only-ruff calkowicie -
+    dowolny obraz i dowolny bind mount to zbyt duza powierzchnia ataku (obraz
+    moze byc podmieniony, `-v /:/host` montuje caly filesystem hosta). Nawet
+    z poprawnym `--no-fix` i mountem wskazujacym na prawdziwy korzen projektu
+    `docker run` ma pozostac deny dla subagenta i ask dla sesji glownej -
+    w odroznieniu od `docker compose run`, ktory ma dedykowana walidacje
+    (TestDockerComposeRunVolumeAndFlagValidation)."""
+
+    def test_plain_docker_run_with_no_fix_denied_for_subagent(self):
+        cmd = f"docker run --rm -v {DOCKER_PROJ}:/app monolynx-app ruff check --no-fix src/"
+        exit_code, decision = run_hook(_docker_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    def test_plain_docker_run_with_no_fix_asks_main_session(self):
+        cmd = f"docker run --rm -v {DOCKER_PROJ}:/app monolynx-app ruff check --no-fix src/"
+        exit_code, decision = run_hook(_docker_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+    def test_docker_run_with_host_root_bind_mount_denied_for_subagent(self):
+        cmd = "docker run --rm -v /:/host attacker/img ruff check --no-fix"
+        exit_code, decision = run_hook(_docker_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    def test_docker_run_with_host_root_bind_mount_asks_main_session(self):
+        cmd = "docker run --rm -v /:/host attacker/img ruff check --no-fix"
+        exit_code, decision = run_hook(_docker_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+
+@pytest.mark.unit
+class TestDockerComposeRunVolumeAndFlagValidation:
+    """MON-207: `docker compose ... run` zostaje jedyna dozwolona forma
+    kontenerowego read-only-ruff (wariant worktree, patrz komentarz historyczny
+    przy dawnym READONLY_RUFF_ALLOWED_CASES), ale tylko gdy:
+    - `-v <cwd>:/app` wskazuje DOKLADNIE na korzen projektu (cwd z payloadu),
+      nie na dowolna sciezke hosta (`/etc`, `/`, cudzy katalog),
+    - nie ma `--entrypoint`, `--privileged`, `-u root`/`--user root` (kazdy
+      z nich pozwala ominac widoczna w komendzie podkomende `ruff`),
+    - podkomenda ruff sama w sobie jest read-only (`--no-fix`, nie goly
+      `ruff check` - MON-207 p. TestReadonlyRuffAllowsSubagent)."""
+
+    def test_valid_project_root_volume_with_no_fix_allowed_for_subagent(self):
+        cmd = f"docker compose -p monolynx --profile dev run --rm --no-deps -v {DOCKER_PROJ}:/app app ruff check --no-fix src/ tests/"
+        exit_code, decision = run_hook(_docker_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_valid_project_root_volume_with_no_fix_asks_main_session_without_autotest(self):
+        """MON-207 odwraca MON-176 rowniez tutaj - sesja glowna nie omija juz pytania."""
+        cmd = f"docker compose -p monolynx --profile dev run --rm --no-deps -v {DOCKER_PROJ}:/app app ruff check --no-fix src/ tests/"
+        exit_code, decision = run_hook(_docker_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+    def test_valid_project_root_volume_with_no_fix_allows_main_session_with_autotest(self):
+        cmd = f"docker compose -p monolynx --profile dev run --rm --no-deps -v {DOCKER_PROJ}:/app app ruff check --no-fix src/ tests/"
+        exit_code, decision = run_hook(_docker_payload(cmd), env_extra={**MAIN_SESSION, "MONOLYNX_AUTOTEST": "true"})
+        assert_allow(exit_code, decision)
+
+    def test_valid_project_root_volume_but_bare_ruff_check_still_denied_for_subagent(self):
+        """Poprawny mount nie ratuje golego `ruff check` bez `--no-fix` (MON-207)."""
+        cmd = f"docker compose -p monolynx --profile dev run --rm --no-deps -v {DOCKER_PROJ}:/app app ruff check src/"
+        exit_code, decision = run_hook(_docker_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    def test_volume_pointing_outside_project_root_denied_for_subagent(self):
+        cmd = "docker compose -p monolynx --profile dev run --rm --no-deps -v /etc:/app app ruff check --no-fix src/"
+        exit_code, decision = run_hook(_docker_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    def test_volume_pointing_outside_project_root_asks_main_session(self):
+        cmd = "docker compose -p monolynx --profile dev run --rm --no-deps -v /etc:/app app ruff check --no-fix src/"
+        exit_code, decision = run_hook(_docker_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+    @pytest.mark.parametrize(
+        "extra_flag",
+        ["--entrypoint sh", "--privileged", "-u root", "--user root"],
+        ids=["entrypoint_sh", "privileged", "dash_u_root", "user_root"],
+    )
+    def test_unsafe_flag_denied_for_subagent_even_with_valid_volume(self, extra_flag):
+        cmd = f"docker compose -p monolynx --profile dev run --rm --no-deps {extra_flag} -v {DOCKER_PROJ}:/app app ruff check --no-fix src/"
+        exit_code, decision = run_hook(_docker_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize(
+        "extra_flag",
+        ["--entrypoint sh", "--privileged", "-u root", "--user root"],
+        ids=["entrypoint_sh", "privileged", "dash_u_root", "user_root"],
+    )
+    def test_unsafe_flag_asks_main_session_even_with_valid_volume(self, extra_flag):
+        cmd = f"docker compose -p monolynx --profile dev run --rm --no-deps {extra_flag} -v {DOCKER_PROJ}:/app app ruff check --no-fix src/"
+        exit_code, decision = run_hook(_docker_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+
 TMP_CLEANUP_ALLOWED_CASES = [
     pytest.param("rm -f /tmp/foo.log", id="single_log_force"),
     pytest.param("rm -f /tmp/*.md", id="glob_md_force"),

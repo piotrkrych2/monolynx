@@ -71,6 +71,7 @@
                 </div>
                 <!-- Header row 2: full ticket title -->
                 <p class="text-sm text-gray-900 dark:text-white font-medium mt-1">{{ ticket.title }}</p>
+                {% include "dashboard/scrum/_blocked_badge.html" %}
                 {% if ticket.labels %}
                 <div class="flex flex-wrap gap-1 mt-1.5">
                     {% for label in ticket.labels %}

@@ -67,7 +67,14 @@ async def wiki_project(db_session):
     return project
 
 
-def _make_wiki_page(project: Project, user: User, slug: str, title: str, minio_path: str | None = None) -> WikiPage:
+def _make_wiki_page(
+    project: Project,
+    user: User,
+    slug: str,
+    title: str,
+    minio_path: str | None = None,
+    exclude_from_embeddings: bool = False,
+) -> WikiPage:
     """Tworzy WikiPage bez zapisu do DB (caller musi add+flush)."""
     path = minio_path or f"{project.slug}/{uuid.uuid4()}.md"
     return WikiPage(
@@ -79,6 +86,7 @@ def _make_wiki_page(project: Project, user: User, slug: str, title: str, minio_p
         position=0,
         minio_path=path,
         is_ai_touched=False,
+        exclude_from_embeddings=exclude_from_embeddings,
         created_by_id=user.id,
         last_edited_by_id=user.id,
     )
@@ -265,6 +273,33 @@ class TestEnsureSystemPage:
         assert page_a.project_id == proj_a.id
         assert page_b.project_id == proj_b.id
 
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_creates_backlink_for_wikilink_in_default_content(self, mock_upload, db_session, wiki_project, wiki_user):
+        """Nowa strona systemowa z [[slug]] w default_content tworzy backlink (MON-124)."""
+        target_page = _make_wiki_page(wiki_project, wiki_user, "cel-schematu", "Cel schematu")
+        target_page_id = target_page.id
+        db_session.add(target_page)
+        await db_session.flush()
+
+        mock_upload.return_value = f"{wiki_project.slug}/schema-link.md"
+
+        page = await ensure_system_page(
+            project=wiki_project,
+            slug="wiki-schema",
+            title="Schemat Wiki",
+            default_content="Patrz [[cel-schematu]] po zasady.",
+            user_id=wiki_user.id,
+            db=db_session,
+        )
+
+        result = await db_session.execute(
+            select(WikiBacklink).where(
+                WikiBacklink.source_page_id == page.id,
+                WikiBacklink.target_page_id == target_page_id,
+            )
+        )
+        assert result.scalar_one_or_none() is not None
+
 
 # ---------------------------------------------------------------------------
 # regenerate_index
@@ -348,6 +383,59 @@ class TestRegenerateIndex:
         result = await db_session.execute(select(WikiPage).where(WikiPage.project_id == wiki_project.id, WikiPage.slug == "wiki-index"))
         index_page = result.scalar_one_or_none()
         assert index_page is not None
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_creates_backlinks_from_index_to_catalogued_pages(self, mock_get, mock_upload, db_session, wiki_project, wiki_user):
+        """Po regenerate_index istnieją wpisy WikiBacklink index->strona dla każdej skatalogowanej strony (MON-124)."""
+        mock_upload.side_effect = lambda slug, pid, content: f"{slug}/{pid}.md"
+        mock_get.return_value = ""
+
+        page_a = _make_wiki_page(wiki_project, wiki_user, "katalog-a", "Katalog A")
+        page_b = _make_wiki_page(wiki_project, wiki_user, "katalog-b", "Katalog B")
+        page_a_id = page_a.id
+        page_b_id = page_b.id
+        db_session.add(page_a)
+        db_session.add(page_b)
+        await db_session.flush()
+
+        index_page, _ = await regenerate_index(project=wiki_project, user_id=wiki_user.id, db=db_session)
+
+        result = await db_session.execute(select(WikiBacklink).where(WikiBacklink.source_page_id == index_page.id))
+        target_ids = {bl.target_page_id for bl in result.scalars().all()}
+
+        assert page_a_id in target_ids
+        assert page_b_id in target_ids
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_second_regeneration_updates_backlinks_when_index_already_exists(self, mock_get, mock_upload, db_session, wiki_project, wiki_user):
+        """Druga regeneracja (wiki-index już istnieje) też synchronizuje backlinki - dolicza nowo utworzoną stronę (MON-124)."""
+        mock_upload.side_effect = lambda slug, pid, content: f"{slug}/{pid}.md"
+        mock_get.return_value = ""
+
+        page_a = _make_wiki_page(wiki_project, wiki_user, "pierwsza-runda", "Pierwsza runda")
+        page_a_id = page_a.id
+        db_session.add(page_a)
+        await db_session.flush()
+
+        index_page, _ = await regenerate_index(project=wiki_project, user_id=wiki_user.id, db=db_session)
+        index_page_id = index_page.id
+        assert index_page.slug == "wiki-index"
+
+        page_b = _make_wiki_page(wiki_project, wiki_user, "druga-runda", "Druga runda")
+        page_b_id = page_b.id
+        db_session.add(page_b)
+        await db_session.flush()
+
+        index_page_2, _ = await regenerate_index(project=wiki_project, user_id=wiki_user.id, db=db_session)
+        assert index_page_2.id == index_page_id
+
+        result = await db_session.execute(select(WikiBacklink).where(WikiBacklink.source_page_id == index_page_id))
+        target_ids = {bl.target_page_id for bl in result.scalars().all()}
+
+        assert page_a_id in target_ids
+        assert page_b_id in target_ids
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +536,33 @@ class TestAppendLog:
         all_content = "\n".join(uploaded_contents)
         # Format: - [YYYY-MM-DD HH:MM] entry
         assert re.search(r"- \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]", all_content) is not None
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_creates_backlink_to_page_mentioned_in_entry(self, mock_get, mock_upload, db_session, wiki_project, wiki_user):
+        """Wpis logu z [[slug]] istniejącej strony tworzy backlink wiki-log->strona (MON-124)."""
+        target_page = _make_wiki_page(wiki_project, wiki_user, "strona-wzmiankowana", "Strona wzmiankowana")
+        target_page_id = target_page.id
+        db_session.add(target_page)
+        await db_session.flush()
+
+        mock_upload.side_effect = lambda slug, pid, content: f"{slug}/{pid}.md"
+        mock_get.return_value = "# Dziennik Wiki\n\n"
+
+        log_page = await append_log(
+            project=wiki_project,
+            entry="Zobacz [[strona-wzmiankowana]] po szczegóły",
+            user_id=wiki_user.id,
+            db=db_session,
+        )
+
+        result = await db_session.execute(
+            select(WikiBacklink).where(
+                WikiBacklink.source_page_id == log_page.id,
+                WikiBacklink.target_page_id == target_page_id,
+            )
+        )
+        assert result.scalar_one_or_none() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -600,12 +715,100 @@ class TestFindOrphans:
         db_session.add(WikiBacklink(source_page_id=root.id, target_page_id=linked.id))
         await db_session.flush()
 
-        orphans = await _find_orphans(wiki_project.id, [root, orphan, linked], db_session)
+        orphans, skipped_generated = await _find_orphans(wiki_project.id, [root, orphan, linked], db_session)
         slugs = {o["slug"] for o in orphans}
 
         assert "sierota" in slugs  # dziecko bez backlinku
         assert "polaczona" not in slugs  # ma backlink przychodzący
         assert "korzen" not in slugs  # korzeń (parent_id is None) wykluczony
+        assert skipped_generated == 0
+
+    async def test_excludes_pipeline_log_pages_from_orphans(self, db_session, wiki_project, wiki_user):
+        """Strony pipeline-logi (exclude_from_embeddings=True) nie liczą się jako sieroty, zwykła sierota tak."""
+        logi_root = _make_wiki_page(wiki_project, wiki_user, "pipeline-logi", "Pipeline logi", exclude_from_embeddings=True)
+        db_session.add(logi_root)
+        await db_session.flush()
+
+        job_log = _make_wiki_page(wiki_project, wiki_user, "job-abc123", "Log joba abc123", exclude_from_embeddings=True)
+        job_log.parent_id = logi_root.id
+
+        normalna_sierota = _make_wiki_page(wiki_project, wiki_user, "merytoryczna-sierota", "Merytoryczna sierota")
+        normalna_sierota.parent_id = logi_root.id
+        db_session.add(job_log)
+        db_session.add(normalna_sierota)
+        await db_session.flush()
+
+        pages = [logi_root, job_log, normalna_sierota]
+        orphans, skipped_generated = await _find_orphans(wiki_project.id, pages, db_session)
+        slugs = {o["slug"] for o in orphans}
+
+        assert "job-abc123" not in slugs
+        assert "merytoryczna-sierota" in slugs
+        assert skipped_generated == 1
+
+    async def test_flagged_page_with_backlink_not_counted_as_skipped(self, db_session, wiki_project, wiki_user):
+        """Strona z exclude_from_embeddings=True, która MA backlink, nie liczy się do skipped_generated."""
+        root = _make_wiki_page(wiki_project, wiki_user, "korzen2", "Korzen2")
+        db_session.add(root)
+        await db_session.flush()
+
+        linkowany_log = _make_wiki_page(wiki_project, wiki_user, "job-linkowany", "Log linkowany", exclude_from_embeddings=True)
+        linkowany_log.parent_id = root.id
+        db_session.add(linkowany_log)
+        await db_session.flush()
+
+        db_session.add(WikiBacklink(source_page_id=root.id, target_page_id=linkowany_log.id))
+        await db_session.flush()
+
+        pages = [root, linkowany_log]
+        orphans, skipped_generated = await _find_orphans(wiki_project.id, pages, db_session)
+        slugs = {o["slug"] for o in orphans}
+
+        assert "job-linkowany" not in slugs
+        assert skipped_generated == 0
+
+
+# ---------------------------------------------------------------------------
+# _find_orphans po regenerate_index - regresja braku sync_backlinks (MON-124)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestOrphanDetectionAfterRegenerateIndex:
+    """regenerate_index musi synchronizować backlinki - inaczej lint fałszywie zgłasza sierotę."""
+
+    @patch("monolynx.services.wiki.upload_markdown")
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_page_catalogued_by_index_is_not_reported_as_orphan(self, mock_get, mock_upload, db_session, wiki_project, wiki_user):
+        """Strona-dziecko linkowana tylko z wiki-index (po regenerate_index) nie jest sierotą."""
+        mock_upload.side_effect = lambda slug, pid, content: f"{slug}/{pid}.md"
+        mock_get.return_value = ""
+
+        root = _make_wiki_page(wiki_project, wiki_user, "korzen-katalogu", "Korzeń katalogu")
+        db_session.add(root)
+        await db_session.flush()
+
+        child = _make_wiki_page(wiki_project, wiki_user, "dziecko-katalogu", "Dziecko katalogu")
+        child.parent_id = root.id
+        db_session.add(child)
+        await db_session.flush()
+
+        await regenerate_index(project=wiki_project, user_id=wiki_user.id, db=db_session)
+
+        # Obiekty root/child są wygaszone po commitach wewnątrz regenerate_index - dociągamy świeże.
+        result = await db_session.execute(
+            select(WikiPage).where(
+                WikiPage.project_id == wiki_project.id,
+                WikiPage.slug.in_(["korzen-katalogu", "dziecko-katalogu"]),
+            )
+        )
+        pages = list(result.scalars().all())
+
+        orphans, skipped_generated = await _find_orphans(wiki_project.id, pages, db_session)
+        slugs = {o["slug"] for o in orphans}
+
+        assert "dziecko-katalogu" not in slugs
+        assert skipped_generated == 0
 
 
 # ---------------------------------------------------------------------------
@@ -629,8 +832,18 @@ class TestLintWikiOrchestrator:
         z_martwym.parent_id = root.id
         ze_sprzecznoscia = _make_wiki_page(wiki_project, wiki_user, "ze-sprzecznoscia", "Ze sprzecznoscia", minio_path="p/contra.md")
         ze_sprzecznoscia.parent_id = root.id
+        job_log = _make_wiki_page(
+            wiki_project,
+            wiki_user,
+            "job-xyz",
+            "Log joba xyz",
+            minio_path="p/joblog.md",
+            exclude_from_embeddings=True,
+        )
+        job_log.parent_id = root.id
         db_session.add(z_martwym)
         db_session.add(ze_sprzecznoscia)
+        db_session.add(job_log)
         await db_session.flush()
 
         # Backlink root -> z-martwym, żeby z-martwym nie był sierotą; ze-sprzecznoscia zostaje sierotą
@@ -655,5 +868,8 @@ class TestLintWikiOrchestrator:
         orphan_slugs = {o["slug"] for o in report["orphans"]}
         assert "ze-sprzecznoscia" in orphan_slugs
         assert "z-martwym" not in orphan_slugs
+        # Log pipeline'u (exclude_from_embeddings) bez backlinku - pominięty, nie sierota
+        assert "job-xyz" not in orphan_slugs
+        assert report["skipped_generated"] == 1
         # Luki: nieistniejacy-koncept wzmiankowany na 2 stronach (count>=2)
         assert any(g["ref"] == "nieistniejacy-koncept" for g in report["gaps"])

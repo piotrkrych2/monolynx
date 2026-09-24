@@ -305,6 +305,13 @@ async def ensure_system_page(
     db.add(page)
     await db.commit()
     await db.refresh(page)
+
+    # Indeks backlinków - best-effort (nie blokuje zapisu strony)
+    try:
+        await sync_backlinks(page=page, content=default_content, db=db)
+    except Exception:
+        logger.warning("Nie udalo sie zsynchronizowac backlinkow dla strony %s", page.id)
+
     return page
 
 
@@ -408,13 +415,21 @@ async def svc_update_system_page(
     """Wewnętrzny helper: zaktualizuj treść strony systemowej (MinIO + DB commit).
 
     Używany przez regenerate_index i append_log - omija pełną logikę update_wiki_page
-    (slug rename, embeddings) dla wydajności przy stronach systemowych.
+    (slug rename, embeddings) dla wydajności przy stronach systemowych, ale synchronizuje
+    backlinki (best-effort) - tak jak zwykła ścieżka zapisu w update_wiki_page.
     """
     upload_markdown(project.slug, page.id, content)
     page.last_edited_by_id = user_id
     page.is_ai_touched = True
     await db.commit()
     await db.refresh(page)
+
+    # Indeks backlinków - best-effort (nie blokuje zapisu strony)
+    try:
+        await sync_backlinks(page=page, content=content, db=db)
+    except Exception:
+        logger.warning("Nie udalo sie zsynchronizowac backlinkow dla strony %s", page.id)
+
     return page
 
 

@@ -29,6 +29,8 @@ async def lint_wiki(project_id: uuid.UUID, db: AsyncSession) -> dict[str, Any]:
     - dead_links: referencje wikilink nierozwiązane do istniejących stron
     - contradictions: strony zawierające marker "> **Sprzeczność"
     - gaps: koncepty wzmiankowane wielokrotnie jako [[x]] bez własnej strony (heurystyka)
+    - skipped_generated: liczba stron generowanych maszynowo (exclude_from_embeddings=True,
+      np. logi pipeline'ów) pominiętych przy liczeniu sierot
     """
     result = await db.execute(select(WikiPage).where(WikiPage.project_id == project_id))
     pages = list(result.scalars().all())
@@ -46,7 +48,7 @@ async def lint_wiki(project_id: uuid.UUID, db: AsyncSession) -> dict[str, Any]:
             logger.warning("Nie można odczytać treści strony %s z MinIO", page.id)
             content_cache[page.id] = ""
 
-    orphans = await _find_orphans(project_id, pages, db)
+    orphans, skipped_generated = await _find_orphans(project_id, pages, db)
     dead_links, missing_ref_counts = _find_dead_links(pages, slug_to_id, id_set, content_cache)
     contradictions = _find_contradictions(pages, content_cache)
     gaps = _find_gaps(missing_ref_counts)
@@ -56,6 +58,7 @@ async def lint_wiki(project_id: uuid.UUID, db: AsyncSession) -> dict[str, Any]:
         "dead_links": dead_links,
         "contradictions": contradictions,
         "gaps": gaps,
+        "skipped_generated": skipped_generated,
     }
 
 
@@ -63,23 +66,28 @@ async def _find_orphans(
     project_id: uuid.UUID,
     pages: list[WikiPage],
     db: AsyncSession,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
     """Strony bez backlinku przychodzącego.
 
     Wyklucza strony systemowe (RESERVED_SLUGS) i strony-korzenie (parent_id is None),
     bo korzenie są normalnie dostępne przez drzewo nawigacyjne - nie ma potrzeby
-    ich linkowania i generowałyby szum w raporcie.
+    ich linkowania i generowałyby szum w raporcie. Wyklucza też strony generowane
+    maszynowo (exclude_from_embeddings=True, np. logi pipeline'ów) - nie mają
+    backlinków z definicji, powiązanie idzie przez PipelineJob.wiki_page_id, nie
+    przez wikilinki. Zwraca też liczbę pominiętych w ten sposób stron.
     """
     result = await db.execute(select(WikiBacklink.target_page_id).where(WikiBacklink.target_page_id.in_([p.id for p in pages])))
     linked_ids: set[uuid.UUID] = set(result.scalars().all())
 
-    orphan_pages = [
+    would_be_orphan = [
         p
         for p in pages
         if p.id not in linked_ids and p.slug not in RESERVED_SLUGS and p.parent_id is not None  # wyklucz korzenie - są nawigowalne przez drzewo
     ]
+    orphan_pages = [p for p in would_be_orphan if not p.exclude_from_embeddings]
+    skipped_generated = len(would_be_orphan) - len(orphan_pages)
 
-    return [{"page_id": str(p.id), "title": p.title, "slug": p.slug} for p in orphan_pages]
+    return [{"page_id": str(p.id), "title": p.title, "slug": p.slug} for p in orphan_pages], skipped_generated
 
 
 def _find_dead_links(

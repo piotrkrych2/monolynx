@@ -53,7 +53,7 @@ Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runti
 
 - `/monolynx:sprint-run [sloty]` - dyspozytor: jeden tick startuje sesje `work` w tle i zbiera zakończone; sam nie pracuje nad ticketem
 - `/monolynx:sprint-end [nazwa sprintu (opcjonalnie)]` - zamknięcie sprintu: INGEST logów, LINT wiki, przebieg mutacyjny, opcjonalne `retro`, `complete_sprint`
-- `/monolynx:retro [nazwa sprintu (opcjonalnie; domyslnie aktywny albo ostatnio zamkniety)]` - powtarzające się korekty jako reguły, wiersze rubryki, wpisy `constitution`
+- `/monolynx:retro [nazwa sprintu (opcjonalnie; domyslnie aktywny albo ostatnio zamkniety)]` - powtarzające się korekty jako reguły, wpisy `constitution`, hooki; wiersze rubryki tylko w repo pluginu
 
 ## Wiki
 

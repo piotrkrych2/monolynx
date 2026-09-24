@@ -28,6 +28,9 @@ docker-build-test:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "develop"
     - if: $CI_COMMIT_BRANCH == "main"
+    # Branche sprintu sa branchem docelowym MR-ow w trakcie sprintu; mr-queue
+    # czeka na zielone CI brancha docelowego po merge, wiec musi tu byc pipeline.
+    - if: $CI_COMMIT_BRANCH =~ /^sprint\//
 
 # --- Lint ---
 
@@ -78,6 +81,7 @@ clean-code:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "develop"
     - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^sprint\//
 
 plugin-consistency:
   stage: lint
@@ -92,6 +96,7 @@ plugin-consistency:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "develop"
     - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^sprint\//
 
 trivy-scan:
   stage: test

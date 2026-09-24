@@ -7,6 +7,7 @@ Te testy SA specyfikacja jego kontraktu dla backend-developera:
     check_em_dash(files: dict[str, str]) -> list[str]
     check_command_names(files: dict[str, str]) -> list[str]
     check_version_matches_changelog(plugin_json: str, readme: str) -> list[str]
+    check_settings_env(settings_json: str, *, release: bool = False) -> list[str]
     main(argv: list[str] | None = None) -> int   # 0 OK, 1 naruszenia, 2 blad konfiguracji
 
 Dopoki modul nie istnieje, cala klasa testow jest skipowana (pytest.skip na
@@ -14,10 +15,15 @@ poziomie modulu) -- czerwone/skipniete do czasu implementacji, potem zielone.
 
 Kontrakt CLI dla main() uzgodniony na potrzeby tych testow (deterministyczny,
 bez dotykania prawdziwych plikow repo):
-    --plugin-json PATH   sciezka do plugin.json
-    --readme PATH        sciezka do README.md (sekcja '## Changelog')
-    --skills-dir PATH    katalog z plikami .md skanowanymi przez pozostale checki
-Brakujacy/niepoprawny plik pod ktoraz ze sciezek -> main() zwraca 2.
+    --plugin-json PATH    sciezka do plugin.json
+    --readme PATH         sciezka do README.md (sekcja '## Changelog')
+    --skills-dir PATH     katalog z plikami .md skanowanymi przez pozostale checki
+    --settings-json PATH  sciezka do .claude/settings.json (domyslnie
+                           ROOT/.claude/settings.json); brakujacy plik NIE jest
+                           bledem konfiguracji -- check_settings_env jest wtedy
+                           pomijany (main() dziala jak przed MON-207)
+Brakujacy/niepoprawny plik pod ktoraz ze sciezek --plugin-json/--readme/--skills-dir
+-> main() zwraca 2.
 Sekcja '## Changelog' nieobecna w README -> main() zwraca 2 (blad konfiguracji,
 nie tresciowe naruszenie -- to zaklada check_version_matches_changelog).
 """
@@ -37,6 +43,12 @@ _spec = importlib.util.spec_from_file_location("validate_plugin_consistency", VA
 assert _spec is not None and _spec.loader is not None
 validator = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(validator)
+
+
+@pytest.fixture(autouse=True)
+def _clear_ci_commit_branch(monkeypatch):
+    """main() ma czytac CI_COMMIT_BRANCH - testy nie moga zalezec od srodowiska uruchomienia."""
+    monkeypatch.delenv("CI_COMMIT_BRANCH", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +210,125 @@ class TestCheckVersionMatchesChangelog:
 
 
 # ---------------------------------------------------------------------------
+# check_version_matches_changelog - sekcja "### Unreleased" (MON-177)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCheckVersionMatchesChangelogUnreleased:
+    def test_unreleased_first_entry_matches_following_numeric_version_no_violation(self):
+        plugin_json = json.dumps({"name": "monolynx", "version": "1.5.0"})
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-177: dodaj walidator\n\n### 1.5.0\n- stare\n"
+        assert validator.check_version_matches_changelog(plugin_json, readme) == []
+
+    def test_unreleased_first_entry_mismatched_following_numeric_version_is_a_violation(self):
+        plugin_json = json.dumps({"name": "monolynx", "version": "1.6.0"})
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-177: dodaj walidator\n\n### 1.5.0\n- stare\n"
+        violations = validator.check_version_matches_changelog(plugin_json, readme)
+        assert len(violations) == 1
+        assert "1.6.0" in violations[0]
+        assert "1.5.0" in violations[0]
+
+    def test_unreleased_without_any_numeric_heading_after_raises_config_error(self):
+        plugin_json = json.dumps({"name": "monolynx", "version": "1.5.0"})
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-177: dodaj walidator\n"
+        with pytest.raises(validator.ConfigError):
+            validator.check_version_matches_changelog(plugin_json, readme)
+
+    def test_release_true_with_unreleased_first_entry_is_a_violation_without_comparing_version(self):
+        plugin_json = json.dumps({"name": "monolynx", "version": "1.5.0"})
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-177: dodaj walidator\n\n### 1.5.0\n- stare\n"
+        violations = validator.check_version_matches_changelog(plugin_json, readme, release=True)
+        assert len(violations) == 1
+        assert "Unreleased" in violations[0]
+        assert "wydanie bez numeru" in violations[0]
+
+    def test_release_true_with_numeric_first_entry_matching_version_no_violation(self):
+        plugin_json = json.dumps({"name": "monolynx", "version": "1.5.0"})
+        readme = "# README\n\n## Changelog\n\n### 1.5.0\n- opis zmian\n\n### 1.4.0\n- starsze\n"
+        assert validator.check_version_matches_changelog(plugin_json, readme, release=True) == []
+
+    @pytest.mark.parametrize("release", [False, True])
+    def test_unreleased_not_as_first_entry_is_a_violation_regardless_of_release(self, release):
+        plugin_json = json.dumps({"name": "monolynx", "version": "1.6.0"})
+        readme = "# README\n\n## Changelog\n\n### 1.6.0\n- opis\n\n### Unreleased\n- MON-177: cos co mergujacy zle dopisal\n"
+        violations = validator.check_version_matches_changelog(plugin_json, readme, release=release)
+        assert len(violations) == 1
+        assert "Unreleased" in violations[0]
+
+
+# ---------------------------------------------------------------------------
+# check_unreleased_entries
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCheckUnreleasedEntries:
+    def test_no_unreleased_heading_returns_empty(self):
+        readme = "# README\n\n## Changelog\n\n### 1.5.0\n- opis\n"
+        assert validator.check_unreleased_entries(readme) == []
+
+    def test_valid_entries_no_violation(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-177: dodaj walidator\n- MON-180: cos innego\n\n### 1.5.0\n- stare\n"
+        assert validator.check_unreleased_entries(readme) == []
+
+    def test_entry_without_ticket_key_reports_readme_line_number(self):
+        lines = [
+            "# README",
+            "",
+            "## Changelog",
+            "",
+            "### Unreleased",
+            "- brak klucza ticketu tutaj",
+            "",
+            "### 1.5.0",
+            "- stare",
+        ]
+        readme = "\n".join(lines) + "\n"
+        bad_line_number = lines.index("- brak klucza ticketu tutaj") + 1
+        violations = validator.check_unreleased_entries(readme)
+        assert len(violations) == 1
+        assert violations[0].startswith(f"README.md:{bad_line_number}:")
+
+    def test_entry_missing_space_after_colon_is_a_violation(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-177:opis bez spacji po dwukropku\n\n### 1.5.0\n- stare\n"
+        violations = validator.check_unreleased_entries(readme)
+        assert len(violations) == 1
+
+    def test_lowercase_ticket_key_is_a_violation(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- mon-177: male litery w kluczu\n\n### 1.5.0\n- stare\n"
+        violations = validator.check_unreleased_entries(readme)
+        assert len(violations) == 1
+
+    def test_indented_continuation_line_is_ignored(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-177: opis\n  kontynuacja bez klucza, wciety wiersz\n\n### 1.5.0\n- stare\n"
+        assert validator.check_unreleased_entries(readme) == []
+
+    def test_entries_after_next_heading_are_not_checked(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-177: valid\n\n### 1.5.0\n- stary wpis bez klucza, ale poza sekcja Unreleased\n"
+        assert validator.check_unreleased_entries(readme) == []
+
+    def test_multiple_invalid_entries_each_reported_separately(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- brak klucza pierwszy\n- brak klucza drugi\n\n### 1.5.0\n- stare\n"
+        violations = validator.check_unreleased_entries(readme)
+        assert len(violations) == 2
+
+    def test_empty_unreleased_section_is_a_violation(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n\n### 1.5.0\n- stare\n"
+        violations = validator.check_unreleased_entries(readme)
+        assert len(violations) == 1
+
+    def test_section_with_only_indented_lines_is_treated_as_empty(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n  jakis tekst bez wypunktowania\n\n### 1.5.0\n- stare\n"
+        violations = validator.check_unreleased_entries(readme)
+        assert len(violations) == 1
+
+    def test_unreleased_section_running_to_end_of_file_with_valid_entry(self):
+        readme = "# README\n\n## Changelog\n\n### Unreleased\n- MON-1: jedyny wpis\n"
+        assert validator.check_unreleased_entries(readme) == []
+
+
+# ---------------------------------------------------------------------------
 # main()
 # ---------------------------------------------------------------------------
 
@@ -273,6 +404,65 @@ class TestMainCli:
             str(skills_dir),
         ]
         assert validator.main(argv) == 2
+
+
+# ---------------------------------------------------------------------------
+# main() - flaga --release i CI_COMMIT_BRANCH, sekcja "### Unreleased" (MON-177)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMainCliRelease:
+    @staticmethod
+    def _write_unreleased_fixture(tmp_path, unreleased_body):
+        plugin_json = tmp_path / "plugin.json"
+        plugin_json.write_text(json.dumps({"name": "monolynx", "version": "1.5.0"}), encoding="utf-8")
+
+        readme = tmp_path / "README.md"
+        readme.write_text(
+            f"# README\n\n## Changelog\n\n### Unreleased\n{unreleased_body}\n\n### 1.5.0\n- connector MCP\n\n### 1.4.0\n- starsze\n",
+            encoding="utf-8",
+        )
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "work.md").write_text("Uzyj /monolynx:work zeby rozpoczac.\n", encoding="utf-8")
+        return plugin_json, readme, skills_dir
+
+    def _argv(self, plugin_json, readme, skills_dir, *, release=False):
+        argv = [
+            "--plugin-json",
+            str(plugin_json),
+            "--readme",
+            str(readme),
+            "--skills-dir",
+            str(skills_dir),
+        ]
+        if release:
+            argv.append("--release")
+        return argv
+
+    def test_release_flag_with_unreleased_first_entry_returns_one(self, tmp_path):
+        plugin_json, readme, skills_dir = self._write_unreleased_fixture(tmp_path, "- MON-177: dodaj walidator")
+        assert validator.main(self._argv(plugin_json, readme, skills_dir, release=True)) == 1
+
+    def test_without_release_flag_unreleased_with_valid_entries_returns_zero(self, tmp_path):
+        plugin_json, readme, skills_dir = self._write_unreleased_fixture(tmp_path, "- MON-177: dodaj walidator")
+        assert validator.main(self._argv(plugin_json, readme, skills_dir, release=False)) == 0
+
+    def test_ci_commit_branch_main_triggers_release_mode_returns_one(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CI_COMMIT_BRANCH", "main")
+        plugin_json, readme, skills_dir = self._write_unreleased_fixture(tmp_path, "- MON-177: dodaj walidator")
+        assert validator.main(self._argv(plugin_json, readme, skills_dir, release=False)) == 1
+
+    def test_ci_commit_branch_develop_does_not_trigger_release_mode(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CI_COMMIT_BRANCH", "develop")
+        plugin_json, readme, skills_dir = self._write_unreleased_fixture(tmp_path, "- MON-177: dodaj walidator")
+        assert validator.main(self._argv(plugin_json, readme, skills_dir, release=False)) == 0
+
+    def test_unreleased_entry_without_ticket_key_returns_one(self, tmp_path):
+        plugin_json, readme, skills_dir = self._write_unreleased_fixture(tmp_path, "- brak klucza ticketu")
+        assert validator.main(self._argv(plugin_json, readme, skills_dir, release=False)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -634,3 +824,152 @@ class TestMainCliSharedBlocks:
         assert validator.main(argv) == 1
         out = capsys.readouterr().out
         assert "slug" in out
+
+
+# ---------------------------------------------------------------------------
+# check_settings_env (MON-207)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCheckSettingsEnv:
+    """Kontrakt (ustalony przez Team Managera dla MON-207):
+
+    check_settings_env(settings_json: str, *, release: bool = False) -> list[str]
+
+    `settings_json` to TRESC pliku .claude/settings.json (jak
+    check_version_matches_changelog przyjmuje tresc plikow, nie sciezki).
+    release=False -> zawsze []: flagi sprintowe w env sa legalne poza
+    wydaniem (branch roboczy dyspozytora sprintu). release=True -> jeden
+    blad na kazdy klucz z {MONOLYNX_SPRINT_RUN, MONOLYNX_BASE_BRANCH,
+    MONOLYNX_MR_TARGET} obecny w obiekcie "env"; te trzy flagi wskazuja stan
+    lub branch sprintu roboczego i nie moga trafic do main. Brak "env" albo
+    brak zakazanych kluczy w nim -> []. Niepoprawny JSON w trybie release ->
+    jeden blad (nie wyjatek, w odroznieniu od ConfigError w
+    check_version_matches_changelog) - main() ma zglosic to jako naruszenie
+    (exit 1), nie jako blad konfiguracji (exit 2).
+    """
+
+    FORBIDDEN_KEYS = ("MONOLYNX_SPRINT_RUN", "MONOLYNX_BASE_BRANCH", "MONOLYNX_MR_TARGET")
+
+    def test_release_false_with_all_forbidden_keys_returns_empty(self):
+        settings_json = json.dumps({"env": {key: "1" for key in self.FORBIDDEN_KEYS}})
+        assert validator.check_settings_env(settings_json, release=False) == []
+
+    def test_default_release_is_false(self):
+        """Wywolanie bez kwarga release= zachowuje sie jak release=False."""
+        settings_json = json.dumps({"env": {"MONOLYNX_SPRINT_RUN": "1"}})
+        assert validator.check_settings_env(settings_json) == []
+
+    def test_release_false_with_invalid_json_returns_empty(self):
+        """release=False nie parsuje tresci - malformed JSON tez daje []."""
+        assert validator.check_settings_env("{not valid json", release=False) == []
+
+    @pytest.mark.parametrize("key", FORBIDDEN_KEYS)
+    def test_release_true_reports_each_forbidden_key(self, key):
+        settings_json = json.dumps({"env": {key: "1"}})
+        violations = validator.check_settings_env(settings_json, release=True)
+        assert len(violations) == 1
+        assert key in violations[0]
+
+    def test_release_true_reports_all_three_keys_present(self):
+        settings_json = json.dumps({"env": {key: "1" for key in self.FORBIDDEN_KEYS}})
+        violations = validator.check_settings_env(settings_json, release=True)
+        assert len(violations) == 3
+        for key in self.FORBIDDEN_KEYS:
+            assert any(key in v for v in violations)
+
+    def test_release_true_missing_env_key_returns_empty(self):
+        settings_json = json.dumps({"permissions": {"allow": []}})
+        assert validator.check_settings_env(settings_json, release=True) == []
+
+    def test_release_true_env_without_forbidden_keys_returns_empty(self):
+        settings_json = json.dumps({"env": {"MONOLYNX_PROJECT_SLUG": "monolynx", "ENABLE_TOOL_SEARCH": "true"}})
+        assert validator.check_settings_env(settings_json, release=True) == []
+
+    def test_release_true_invalid_json_returns_one_violation_not_exception(self):
+        violations = validator.check_settings_env("{not valid json", release=True)
+        assert len(violations) == 1
+
+
+# ---------------------------------------------------------------------------
+# main() - flaga --settings-json (MON-207)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMainCliSettingsEnv:
+    @staticmethod
+    def _argv(plugin_json, readme, skills_dir, settings_json, *, release=True):
+        argv = [
+            "--plugin-json",
+            str(plugin_json),
+            "--readme",
+            str(readme),
+            "--skills-dir",
+            str(skills_dir),
+            "--settings-json",
+            str(settings_json),
+        ]
+        if release:
+            argv.append("--release")
+        return argv
+
+    def test_missing_settings_json_file_no_violation(self, tmp_path):
+        """Brak pliku pod --settings-json nie jest bledem konfiguracji (main
+        dziala jak przed MON-207, kiedy tej flagi jeszcze nie bylo)."""
+        plugin_json, readme, skills_dir = TestMainCli._write_ok_fixture(tmp_path)
+        argv = self._argv(plugin_json, readme, skills_dir, tmp_path / "does-not-exist-settings.json", release=True)
+        assert validator.main(argv) == 0
+
+    def test_release_mode_with_forbidden_key_in_settings_json_returns_nonzero(self, tmp_path):
+        plugin_json, readme, skills_dir = TestMainCli._write_ok_fixture(tmp_path)
+        settings_json = tmp_path / "settings.json"
+        settings_json.write_text(json.dumps({"env": {"MONOLYNX_SPRINT_RUN": "1"}}), encoding="utf-8")
+        argv = self._argv(plugin_json, readme, skills_dir, settings_json, release=True)
+        assert validator.main(argv) != 0
+
+    def test_without_release_flag_forbidden_key_in_settings_json_no_violation(self, tmp_path):
+        """Bez --release (i bez CI_COMMIT_BRANCH=main) check_settings_env jest
+        gaszony tym samym `release` co check_version_matches_changelog."""
+        plugin_json, readme, skills_dir = TestMainCli._write_ok_fixture(tmp_path)
+        settings_json = tmp_path / "settings.json"
+        settings_json.write_text(json.dumps({"env": {"MONOLYNX_SPRINT_RUN": "1"}}), encoding="utf-8")
+        argv = self._argv(plugin_json, readme, skills_dir, settings_json, release=False)
+        assert validator.main(argv) == 0
+
+    def test_release_mode_with_clean_settings_json_returns_zero(self, tmp_path):
+        plugin_json, readme, skills_dir = TestMainCli._write_ok_fixture(tmp_path)
+        settings_json = tmp_path / "settings.json"
+        settings_json.write_text(json.dumps({"env": {"MONOLYNX_PROJECT_SLUG": "monolynx"}}), encoding="utf-8")
+        argv = self._argv(plugin_json, readme, skills_dir, settings_json, release=True)
+        assert validator.main(argv) == 0
+
+
+# ---------------------------------------------------------------------------
+# Kryterium akceptacji MON-207: tracked .claude/settings.json bez flag sprintu
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestTrackedSettingsJsonHasNoSprintOnlyEnv:
+    """`.claude/settings.json` jest sledzony przez git (w odroznieniu od
+    settings.local.json) i trafia razem z pluginem na main przy kazdym
+    merge'u sprintu. MONOLYNX_SPRINT_RUN=1 na main zmienia zachowanie
+    bash_guard poza sesja sprintu (deny zamiast ask), a MONOLYNX_BASE_BRANCH /
+    MONOLYNX_MR_TARGET wskazuja branch roboczy sprintu, nie main - zaden z tych
+    trzech kluczy nie powinien byc w wersji, ktora wchodzi do main.
+
+    Obraz `:dev` nie kopiuje `.claude/` (`.dockerignore`), wiec w kontenerze CI
+    ten plik nie istnieje -- test wtedy pomija sie ze skip, bo rzeczywista
+    kontrola dziala na pelnym checkoucie w jobie `plugin-consistency`
+    (`validate_plugin_consistency.py --release`), patrz
+    tests/unit/test_sync_agents.py:283 dla tego samego wzorca.
+    """
+
+    def test_tracked_settings_json_has_no_forbidden_env_keys(self):
+        settings_path = validator.ROOT / ".claude" / "settings.json"
+        if not settings_path.is_file():
+            pytest.skip(".claude/settings.json nie jest dostarczane do obrazu - pilnuje job plugin-consistency")
+        settings_json = settings_path.read_text(encoding="utf-8")
+        assert validator.check_settings_env(settings_json, release=True) == []

@@ -5,6 +5,21 @@ Zasady:
 - Subagent NIGDY nie robi git add/commit/push/reset --hard/rebase ani nie
   odpala lintu/testow - to nalezy do Team Managera (glowna sesja)
   i uzytkownika. Dotad byla to tylko prosba w prompcie; hook ja egzekwuje.
+  Wyjatek (MON-176, zawezony w MON-207 po code review MR !98): `ruff check
+  --no-fix` (goly `ruff check` bez tej flagi juz NIE wystarcza - `pyproject.
+  toml` moze ustawic `fix = true` i cicho naprawiac pliki) i `ruff format
+  --check` albo `--diff` sa odczytem, wiec TYLKO SUBAGENT moze je uruchomic
+  na wlasnych plikach bez posrednictwa Team Managera - takze przez `docker
+  compose exec [-T] app` i `docker compose ... run <flagi> app` (wariant
+  worktree; `-v`/`--volume` dozwolone tylko gdy host wskazuje doslownie na
+  korzen projektu, patrz `is_readonly_ruff`/`_docker_prefix_end`). Sesja
+  glowna dla tych samych komend wraca do zwyklej galezi TEST_LINT (ask bez
+  MONOLYNX_AUTOTEST, allow z nim) - nie dostaje juz automatycznego allow bez
+  pytania. `docker run <obraz> ruff ...` zniknal calkowicie z wyjatku -
+  dowolny obraz i dowolny bind mount to zbyt duza powierzchnia ataku. `ruff
+  check --fix`, `ruff format` bez `--check/--diff`, przekierowanie (`<`/`>`,
+  takze doklejone jak `>/etc/hosts` albo `1>plik`) i wszystko poza tym waskim
+  zestawem nadal spada do zwyklej galezi TEST_LINT ponizej.
 - Operacje destrukcyjne (rm -rf, force-push, curl|sh, zapis do ~/.ssh,
   DROP/TRUNCATE w SQL, mkfs/dd na urzadzenie): subagent -> deny,
   glowna sesja -> ask. Wyjatek `rm -rf` (MON-174): cel pod /tmp, pod
@@ -219,6 +234,160 @@ def is_tmp_cleanup(cmd: str) -> bool:
 
 if is_tmp_cleanup(cmd):
     sys.exit(0)
+
+_DOCKER_COMPOSE_PRE_SUBCOMMAND_FLAGS = ("-p", "--profile")
+_DOCKER_COMPOSE_RUN_FLAGS = ("--rm", "--no-deps", "-T")
+# Sprawdzane raz, globalnie w is_readonly_ruff, na WSZYSTKICH tokenach komendy
+# - niebezpieczny token moze stac w dowolnym miejscu (sciezka ruff, wartosc
+# -p/--profile/-v, nazwa obrazu docker), a przekierowanie zapisuje plik mimo
+# ze cala reszta komendy jest read-only.
+_RUFF_UNSAFE_ARG = re.compile(r"[$~*?\[{]")
+_RUFF_REDIRECT = re.compile(r"[<>]")
+
+
+def _ruff_check_readonly(rest: list) -> bool:
+    """MON-207: `ruff check` jest odczytem TYLKO z jawna flaga `--no-fix` -
+    `pyproject.toml` moze ustawic `fix = true`, wiec goly `ruff check` bez
+    zadnej flagi juz nie gwarantuje braku zapisu (code review MR !98). Poza
+    `--no-fix` zadna inna flaga nie jest dozwolona (nie tylko --fix/
+    --unsafe-fixes/--add-noqa, tez np. --output-file, --watch) - allow-lista
+    zamiast wyliczania pisowni (fail-closed jak is_tmp_cleanup/rm_target_policy).
+    $/~/glob juz odrzucone globalnie w is_readonly_ruff (kazdy token)."""
+    if "--no-fix" not in rest:
+        return False
+    return not any(arg.startswith("-") and arg != "--no-fix" for arg in rest)
+
+
+def _ruff_format_readonly(rest: list) -> bool:
+    """`ruff format` domyslnie zapisuje pliki - odczyt tylko z --check albo
+    --diff, bez zadnej innej flagi (ta sama allow-lista co check)."""
+    has_check_or_diff = False
+    for arg in rest:
+        if arg in ("--check", "--diff"):
+            has_check_or_diff = True
+            continue
+        if arg.startswith("-"):
+            return False
+    return has_check_or_diff
+
+
+def _ruff_invocation_readonly(ruff_args: list) -> bool:
+    if not ruff_args:
+        return False
+    subcommand, rest = ruff_args[0], ruff_args[1:]
+    if subcommand == "check":
+        return _ruff_check_readonly(rest)
+    if subcommand == "format":
+        return _ruff_format_readonly(rest)
+    return False
+
+
+def _docker_prefix_end(tokens: list, project_root: str) -> "int | None":
+    """Zwraca indeks pierwszego tokenu PO prefiksie `docker compose exec [-T]
+    app` / `docker compose ... run <flagi> app`, albo None gdy prefiks nie
+    jest jedna z tych dwoch waskich, jawnie wspieranych form (nieznana flaga,
+    inny subcommand, brak `app` na koncu). Fail-closed: nierozpoznany prefiks
+    nigdy nie jest odczytem.
+
+    MON-207 (code review MR !98): `docker run <flagi> <obraz>` zniknal z tej
+    funkcji calkowicie (patrz TestDockerRunNeverAllowedForRuff) - dowolny obraz
+    i dowolny bind mount to zbyt duza powierzchnia ataku, `docker compose run`
+    zostaje jedyna dozwolona forma kontenerowa. W segmencie `run` `-v`/
+    `--volume` jest dozwolone TYLKO gdy jego host-path (czesc przed pierwszym
+    `:`) jest DOSLOWNIE rowny `project_root` (patrz `_project_root` w wywolaniu
+    `is_readonly_ruff`) - inaczej subagent moglby zamontowac dowolny katalog
+    hosta pod `/app`. Kazda inna flaga w tym segmencie (w tym `--entrypoint`,
+    `--privileged`, `-u`, `--user`, w dowolnej formie `--flaga wartosc` albo
+    `--flaga=wartosc`) nigdy nie byla w allow-liscie `_DOCKER_COMPOSE_RUN_FLAGS`,
+    wiec konczy petle przez `break` i pada na niedopasowaniu do `app` ponizej -
+    ten sam mechanizm co dotychczas, bez potrzeby wyliczania ich osobno.
+    $/~/glob w wartosciach flag (-p/--profile) i w nazwie obrazu sprawdzone juz
+    w is_readonly_ruff, globalnie po wszystkich tokenach - nie tutaj.
+    """
+    if tokens[0] != "docker" or len(tokens) < 2 or tokens[1] != "compose":
+        return None
+    i = 2
+    while i < len(tokens) and tokens[i] in _DOCKER_COMPOSE_PRE_SUBCOMMAND_FLAGS:
+        if i + 1 >= len(tokens):
+            return None
+        i += 2
+    if i >= len(tokens):
+        return None
+    subcmd = tokens[i]
+    i += 1
+    if subcmd == "exec":
+        while i < len(tokens) and tokens[i] == "-T":
+            i += 1
+    elif subcmd == "run":
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok in _DOCKER_COMPOSE_RUN_FLAGS:
+                i += 1
+                continue
+            if tok in ("-v", "--volume"):
+                if i + 1 >= len(tokens):
+                    return None
+                host = tokens[i + 1].split(":", 1)[0]
+                if host != project_root:
+                    return None
+                i += 2
+                continue
+            break
+    else:
+        return None
+    if i >= len(tokens) or tokens[i] != "app":
+        return None
+    return i + 1
+
+
+def is_readonly_ruff(cmd: str, project_root: str) -> bool:
+    """MON-176, zawezone w MON-207 (code review MR !98): `ruff check --no-fix`
+    (jawna flaga - goly `ruff check` juz NIE wystarcza, patrz
+    `_ruff_check_readonly`) i `ruff format --check|--diff` sa odczytem, wiec
+    TYLKO SUBAGENT moze je uruchomic sam - takze przez `docker compose exec
+    [-T] app` i `docker compose [-p X] [--profile X] run <flagi> app` (wariant
+    worktree z toolchainu projektu, `exec` wchodzi do dzialajacego kontenera
+    glownego checkoutu; `run` wymaga, gdy uzywa `-v`/`--volume`, ze host-path
+    jest doslownie rowny `project_root`). `docker run <flagi> <obraz>` zniknal
+    calkowicie z allow-listy (patrz `_docker_prefix_end`). Sesja glowna
+    (wywolujaca ta funkcje jest odpowiedzialnoscia dzwoniacego - patrz uzycie
+    `is_subagent and is_readonly_ruff(...)` na koncu pliku) dla tych samych
+    komend wraca do zwyklej galezi TEST_LINT.
+
+    Komenda musi byc prosta (fail-closed jak is_tmp_cleanup): zadnego
+    `|`/`;`/`&`/backticka/nowej linii/`$(` (TMP_CLEANUP_COMPOUND) ani
+    przekierowania `<`/`>` (`_RUFF_REDIRECT` - `TMP_CLEANUP_COMPOUND` tego nie
+    lapie, `ruff check src/ > ~/.bashrc` nie ma zadnego z jej znakow), zeby
+    nie dac powloce wykonac lub zapisac czegos poza widocznym `ruff ...`.
+    Tokenizacja jak reszta pliku: `cmd.strip().split()`, bez shlex - token
+    z cudzyslowem (np. `sh -c "ruff ..."`) nigdy nie zrowna sie z `ruff`
+    i konczy sie False. $/~/glob sprawdzone RAZ, globalnie, w KAZDYM tokenie
+    calej komendy (nie tylko w argumentach `ruff` - tez `-p`/`--profile`
+    compose i wartosc `-v`), zeby nie trzeba bylo powtarzac tego sprawdzenia
+    w kazdym miejscu, gdzie token moze wystapic.
+
+    `project_root` (z `_project_root(hook_cwd)` w wywolaniu) jest jedynym
+    dozwolonym host-path dla `-v`/`--volume` w `docker compose run`.
+    """
+    stripped = cmd.strip()
+    if not stripped or TMP_CLEANUP_COMPOUND.search(stripped) or _RUFF_REDIRECT.search(stripped):
+        return False
+
+    tokens = stripped.split()
+    if any(_RUFF_UNSAFE_ARG.search(tok) for tok in tokens):
+        return False
+
+    if tokens[0] == "ruff":
+        return _ruff_invocation_readonly(tokens[1:])
+
+    if tokens[0] == "docker":
+        prefix_end = _docker_prefix_end(tokens, project_root)
+        if prefix_end is None or prefix_end >= len(tokens) or tokens[prefix_end] != "ruff":
+            return False
+        return _ruff_invocation_readonly(tokens[prefix_end + 1 :])
+
+    return False
+
 
 _RM_LONG_FLAG_NAMES = ("recursive", "force", "dir")
 _RM_SEGMENT_SPLIT = re.compile(r"[;&|`\n\r]+|\$\(")
@@ -450,6 +619,9 @@ if git_match:
             f"git {op} przepisuje/kasuje stan repo - wymaga potwierdzenia "
             "uzytkownika.",
         )
+    sys.exit(0)
+
+if is_subagent and is_readonly_ruff(cmd, _project_root(hook_cwd)):
     sys.exit(0)
 
 if TEST_LINT.search(cmd):

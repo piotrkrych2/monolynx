@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Walidator spojnosci pluginu Monolynx (skille, agenci, README, plugin.json).
 
-Sprawdza cztery rzeczy niezalezne od siebie:
+Sprawdza nastepujace rzeczy niezaleznie od siebie:
 - czy referencje "KROK X" / "FAZA X" / "sekcja N pipeline.md" w tresci skilli
   wskazuja istniejacy naglowek (martwe odnosniki po edycji skilli),
 - czy w plikach nie ma em-dash (U+2014) ani en-dash (U+2013) - konwencja
@@ -11,12 +11,24 @@ Sprawdza cztery rzeczy niezalezne od siebie:
   install_monolynx_skills, jest poprawna nazwa skilla do recznej instalacji -
   nie jest to komenda i nie jest zglaszane),
 - czy `version` w plugin.json zgadza sie z pierwszym wpisem `### X.Y.Z`
-  w sekcji "## Changelog" pliku README.md pluginu,
+  w sekcji "## Changelog" pliku README.md pluginu; ticket dopisuje swoj wpis
+  pod naglowkiem "### Unreleased" (MON-177) - na branchu roboczym to OK i
+  wersja jest porownywana z pierwszym wpisem numerycznym PO Unreleased, na
+  wydaniu (main albo `--release`) "### Unreleased" jako pierwszy wpis jest
+  bledem, bo wydanie wymaga numeru nadanego przez mergujacego,
+- czy wpisy pod "### Unreleased" maja klucz ticketu (`KLUCZ-123: opis`) -
+  pozwala jednoznacznie scalic wpisy z wielu MR-ow przy nadawaniu numeru,
 - czy kazdy skill z katalogu plugin/skills/<nazwa>/ jest wymieniony jako
   `/monolynx:<nazwa>` na kazdej stronie opisujacej skille (README pluginu,
   /monolynx:help, mcp-guide po zalogowaniu, agent-bootstrap.md,
   how-to-use-monolynx.md, teksty landingu w main.py) - nowy skill bez wpisu
-  na ktorejs z nich to naruszenie.
+  na ktorejs z nich to naruszenie,
+- czy tracked `.claude/settings.json` (domyslnie ROOT/.claude/settings.json,
+  jawna sciezka przez `--settings-json`) niesie w "env" flagi sesji sprintu
+  roboczego (MONOLYNX_SPRINT_RUN, MONOLYNX_BASE_BRANCH, MONOLYNX_MR_TARGET) -
+  w trybie wydania (`--release` / CI_COMMIT_BRANCH=main) to naruszenie, bo te
+  flagi opisuja stan/branch sprintu i nie maja sensu na main (MON-207); brak
+  pliku pod `--settings-json` nie jest bledem.
 
 Uzycie (bez argumentow - domyslnie skanuje plugin/ w korzeniu repo):
 
@@ -34,6 +46,10 @@ Uzycie z jawnymi sciezkami:
 Przy niestandardowym --skills-dir bez jawnych --page sprawdzenie pokrycia stron
 jest pomijane (testy walidatora pracuja na katalogach tymczasowych, nie na repo).
 
+Flaga `--release` (albo `CI_COMMIT_BRANCH=main` w srodowisku) wlacza tryb
+wydania: "### Unreleased" jako pierwszy wpis changeloga jest wtedy bledem
+zamiast dozwolonego stanu miedzy mergami.
+
 Kod wyjscia: 0 (OK), 1 (znaleziono naruszenia), 2 (blad konfiguracji - brakujacy
 plik/katalog albo README.md bez sekcji "## Changelog").
 """
@@ -42,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -51,6 +68,8 @@ DEFAULT_PLUGIN_JSON = ROOT / "plugin" / ".claude-plugin" / "plugin.json"
 DEFAULT_README = ROOT / "plugin" / "README.md"
 DEFAULT_SKILLS_DIR = ROOT / "plugin"
 DEFAULT_SKILLS_ROOT = ROOT / "plugin" / "skills"
+DEFAULT_SETTINGS_JSON = ROOT / ".claude" / "settings.json"
+_SETTINGS_ENV_FORBIDDEN_KEYS = ("MONOLYNX_SPRINT_RUN", "MONOLYNX_BASE_BRANCH", "MONOLYNX_MR_TARGET")
 DEFAULT_PAGES = (
     ROOT / "plugin" / "README.md",
     ROOT / "plugin" / "skills" / "help" / "SKILL.md",
@@ -67,6 +86,10 @@ _REF_SEKCJA_RE = re.compile(r"\bsekcja\s+(\d+)\s+`?pipeline\.md`?", re.IGNORECAS
 _COMMAND_NAME_RE = re.compile(r"/monolynx-[A-Za-z0-9-]+")
 _CHANGELOG_HEADING_RE = re.compile(r"^##\s*Changelog\s*$", re.MULTILINE)
 _CHANGELOG_ENTRY_RE = re.compile(r"^###\s*(\S+)", re.MULTILINE)
+_CHANGELOG_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_UNRELEASED_HEADING_RE = re.compile(r"^###\s*Unreleased\s*$", re.MULTILINE)
+_UNRELEASED_SECTION_END_RE = re.compile(r"^#{2,3}\s", re.MULTILINE)
+_UNRELEASED_ENTRY_VALID_RE = re.compile(r"^- [A-Z][A-Z0-9]*-\d+: ")
 
 _SHARED_NAME = r"[a-z0-9][a-z0-9-]*"
 _SHARED_OPEN_ONLY_RE = re.compile(rf"^\s*<!--\s*shared:({_SHARED_NAME})\s*-->\s*$")
@@ -142,12 +165,25 @@ def check_command_names(files: dict[str, str]) -> list[str]:
     return violations
 
 
-def check_version_matches_changelog(plugin_json: str, readme: str) -> list[str]:
+def check_version_matches_changelog(plugin_json: str, readme: str, *, release: bool = False) -> list[str]:
     """Porownaj `version` z plugin.json z pierwszym wpisem sekcji Changelog w README.
 
+    Zwykly przypadek: pierwszy wpis to numer wersji i musi byc rowny `version`.
+    Ticket dopisuje swoj wpis pod naglowkiem "### Unreleased" (MON-177) -
+    numer nadaje dopiero mergujacy do main:
+    - release=False (branch roboczy): "### Unreleased" jako pierwszy wpis jest
+      OK; `version` jest porownywany z PIERWSZYM wpisem numerycznym `### X.Y.Z`
+      PO nim. Brak takiego wpisu po Unreleased to blad konfiguracji.
+    - release=True (wydanie na main - patrz `--release` w main()): "### Unreleased"
+      jako pierwszy wpis jest naruszeniem, bez porownania wersji - wydanie
+      wymaga numeru.
+    Niezaleznie od release: "### Unreleased" obecny, ale NIE jako pierwszy
+    wpis, jest naruszeniem (dopisany pod zlym, juz istniejacym numerem).
+
     Podnosi ConfigError gdy plugin_json jest niepoprawnym JSON-em, brakuje pola
-    `version`, README nie ma sekcji '## Changelog' albo ta sekcja jest pusta -
-    to sa bledy konfiguracji, nie tresciowe naruszenia.
+    `version`, README nie ma sekcji '## Changelog', ta sekcja jest pusta, albo
+    "### Unreleased" (poza trybem release) nie ma po sobie zadnego wpisu
+    numerycznego - to sa bledy konfiguracji, nie tresciowe naruszenia.
     """
     try:
         data = json.loads(plugin_json)
@@ -162,14 +198,117 @@ def check_version_matches_changelog(plugin_json: str, readme: str) -> list[str]:
     if changelog_match is None:
         raise ConfigError("README.md nie ma sekcji '## Changelog'")
 
-    entry_match = _CHANGELOG_ENTRY_RE.search(readme[changelog_match.end() :])
-    if entry_match is None:
+    entries = list(_CHANGELOG_ENTRY_RE.finditer(readme[changelog_match.end() :]))
+    if not entries:
         raise ConfigError("sekcja '## Changelog' w README.md nie ma zadnego wpisu '### X.Y.Z'")
 
-    changelog_version = entry_match.group(1)
-    if changelog_version != version:
-        return [f"plugin.json: version '{version}' nie zgadza sie z pierwszym wpisem changeloga '{changelog_version}' w README.md"]
-    return []
+    first_entry = entries[0].group(1)
+    violations: list[str] = []
+
+    if first_entry == "Unreleased":
+        if release:
+            violations.append(
+                "plugin.json: pierwszy wpis changeloga w README.md to 'Unreleased' - to wydanie bez numeru, "
+                "zamien naglowek '### Unreleased' na numer wersji i ustaw go w plugin.json"
+            )
+        else:
+            next_version: str | None = next(
+                (entry.group(1) for entry in entries[1:] if _CHANGELOG_VERSION_RE.match(entry.group(1))),
+                None,
+            )
+            if next_version is None:
+                raise ConfigError("sekcja 'Unreleased' w README.md nie ma po sobie zadnego wpisu numerycznego '### X.Y.Z'")
+            if next_version != version:
+                violations.append(f"plugin.json: version '{version}' nie zgadza sie z pierwszym wpisem changeloga '{next_version}' w README.md")
+    else:
+        if first_entry != version:
+            violations.append(f"plugin.json: version '{version}' nie zgadza sie z pierwszym wpisem changeloga '{first_entry}' w README.md")
+        if any(entry.group(1) == "Unreleased" for entry in entries[1:]):
+            violations.append("README.md: sekcja 'Unreleased' w changelogu nie jest pierwszym wpisem - musi byc na samej gorze")
+
+    return violations
+
+
+def check_unreleased_entries(readme: str) -> list[str]:
+    """Sprawdz, czy kazdy wpis pod "### Unreleased" w README.md ma klucz ticketu.
+
+    Brak naglowka "### Unreleased" to nie blad - sekcja jest opcjonalna (branch
+    bez zadnej zmiany w changelogu). Sekcja to linie od naglowka do nastepnego
+    naglowka `##`/`###` albo konca pliku. Kazdy punkt najwyzszego poziomu
+    (linia zaczynajaca sie od "- " w kolumnie 0) musi pasowac do wzorca
+    "KLUCZ-123: opis" (`^- [A-Z][A-Z0-9]*-\\d+: `); wciete linie (kontynuacje)
+    i puste linie sa ignorowane. Sekcja bez zadnego punktu jest naruszeniem
+    (pusta sekcja).
+
+    WHY: klucz ticketu pozwala jednoznacznie scalic wpisy z wielu MR-ow, gdy
+    numer wersji nadaje dopiero mergujacy do main (MON-177).
+    """
+    heading_match = _UNRELEASED_HEADING_RE.search(readme)
+    if heading_match is None:
+        return []
+
+    lines = readme.splitlines()
+    section_start = readme.count("\n", 0, heading_match.start()) + 1
+
+    section_end = len(lines)
+    for index in range(section_start, len(lines)):
+        if _UNRELEASED_SECTION_END_RE.match(lines[index]):
+            section_end = index
+            break
+
+    violations: list[str] = []
+    has_entry = False
+    for index in range(section_start, section_end):
+        line = lines[index]
+        if not line.strip() or line.startswith((" ", "\t")):
+            continue
+        if line.startswith("- "):
+            has_entry = True
+            if not _UNRELEASED_ENTRY_VALID_RE.match(line):
+                violations.append(f"README.md:{index + 1}: wpis w sekcji Unreleased bez klucza ticketu (oczekiwano '- KLUCZ-123: opis'): {line}")
+
+    if not has_entry:
+        violations.append("README.md: sekcja 'Unreleased' jest pusta - dopisz co najmniej jeden wpis z kluczem ticketu")
+
+    return violations
+
+
+def check_settings_env(settings_json: str, *, release: bool = False) -> list[str]:
+    """Sprawdz, czy `.claude/settings.json` niesie flagi sesji sprintu roboczego do main.
+
+    MONOLYNX_SPRINT_RUN, MONOLYNX_BASE_BRANCH i MONOLYNX_MR_TARGET opisuja stan
+    albo branch biezacego sprintu (dyspozytor sesji w tle) - nie maja sensu
+    poza tym sprintem i nie moga trafic do main (MONOLYNX_SPRINT_RUN=1 na main
+    zmienia zachowanie bash_guard.py poza sesja sprintu - "ask" staje sie
+    "deny" wszedzie, patrz plugin/hooks/bash_guard.py).
+
+    release=False (branch roboczy sprintu): te flagi sa legalne, zawsze [].
+    release=True (wydanie/main): kazdy z trzech kluczy obecny w "env" to jedno
+    naruszenie z nazwa klucza. Brak "env" albo brak zakazanych kluczy -> [].
+    Niepoprawny JSON w trybie release -> jedno naruszenie (nie wyjatek, w
+    odroznieniu od ConfigError w check_version_matches_changelog - brak env
+    jest tresciowym naruszeniem, nie bledem konfiguracji walidatora).
+    """
+    if not release:
+        return []
+
+    try:
+        data = json.loads(settings_json)
+    except json.JSONDecodeError:
+        return ["settings.json: niepoprawny JSON - nie mozna sprawdzic sekcji 'env'"]
+
+    env = data.get("env")
+    if not isinstance(env, dict):
+        return []
+
+    violations: list[str] = []
+    for key in _SETTINGS_ENV_FORBIDDEN_KEYS:
+        if key in env:
+            violations.append(
+                f"settings.json: klucz '{key}' w sekcji 'env' opisuje stan/branch sprintu roboczego "
+                "i nie moze trafic do main - usun go przed wydaniem"
+            )
+    return violations
 
 
 def check_skill_coverage(skill_names: list[str], pages: dict[str, str]) -> list[str]:
@@ -336,7 +475,9 @@ def check_shared_blocks(files: dict[str, str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Walidator spojnosci pluginu Monolynx (referencje krokow, em-dash, nazwy komend, wersja/changelog).")
+    parser = argparse.ArgumentParser(
+        description="Walidator spojnosci pluginu Monolynx (referencje krokow, em-dash, nazwy komend, wersja/changelog, sekcja Unreleased)."
+    )
     parser.add_argument(
         "--plugin-json",
         type=Path,
@@ -368,6 +509,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="strona opisujaca skille, do sprawdzenia pokrycia (powtarzalne; domyslnie README, help, mcp_guide, agent-bootstrap, how-to, main.py)",
     )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="wydanie na main - '### Unreleased' jako pierwszy wpis w changelogu to blad (domyslnie wlaczane tez przez CI_COMMIT_BRANCH=main)",
+    )
+    parser.add_argument(
+        "--settings-json",
+        type=Path,
+        default=DEFAULT_SETTINGS_JSON,
+        help=f"sciezka do .claude/settings.json (domyslnie {DEFAULT_SETTINGS_JSON}); brak pliku nie jest bledem",
+    )
     args = parser.parse_args(argv)
 
     if not args.plugin_json.is_file():
@@ -391,12 +543,18 @@ def main(argv: list[str] | None = None) -> int:
     violations.extend(check_command_names(files))
     violations.extend(check_runtime_contract(files))
     violations.extend(check_shared_blocks(files))
+    violations.extend(check_unreleased_entries(readme_text))
 
+    release = args.release or os.environ.get("CI_COMMIT_BRANCH") == "main"
     try:
-        violations.extend(check_version_matches_changelog(plugin_json_text, readme_text))
+        violations.extend(check_version_matches_changelog(plugin_json_text, readme_text, release=release))
     except ConfigError as exc:
         print(f"BLAD KONFIGURACJI: {exc}", file=sys.stderr)
         return 2
+
+    if args.settings_json.is_file():
+        settings_json_text = args.settings_json.read_text(encoding="utf-8")
+        violations.extend(check_settings_env(settings_json_text, release=release))
 
     # Pokrycie stron: domyslne strony maja sens tylko dla prawdziwego repo;
     # walidator odpalony na katalogu tymczasowym bez --page pomija ten check.

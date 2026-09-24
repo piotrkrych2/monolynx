@@ -83,7 +83,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 - **`/monolynx:sprint-run`** - dyspozytor sprintu: jeden idempotentny tick startuje brakujące sesje `work` w tle (jeden ticket = jedna nazwana sesja `<slug>-<KEY>-<model>` i własny worktree), zbiera zakończone, raportuje czekające na człowieka. Sam nie pracuje nad ticketem; pętla jest na zewnątrz (`/loop 15m` albo skrypt `sprint_run.sh` z pluginu).
 - **`/monolynx:mr-queue`** - kolejka merge MR (glab) i PR (gh): jeden tick bierze pierwszy MR/PR z kolejki i robi jedno działanie w kolejności CI -> konflikt -> approve -> merge, a po merge czeka na zielone CI brancha docelowego. Bez argumentów sam układa kolejkę z otwartych MR/PR.
 - **`/monolynx:sprint-end`** - zamknij sprint jako pipeline `sprint_close`: INGEST logow pracy do wiki + LINT + retro korekt + domkniecie sprintu.
-- **`/monolynx:retro`** - retro korekt sprintu: uwagi krytyka, NEEDS WORK, STOP-y i eskalacje z ticketow oraz pamieci agentow, pogrupowane per ticket, z propozycja trwalej maszynerii (regula, rubryka, constitution).
+- **`/monolynx:retro`** - retro korekt sprintu: uwagi krytyka, NEEDS WORK, STOP-y i eskalacje z ticketow oraz pamieci agentow, pogrupowane per ticket, z propozycja trwalej maszynerii (regula, constitution, hook; wiersz rubryki tylko w repo pluginu, poza nim regula projektu albo ticket do projektu Monolynx).
 - **`/monolynx:search`** - semantyczne wyszukiwanie RAG w wiki projektu.
 - **`/monolynx:wiki-init`** - wlacz metode LLM Wiki dla projektu (strony systemowe + flaga).
 - **`/monolynx:wiki-ingest`** - zintegruj nowe zrodlo (plik, URL, wklejona tresc) z wiki, linkujac wikilinkami.

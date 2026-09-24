@@ -316,6 +316,19 @@ def _feature_scrum(lang: str) -> dict[str, Any]:
                     "title": "Tworzenie z błędów 500ki",
                     "desc": "Utwórz ticket bezpośrednio z błędu — opis wypełnia się automatycznie ze stacktrace i kontekstem requestu.",
                 },
+                {
+                    "title": "Zależności między ticketami (blocker)",
+                    "desc": (
+                        "Wskaż blokery ticketu w formularzu tworzenia lub edycji - z walidacją tego samego projektu, "
+                        'self-reference i cyklu bezpośredniego. Szczegół ticketu pokazuje sekcję "Zależności" z linkiem '
+                        "i statusem każdego blokera, a backlog i tablica Kanban oznaczają zablokowany ticket odznaką. "
+                        "Agent AI ustawia zależności przez create_ticket/update_ticket (blocked_by_ids), widoczne też "
+                        'w wyniku narzędzia MCP get_ticket, w sekcji "Zależności". '
+                        "Skille pluginu respektują blokery: work i work-simple zatrzymują się przy niezamkniętym blokerze, "
+                        "sprint-run nie startuje takiego ticketu, ticket-create zapisuje blokery strukturalnie, "
+                        "a next bierze je pod uwagę w rekomendacji."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz sprint", "desc": "Nadaj nazwę, cel, daty rozpoczęcia i zakończenia."},
@@ -398,6 +411,19 @@ def _feature_scrum(lang: str) -> dict[str, Any]:
             {
                 "title": "Create from 500s errors",
                 "desc": "Create a ticket directly from an error — description auto-fills with stacktrace and request context.",
+            },
+            {
+                "title": "Ticket dependencies (blockers)",
+                "desc": (
+                    "Pick blockers for a ticket right in the create or edit form - validated for same-project "
+                    'membership, self-reference, and direct cycles. Ticket detail shows a "Dependencies" section with '
+                    "a link and status for each blocker, and the backlog and Kanban board flag a blocked ticket with "
+                    "a badge. The AI agent sets dependencies via create_ticket/update_ticket (blocked_by_ids), also "
+                    'visible in the get_ticket MCP tool result under "Dependencies". '
+                    "Plugin skills respect blockers: work and work-simple stop on an open blocker, "
+                    "sprint-run does not start such a ticket, ticket-create stores blockers structurally, "
+                    "and next takes them into account when recommending."
+                ),
             },
         ],
         "steps": [

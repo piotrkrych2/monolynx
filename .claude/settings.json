@@ -1,9 +1,33 @@
 {
+  "autoMode": {
+    "allow": [
+      "Monolynx sprint-run dispatch: starting `MONOLYNX_SPRINT_RUN=1 claude --bg --worktree <KEY> --name monolynx-<KEY>-<model> --model <model> --permission-mode auto \"/monolynx:work <KEY>\"` from the Monolynx repository root is intended. The child session runs in auto mode, so every action still goes through the auto-mode classifier; this is not an agent without approvals."
+    ],
+    "environment": [
+      "$defaults",
+      "**Trusted repo**: Monolynx repository (this checkout), its worktrees and its GitLab remote piotrkrych/monolynx",
+      "**Key internal services**: monolynx.com (own product, MCP server and dashboard)"
+    ]
+  },
+  "remoteControlAtStartup": true,
+  "permissions": {
+    "allow": [
+      "Bash(claude --bg:*)",
+      "Bash(MONOLYNX_SPRINT_RUN=1 claude --bg:*)",
+      "Bash(claude agents:*)",
+      "Bash(claude logs:*)",
+      "Bash(claude rm:*)"
+    ]
+  },
   "enabledPlugins": {
     "monolynx@monolynx": true
   },
   "env": {
-    "MONOLYNX_PROJECT_SLUG": "monolynx"
+    "MONOLYNX_SPRINT_PERMISSION_MODE": "auto",
+    "MONOLYNX_PROJECT_SLUG": "monolynx",
+    "ENABLE_TOOL_SEARCH": "true",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "MONOLYNX_SPRINT_PARALLEL": "2"
   },
   "hooks": {
     "PreToolUse": [

@@ -26,7 +26,7 @@ W katalogu dostępnych narzędzi znajdź funkcje Monolynx potrzebne poniżej i s
 <!-- runtime:claude-code -->
 Opcjonalny wariant discovery w Claude Code:
 ```
-ToolSearch(query="+monolynx ticket sprint label board search", max_results=10)
+ToolSearch(query="+monolynx ticket create sprint label board search", max_results=10)
 ToolSearch(query="+monolynx wiki graph query node", max_results=10)
 ```
 <!-- /runtime:claude-code -->
@@ -130,6 +130,9 @@ Na podstawie wynikow z kroku 3d:
 
 - **Jesli znaleziono powiazane tickety** (nie duplikaty, ale zaleznosci):
   Zapisz je - wylistujesz w sekcji "Zaleznosci" nowego ticketu.
+  Rozdziel je na dwie grupy:
+  - **blokery** - tickety, ktore musza byc `done`, zanim nowy ticket da sie zaczac. Dla kazdego zapamietaj klucz ORAZ UUID (pole `id` z wyniku `search_tickets`; `key` to klucz) - UUID trafi do `blocked_by_ids` w KROK 7,
+  - **powiazane** - kontekst bez blokady startu (ten sam modul, podobny temat). Tylko w opisie, nie w `blocked_by_ids`.
 
 ---
 
@@ -179,7 +182,8 @@ Uwzglednij powiazania z grafu zaleznosci jesli sa istotne.]
 
 ## Zaleznosci
 
-- [KEY] [tytul] (status: [status]) - [dlaczego jest zaleznoscia]
+- Bloker: [KEY] [tytul] (status: [status]) - [dlaczego blokuje start]
+- [KEY] [tytul] (status: [status]) - [dlaczego jest powiazany, bez blokady]
 - [Modul/serwis] - [jesli zalezy od infrastruktury]
 - [Element z grafu] - [jesli graf wskazal powiazanie warte uwagi]
 - *Brak zaleznosci* - jesli zadanie jest niezalezne
@@ -202,7 +206,7 @@ Pokryj: funkcjonalnosc, MCP tools (jesli dotyczy), UI (jesli dotyczy), testy (je
    - sredni (3-5 plikow): **3-5 SP**
    - duzy (6+ plikow): **8-13 SP**
 3. **Zakres** - zawsze podawaj konkretne pliki/endpointy/modele z kroku 3b/3c. Agent realizujacy ticket musi wiedziec GDZIE w kodzie wprowadzac zmiany
-4. **Zaleznosci** - wymien KAZDY powiazany ticket z kroku 3d/4 + infrastrukture z kroku 3c + powiazania z grafu z kroku 3b
+4. **Zaleznosci** - wymien KAZDY powiazany ticket z kroku 3d/4 + infrastrukture z kroku 3c + powiazania z grafu z kroku 3b. Sekcja w opisie to uzasadnienie "dlaczego"; strukturalnie blokery zapisuje `blocked_by_ids` w KROK 7. Po utworzeniu `get_ticket` doklada do wyniku wlasna, generowana sekcje relacji `## Blokery (relacja)` (linie `Blokowany przez:` / `Blokuje:`, poza `## Description`). Sekcja `## Zaleznosci` w opisie to proza, `## Blokery (relacja)` to relacja - lista blokerow w opisie musi zgadzac sie z `blocked_by_ids`. W opisie pisz `Bloker:`, nie `Blokowany przez:`, zeby skille czytajace wynik `get_ticket` nie pomylily opisu z relacja
 5. **Kryteria akceptacji** - minimum 3, maksimum 10. Kazde weryfikowalne. Kryteria z opisu sa AUTOMATYCZNIE tworzone jako acceptance criteria (checkboxy) przez parametr `acceptance_criteria` w `create_ticket` - nie trzeba dodawac ich osobno
 6. **Nie ruszac** - granica jest czescia zadania, nie domyslem. Zrodla: sasiedztwo wezlow z grafu (3b) i pliki z raportu Explore (3c), ktorych zmiana NIE jest potrzebna; powiazane tickety w toku (3d) - ich pliki sa cudze; publiczne kontrakty (API, SDK, format eksportu). Kazda pozycja z powodem. "Brak ograniczen" wolno napisac tylko po sprawdzeniu tych zrodel, nie zamiast sprawdzenia
 7. **Odwracalnosc** - wypisz operacje, ktorych nie cofnie `git revert`: migracja z danymi, wysylka na zewnatrz, publikacja, zmiana schematu/API, kasowanie. To jest lista rzeczy, przed ktorymi agent realizujacy ticket ma sie zatrzymac i zapytac (`work` buduje z niej kontrakt autonomii). Zadanie bez takich operacji -> *brak*, ale napisane wprost
@@ -273,9 +277,14 @@ mcp__monolynx__create_ticket(
   sprint_id="<UUID sprintu lub null dla backlogu>",
   label_ids=[<lista UUID etykiet lub null>],
   acceptance_criteria=["<kryterium 1>", "<kryterium 2>", "<kryterium 3>", ...],
-  spec_page_id="<UUID strony wiki lub null>"
+  spec_page_id="<UUID strony wiki lub null>",
+  blocked_by_ids=["<UUID blokera 1>", "<UUID blokera 2>"]
 )
 ```
+
+`blocked_by_ids` - UUID ticketow-blokerow z KROK 4 (grupa "blokery"), tylko z tego samego projektu. Klucze `KEY-123` nie sa przyjmowane - podaj UUID. Ticket bez blokerow: pomin parametr. Nie dopisuj "powiazanych" - kazdy wpis tutaj zatrzymuje `work` / `work-simple` i `sprint-run`, dopoki bloker nie jest `done`.
+
+Jesli `create_ticket` odrzuci blokery (inny projekt, self-reference, cykl) - pokaz uzytkownikowi komunikat bledu, popraw liste i wywolaj ponownie; nie tworz ticketu bez blokerow po cichu.
 
 ### Po utworzeniu:
 
@@ -284,15 +293,7 @@ mcp__monolynx__create_ticket(
 > **Utworzono ticket [KEY] - [tytul]**
 > ID: `[UUID]`
 
-2. Jesli ticket ma zaleznosci od innych ticketow - dodaj komentarz:
-
-```
-mcp__monolynx__add_comment(
-  project_slug="<PROJECT-SLUG>",
-  ticket_id="<UUID>",
-  content="**Zaleznosci:**\n- [KEY1] - [krotki opis]\n- [KEY2] - [krotki opis]\n\nPrzed rozpoczeciem pracy upewnij sie, ze powyzsze tickety sa ukonczone lub w review."
-)
-```
+2. Jesli przekazano `blocked_by_ids` - wymien blokery w potwierdzeniu (`Blokowany przez: [KEY1], [KEY2]`). Osobny komentarz z zaleznosciami nie jest potrzebny - `get_ticket` pokazuje je w sekcji `## Blokery (relacja)`.
 
 ---
 
@@ -304,7 +305,7 @@ Jesli uzytkownik opisal wiekszy zakres prac (np. "caly modul X"), zaproponuj:
 
 Jesli tak - powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
 - Kazdy ticket jest samodzielny (moze byc zrealizowany niezaleznie)
-- Zaleznosci miedzy ticketami sa jawnie zapisane
+- Zaleznosci miedzy ticketami sa jawnie zapisane - tworz tickety w kolejnosci realizacji, a UUID wczesniejszego (pole `id` z odpowiedzi `create_ticket`) podawaj w `blocked_by_ids` kolejnego, jesli go blokuje
 - Story points w serii sumuja sie logicznie
 - Kolejnosc realizacji wynika z zaleznosci
 
@@ -322,3 +323,4 @@ Jesli tak - powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
 8. **Jezyk**: polski (terminy techniczne w oryginale)
 9. **Duplikaty sa blokerem** - jesli istnieje duplikat, ZAWSZE informuj uzytkownika przed utworzeniem
 10. **Po utworzeniu zawsze pokazuj KEY + UUID** - uzytkownik potrzebuje obu identyfikatorow
+11. **Blokery strukturalnie** - ticket, ktory blokuje start, idzie do `blocked_by_ids` (UUID), nie do komentarza. Lista blokerow w sekcji "Zaleznosci" opisu = lista `blocked_by_ids`

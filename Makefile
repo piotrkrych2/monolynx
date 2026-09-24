@@ -1,4 +1,4 @@
-.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings backfill-backlinks sync-graph sync-graph-dry clear-all-graphs sync-agents sync-agents-check
+.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings backfill-backlinks backfill-dependencies sync-graph sync-graph-dry clear-all-graphs sync-agents sync-agents-check
 
 # Zaladuj .env, zeby targety hostowe (sync-graph) widzialy MONOLYNX_MCP_TOKEN itd.
 -include .env
@@ -51,6 +51,10 @@ backfill-embeddings: ## Wygeneruj embeddingi dla istniejacych stron wiki
 
 backfill-backlinks: ## Wygeneruj backlinki dla istniejacych stron wiki
 	docker compose --profile dev exec app python -m monolynx.cli backfill-backlinks
+
+# --- Scrum ---
+backfill-dependencies: ## Zaproponuj/zapisz zaleznosci ze starych opisow/komentarzy (dry-run; ARGS=--apply zeby zapisac)
+	docker compose --profile dev exec app python -m monolynx.cli backfill-dependencies $(ARGS)
 
 # --- Skille pluginowe ---
 sync-skills: ## Skopiuj plugin/skills -> static/skills (zrodlo dla install_monolynx_skills)

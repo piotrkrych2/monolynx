@@ -114,10 +114,10 @@ Po zakonczeniu: `append_job_log` (np. _"Usunieto N stron logow pipeline sprintu"
 Krok jest **nieblokujacy i pomijalny**. Brak konfiguracji mutacji, brak narzedzia, odmowa
 uzytkownika, przekroczony budzet, blad toola wiki albo blad toola pipeline NIE wstrzymuja
 zamkniecia sprintu. W kazdym z tych przypadkow odnotowujesz powod JEDNA linia w
-podsumowaniu (4d) i przechodzisz do `retro` (4b).
+podsumowaniu (4e) i przechodzisz do `retro` (4b).
 
-Mutacja idzie PRZED `close-sprint` (4c), bo `complete_sprint` jest nieodwracalne, i PRZED
-`summary` (4d), zeby podsumowanie znalo wynik.
+Mutacja idzie PRZED `close-sprint` (4d), bo `complete_sprint` jest nieodwracalne, i PRZED
+`summary` (4e), zeby podsumowanie znalo wynik.
 
 **1. Odczytaj sekcje `## Mutacje` strony wiki `toolchain`**
 
@@ -142,7 +142,7 @@ Z sekcji `## Mutacje` odczytaj pola (etykiety sa kontraktem, nie parafrazuj ich)
 legalna dla kazdego pola.
 
 Kazda degradacja konczy krok tak samo: job `mutation-run` ze statusem `skipped` i powodem w
-`summary`, JEDNA linia w 4d i w podsumowaniu, przejscie do 4b. Sprint zamykasz normalnie.
+`summary`, JEDNA linia w 4e i w podsumowaniu, przejscie do 4b. Sprint zamykasz normalnie.
 
 | Sytuacja | Co pokazujesz uzytkownikowi |
 |---|---|
@@ -297,7 +297,7 @@ reguly / wiersze rubryki."_ z opcjami **Tak** / **Nie, pomin**.
 `agent_type="skill"`), uruchom skill `monolynx:retro` (przez narzedzie `Skill`)
 z nazwa zamykanego sprintu. Retro czyta komentarze ticketow i pamiec agentow,
 nie strony logow pipeline - dlatego moze isc po `wiki-clean` (3c). Musi jednak
-isc PRZED `close-sprint` (4c): `complete_sprint` wypisuje niedokonczone tickety
+isc PRZED `close-sprint` (4d): `complete_sprint` wypisuje niedokonczone tickety
 ze sprintu (`sprint_id = null`, status `backlog`), a to wlasnie one nosza
 eskalacje, STOP i "ponizej progu" - po zamknieciu `list_tickets(sprint_id=...)`
 juz ich nie zwroci. Po zakonczeniu: `append_job_log` (ile korekt zebrano,
@@ -305,7 +305,175 @@ ile regul zapisano) i `update_pipeline_job(status="success"|"failed")`.
 
 **Nie** -> pomin bez joba (albo job `skipped`).
 
-### 4c. Job `close-sprint` - REALNE zamkniecie sprintu
+### 4c. Job `version-bump` - numer wydania pluginu (warunkowy, PRZED zamknieciem)
+
+Tickety sprintu dopisuja swoje wpisy changelogu pod `### Unreleased` i nie zmieniaja
+numeru wersji (regula `.claude/rules/plugin-version-bump.md`, blok `changelog-unreleased`
+w `work` i `work-simple`). Numer nadaje mergujacy: czlowiek przy merge do main albo ten
+job. Krok jest **nieblokujacy**: kazdy powod pominiecia albo blad konczy sie JEDNA linia w
+podsumowaniu (4e) i przejsciem do `close-sprint` (4d). Idzie przed `close-sprint`, zeby
+podsumowanie znalo numer wydania.
+
+**1. Odczytaj konfiguracje**
+
+```bash
+echo "AUTOCOMMIT=${MONOLYNX_AUTOCOMMIT:-false} AUTOPUSH=${MONOLYNX_AUTOPUSH:-false} AUTOMR=${MONOLYNX_AUTOMR:-false} SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0} MR_TARGET=${MONOLYNX_MR_TARGET:-}"
+```
+
+**2. Ustal branch docelowy i warunek**
+
+Branch docelowy (`<branch_docelowy>`) ustal jak w `work/commit-mr.md`, kazda komende
+uruchamiajac OSOBNO i wpisujac wynik do kolejnych komend jako literal (bez `$VAR` i
+`$(...)`):
+
+a) `MR_TARGET` z linii konfiguracji niepusta -> ta wartosc.
+b) `git symbolic-ref refs/remotes/origin/HEAD` -> wynik `refs/remotes/origin/<nazwa>`,
+   bierzesz `<nazwa>`. Blad albo pusty wynik -> c).
+c) `glab repo view -F json --jq .default_branch`.
+d) Nic nie dalo wyniku -> NIE zgaduj `main`: job `skipped`, linia _"version-bump
+   pominiety: nie ustalono brancha docelowego (ustaw MONOLYNX_MR_TARGET)"_.
+
+Stan czytasz z originu, nie z lokalnego checkoutu (moze byc nieaktualny albo na innym
+branchu):
+
+```bash
+git fetch origin <branch_docelowy>
+git show origin/<branch_docelowy>:plugin/.claude-plugin/plugin.json
+git show origin/<branch_docelowy>:plugin/README.md
+```
+
+Warunek wykonania: oba pliki istnieja, README ma sekcje `## Changelog`, a jej pierwszym
+wpisem `### ` jest `### Unreleased`. Brak ktoregokolwiek pliku (projekt bez pluginu),
+brak sekcji albo pierwszy wpis numeryczny (nic do wydania) -> job `skipped` bez pytania,
+jedna linia _"version-bump pominiety: <powod>"_.
+
+Zapamietaj `OSTATNIA` = pierwszy naglowek numeryczny `### X.Y.Z` pod `### Unreleased`
+(ostatnio wydana wersja; rowna `version` w `plugin.json`) oraz tresc punktow pod
+`### Unreleased` (kazdy zaczyna sie od klucza ticketu).
+
+Na branchu docelowym `main` taki stan oznacza, ze ktos zmergowal ticket bez nadania
+numeru: pipeline `plugin-consistency` na `main` jest czerwony (tryb wydania) az do merge
+MR-a z tego joba. Napisz to wprost w propozycji.
+
+**3. Zaproponuj numer: minor albo patch**
+
+Commit ostatniego wydania znajdz po zmianie wersji w manifescie:
+
+```bash
+git log -1 --format=%H -S'"version": "<OSTATNIA>"' origin/<branch_docelowy> -- plugin/.claude-plugin/plugin.json
+git diff --name-status <commit_wydania> origin/<branch_docelowy> -- plugin/skills plugin/hooks plugin/scripts
+```
+
+- **minor** (`X.(Y+1).0`) - od ostatniego wydania doszedl nowy skill
+  (`A` na `plugin/skills/*/SKILL.md`), nowy hook (`A` w `plugin/hooks/`) albo nowy
+  skrypt (`A` w `plugin/scripts/`); to samo, gdy punkt pod `### Unreleased` mowi
+  wprost o nowym skillu, hooku albo skrypcie.
+- **patch** (`X.Y.(Z+1)`) - w pozostalych przypadkach (poprawki i zmiany tresci
+  istniejacych skilli).
+- `git log` nie znalazl commita wydania -> ocen tylko z tresci punktow pod
+  `### Unreleased` i zaznacz to w uzasadnieniu.
+
+Pokaz propozycje: numer, rodzaj (minor/patch), uzasadnienie (lista dodanych plikow z
+diffu albo cytat punktu changelogu) i klucze ticketow z `### Unreleased`.
+
+**4. Zgoda**
+
+- **Interaktywnie** (`SPRINT_RUN` rozne od `1`): zapytaj uzytkownika (`narzędzie pytań dostępne w bieżącym trybie lub wiadomość`):
+  _"Nadac wydaniu numer `<X.Y.Z>` (<minor|patch>: <uzasadnienie>)?"_ z opcjami **Tak** /
+  **Inny numer** / **Nie, pomin**. **Inny numer** -> przyjmij podany numer, jesli jest
+  wyzszy od `OSTATNIA`; inaczej zapytaj ponownie. **Nie** -> job `skipped`, summary
+  _"odmowa uzytkownika"_, jedna linia w podsumowaniu, przejdz do 4d.
+- **Sesja w tle** (`SPRINT_RUN=1`, `sprint_run.sh --close`): nie pytasz, bo nikt nie
+  odpowie. Bierzesz numer z punktu 3 i idziesz dalej w granicach flag z punktu 1. Wynik
+  jest odwracalny - nic nie trafia do brancha docelowego bez merge MR-a przez czlowieka -
+  wiec to nie jest decyzja, ktora wymaga `SPRINT-RUN STOP`. W opisie MR i w podsumowaniu
+  zaznacz _"numer wg reguly minor/patch, bez potwierdzenia"_.
+
+**5. Wykonanie**
+
+```
+mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<pipeline_id>", step="wrap-up", name="version-bump", agent_type="system")
+mcp__monolynx__update_pipeline_job(project_slug="<PROJECT-SLUG>", job_id="<job_id>", status="running")
+```
+
+Checkout uzytkownika zostaje nietkniety: prace robisz w osobnym worktree. Katalog ustal
+komenda `git rev-parse --git-common-dir` i wpisz literalnie
+`<sciezka worktree>` = `<wynik>/monolynx/wt-version-bump` (sciezka bezwzgledna).
+
+Najpierw sprawdz, czy branch nie istnieje na originie:
+`git ls-remote --heads origin release/plugin-<X.Y.Z>` (niepusty wynik = istnieje;
+lokalny duplikat zglosi sam `git worktree add -b`). Branch `release/plugin-<X.Y.Z>`
+juz istnieje (lokalnie albo na originie) -> NIE nadpisuj go: job `failed`, linia
+_"version-bump: branch release/plugin-<X.Y.Z> juz istnieje - sprawdz otwarty MR"_,
+przejdz do 4d. Inaczej:
+
+```bash
+git worktree add -b release/plugin-<X.Y.Z> <sciezka worktree> origin/<branch_docelowy>
+```
+
+W worktree zmien DOKLADNIE trzy miejsca (plus ewentualnie `.claude/settings.json`,
+patrz nizej), nic wiecej:
+
+- `plugin/README.md`: naglowek `### Unreleased` -> `### <X.Y.Z>`; tresc punktow bez
+  zmian,
+- `plugin/.claude-plugin/plugin.json`: `"version": "<X.Y.Z>"`,
+- `plugin/.codex-plugin/plugin.json`: `"version": "<X.Y.Z>"` (test dystrybucji
+  wymaga rownosci obu manifestow).
+
+Potem sprawdz sledzony `<sciezka worktree>/.claude/settings.json` (MON-207). Branch
+sprintu mogl dostac w polu `env` flagi dyspozytora, ktore nie moga trafic na `main`:
+`MONOLYNX_SPRINT_RUN`, `MONOLYNX_BASE_BRANCH`, `MONOLYNX_MR_TARGET` oraz flagi AUTO*
+ustawione na czas sprintu. Porownaj pole `env` z wersja z `main`
+(`git -C <sciezka worktree> show origin/main:.claude/settings.json`). Jest ktoras z tych
+flag, ktorej nie ma na `main` -> przywroc `env` do stanu z `main` (usun te klucze, reszty
+pliku nie ruszaj) i dopisz `.claude/settings.json` jako czwarty plik tego commita. Brak
+roznic -> plik zostaje bez zmian. `validate_plugin_consistency.py --release` odrzuca
+`.claude/settings.json` z `MONOLYNX_SPRINT_RUN`, `MONOLYNX_BASE_BRANCH` albo
+`MONOLYNX_MR_TARGET` w `env`, wiec bez tego kroku walidator nizej bedzie czerwony.
+
+Sprawdz walidatorem w trybie wydania, z plikami worktree:
+
+```bash
+python3 <sciezka worktree>/scripts/validate_plugin_consistency.py --release
+```
+
+Czerwony -> NIE commituj: job `failed` z pierwsza linia bledu w `summary`, usun
+worktree i branch (`git worktree remove --force <sciezka worktree>` - `--force`, bo
+worktree ma twoje niezacommitowane zmiany; potem `git branch -D release/plugin-<X.Y.Z>`),
+jedna linia w podsumowaniu, przejdz do 4d. Walidator w trybie wydania odrzuca
+`### Unreleased` jako pierwszy wpis, punkty bez klucza ticketu oraz flagi sprintu
+w `env` sledzonego `.claude/settings.json` - czerwony wynik znaczy zwykle, ze wpis
+ktoregos ticketu trzeba poprawic recznie.
+
+Zielony -> commit, push i MR wg flag, na wzor `work/commit-mr.md` (wszystkie komendy
+z `git -C <sciezka worktree>`):
+
+- **`AUTOCOMMIT=false`** (domyslnie) - niczego nie commitujesz. Worktree zostaje ze
+  zmianami, a uzytkownik dostaje gotowe komendy:
+
+  ```bash
+  git -C <sciezka worktree> add plugin/README.md plugin/.claude-plugin/plugin.json plugin/.codex-plugin/plugin.json
+  git -C <sciezka worktree> add .claude/settings.json   # tylko gdy przywrociles env z main
+  git -C <sciezka worktree> commit -m "Plugin <X.Y.Z>: wydanie <klucze ticketow z Unreleased>"
+  git -C <sciezka worktree> push -u origin release/plugin-<X.Y.Z>
+  glab mr create --fill --yes --source-branch release/plugin-<X.Y.Z> --target-branch <branch_docelowy>
+  git worktree remove <sciezka worktree>
+  ```
+
+- **`AUTOCOMMIT=true`** - jeden commit z trzema plikami, z czterema, gdy przywrociles
+  `env` w `.claude/settings.json` (imienny `git add`, nigdy `-A`).
+- **`AUTOPUSH=true`** - `git -C <sciezka worktree> push -u origin release/plugin-<X.Y.Z>`,
+  tylko gdy commit faktycznie sie odbyl.
+- **`AUTOMR=true`** - po faktycznym pushu `glab mr create` jak wyzej; URL zapamietaj do
+  podsumowania. Blad albo brak `glab` -> wypisz komende, nie powtarzaj.
+- Po pushu usun worktree (`git worktree remove <sciezka worktree>`); bez pushu zostaw go
+  i podaj sciezke w podsumowaniu.
+
+Po zakonczeniu: `append_job_log` (numer, rodzaj i uzasadnienie, klucze ticketow, wynik
+walidatora, commit/push/MR albo wypisane komendy), nastepnie
+`update_pipeline_job(status="success"|"failed"|"skipped", summary="<np. 'Plugin 1.22.0 (minor: nowy skill X), MR !123'>")`.
+
+### 4d. Job `close-sprint` - REALNE zamkniecie sprintu
 
 > **UWAGA**: `complete_sprint` to nieodwracalne zamkniecie sprintu. **Niedokonczone tickety wracaja do backlogu.** Zanim wywolasz tool, ostrzez uzytkownika i poczekaj na potwierdzenie.
 
@@ -327,7 +495,7 @@ mcp__monolynx__complete_sprint(project_slug="<PROJECT-SLUG>", sprint_id="<sprint
 
 Po zakonczeniu: `append_job_log` (co domkniete, ile ticketow wrocilo do backlogu jesli wiesz), nastepnie `update_pipeline_job(status="success"|"failed")`.
 
-### 4d. Job `summary` - podsumowanie sprintu
+### 4e. Job `summary` - podsumowanie sprintu
 
 ```
 mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<pipeline_id>", step="wrap-up", name="summary", agent_type="system")
@@ -342,7 +510,9 @@ Zbierz ladne podsumowanie tego, co zdzialo sie w sprincie:
 - wynik INGEST (ile stron wiki utworzono/zaktualizowano),
 - wynik LINT (ile problemow znaleziono/naprawiono, co pozostaje do rozstrzygniecia),
 - ile stron logow pipeline wyczyszczono (`N` z kroku 3c),
-- wynik RETRO, jesli uruchomione (ile korekt, ile regul zapisano, co zostalo do decyzji).
+- wynik RETRO, jesli uruchomione (ile korekt, ile regul zapisano, co zostalo do decyzji),
+- **wydanie pluginu** (4c): numer, minor/patch z uzasadnieniem i MR albo wypisane
+  komendy - albo jedna linia `version-bump pominiety: <powod>`.
 
 Zapisz je przez `append_job_log`, nastepnie `update_pipeline_job(status="success")`.
 
@@ -369,6 +539,9 @@ Na koniec pokaz:
   spadek) - albo jedna linia `pominiete: <powod>`,
 - wynik INGEST i LINT (krotko),
 - wynik RETRO (jesli uruchomione) - zapisane reguly i to, co czeka na decyzje,
+- wydanie pluginu: numer i MR (albo komendy do wykonania i sciezka worktree przy
+  `AUTOCOMMIT=false`), w sesji w tle z dopiskiem _"numer wg reguly minor/patch, bez
+  potwierdzenia"_ - albo jedna linia `version-bump pominiety: <powod>`,
 - ile stron logow pipeline wyczyszczono,
 - przypomnienie, ze niedokonczone tickety wrocily do backlogu,
 - (jesli pipeline raportowany) link/info, ze przebieg widac w zakladce "Pipelines".
@@ -378,10 +551,11 @@ Na koniec pokaz:
 ## Wazne zasady
 
 1. **Pipeline jest best-effort, nie gate** - blad ktoregokolwiek toola pipeline (`create_pipeline`, joby, `append_job_log`, `finish_pipeline`) NIGDY nie przerywa zamkniecia sprintu. Odnotuj i kontynuuj. Gdy toole pipeline sa niedostepne (starszy serwer MCP), pomin CALA instrumentacje i wykonaj samo `complete_sprint`.
-2. **complete_sprint to realne zamkniecie** - niedokonczone tickety wracaja do backlogu. ZAWSZE potwierdz z uzytkownikiem przed jobem `close-sprint` (4c).
+2. **complete_sprint to realne zamkniecie** - niedokonczone tickety wracaja do backlogu. ZAWSZE potwierdz z uzytkownikiem przed jobem `close-sprint` (4d).
 3. **Joby step `wiki-update` wykonuj sekwencyjnie** - ingest, potem lint, potem clean (clean dopiero po zaingestowaniu wiedzy).
 4. **Nigdy nie czysc logow po nieudanym ingescie** - `wiki-clean` wolno wykonac TYLKO gdy `wiki-ingest` sie powiodl. Inaczej skasujesz jedyne zrodlo wiedzy ze sprintu.
 5. **Praca wiki jest niezalezna od pipeline** - INGEST, LINT, CLEAN, przebieg mutacyjny i `complete_sprint` dzialaja nawet bez modulu Pipelines. Niedostepnosc pipeline degraduje tylko raportowanie, nie zakres pracy domkniecia.
-6. **Mutacje nie blokuja zamkniecia sprintu** - krok 4a jest nieblokujacy i pomijalny: brak narzedzia, brak konfiguracji, odmowa uzytkownika, przekroczony budzet i blad toola koncza sie jedna linia w podsumowaniu, nigdy wstrzymaniem 4b-4d. Przebieg **proponujesz**, nie odpalasz z automatu. Mutation score jest trendem, nie bramka. Pole `baseline` w `toolchain` jest JEDNO (agregat modulow rdzenia) i dziala jak zapadka - rosnie po lepszym wyniku, nigdy nie jest obnizane automatycznie.
-7. **Brak aktywnego/nieznaleziony sprint** - czytelny komunikat PL i przerwanie, bez zgadywania.
-8. **Jezyk**: polski (terminy techniczne i nazwy narzedzi w oryginale).
+6. **Mutacje nie blokuja zamkniecia sprintu** - krok 4a jest nieblokujacy i pomijalny: brak narzedzia, brak konfiguracji, odmowa uzytkownika, przekroczony budzet i blad toola koncza sie jedna linia w podsumowaniu, nigdy wstrzymaniem 4b-4e. Przebieg **proponujesz**, nie odpalasz z automatu. Mutation score jest trendem, nie bramka. Pole `baseline` w `toolchain` jest JEDNO (agregat modulow rdzenia) i dziala jak zapadka - rosnie po lepszym wyniku, nigdy nie jest obnizane automatycznie.
+7. **Numer wydania nadaje sprint-end, nie ticket** - job `version-bump` (4c) zamienia `### Unreleased` na `### X.Y.Z` i ustawia ten sam numer w obu manifestach (`plugin/.claude-plugin/plugin.json`, `plugin/.codex-plugin/plugin.json`) jednym commitem na osobnym branchu `release/plugin-X.Y.Z`, w osobnym worktree, po zielonym `validate_plugin_consistency.py --release`. W tym samym commicie przywraca `env` sledzonego `.claude/settings.json` do stanu z `main`, jesli branch sprintu dodal tam `MONOLYNX_SPRINT_RUN`, `MONOLYNX_BASE_BRANCH`, `MONOLYNX_MR_TARGET` albo flagi AUTO* na czas sprintu. Commit, push i MR tylko wg `MONOLYNX_AUTOCOMMIT`/`AUTOPUSH`/`AUTOMR`. Krok jest nieblokujacy i warunkowy: projekt bez pluginu albo bez `### Unreleased` na branchu docelowym to `skipped`, nie blad.
+8. **Brak aktywnego/nieznaleziony sprint** - czytelny komunikat PL i przerwanie, bez zgadywania.
+9. **Jezyk**: polski (terminy techniczne i nazwy narzedzi w oryginale).

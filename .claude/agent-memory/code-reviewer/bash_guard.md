@@ -40,3 +40,12 @@ Znane granice (stan po MON-147):
   w pyproject, wiec dlugie linie parametrize w `tests/unit/test_bash_guard.py` nie sa naruszeniem.
 - Testy hooka: subprocess ze stdin (`run_hook`), helpery `assert_allow/deny/ask`, `SUBAGENT` vs `MAIN_SESSION`.
   Uwaga: `MAIN_SESSION` to pusty dict przekazywany jako `env_extra` - mylaca nazwa, znana od MON-144.
+
+## `is_readonly_ruff` (MON-176)
+Allow przed `TEST_LINT` dla `ruff check` bez flag / `ruff format --check|--diff` (+ prefiksy docker).
+Reuzywa `TMP_CLEANUP_COMPOUND` (`[|;&`\n\r]|\$\(`), ktory NIE zawiera `<`/`>` -> przekierowanie
+`ruff check x > /abs/plik` przechodzi jako "odczyt". Kazda nowa allow-lista na tym regexie: sprawdz redirect
+i czy `$`/`~`/glob sa sprawdzane takze w wartosciach flag prefiksu (`-p`, `--profile`, obraz docker run).
+Sondowanie bez lapania wlasnego hooka (samo slowo "ruff" w komendzie Bash = deny dla subagenta, nawet w grep):
+komendy w pliku .py w `$CLAUDE_JOB_DIR/tmp`, skrypt podaje payload JSON na stdin `python3 plugin/hooks/bash_guard.py`.
+Kolumna "main" zalezy od MONOLYNX_AUTOTEST w srodowisku recenzenta - ask weryfikuj testami, nie sonda.

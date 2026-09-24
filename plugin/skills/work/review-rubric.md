@@ -24,6 +24,8 @@ decyzja jest zawsze jednoznaczna (85 zalicza, 80 nie).
 | Over-engineering | -10 | abstrakcja bez 3 realnych uzyc, przedwczesny feature flag |
 | Niezgodnosc z konwencja sasiedniego pliku | -5 | nazewnictwo, gestosc komentarzy, idiom |
 | Komentarz opisujacy CO robi kod | -5 | komentarze tylko o WHY |
+| Test przechodzi na mutancie chronionego kodu (usunięty ORDER BY/filtr, odwrócona wartość domyślna, asercja na echo wejścia) | -20 | krytyk podaje mutanta, który przeżył; patrz `.claude/rules/test-kills-mutant.md` |
+
 
 ### Wiersze TYLKO gdy TRYB = defekt
 
