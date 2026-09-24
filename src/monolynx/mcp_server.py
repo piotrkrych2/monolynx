@@ -76,6 +76,7 @@ from monolynx.schemas.time_tracking import TimeTrackingEntryResponse, TimeTracki
 from monolynx.schemas.work_plan import WorkPlanEntryResponse
 from monolynx.services import graph as graph_service
 from monolynx.services import pipelines as pipelines_service
+from monolynx.services import ticket_dependencies
 from monolynx.services import work_plan as work_plan_service
 from monolynx.services.activity import get_activity_log as svc_get_activity_log
 from monolynx.services.burndown import get_burndown_data as svc_get_burndown_data
@@ -415,6 +416,10 @@ def _format_ticket_detail(
         ## Attachments (2)
         - report.pdf (application/pdf, 1.2 MB)
 
+        ## Blokery (relacja)
+        Blokowany przez: MON-5 | todo | Tytul blokera
+        Blokuje: MON-9 | in_progress | Tytul blokowanego
+
         ## Comments (3)
         [2026-03-11 jan@example.com] Tresc komentarza
     """
@@ -468,6 +473,18 @@ def _format_ticket_detail(
             checkbox = "[x]" if ac.is_completed else "[ ]"
             ai_str = " (AI)" if ac.created_via_ai else ""
             lines.append(f"{checkbox} {ac.description}{ai_str}")
+
+    blocked_by = list(ticket.blocked_by) if ticket.blocked_by else []
+    blocking = list(ticket.blocking) if ticket.blocking else []
+    if blocked_by or blocking:
+        lines.append("")
+        lines.append("## Blokery (relacja)")
+        for blocker in blocked_by:
+            blocker_key = f"{project_code}-{blocker.number}"
+            lines.append(f"Blokowany przez: {blocker_key} | {blocker.status} | {blocker.title}")
+        for blocked in blocking:
+            blocked_key = f"{project_code}-{blocked.number}"
+            lines.append(f"Blokuje: {blocked_key} | {blocked.status} | {blocked.title}")
 
     comments = list(ticket.comments) if ticket.comments else []
     if comments:
@@ -2373,6 +2390,8 @@ async def get_ticket(
                 selectinload(Ticket.attachments),
                 selectinload(Ticket.acceptance_criteria),
                 selectinload(Ticket.settlements),
+                selectinload(Ticket.blocked_by),
+                selectinload(Ticket.blocking),
             )
             .where(
                 Ticket.id == resolved_id,
@@ -2413,6 +2432,7 @@ async def create_ticket(
     label_ids: list[str] | None = None,
     acceptance_criteria: list[str] | None = None,
     spec_page_id: str | None = None,
+    blocked_by_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Utworz nowy ticket w projekcie. Oznaczany jako created_via_ai=True.
 
@@ -2420,6 +2440,7 @@ async def create_ticket(
     label_ids: opcjonalna lista UUID etykiet do przypisania
     acceptance_criteria: opcjonalna lista opisów kryteriów akceptacji — tworzone razem z ticketem, created_via_ai=True
     spec_page_id: opcjonalny UUID strony wiki jako specyfikacja techniczna ticketa
+    blocked_by_ids: opcjonalna lista UUID ticketow-blokerow (musza byc w tym samym projekcie, bez self-reference i cyklu bezposredniego)
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -2434,6 +2455,15 @@ async def create_ticket(
             parsed_due_date = date.fromisoformat(due_date)
         except ValueError as e:
             raise ValueError(f"Nieprawidlowy format daty due_date: '{due_date}'. Uzyj YYYY-MM-DD") from e
+
+    parsed_blocked_by_ids: list[uuid.UUID] | None = None
+    if blocked_by_ids is not None:
+        parsed_blocked_by_ids = []
+        for bid in blocked_by_ids:
+            try:
+                parsed_blocked_by_ids.append(uuid.UUID(bid))
+            except ValueError as e:
+                raise ValueError(f"Nieprawidlowy UUID blokera: '{bid}'") from e
 
     async with async_session_factory() as db:
         assignee_id = None
@@ -2495,6 +2525,9 @@ async def create_ticket(
                     )
                     criteria_count += 1
 
+        if parsed_blocked_by_ids:
+            await ticket_dependencies.set_blockers(db, ticket, parsed_blocked_by_ids)
+
         await db.commit()
         await db.refresh(ticket)
 
@@ -2525,6 +2558,7 @@ async def update_ticket(
     assignee_email: str | None = None,
     due_date: str | None = None,
     label_ids: list[str] | None = None,
+    blocked_by_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Aktualizuj istniejacy ticket. Podaj tylko pola do zmiany.
 
@@ -2532,9 +2566,19 @@ async def update_ticket(
     assignee_email: email uzytkownika, pusty string aby wyczysc, lub "me" dla aktualnego uzytkownika
     due_date: data graniczna w formacie YYYY-MM-DD, lub pusty string aby wyczysc
     label_ids: lista UUID etykiet — zastepuje wszystkie poprzednie etykiety; [] = usun etykiety
+    blocked_by_ids: lista UUID ticketow-blokerow — zastepuje wszystkie poprzednie; [] = usun blokery; brak = bez zmian
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
     resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+
+    parsed_blocked_by_ids: list[uuid.UUID] | None = None
+    if blocked_by_ids is not None:
+        parsed_blocked_by_ids = []
+        for bid in blocked_by_ids:
+            try:
+                parsed_blocked_by_ids.append(uuid.UUID(bid))
+            except ValueError as e:
+                raise ValueError(f"Nieprawidlowy UUID blokera: '{bid}'") from e
 
     async with async_session_factory() as db:
         result = await db.execute(
@@ -2551,7 +2595,7 @@ async def update_ticket(
 
         if is_ticket_frozen(ticket):
             # Frozen ticket: dozwolona tylko zmiana statusu (wszystkie inne pola musza byc None)
-            other_fields = (title, description, priority, story_points, sprint_id, assignee_email, due_date, label_ids)
+            other_fields = (title, description, priority, story_points, sprint_id, assignee_email, due_date, label_ids, blocked_by_ids)
             if any(f is not None for f in other_fields):
                 raise ValueError("Ticket zamrozony — dozwolona tylko zmiana statusu. Pelna edycja zablokowana dla rozliczen sent/paid.")
 
@@ -2617,6 +2661,9 @@ async def update_ticket(
                 labels = labels_result.scalars().all()
                 for lb in labels:
                     db.add(TicketLabel(ticket_id=ticket.id, label_id=lb.id))
+
+        if parsed_blocked_by_ids is not None:
+            await ticket_dependencies.set_blockers(db, ticket, parsed_blocked_by_ids)
 
         await db.commit()
 
@@ -3947,6 +3994,8 @@ async def lint_wiki(
     - dead_links: referencje [[slug]] lub [[uuid]] nierozwiązane do stron projektu
     - contradictions: strony z markerem "> **Sprzeczność"
     - gaps: koncepty wzmiankowane >=2x bez własnej strony (heurystyka)
+    - skipped_generated: liczba stron generowanych maszynowo (np. logów pipeline'ów)
+      pominiętych przy liczeniu sierot
     """
     _user, project = await _get_user_and_project(ctx, project_slug)
 

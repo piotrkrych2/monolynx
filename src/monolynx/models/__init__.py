@@ -27,6 +27,7 @@ from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
 from monolynx.models.ticket_attachment import TicketAttachment
 from monolynx.models.ticket_comment import TicketComment
+from monolynx.models.ticket_dependency import TicketDependency
 from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.models.user import User
 from monolynx.models.user_api_token import UserApiToken
@@ -65,6 +66,7 @@ __all__ = [
     "TicketAcceptanceCriterion",
     "TicketAttachment",
     "TicketComment",
+    "TicketDependency",
     "TicketLabel",
     "TimeTrackingEntry",
     "User",

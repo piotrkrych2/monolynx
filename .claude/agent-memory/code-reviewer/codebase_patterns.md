@@ -70,3 +70,7 @@ Wszystkie trzy handlery pobierania (`blog.py:188`, `dashboard/wiki.py:778`, `das
 
 ## Wiki: is_public i partial unique index
 `services/wiki.py:483` (`create_wiki_page`) i `:542` (`update_wiki_page`) robia `await db.commit()` wewnatrz `try` z mapowaniem `IntegrityError -> db.rollback() -> ValueError` (globalny partial unique index `uq_wiki_public_slug`, MON-201). Tool MCP i router NIE dodaja wlasnego commita - bylby podwojny. Weryfikuj to przy kazdym tickecie dotykajacym wiki, bo na tym jednym fakcie wisi caly wiersz -30. Konsekwencja dla routera: po `ValueError` sesja jest po rollbacku, wiec kazdy obiekt ORM trafiajacy do Jinja2 musi byc przeladowany (`MissingGreenlet` w sync renderze).
+
+## SQL text() i testy commita (MON-207)
+- `text()` z `:param::uuid` psuje bind: regex SQLAlchemy `(?<![:\w\x5c]):(\w+)(?!:)` cofa sie i robi bind `para` + literal `m::uuid` -> "A value is required for bind parameter". Wymagaj `CAST(:param AS uuid)`. Dowod w review: ten sam regex w `perl -ne`.
+- Fixture `db_session` (tests/conftest.py) wiaze sesje z polaczeniem z otwarta transakcja -> `join_transaction_mode` przechodzi w `rollback_only`, `session.commit()` nie wychodzi poza nia. Test "widoczne z niezaleznego polaczenia" jest zawsze czerwony; commit dowodzi sie spy (`mock.patch.object(db_session, "commit", wraps=...)`).

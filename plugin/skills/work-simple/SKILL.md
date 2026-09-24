@@ -128,8 +128,8 @@ wg komentarzy i pipeline] czy od zera?"; przy wznowieniu pomin FAZA 1 i 2.2,
 a `BASELINE_SHA`, `PLIKI_SPRZED_STARTU` i `pipeline_id` przepisz z komentarza
 planu - w 0.45 NIE mierz ich ponownie (brudne pliki to teraz praca dev,
 ponowny pomiar wykluczylby je z oceny krytyka; plan bez tych pol -> SHA
-z `git rev-parse HEAD`, brudne = brak, zaznacz w 4.8). Wejdz w pierwszy
-niedomkniety etap. Pelny obraz stanu bez podejmowania pracy:
+z `git rev-parse HEAD`, brudne = brak, zaznacz w 4.8). Sprawdz zaleznosci
+(0.25), potem wejdz w pierwszy niedomkniety etap. Pelny obraz stanu bez podejmowania pracy:
 `/monolynx:resume [ticket-id]`.
 
 **Tryb**: `TRYB = defekt`, gdy ticket ma etykiete `bug`/`defekt`, tytul zaczyna
@@ -137,6 +137,65 @@ sie od "Fix", "Napraw", "Bug", "Blad" albo user mowi wprost, ze to naprawa
 bledu; inaczej `TRYB = zmiana`. Wypisz tryb razem z ticketem w 0.3. W trybie
 defektu research kodu (`k`) w 0.4 jest OBOWIAZKOWY, nie opt-in - bez
 reprodukcji i dowodu w kodzie fix jest zgadywaniem.
+
+### 0.25. Zaleznosci niezmergowane
+
+Sprawdz zaleznosci teraz - przed decyzja o scope, branchem i dev. Obowiazuje
+takze przy wznowieniu: zaleznosc mogla od tamtej pory zostac zmergowana albo
+odrzucona.
+
+<!-- shared:zaleznosci -->
+**Zaleznosc blokujaca.** Zrodlo: sekcja `## Blokery (relacja)` generowana
+przez MCP w odpowiedzi `get_ticket` (tej, ktora juz masz - bez dodatkowego
+wywolania). Pojawia sie tylko, gdy ticket ma relacje; linie maja format
+`Blokowany przez: <KEY> | <status> | <tytul>` oraz
+`Blokuje: <KEY> | <status> | <tytul>`. Relacja to wylacznie ta sekcja: stoi po
+`## Description` i `## Acceptance Criteria`, przed `## Comments`. Sekcja
+`## Zaleznosci` w tekscie opisu (szablon `ticket-create`)
+i komentarz `**Zaleznosci:**` to proza autora, nie relacja - ignoruj je;
+blokery zapisuje `blocked_by_ids`. Stare zaleznosci zapisane tylko proza
+przenosi do relacji jednorazowa migracja danych `make backfill-dependencies`
+(dry-run; zapis: `make backfill-dependencies ARGS=--apply`). Status w linii
+`Blokowany przez:` jest liczony przy odczycie, wiec swiezy.
+
+Bloker jest zamkniety wylacznie przy statusie `done`; kazdy inny (`backlog`,
+`todo`, `in_progress`, `in_review`) oznacza **niezamkniety bloker**: review to
+nie merge, kod blokera nie jest jeszcze na branchu bazowym. Brak sekcji, same
+linie `Blokuje:` albo wszystkie blokery `done` -> brak blokady, bez pytania.
+
+**Nigdy nie merguj, nie pulluj, nie cherry-pickuj ani nie rebase'uj brancha
+zaleznosci** (np. `origin/worktree-<KEY>`) do brancha roboczego. Branch roboczy
+startuje z brancha bazowego. Brakujacy kod blokera to "zaleznosc
+niezmergowana", a nie przeszkoda do obejscia.
+
+- `MONOLYNX_SPRINT_RUN=1` -> blokada jak kazda inna w trybie sesji w tle,
+  z powodem `czeka na merge <KEY>` (kilka zaleznosci -> wszystkie klucze po
+  przecinku). Ostatnia linia odpowiedzi: `SPRINT-RUN STOP: czeka na merge <KEY>`.
+  Statusu ticketu nie zmieniaj.
+- Interaktywnie -> jedno pytanie i czekasz na odpowiedz:
+
+  > Ticket [KEY] ma niezamkniete blokery: [KEY1 (status, tytul), ...].
+  > Ich kodu nie ma na branchu bazowym. Co robimy?
+  > - **(a)** Czekamy na merge - koncze teraz, bez zmiany statusu ticketu
+  > - **(b)** Pracuje na branchu bazowym bez kodu zaleznosci; gdy okaze sie
+  >   potrzebny -> STOP, nie merge
+  > - **(c)** Merguje branch zaleznosci mimo to - MR poniesie cudze commity
+
+  Wariant (c) wykonujesz wylacznie na wprost wyrazone polecenie uzytkownika
+  (wybor (c) albo wlasne "zmerguj [KEY]"), nigdy jako domysl. Odnotuj go
+  w komentarzu planu: "MR poniesie commity niezmergowanej zaleznosci [KEY]".
+
+WHY: MON-150 i MON-152 zmergowaly do swoich branchy `origin/worktree-MON-149`
+i `origin/worktree-MON-150`, gdy te byly `in_review`. MR-y niosly cudze commity,
+kolejnosc merge byla wymuszona, a konflikty rozplatywano recznie.
+<!-- /shared:zaleznosci -->
+
+Przy `MONOLYNX_SPRINT_RUN=1` blokade obsluz wg reguly 21. Przy starcie od zera
+pipeline jeszcze nie istnieje (powstaje w 0.6), wiec domkniecie instrumentacji
+odpada. Przy wznowieniu (0.2) pipeline z komentarza planu jest `running` -
+domknij go wg regul 14 i 21, zanim zakonczysz. Przy
+wyborze (b) klucze niezmergowanych zaleznosci wpisz do kontraktu autonomii
+(2.2, pozycja o kodzie z brancha innego ticketu) i do komentarza planu.
 
 ### 0.3. Decyzja simple vs full
 
@@ -428,7 +487,10 @@ Kontrakt autonomii dla [KEY]
              komentarze/log_time/kryteria; commit/push wg flag AUTO*
  Stop przed: plik spoza zakresu / z listy "Nie ruszac": [lista];
              operacja nieodwracalna: [z ticketu: wysylka, publikacja,
-             zmiana publicznego API - lub brak]
+             zmiana publicznego API - lub brak];
+             kod z brancha innego ticketu (merge / pull / cherry-pick /
+             rebase): potrzebny kod niezmergowanej zaleznosci
+             [KEY z 0.25 lub brak] -> STOP, nie merge
 ENTER = akceptujesz, albo napisz co dodac lub zdjac.
 ```
 
@@ -452,7 +514,7 @@ usera" zostaje puste.
 mcp__monolynx__add_comment(
   project_slug="<PROJECT_SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager Lite - Plan**\n\nTryb: [zmiana | defekt]\nDev: [wybrany-agent] - pliki: [lista z ticketu/mini-researchu]\nKrytyk: [wybrany-krytyk]\nZakres: [1-2 zdania]\n[Kontrakt | KONTRAKT (auto)]: stop przed [pelna lista]; zdjete przez usera [lista lub brak; przy auto brak - kontrakt zaakceptowany automatycznie (MONOLYNX_CONTRACT=auto), bez potwierdzenia uzytkownika]\nBaseline: SHA [BASELINE_SHA]; brudne przed startem: [PLIKI_SPRZED_STARTU lub brak]\nPipeline: [pipeline_id lub brak]\nScope guard: eskalacja do full gdy >5 plikow / cross-module / migracja / nowa zaleznosc."
+  content="**Team Manager Lite - Plan**\n\nTryb: [zmiana | defekt]\nDev: [wybrany-agent] - pliki: [lista z ticketu/mini-researchu]\nKrytyk: [wybrany-krytyk]\nZakres: [1-2 zdania]\n[Kontrakt | KONTRAKT (auto)]: stop przed [pelna lista]; zdjete przez usera [lista lub brak; przy auto brak - kontrakt zaakceptowany automatycznie (MONOLYNX_CONTRACT=auto), bez potwierdzenia uzytkownika]\nBaseline: SHA [BASELINE_SHA]; brudne przed startem: [PLIKI_SPRZED_STARTU lub brak]\nZaleznosci niezmergowane (0.25): [KEY -> (b) bez kodu zaleznosci | (c) MR poniesie commity niezmergowanej zaleznosci KEY; lub brak]\nPipeline: [pipeline_id lub brak]\nScope guard: eskalacja do full gdy >5 plikow / cross-module / migracja / nowa zaleznosc."
 )
 ```
 
@@ -524,7 +586,8 @@ Zatrzymaj sie i zglos Team Managerowi ZANIM zrobisz cokolwiek z tej listy -
 przerwij, opisz w raporcie koncowym jako `STOP: <powod>`, praca do tego
 miejsca zostaje:
 - [pozycje "Stop przed" z KONTRAKT: pliki z "Nie ruszac", operacje
-  nieodwracalne z ticketu (wysylka, publikacja, zmiana publicznego API), ...]
+  nieodwracalne z ticketu (wysylka, publikacja, zmiana publicznego API), kod
+  z brancha innego ticketu, ...]
 - odkrycie, ze ticket jest sprzeczny z kodem, wiki albo mini-researchem
 Zrobienie czegos z tej listy bez zgloszenia krytyk punktuje jak zmiane poza
 zakresem. Migracja DB, nowa zaleznosc, >5 plikow, cross-module to NIE jest
@@ -543,6 +606,25 @@ STOP - to SCOPE GUARD ponizej, z wlasnym sygnalem.
 3. W raporcie: mechanizm (jedno zdanie), plik:linia fixu, nazwa testu, czy
    klasa bledu (inne wystapienia wzorca) sprawdzona.
 Research mowi 'reprodukcja nieudana' -> STOP, nie zgaduj.
+
+---
+
+<!-- shared:changelog-unreleased -->
+CHANGELOG I WERSJA (dotyczy projektu z changelogiem wydan i manifestami wersji;
+w repo Monolynx: sekcja `## Changelog` w `plugin/README.md` i
+`plugin/.claude-plugin/plugin.json` oraz `plugin/.codex-plugin/plugin.json`):
+- wpis tego ticketu idzie pod naglowek `### Unreleased` na poczatku changelogu;
+  brak naglowka -> utworz go nad ostatnio wydana wersja,
+- kazdy punkt najwyzszego poziomu zaczyna sie od klucza ticketu, np.
+  `- MON-123: opis`; wciete kontynuacje sa bez klucza,
+- NIE zmieniasz numeru wersji w manifestach i NIE zamieniasz `Unreleased` na
+  numer - numer nadaje mergujacy (czlowiek przy merge do main albo
+  `/monolynx:sprint-end`, job version-bump),
+- wyjatek: ticket bedacy wydaniem (hotfix mergowany od razu, poza sprintem)
+  moze nadac numer, jesli jest jedynym otwartym MR-em zmieniajacym ten
+  changelog; decyzje podejmuje Team Manager i zapisuje ja w komentarzu planu.
+  Bez takiej decyzji w prompcie zmiana wersji to STOP.
+<!-- /shared:changelog-unreleased -->
 
 ---
 
@@ -605,7 +687,7 @@ mcp__monolynx__log_time(
 
 ## ZAKAZY
 
-- NIE uruchamiaj testow ani lintera - robi to Team Manager w FAZA 3, wg konfiguracji projektu.
+- NIE uruchamiaj testow ani lintera/formattera w trybie naprawy (np. `ruff check --fix`, `ruff format` bez `--check`/`--diff`, `eslint --fix`, `prettier --write`, mypy) - robi to Team Manager w FAZA 3, wg konfiguracji projektu. Wyjatek: przed oddaniem MOZESZ (i powinienes) uruchomic na swoich plikach read-only `ruff check --no-fix` i `ruff format --check` (albo `--diff`) - hook przepuszcza subagentowi TYLKO ten waski tryb bez posrednictwa Team Managera (MON-176, zawezone w MON-207; `ruff check` bez `--no-fix` moze naprawiac pliki i dostaje deny), zadnego innego lintera/formattera to nie dotyczy; w worktree uzyj wariantu z sekcji `## Worktree` strony `toolchain` (`docker compose ... run` z `-v` z korzenia projektu, bez `--entrypoint`/`--privileged`/`--user`; `docker run <obraz> ruff` zawsze dostaje deny).
 - NIE rob commit/push ani git add - decyzja nalezy do Team Managera i uzytkownika (4.5).
 - Nowe pliki tworz tylko w zakresie ticketa; watpliwosc -> odnotuj w raporcie.
 - NIE uzywaj TaskCreate/TeamCreate/SendMessage - to simple flow, nie Agent Teams."
@@ -1110,6 +1192,6 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 18. **Prawa decyzyjne ustalane RAZ, na starcie** (2.2) - kontrakt autonomii i STOP CONDITIONS zastepuja sterowanie przez przerywanie. Przerwanie usera w trakcie = kontrakt byl niekompletny; brakujaca pozycje odnotuj w 4.8. Przy `SPRINT_RUN=1` patrz regula 21.
 19. **Tryb defektu** (0.2) - research kodu obowiazkowy, test regresyjny przed fixem, krytyk ocenia nazwany mechanizm, nie znikniecie symptomu.
 20. **Ostatni przebieg lint+test jest pelny** (3.5.3) - iteracja moze testowac obszar, zamkniecie testuje calosc.
-21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, praca na `main`/`master`, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
+21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, niezamkniety bloker ticketu (0.25, powod `czeka na merge <KEY>`, bez zmiany statusu), praca na `main`/`master`, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
 22. **Trwale reguly projektowe zyja w repozytorium**, nie w prywatnej pamieci klienta. Dwie lokalizacje, obie liczone od KORZENIA REPOZYTORIUM: `.claude/rules/*.md` (reguly projektu; krytyk czyta je na starcie review, naruszenie to -25) i `.claude/agent-memory/<typ-agenta>/MEMORY.md` (reguly z review per rola, zapisywane w 3.5.2). To zwykle pliki Markdown w repo: czyta je KAZDY klient wykonujacy te instrukcje, wersjonuje je git i widzi je kolejny przebieg niezaleznie od tego, w czym go uruchomiono. Nie zakladaj prywatnego formatu pamieci zadnego klienta i nie migruj tych plikow do niego. Nazwa katalogu `.claude/` jest HISTORYCZNA - katalog jest wspolny dla klientow, nie zastrzezony dla jednego. Kazdy zapis jest ADDYTYWNY: dopisujesz do sekcji, nigdy nie nadpisujesz pliku.
 23. **Fallback solo nie jest niezaleznym review** (2.1) - stosujesz go wylacznie przy faktycznym braku delegacji stwierdzonym po dostepnych narzedziach, nigdy po nazwie klienta, i zawsze z jawna adnotacja o ograniczeniu niezaleznosci w komentarzu planu, komentarzu podsumowujacym i w 4.8.

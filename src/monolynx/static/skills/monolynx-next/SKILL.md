@@ -74,6 +74,15 @@ Nie ładuj narzędzi zapisu. Bez ToolSearch użyj dostępnego katalogu narzędzi
   `done` i pozostałe statusy. Nie licz `in_review` jako zakończonego sprintu.
 - Ticket z brancha pobierz przez `get_ticket(project_slug, ticket_id)`.
   `in_progress` potwierdza rekomendację `resume`, niezależnie od sprintu.
+- Zależności czytaj wyłącznie z `get_ticket`: `list_tickets`, `get_board`
+  i `search_tickets` nie zwracają blokerów. Sekcja `## Blokery (relacja)`
+  pojawia się w wyniku tylko przy relacjach, poza `## Description` (sekcja
+  `## Zaleznosci` w opisie ticketu to proza szablonu `ticket-create`, nie
+  relacja - pomijasz ją); linie `Blokowany przez: <KEY> | <status> | <tytuł>`
+  to blokery tego ticketu (linie `Blokuje:` pomijasz). Bloker jest zamknięty
+  tylko przy statusie `done`; każdy inny status, także `in_review`, to
+  niezamknięty bloker. Brak sekcji po udanym odczycie oznacza brak blokerów,
+  błąd odczytu `get_ticket` to NIEZNANE.
 
 ## KROK 3: Sesje w tle
 
@@ -170,13 +179,23 @@ konfiguracji ma pierwszeństwo nawet przy częściowo niedostępnych źródłach
 | Otwarty MR/PR z werdyktem innym niż `wait` | `/monolynx:mr-queue <URL>` | URL i werdykt klasyfikatora |
 | Ticket `in_progress` potwierdzony na bieżącym branchu | `/monolynx:resume <KEY>` | Klucz, branch i status |
 | Wolny ticket aktywnego sprintu | `/monolynx:work <KEY>` | `todo`, brak sesji, spełnione zależności |
+| Wolny ticket z niezamkniętym blokerem | komenda dla blokera (niżej) | Klucz ticketu, klucz i status blokera |
 | Wolne tickety i gotowy autopilot Claude Code | `/loop 15m /monolynx:sprint-run` | Alternatywa pracy ręcznej, nie dodatkowy start tego samego ticketu |
 | Sprint wyczerpany i brak pracy w toku | `/monolynx:sprint-end` | Kompletny odczyt: wszystkie tickety `done`, brak `in_progress` w całym projekcie, żywych sesji i otwartych MR/PR |
 | `main`/`master`, brak pracy i wolnych ticketów | `/monolynx:ticket-create` lub `/monolynx:ticket-review <KEY>` | Nowe zadanie albo konkretny istniejący ticket wymagający dopracowania |
 
 Wolny ticket wymaga werdyktu `free`, odczytu `get_ticket` i sprawdzenia
 zależności; nie polecaj startu zadania z zajętą sesją ani niespełnioną
-zależnością. Sortuj kandydatów: high > medium > low, następnie numer klucza.
+zależnością. Spełnione zależności = w `## Blokery (relacja)` z `get_ticket` nie ma
+linii `Blokowany przez:` ze statusem innym niż `done`. Ticket z niezamkniętym
+blokerem nie dostaje `/monolynx:work <KEY>`; rekomendacja dotyczy blokera:
+`in_review` z otwartym MR/PR -> `/monolynx:mr-queue <URL>` tego MR/PR,
+`todo` bez sesji -> `/monolynx:work <KEY blokera>` (po jego własnym
+`get_ticket`: bloker też może mieć niezamknięty bloker), inny status
+(`in_progress`, `backlog`) -> bez rekomendacji startu; sesję blokera obsługują
+wiersze `attach`/`resume` wyżej. W uzasadnieniu podaj oba klucze, np. „MON-12 czeka na MON-9 (in_review)”.
+Brak `get_ticket` dla kandydata: NIEZNANE, bez rekomendacji startu.
+Sortuj kandydatów: high > medium > low, następnie numer klucza.
 Autopilot polecaj tylko w runtime Claude Code z dostępnym `/loop` i znanymi
 flagami AUTOTEST/AUTOCOMMIT/AUTOPUSH=true; nie włączaj ich.
 Brak danych o sesjach nie jest dowodem, że ticket jest wolny.

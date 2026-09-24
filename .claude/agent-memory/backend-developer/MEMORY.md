@@ -14,6 +14,7 @@
 - [patterns_nh3_sanitization.md](patterns_nh3_sanitization.md) — confirmed nh3.clean() API params for sanitizing public HTML (MON-201)
 - [patterns_partial_unique_index_no_project_scope.md](patterns_partial_unique_index_no_project_scope.md) — global partial unique index alongside per-project uniqueness, + how to find alembic head without running alembic (MON-201)
 - [feedback_storage_calls_need_exception_mapping.md](feedback_storage_calls_need_exception_mapping.md) — wrap every MinIO/S3 call in a new HTTP handler in try/except mapped to the endpoint's contracted status, always, doubly so unauthenticated (MON-201)
+- [patterns_self_referential_m2m_viewonly.md](patterns_self_referential_m2m_viewonly.md) — self-referential M2M relationship (blocker/blocked_by) needs explicit primaryjoin/secondaryjoin + viewonly=True to avoid SAWarning, no overlaps= needed (MON-198)
 
 ## Reguly z review krytyka
 

@@ -5414,10 +5414,12 @@ class TestWikiLlmMcpTools:
         assert "dead_links" in result
         assert "contradictions" in result
         assert "gaps" in result
+        assert "skipped_generated" in result
         assert isinstance(result["orphans"], list)
         assert isinstance(result["dead_links"], list)
         assert isinstance(result["contradictions"], list)
         assert isinstance(result["gaps"], list)
+        assert isinstance(result["skipped_generated"], int)
 
     # ------------------------------------------------------------------
     # get_wiki_backlinks

@@ -26,7 +26,12 @@
 # Uprawnienia ticku (MON-190): ten skrypt przekazuje `--allowedTools` i
 # `--permission-prompts none` do kazdego wywolania `claude -p`, wiec swiezy
 # projekt bez recznych regul w `.claude/settings.json` (`permissions.allow`)
-# rowniez odpala tick poprawnie - patrz TICK_ALLOWED_TOOLS nizej.
+# rowniez odpala tick poprawnie - patrz TICK_ALLOWED_TOOLS nizej. Od MON-207
+# lista zawiera tez `Bash(MONOLYNX_SPRINT_RUN=1 claude:*)` obok `Bash(claude:*)` -
+# `sprint-run/SKILL.md` KROK 4 startuje sesje robocze z inline `MONOLYNX_
+# SPRINT_RUN=1 claude --bg ...` (zamiast polegac na tracked settings.json),
+# a `Bash(claude:*)` pasuje tylko do polecen zaczynajacych sie doslownie od
+# `claude`, wiec bez osobnej reguly to konkretne wywolanie nie byloby objete.
 # Tryb -p nie odpowie na zadne pytanie, dlatego skrypt wymusza flagi AUTO*
 # i MONOLYNX_SPRINT_RUN=1 (MON-165). Kazda z nich mozna nadpisac w srodowisku.
 # Skrypt eksportuje tez MONOLYNX_SPRINT_RUN_MODE=batch (stala kontraktu, NIE do
@@ -136,7 +141,7 @@ if [ -n "${MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS:-}" ]; then
   TICK_ALLOWED_TOOLS="$MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS"
   ALLOWED_TOOLS_LABEL="custom"
 else
-  TICK_ALLOWED_TOOLS="Bash(claude:*),Bash(python3:*),Read(~/.claude/plugins/**),mcp__monolynx,mcp__claude_ai_Monolynx,mcp__plugin_monolynx_monolynx"
+  TICK_ALLOWED_TOOLS="Bash(claude:*),Bash(MONOLYNX_SPRINT_RUN=1 claude:*),Bash(python3:*),Read(~/.claude/plugins/**),mcp__monolynx,mcp__claude_ai_Monolynx,mcp__plugin_monolynx_monolynx"
   ALLOWED_TOOLS_LABEL="default"
 fi
 

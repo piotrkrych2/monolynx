@@ -36,12 +36,13 @@ mcp__monolynx__get_wiki_config(project_slug="<PROJECT_SLUG>")
 mcp__monolynx__lint_wiki(project_slug="<PROJECT_SLUG>")
 ```
 
-Zwraca raport z czterema listami:
+Zwraca raport z czterema listami i licznikiem pominietych stron:
 
 - `orphans` - strony bez zadnego backlinku przychodzacego,
 - `dead_links` - wikilinki do nieistniejacych stron,
 - `contradictions` - strony z markerem sprzecznosci (`> **Sprzeczność ...`),
-- `gaps` - koncepty wzmiankowane wielokrotnie jako wikilink, ale bez wlasnej strony.
+- `gaps` - koncepty wzmiankowane wielokrotnie jako wikilink, ale bez wlasnej strony,
+- `skipped_generated` - liczba stron generowanych maszynowo (np. logow pipeline'ow), pominietych przy liczeniu sierot.
 
 ---
 
@@ -51,7 +52,7 @@ Pokaz raport czytelnie, w czterech sekcjach. Dla kazdej kategorii podaj liste po
 
 ### Sieroty (`orphans`)
 
-Strony, do ktorych nic nie prowadzi. Nie da sie do nich dotrzec przez nawigacje grafu - latwo o nich zapomniec.
+Strony, do ktorych nic nie prowadzi. Nie da sie do nich dotrzec przez nawigacje grafu - latwo o nich zapomniec. Strony generowane maszynowo (np. logi pipeline'ow) sa z tej listy wylaczone z definicji - ich liczbe podaj osobno w podsumowaniu na podstawie `skipped_generated` (np. "Sieroty: N (pominieto M stron generowanych maszynowo)").
 
 ### Martwe linki (`dead_links`)
 
@@ -113,7 +114,7 @@ mcp__monolynx__append_wiki_log(project_slug="<PROJECT_SLUG>", entry="LINT: audyt
 
 Na koniec pokaz:
 
-- liczbe znalezionych problemow w kazdej kategorii,
+- liczbe znalezionych problemow w kazdej kategorii, przy sierotach dopisz liczbe pominietych stron generowanych maszynowo z `skipped_generated` (np. "Sieroty: N (pominieto M stron generowanych maszynowo)"),
 - co naprawiono w tej sesji,
 - co pozostaje do rozstrzygniecia (zwlaszcza nierozstrzygniete sprzecznosci).
 

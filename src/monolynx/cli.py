@@ -77,6 +77,41 @@ async def backfill_embeddings_cmd() -> None:
     print(f"Gotowe! Laczna liczba embeddingow: {count}")
 
 
+async def backfill_ticket_dependencies_cmd() -> None:
+    """Skanuje opisy/komentarze ticketow pod katem starych deklaracji zaleznosci i albo
+    tylko raportuje (dry-run, domyslnie), albo zapisuje przez set_blockers (--apply)."""
+    from monolynx.services.ticket_dependencies import backfill_dependencies
+
+    apply = "--apply" in sys.argv
+
+    async with async_session_factory() as session:
+        report = await backfill_dependencies(session, apply=apply)
+
+    if not report.proposals:
+        print("Brak ticketow ze starymi deklaracjami zaleznosci do zaproponowania.")
+        return
+
+    applied_count = 0
+    for p in report.proposals:
+        parts = [p.ticket_key]
+        if p.blocker_keys:
+            parts.append(f"blokery: {', '.join(p.blocker_keys)}")
+        if p.unknown_keys:
+            parts.append(f"nieznane klucze: {', '.join(p.unknown_keys)}")
+        if p.error:
+            parts.append(f"BLAD: {p.error}")
+        elif apply:
+            parts.append("zapisano" if p.applied else "pominieto")
+        else:
+            parts.append("dry-run")
+        print(" | ".join(parts))
+        if p.applied:
+            applied_count += 1
+
+    mode = "Zapisano" if apply else "Dry-run (uzyj --apply, aby zapisac)"
+    print(f"{mode}: {applied_count}/{len(report.proposals)} propozycji zastosowanych.")
+
+
 async def clear_all_graphs_cmd() -> None:
     """Zaoraj grafy Neo4j WSZYSTKICH projektow (rollout graphify, MON-121)."""
     from sqlalchemy import select
@@ -119,6 +154,7 @@ COMMANDS = {
     "createsuperuser": createsuperuser,
     "backfill-backlinks": backfill_backlinks_cmd,
     "backfill-embeddings": backfill_embeddings_cmd,
+    "backfill-dependencies": backfill_ticket_dependencies_cmd,
     "clear-all-graphs": clear_all_graphs_cmd,
 }
 

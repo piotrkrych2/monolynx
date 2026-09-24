@@ -86,6 +86,28 @@ class Ticket(Base):
         cascade="all, delete-orphan",
         order_by="TicketAcceptanceCriterion.position",
     )
+    # Self-referential M2M przez ticket_dependencies. Wiersz (ticket_id=A, blocker_id=B) = B blokuje A.
+    # viewonly=True: zapisy tylko przez services.ticket_dependencies.set_blockers (walidacja self-ref/projekt/cykl),
+    # nigdy przez te kolekcje -- inaczej SQLAlchemy zglasza konflikt dwoch relacji na tej samej tabeli.
+    # lazy="raise": dostep bez jawnego selectinload() w zapytaniu eksploduje od razu (InvalidRequestError)
+    # zamiast cicho doladowac sie samodzielnie (N+1/rekurencja self-referential przy kazdym plain
+    # select(Ticket)) albo rzucic MissingGreenlet w polowie renderu Jinja2 (MON-207).
+    blocked_by: Mapped[list[Ticket]] = relationship(
+        "Ticket",
+        secondary="ticket_dependencies",
+        primaryjoin="Ticket.id == TicketDependency.ticket_id",
+        secondaryjoin="Ticket.id == TicketDependency.blocker_id",
+        viewonly=True,
+        lazy="raise",
+    )
+    blocking: Mapped[list[Ticket]] = relationship(
+        "Ticket",
+        secondary="ticket_dependencies",
+        primaryjoin="Ticket.id == TicketDependency.blocker_id",
+        secondaryjoin="Ticket.id == TicketDependency.ticket_id",
+        viewonly=True,
+        lazy="raise",
+    )
 
     @property
     def key(self) -> str:

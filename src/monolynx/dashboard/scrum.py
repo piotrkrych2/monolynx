@@ -59,6 +59,7 @@ from monolynx.services.settlements import (
     validate_settlement_ticket_link,
 )
 from monolynx.services.sprint import complete_sprint, start_sprint
+from monolynx.services.ticket_dependencies import set_blockers
 from monolynx.services.ticket_numbering import get_next_ticket_number
 from monolynx.services.time_tracking import (
     add_time_entry,
@@ -100,6 +101,143 @@ def _parse_valid_label_ids(label_ids_raw: list[Any], project_labels: list[Label]
             if lid in project_label_ids:
                 valid_ids.add(lid)
     return valid_ids
+
+
+async def _get_blocker_candidates(project_id: uuid.UUID, db: AsyncSession, exclude_id: uuid.UUID | None = None) -> Sequence[Any]:
+    """Tickety tego samego projektu jako kandydaci na blokery w <select> formularza --
+    tylko kolumny potrzebne do opcji (id/number/title), bez pelnych obiektow ORM Ticket
+    (MON-207 P9: unika ladowania calego wiersza + relacji dla samej listy wyboru)."""
+    conditions: list[Any] = [Ticket.project_id == project_id]
+    if exclude_id is not None:
+        conditions.append(Ticket.id != exclude_id)
+    result = await db.execute(select(Ticket.id, Ticket.number, Ticket.title).where(*conditions).order_by(Ticket.number))
+    return result.all()
+
+
+def _parse_blocker_uuids(blocker_ids_raw: list[Any]) -> list[uuid.UUID] | None:
+    """Parsuje surowe blocked_by_ids z formularza na liste UUID. Zwraca None, gdy
+    KTORYKOLWIEK element nie jest poprawnym UUID -- caly submit trafia do 422, zamiast
+    cicho pomijac zly wpis (MON-207 P9: krytyk wskazal cichy drop bledny ID w MR !98
+    jako problem, nie feature). Reszta walidacji (self-ref/projekt/cykl) idzie surowo
+    do set_blockers, bez wstepnego filtra."""
+    parsed: list[uuid.UUID] = []
+    for raw_id in blocker_ids_raw:
+        try:
+            parsed.append(uuid.UUID(str(raw_id)))
+        except ValueError:
+            return None
+    return parsed
+
+
+def _parse_display_blocker_ids(blocker_ids_raw: list[Any]) -> set[uuid.UUID]:
+    """Best-effort parsowanie blocked_by_ids TYLKO do ponownego zaznaczenia opcji w
+    <select> po odrzuceniu submitu (422) -- nie sluzy do walidacji, wiec zle UUID sa
+    tu po prostu pomijane bez wplywu na wynik zapisu."""
+    display_ids: set[uuid.UUID] = set()
+    for raw_id in blocker_ids_raw:
+        with contextlib.suppress(ValueError):
+            display_ids.add(uuid.UUID(str(raw_id)))
+    return display_ids
+
+
+def _transient_ticket_for_display(
+    project_id: uuid.UUID,
+    *,
+    title: str,
+    description: str | None,
+    priority: str,
+    story_points: int | None,
+    sprint_id: uuid.UUID | None,
+    assignee_id: uuid.UUID | None,
+    due_date: date | None,
+    labels: list[Label],
+) -> Ticket:
+    """Obiekt Ticket NIGDY nie dodany do sesji (brak db.add/flush) -- sluzy wylacznie do
+    wypelnienia formularza submitowanymi wartosciami po odrzuceniu tworzenia (422, MON-207 P9),
+    bez jakiegokolwiek zapisu do bazy."""
+    transient = Ticket(
+        project_id=project_id,
+        title=title,
+        description=description,
+        priority=priority,
+        story_points=story_points,
+        sprint_id=sprint_id,
+        assignee_id=assignee_id,
+        due_date=due_date,
+    )
+    transient.labels = labels
+    return transient
+
+
+async def _render_ticket_form_error(
+    request: Request,
+    project: Project,
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    is_edit: bool,
+    ticket: Ticket | None,
+    error: str,
+    display_blocker_ids: set[uuid.UUID],
+    current_settlement_ids: set[uuid.UUID] | None = None,
+) -> HTMLResponse:
+    """Re-renderuje formularz ticketu po odrzuceniu submitu (422) -- np. bledny blocked_by_ids,
+    self-reference, bloker z innego projektu albo cykl. `ticket` jest zawsze obiektem, ktory
+    NIGDY nie trafil do sesji (transient) -- wypelnionym submitowanymi wartosciami, zeby
+    formularz pokazal to, co uzytkownik wpisal, nie stan sprzed submitu ani sflushowany-a-potem-
+    wycofany zapis. `current_settlement_ids` podawane osobno, bo `ticket.settlements` na
+    obiekcie transient jest zawsze puste (relacja nigdy nie byla ladowana z bazy). `user_id`
+    przyjety jako juz-zwezony `UUID` (nie `UUID | None` z `_get_user_id(request)`) -- wolajacy
+    handler juz sprawdzil, ze user jest zalogowany, zanim doszlo do tego punktu (mypy MON-207 r2).
+
+    Selektor kandydatow jest odtwarzany (tym samym lekkim zapytaniem kolumnowym co GET) i
+    zaznacza to, co uzytkownik wyslal (`display_blocker_ids`) -- UUID-y w `value` opcji i w
+    `action` formularza to zwykle wartosci formularza, nie wyciek. Sam komunikat bledu (self-
+    ref/obcy-projekt/cykl) renderuje sie w izolowanym elemencie `data-testid="blocker-error"`
+    i nie zawiera zadnego surowego UUID (MON-207 P9, rekoncyliacja rundy 2)."""
+    members = await _get_project_members(project.id, db)
+    labels = await _get_project_labels(project.id, db)
+    exclude_id = ticket.id if is_edit and ticket is not None else None
+    blocker_candidates = await _get_blocker_candidates(project.id, db, exclude_id=exclude_id)
+    result = await db.execute(select(Sprint).where(Sprint.project_id == project.id, Sprint.status != "completed"))
+    sprints = result.scalars().all()
+
+    context: dict[str, Any] = {
+        "project": project,
+        "ticket": ticket,
+        "is_edit": is_edit,
+        "members": members,
+        "sprints": sprints,
+        "labels": labels,
+        "priorities": PRIORITIES,
+        "statuses": TICKET_STATUSES,
+        "error": error,
+        "is_blocker_error": True,
+        "active_module": "scrum",
+        "blocker_candidates": blocker_candidates,
+        "current_blocker_ids": display_blocker_ids,
+    }
+    if is_edit and ticket is not None:
+        can_edit_settlements = await check_permission(db, user_id, project.id, "rozliczenia", "write")
+        available_settlements: list[Settlement] = []
+        if can_edit_settlements:
+            avail_result = await db.execute(
+                select(Settlement)
+                .join(SettlementProject, SettlementProject.settlement_id == Settlement.id)
+                .where(
+                    SettlementProject.project_id == project.id,
+                    Settlement.status == "draft",
+                    Settlement.is_active.is_(True),
+                )
+                .options(selectinload(Settlement.projects))
+                .distinct()
+            )
+            available_settlements = list(avail_result.scalars().unique().all())
+        context["can_edit_settlements"] = can_edit_settlements
+        context["available_settlements"] = available_settlements
+        context["current_settlement_ids"] = current_settlement_ids or set()
+
+    return templates.TemplateResponse(request, "dashboard/scrum/ticket_form.html", context, status_code=422)
 
 
 # --- Backlog ---
@@ -185,7 +323,12 @@ async def backlog(
     # Main query with eager loads
     query = (
         select(Ticket, nearest_subq.label("nearest_scheduled_date"))
-        .options(selectinload(Ticket.assignee), selectinload(Ticket.sprint), selectinload(Ticket.labels))
+        .options(
+            selectinload(Ticket.assignee),
+            selectinload(Ticket.sprint),
+            selectinload(Ticket.labels),
+            selectinload(Ticket.blocked_by),
+        )
         .where(*conditions)
     )
     if not show_completed_sprints:
@@ -284,7 +427,11 @@ async def board(
 
         ticket_result = await db.execute(
             select(Ticket, board_nearest_subq.label("nearest_scheduled_date"))
-            .options(selectinload(Ticket.assignee), selectinload(Ticket.labels))
+            .options(
+                selectinload(Ticket.assignee),
+                selectinload(Ticket.labels),
+                selectinload(Ticket.blocked_by),
+            )
             .where(Ticket.sprint_id == active_sprint.id)
             .order_by(Ticket.order)
         )
@@ -357,6 +504,7 @@ async def ticket_create_form(
 
     members = await _get_project_members(project.id, db)
     labels = await _get_project_labels(project.id, db)
+    blocker_candidates = await _get_blocker_candidates(project.id, db)
 
     result = await db.execute(select(Sprint).where(Sprint.project_id == project.id, Sprint.status != "completed").order_by(Sprint.created_at.desc()))
     sprints = result.scalars().all()
@@ -367,6 +515,7 @@ async def ticket_create_form(
         {
             "project": project,
             "ticket": None,
+            "is_edit": False,
             "members": members,
             "sprints": sprints,
             "labels": labels,
@@ -374,6 +523,8 @@ async def ticket_create_form(
             "statuses": TICKET_STATUSES,
             "error": None,
             "active_module": "scrum",
+            "blocker_candidates": blocker_candidates,
+            "current_blocker_ids": set(),
         },
         db=db,
     )
@@ -409,10 +560,12 @@ async def ticket_create(
     due_date_raw = str(form.get("due_date", "")).strip()
 
     label_ids_raw = list(form.getlist("label_ids"))
+    blocked_by_ids_raw = list(form.getlist("blocked_by_ids"))
 
     if not title:
         members = await _get_project_members(project.id, db)
         labels = await _get_project_labels(project.id, db)
+        blocker_candidates = await _get_blocker_candidates(project.id, db)
         result = await db.execute(
             select(Sprint).where(
                 Sprint.project_id == project.id,
@@ -426,6 +579,7 @@ async def ticket_create(
             {
                 "project": project,
                 "ticket": None,
+                "is_edit": False,
                 "members": members,
                 "sprints": sprints,
                 "labels": labels,
@@ -433,6 +587,8 @@ async def ticket_create(
                 "statuses": TICKET_STATUSES,
                 "error": "Tytul jest wymagany",
                 "active_module": "scrum",
+                "blocker_candidates": blocker_candidates,
+                "current_blocker_ids": set(),
             },
         )
 
@@ -456,6 +612,34 @@ async def ticket_create(
     if priority not in PRIORITIES:
         priority = "medium"
 
+    display_blocker_ids = _parse_display_blocker_ids(blocked_by_ids_raw)
+    parsed_blocker_ids = _parse_blocker_uuids(blocked_by_ids_raw)
+    project_labels = await _get_project_labels(project.id, db)
+    valid_label_ids = _parse_valid_label_ids(label_ids_raw, project_labels)
+
+    if parsed_blocker_ids is None:
+        transient = _transient_ticket_for_display(
+            project.id,
+            title=title,
+            description=description,
+            priority=priority,
+            story_points=story_points,
+            sprint_id=sprint_id,
+            assignee_id=assignee_id,
+            due_date=due_date,
+            labels=[lb for lb in project_labels if lb.id in valid_label_ids],
+        )
+        return await _render_ticket_form_error(
+            request,
+            project,
+            db,
+            user_id=user_id,
+            is_edit=False,
+            ticket=transient,
+            error="Nieprawidlowy UUID blokera",
+            display_blocker_ids=display_blocker_ids,
+        )
+
     next_number = await get_next_ticket_number(project.id, db)
 
     ticket = Ticket(
@@ -470,14 +654,48 @@ async def ticket_create(
         status="backlog" if sprint_id is None else "todo",
         due_date=due_date,
     )
-    db.add(ticket)
-    await db.flush()  # Get ticket.id before syncing labels
+    # Insert ticketu, etykiet i set_blockers ida w SAVEPOINT (nie w calej transakcji sesji):
+    # w testach `db` jest zwiazana z zewnetrzna transakcja testowa bez aktywnego savepointu,
+    # wiec zwykly `db.rollback()` cofa CALA sesje (usuwa tez projekt zaladowany w fixture) --
+    # `_get_project` po takim rollbacku zwraca None i 422 zamienia sie w 404. SAVEPOINT cofa
+    # tylko to, co w nim powstalo (ticket + etykiety), `project` zaladowany PRZED nim zostaje
+    # nietkniety i nie wymaga requery (MON-207, CI pipeline 2878254502).
+    nested = await db.begin_nested()
+    try:
+        db.add(ticket)
+        await db.flush()  # Get ticket.id before syncing labels/blokerow
 
-    # Sync labels (validated against project)
-    project_labels = await _get_project_labels(project.id, db)
-    valid_label_ids = _parse_valid_label_ids(label_ids_raw, project_labels)
-    for lid in valid_label_ids:
-        db.add(TicketLabel(ticket_id=ticket.id, label_id=lid))
+        for lid in valid_label_ids:
+            db.add(TicketLabel(ticket_id=ticket.id, label_id=lid))
+
+        # Blokery ida surowo do set_blockers, bez wstepnego filtra "jak etykiety" (MON-207 P9 --
+        # cichy drop bledny ID byl uznany przez code review MR !98 za problem, nie feature).
+        await set_blockers(db, ticket, parsed_blocker_ids)
+    except ValueError as e:
+        await nested.rollback()
+        transient = _transient_ticket_for_display(
+            project.id,
+            title=title,
+            description=description,
+            priority=priority,
+            story_points=story_points,
+            sprint_id=sprint_id,
+            assignee_id=assignee_id,
+            due_date=due_date,
+            labels=[lb for lb in project_labels if lb.id in valid_label_ids],
+        )
+        return await _render_ticket_form_error(
+            request,
+            project,
+            db,
+            user_id=user_id,
+            is_edit=False,
+            ticket=transient,
+            error=str(e),
+            display_blocker_ids=display_blocker_ids,
+        )
+    else:
+        await nested.commit()
 
     await db.commit()
 
@@ -646,6 +864,7 @@ async def ticket_detail(
             selectinload(Ticket.acceptance_criteria).selectinload(TicketAcceptanceCriterion.created_by_user),
             selectinload(Ticket.acceptance_criteria).selectinload(TicketAcceptanceCriterion.completed_by_user),
             selectinload(Ticket.settlements).selectinload(Settlement.projects),
+            selectinload(Ticket.blocked_by),
         )
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )
@@ -962,6 +1181,7 @@ async def ticket_edit_form(
             selectinload(Ticket.sprint),
             selectinload(Ticket.labels),
             selectinload(Ticket.settlements).selectinload(Settlement.projects),
+            selectinload(Ticket.blocked_by),
         )
         .where(Ticket.id == ticket_id, Ticket.project_id == project.id)
     )
@@ -976,6 +1196,8 @@ async def ticket_edit_form(
 
     members = await _get_project_members(project.id, db)
     labels = await _get_project_labels(project.id, db)
+    blocker_candidates = await _get_blocker_candidates(project.id, db, exclude_id=ticket.id)
+    current_blocker_ids = {b.id for b in ticket.blocked_by}
     result = await db.execute(
         select(Sprint).where(
             Sprint.project_id == project.id,
@@ -1008,6 +1230,7 @@ async def ticket_edit_form(
         {
             "project": project,
             "ticket": ticket,
+            "is_edit": True,
             "members": members,
             "sprints": sprints,
             "labels": labels,
@@ -1018,6 +1241,8 @@ async def ticket_edit_form(
             "can_edit_settlements": can_edit_settlements,
             "available_settlements": available_settlements,
             "current_settlement_ids": current_settlement_ids,
+            "blocker_candidates": blocker_candidates,
+            "current_blocker_ids": current_blocker_ids,
         },
         db=db,
     )
@@ -1064,37 +1289,112 @@ async def ticket_edit(
         edit_url = f"/dashboard/{slug}/scrum/tickets/{ticket_id}/edit"
         return RedirectResponse(url=edit_url, status_code=303)
 
-    ticket.title = title
-    ticket.description = str(form.get("description", "")).strip() or None
-    priority = str(form.get("priority", "medium"))
-    ticket.priority = priority if priority in PRIORITIES else "medium"
+    description = str(form.get("description", "")).strip() or None
+    priority_raw = str(form.get("priority", "medium"))
+    priority = priority_raw if priority_raw in PRIORITIES else "medium"
 
     story_points_raw = str(form.get("story_points", "")).strip()
     try:
-        ticket.story_points = int(story_points_raw) if story_points_raw else None
+        story_points = int(story_points_raw) if story_points_raw else None
     except ValueError:
-        ticket.story_points = None
+        story_points = None
 
     sprint_id_raw = str(form.get("sprint_id", "")).strip()
-    with contextlib.suppress(ValueError):
-        ticket.sprint_id = uuid.UUID(sprint_id_raw) if sprint_id_raw else None
+    try:
+        sprint_id = uuid.UUID(sprint_id_raw) if sprint_id_raw else None
+    except ValueError:
+        sprint_id = ticket.sprint_id
 
     assignee_id_raw = str(form.get("assignee_id", "")).strip()
-    with contextlib.suppress(ValueError):
-        ticket.assignee_id = uuid.UUID(assignee_id_raw) if assignee_id_raw else None
-
-    status = str(form.get("status", ticket.status))
-    if status in TICKET_STATUSES:
-        ticket.status = status
+    try:
+        assignee_id = uuid.UUID(assignee_id_raw) if assignee_id_raw else None
+    except ValueError:
+        assignee_id = ticket.assignee_id
 
     due_date_raw = str(form.get("due_date", "")).strip()
-    with contextlib.suppress(ValueError):
-        ticket.due_date = date.fromisoformat(due_date_raw) if due_date_raw else None
+    try:
+        due_date = date.fromisoformat(due_date_raw) if due_date_raw else None
+    except ValueError:
+        due_date = ticket.due_date
 
-    # Sync labels: remove existing, add new ones from form (validated against project)
+    status = str(form.get("status", ticket.status))
+    if status not in TICKET_STATUSES:
+        status = ticket.status
+
     label_ids_raw = list(form.getlist("label_ids"))
+    blocked_by_ids_raw = list(form.getlist("blocked_by_ids"))
+    display_blocker_ids = _parse_display_blocker_ids(blocked_by_ids_raw)
+    parsed_blocker_ids = _parse_blocker_uuids(blocked_by_ids_raw)
+
+    # Liczone PRZED walidacja blokerow (nie tylko po sukcesie), zeby 422 pokazal etykiety
+    # z SUBMITU, nie stan sprzed edycji z bazy (review r3: `labels=list(ticket.labels)`
+    # ignorowal to, co uzytkownik wlasnie zaznaczyl/odznaczyl w formularzu).
     project_labels = await _get_project_labels(project.id, db)
     valid_label_ids = _parse_valid_label_ids(label_ids_raw, project_labels)
+
+    def _display_ticket_for_edit_error() -> Ticket:
+        transient = _transient_ticket_for_display(
+            ticket.project_id,
+            title=title,
+            description=description,
+            priority=priority,
+            story_points=story_points,
+            sprint_id=sprint_id,
+            assignee_id=assignee_id,
+            due_date=due_date,
+            labels=[lb for lb in project_labels if lb.id in valid_label_ids],
+        )
+        transient.id = ticket.id
+        transient.number = ticket.number
+        transient.status = status
+        return transient
+
+    current_settlement_ids = {s.id for s in ticket.settlements if s.is_active}
+
+    if parsed_blocker_ids is None:
+        return await _render_ticket_form_error(
+            request,
+            project,
+            db,
+            user_id=user_id,
+            is_edit=True,
+            ticket=_display_ticket_for_edit_error(),
+            error="Nieprawidlowy UUID blokera",
+            display_blocker_ids=display_blocker_ids,
+            current_settlement_ids=current_settlement_ids,
+        )
+
+    # Blokery ida surowo do set_blockers PRZED jakakolwiek mutacja pol ticketu -- bez
+    # wstepnego filtra "jak etykiety" (MON-207 P9: cichy drop bledny ID byl uznany przez
+    # code review MR !98 za problem, nie feature). Przy ValueError (self-ref/obcy projekt/
+    # nieistniejacy/cykl) sesja jeszcze nic nie zmienila (zaden flush pol ticketu), wiec
+    # wystarczy 422 z podmienionymi (niezapisanymi) wartosciami bez rollbacku.
+    try:
+        await set_blockers(db, ticket, parsed_blocker_ids)
+    except ValueError as e:
+        return await _render_ticket_form_error(
+            request,
+            project,
+            db,
+            user_id=user_id,
+            is_edit=True,
+            ticket=_display_ticket_for_edit_error(),
+            error=str(e),
+            display_blocker_ids=display_blocker_ids,
+            current_settlement_ids=current_settlement_ids,
+        )
+
+    ticket.title = title
+    ticket.description = description
+    ticket.priority = priority
+    ticket.story_points = story_points
+    ticket.sprint_id = sprint_id
+    ticket.assignee_id = assignee_id
+    ticket.status = status
+    ticket.due_date = due_date
+
+    # Sync labels: remove existing, add new ones from form (juz zwalidowane wyzej,
+    # przed sciezkami bledu blokera -- project_labels/valid_label_ids policzone raz).
     await db.execute(sa_delete(TicketLabel).where(TicketLabel.ticket_id == ticket_id))
     for lid in valid_label_ids:
         db.add(TicketLabel(ticket_id=ticket_id, label_id=lid))

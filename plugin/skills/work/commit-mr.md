@@ -63,8 +63,23 @@ d) Nic nie dalo wyniku -> NIE zgaduj `main`: MR nie powstaje, wypisz gotowa
    nie ustalono brancha docelowego (ustaw MONOLYNX_MR_TARGET)". MR do zlego
    brancha trzeba poprawiac recznie, brak MR tylko opoznia.
 
+Tytul i opis MR podajesz wprost, nigdy przez `--fill`: `--fill` bierze je
+z commitow, a na branchu z jednym commitem albo z nazwa w stylu
+`worktree-MON-150` daje tytul "worktree MON 150" (MON-150).
+
+- `<KEY>` i `<tytul ticketu>` - pola `key` i `title` pobranego ticketu.
+- `<podsumowanie>` - zwiezla tresc z podsumowania zadania (lista
+  "Zrealizowane" / co zrobiono) zaczynajaca sie od klucza ticketu, np.
+  `MON-178: [zmiana 1]; [zmiana 2]; [zmiana 3].` Jedna linia, punkty
+  rozdzielone `; `, bez `$`, bez em-dash. Nigdy sam `-`: dla glab to
+  polecenie otwarcia edytora, a w sesji bez terminala MR nie powstanie.
+
+Oba wpisujesz jako literal w apostrofach. Apostrof w tytule albo w tresci
+zamien na cudzyslow `"`, bo apostrof zamyka napis. Bez `$VAR` i `$(...)` -
+sesja w worktree je odrzuca.
+
 ```bash
-glab mr create --fill --yes --source-branch <aktualny_branch> --target-branch <branch_docelowy>
+glab mr create --title '<KEY>: <tytul ticketu>' --description '<podsumowanie>' --yes --source-branch <aktualny_branch> --target-branch <branch_docelowy>
 ```
 
 Zwrocony URL zapisz jako `MR_URL` i podaj go razem z ustalonym branchem

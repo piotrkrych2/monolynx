@@ -57,7 +57,10 @@
                         {% endif %}
                     </div>
                 </div>
-                <h1 class="text-xl font-bold text-gray-900 dark:text-white">{{ ticket.title }}</h1>
+                <h1 class="text-xl font-bold text-gray-900 dark:text-white flex items-center flex-wrap gap-2">
+                    {{ ticket.title }}
+                    {% include "dashboard/scrum/_blocked_badge.html" %}
+                </h1>
             </div>
 
             {% if ticket.description %}
@@ -369,6 +372,36 @@
             </button>
         </div>
     </form>
+</div>
+
+<!-- Zaleznosci -->
+<div class="mt-6" id="dependencies-section" data-testid="dependencies-section">
+    <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Zależności</h3>
+    </div>
+
+    {% if ticket.blocked_by %}
+    <div class="space-y-2">
+        {% for blocker in ticket.blocked_by %}
+        <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 flex items-center justify-between gap-3">
+            <a href="/dashboard/{{ project.slug }}/scrum/tickets/{{ blocker.id }}"
+               class="text-sm text-indigo-400 hover:text-indigo-300 transition truncate">
+                <span class="font-mono text-xs mr-1">{{ project.code }}-{{ blocker.number }}</span>{{ blocker.title }}
+            </a>
+            <span class="px-2 py-1 rounded text-xs shrink-0
+                {% if blocker.status == 'done' %}bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300
+                {% elif blocker.status == 'in_progress' %}bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300
+                {% elif blocker.status == 'in_review' %}bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-300
+                {% elif blocker.status == 'todo' %}bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-300
+                {% else %}bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300{% endif %}">
+                {{ status_labels.get(blocker.status, blocker.status) }}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-gray-500 text-sm italic">Brak blokerów.</p>
+    {% endif %}
 </div>
 
 <!-- Zalaczniki -->

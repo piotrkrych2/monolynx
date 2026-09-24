@@ -26,7 +26,7 @@ W katalogu dostępnych narzędzi znajdź funkcje Monolynx potrzebne poniżej i s
 <!-- runtime:claude-code -->
 Opcjonalny wariant discovery w Claude Code:
 ```
-ToolSearch(query="+monolynx ticket board comment wiki search", max_results=10)
+ToolSearch(query="+monolynx ticket get update board comment wiki search", max_results=10)
 ToolSearch(query="+monolynx graph query", max_results=10)
 ```
 <!-- /runtime:claude-code -->
@@ -67,7 +67,7 @@ Oceń ticket pod katem nastepujacych kryteriow:
 | **Zakres zmian** | Czy wiadomo GDZIE w kodzie/systemie trzeba wprowadzic zmiany? |
 | **Nie ruszac** | Czy ticket mowi, czego NIE zmieniac (pliki, zachowania, kontrakty), z powodem? Sekcja "Nie ruszac" z pozycjami = OK; "brak ograniczen" napisane wprost = OK, jesli sasiedztwo w kodzie/grafie tego nie podwaza (sprawdz w KROK 4); sekcji brak = BRAK. |
 | **Odwracalnosc** | Czy ticket wskazuje operacje nieodwracalne (migracja z danymi, wysylka, publikacja, zmiana API/schematu, kasowanie) albo mowi wprost, ze ich nie ma? Sekcja obecna = OK; brak sekcji przy zakresie, ktory takie operacje zawiera = BRAK; brak sekcji przy czysto kodowym zakresie = SLABE. |
-| **Zaleznosci** | Czy wymieniono zaleznosci od innych ticketow, modulow, serwisow? |
+| **Zaleznosci** | Czy wymieniono zaleznosci od innych ticketow, modulow, serwisow? Blokery musza byc zapisane strukturalnie (`blocked_by_ids`): porownaj tickety-blokery z opisu z liniami `Blokowany przez:` w generowanej sekcji `## Blokery (relacja)` wyniku `get_ticket` (poza `## Description`; brak sekcji = brak blokerow). Sekcja `## Zaleznosci` w opisie to proza szablonu `ticket-create`, nie relacja. Zgodne = OK; opis wymienia bloker, ktorego nie ma w `## Blokery (relacja)`, albo odwrotnie = SLABE z propozycja w KROK 7f. |
 | **Jednoznacznosc** | Czy opis jest wolny od wieloznacznosci i sprzecznosci? |
 
 Dla kazdego kryterium przypisz ocene:
@@ -173,7 +173,7 @@ Wygeneruj raport w nastepujacym formacie:
 | Zakres zmian | OK/SLABE/BRAK | [krotki komentarz] |
 | Nie ruszac | OK/SLABE/BRAK | [krotki komentarz; kandydaci z KROK 4, ktorych ticket nie wymienia] |
 | Odwracalnosc | OK/SLABE/BRAK | [krotki komentarz; operacje nieodwracalne znalezione w KROK 4] |
-| Zaleznosci | OK/SLABE/BRAK | [krotki komentarz] |
+| Zaleznosci | OK/SLABE/BRAK | [krotki komentarz; rozjazd opisu z `## Blokery (relacja)` z get_ticket - ktore klucze] |
 | Jednoznacznosc | OK/SLABE/BRAK | [krotki komentarz] |
 
 ### Zgodnosc zalozen
@@ -262,6 +262,25 @@ description=<PELNY dotychczasowy opis z obiema sekcjami wstawionymi przed
 "Zaleznosci">)`. Parametr `description` NADPISUJE caly opis - wyslanie samych
 nowych sekcji skasuje reszte ticketu. `work` buduje z nich kontrakt
 autonomii - bez nich agent dowiaduje sie o granicy dopiero po jej przekroczeniu.
+
+### 7f. Jesli blokery w opisie nie zgadzaja sie z `## Blokery (relacja)`
+
+Pokaz rozjazd (klucze tylko w opisie / tylko w `## Blokery (relacja)`) i ustal z uzytkownikiem docelowa liste blokerow - tylko tickety, ktore faktycznie blokuja start. UUID kazdego blokera wez z linii `ID:` wyniku `mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY blokera>")`.
+
+Zapytaj:
+> **Blokery w opisie i w relacjach ticketu sie roznia. Chcesz, zebym ustawil blokery na: [KEY1, KEY2]?**
+
+Uzytkownik potwierdza ->
+
+```
+mcp__monolynx__update_ticket(
+  project_slug="<PROJECT_SLUG>",
+  ticket_id="<ID>",
+  blocked_by_ids=["<UUID blokera 1>", "<UUID blokera 2>"]
+)
+```
+
+`blocked_by_ids` ZASTEPUJE wszystkie dotychczasowe blokery (replace-all): lista musi zawierac WSZYSTKIE blokery, nie tylko nowy. `[]` usuwa wszystkie. Tylko UUID z tego samego projektu - klucze `KEY-123` sa odrzucane. Jesli to opis jest nieaktualny (bloker usuniety z relacji celowo), popraw opis zamiast relacji - `description` nadpisuje caly opis, jak w 7e.
 
 ---
 

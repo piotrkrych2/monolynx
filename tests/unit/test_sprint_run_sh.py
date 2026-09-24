@@ -384,6 +384,20 @@ class TestSprintRunSh:
         assert "mcp__plugin_monolynx_monolynx" in call
         assert "--permission-prompts none" in call
 
+    def test_default_allowed_tools_includes_sprint_run_flagged_claude_invocation(self, sandbox):
+        """MON-207: `sprint-run/SKILL.md` KROK 4 startuje sesje robocze wprost jako
+        `MONOLYNX_SPRINT_RUN=1 claude --bg ...` (przypisanie zmiennej inline zamiast
+        polegania na tracked `.claude/settings.json`, patrz P1/P8). `Bash(claude:*)`
+        pasuje tylko do polecen zaczynajacych sie od doslownego `claude`, wiec bez
+        osobnej reguly to konkretne wywolanie nie byloby objete domyslnym allowedTools."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [])
+
+        assert result.returncode == 0
+        call = arg_lines(sandbox)[0]
+        assert "Bash(MONOLYNX_SPRINT_RUN=1 claude:*)" in call
+
     def test_allowed_tools_overridable_via_env(self, sandbox):
         write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
 

@@ -10,10 +10,9 @@ Tickety sprintu pracują równolegle (dyspozytor `sprint-run`), a każdy z nich 
 
 ## Rule
 
-1. **Ticket dopisuje swój wpis pod nagłówkiem `### Unreleased`** na początku sekcji `## Changelog` w `plugin/README.md` (tworzy go, jeśli nie ma), z kluczem ticketu w pierwszym punkcie. Nie zmienia `plugin/.claude-plugin/plugin.json`.
-2. **Numer i bump nadaje ten, kto merguje do `main`** (człowiek, sesja mr-prep albo `sprint-end`): zamienia `### Unreleased` na `### X.Y.Z` (minor przy nowym skillu/hooku/skrypcie, patch przy poprawce), ustawia tę samą wartość w `plugin.json`, w tym samym commicie.
-3. Wyjątek: ticket, który sam jest wydaniem (hotfix mergowany od razu, poza sprintem) może nadać numer, jeśli w chwili commita jest jedynym otwartym MR-em zmieniającym plugin.
-4. Do czasu wdrożenia obsługi `### Unreleased` w `scripts/validate_plugin_consistency.py` (ticket z retro) walidator wymaga równości wersji z pierwszym wpisem: ticket, który nie może zostawić `Unreleased`, wybiera numer o jeden wyżej niż najwyższy numer widoczny na `main` **i** we wszystkich otwartych MR-ach (`glab mr list`), i pisze to w komentarzu planu.
+1. **Ticket dopisuje swój wpis pod nagłówkiem `### Unreleased`** na początku sekcji `## Changelog` w `plugin/README.md` (tworzy go, jeśli nie ma). Każdy punkt najwyższego poziomu zaczyna się od klucza ticketu (`- MON-123: opis`), wcięte kontynuacje są bez klucza. Nie zmienia `plugin/.claude-plugin/plugin.json` ani `plugin/.codex-plugin/plugin.json`. `work` i `work-simple` wklejają tę zasadę do promptu każdego developera (blok `changelog-unreleased`).
+2. **Numer i bump nadaje ten, kto merguje**. Tickety mergowane do brancha integracyjnego (`MONOLYNX_MR_TARGET`, tryb dyspozytora): `/monolynx:sprint-end`, job `version-bump` (4c), na branchu integracyjnym przed jego merge do `main`, więc `main` nie widzi `### Unreleased`. Ticket mergowany wprost do `main`: mergujący na branchu MR, przed merge (człowiek; `mr-queue` tego nie robi), a `sprint-end` na `main` jest tylko siatką po merge bez numeru. Zamienia `### Unreleased` na `### X.Y.Z` (minor przy nowym skillu/hooku/skrypcie od ostatniego wydania, patch przy poprawce) i ustawia tę samą wartość w obu manifestach, w tym samym commicie.
+3. Wyjątek: ticket, który sam jest wydaniem (hotfix mergowany od razu, poza sprintem) może nadać numer, jeśli w chwili commita jest jedynym otwartym MR-em zmieniającym plugin. Decyzję podejmuje Team Manager i zapisuje ją w komentarzu planu.
 
 ## Pitfall
 
@@ -22,9 +21,11 @@ Dwa branche na tym samym `main` niezależnie wybierają "1.10.0". Oba pipeline'y
 ## Regression
 
 - MON-149 (1.9.0), MON-150 (1.10.0), MON-151 (1.10.0), MON-152 (1.11.0), MON-166 (1.8.2, zajęte przez MON-173/174): pięć kolizji `plugin.json` + changelog przy merge, rozwiązywane przez osobną sesję `monolynx-mr-prep` (2026-09-13).
+- MON-191: czerwony `plugin-consistency`, numer wersji nadany po fakcie.
+- MON-197: błędną decyzję Team Managera w sprawie wersji zatrzymał dopiero STOP technical-writera.
 
 ## What to check
 
-- Diff ticketu zmienia `plugin.json` `version` w sprincie z innymi otwartymi MR-ami pluginu -> zamiast tego `### Unreleased` (albo pkt 4, jawnie w planie).
-- Wpis changelogu bez klucza ticketu w pierwszym punkcie -> nie da się go przypisać przy scalaniu.
-- Merge do `main` zostawia `### Unreleased` jako pierwszy wpis -> mergujący nie nadał numeru.
+- Diff ticketu zmienia `version` w którymkolwiek manifeście w sprincie z innymi otwartymi MR-ami pluginu -> zamiast tego `### Unreleased` (wyjątek tylko wg pkt 3, jawnie w planie).
+- Punkt pod `### Unreleased` bez klucza ticketu, pusta sekcja `### Unreleased` albo `### Unreleased` nie na pierwszej pozycji -> `scripts/validate_plugin_consistency.py` zgłasza to w każdym trybie (job `plugin-consistency` na MR).
+- Merge do `main` zostawia `### Unreleased` jako pierwszy wpis -> mergujący nie nadał numeru; walidator w trybie wydania (`--release` albo `CI_COMMIT_BRANCH=main`) zgłasza "wydanie bez numeru" i pipeline `main` jest czerwony do merge wydania (`sprint-end`, job `version-bump`).
