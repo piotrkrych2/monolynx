@@ -8,7 +8,7 @@ Monolynx is a multi-module project platform. It started as a minimalist error-tr
 
 ## Commands
 
-All commands run inside Docker. Never run Python commands locally — always use `docker compose exec app <command>`.
+All commands run inside Docker. Never run Python commands locally — always use `docker compose exec app <command>`. Exception: stdlib-only repo scripts in `scripts/` and `plugin/scripts/` (`sync_skills.py`, `validate_plugin_consistency.py`, `*_state.py`) run on the host with `python3`, exactly as the `Makefile` targets `sync-skills`, `sync-skills-check` and `validate-plugin` do. Application code under `src/`, `pytest`, `ruff` and `mypy` still run only in Docker.
 
 ```bash
 # Development environment (Docker Compose: PostgreSQL + FastAPI with hot reload)
