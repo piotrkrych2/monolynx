@@ -828,7 +828,7 @@ W obu trybach błędem jest `### Unreleased` na innej pozycji niż pierwsza, pus
 
 ## Changelog
 
-### Unreleased
+### 1.22.0
 
 - MON-228: **`mr_queue_state.py queue-set` nie gubi pozycji zatrzymującej kolejkę**. Poza pozycjami `verifying` zachowuje też pozycje `stopped` ze `stop_reason` `target_ci_failed` spoza nowej listy (na początku kolejki, w dotychczasowej kolejności), więc ponowne `queue-set` nie zdejmuje blokady czerwonego brancha integracyjnego (`halted` zostaje). `stopped` z innym powodem albo bez powodu nadal wypada.
 - MON-228: **`/monolynx:mr-queue`, KROK 2: pusty `order` z pozycjami `verifying` idzie do KROK 3.** Wcześniej tick kończył się od razu z `remaining=0` i weryfikacja wsteczna (3.0) nie startowała, przez co zmergowane MR-y czekały z ticketem na `done`; teraz `remaining=0` i koniec ticka następuje dopiero bez pozycji `verifying`.
