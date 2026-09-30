@@ -191,7 +191,7 @@ włączenia. Sprawdź flagi w trzech źródłach: env procesu, `.claude/settings
 
 Dla env procesu nie da się wylistować kluczy bez `$(...)`/`env | grep`, więc
 sprawdzasz jawną listę znanych flag - jeden blok `echo` wypisujący wszystkie
-17 flag naraz (pusta wartość po `:-` znaczy nieustawiona w env):
+19 flag naraz (pusta wartość po `:-` znaczy nieustawiona w env):
 
 ```bash
 echo "MONOLYNX_PROJECT_SLUG=${MONOLYNX_PROJECT_SLUG:-}"
@@ -211,6 +211,8 @@ echo "MONOLYNX_SPRINT_TICK_MODEL=${MONOLYNX_SPRINT_TICK_MODEL:-}"
 echo "MONOLYNX_BRIEF_GUARD=${MONOLYNX_BRIEF_GUARD:-}"
 echo "MONOLYNX_MUTATION_BUDGET=${MONOLYNX_MUTATION_BUDGET:-}"
 echo "MONOLYNX_SPRINT_PARALLEL=${MONOLYNX_SPRINT_PARALLEL:-}"
+echo "MONOLYNX_BASE_BRANCH=${MONOLYNX_BASE_BRANCH:-}"
+echo "MONOLYNX_MR_TARGET=${MONOLYNX_MR_TARGET:-}"
 ```
 
 ```bash
@@ -237,10 +239,50 @@ Dla każdej flagi znalezionej w co najmniej jednym źródle zbuduj wiersz
 - **Źródło: env procesu** - uwaga: "widoczna tylko dla procesów startowanych z
   tego środowiska - sesja `--bg` odpalona z innego terminala, crona albo
   skryptu bez eksportu jej nie dostanie".
+- **`MONOLYNX_BASE_BRANCH` i `MONOLYNX_MR_TARGET` obie ustawione i różne** (po
+  obcięciu białych znaków, porównaj efektywne wartości: env procesu, potem
+  pliki settings) - uwaga w wierszu obu flag: "ostrzeżenie: różne
+  `MONOLYNX_BASE_BRANCH` i `MONOLYNX_MR_TARGET` - preflight `sprint-run`
+  zwróci `ERROR`, a `config-check` w `mr-queue` zatrzyma tick; obie wskazują
+  ten sam branch, wystarczy jedna (zwykle `MONOLYNX_MR_TARGET`, bo tylko ona
+  ustala też cel MR w `work` / `work-simple`)". Nie poprawiasz żadnej z nich -
+  wybór zostaje przy człowieku. Jedna z nich albo obie równe - bez uwagi.
 
 Flagi nieznalezionej w żadnym źródle nie umieszczaj w wykazie - domyślna
 wartość jest już udokumentowana w `plugin/README.md`, powielanie jej tutaj nie
 niesie informacji.
+
+<!-- runtime:claude-code -->
+**Plugin z checkoutu (dogfooding).** Osobne sprawdzenie, poza listą flag:
+
+```bash
+echo "CLAUDE_CODE_PLUGIN_DIRS=${CLAUDE_CODE_PLUGIN_DIRS:-}"
+```
+
+Niepusta wartość znaczy, że skille tej sesji, a także sesji w tle
+startowanych z jej środowiska, pochodzą z katalogu pluginu w checkoucie, nie
+z zainstalowanej wersji. To nie jest flaga `MONOLYNX_*`: nie trafia do wykazu
+flag ani do licznika `N`, dopisujesz ją wyłącznie do stanu wiersza 6 (patrz
+niżej). Nigdy BRAK i nigdy propozycja zmiany - to świadomy wybór człowieka
+pracującego nad samym pluginem. Zmienna jest nieudokumentowana w `claude
+--help` (sprawdzona na Claude Code 2.1.284). Pusta wartość nie wyklucza
+pluginu z checkoutu: sesja uruchomiona z flagą `--plugin-dir` nie ustawia
+żadnej zmiennej.
+
+Gdy człowiek pyta, jak przełączyć dyspozytora na plugin z brancha sprintu i
+jak wrócić, podaj te komendy (dotyczą repozytorium pluginu; `/sciezka/do/repo`
+to główny checkout na branchu sprintu, nie worktree ticketu):
+
+- pętla skryptowa: `CLAUDE_CODE_PLUGIN_DIRS=/sciezka/do/repo/plugin plugin/scripts/sprint_run.sh --interval 15m --slots 2`
+- dyspozytor interaktywny: `CLAUDE_CODE_PLUGIN_DIRS=/sciezka/do/repo/plugin claude`, a w tej sesji `/loop 15m /monolynx:sprint-run`
+- pojedyncza sesja: `claude --plugin-dir /sciezka/do/repo/plugin` (flaga nie przechodzi do sesji `claude --bg` startowanych przez dyspozytora)
+- sprawdzenie: `CLAUDE_CODE_PLUGIN_DIRS=/sciezka/do/repo/plugin claude plugin list --json` pokazuje wpis `monolynx@inline` z `installPath` checkoutu
+- powrót: `unset CLAUDE_CODE_PLUGIN_DIRS` i nowa sesja bez `--plugin-dir`
+
+Kiedy tego nie robić (czerwone CI brancha sprintu, zmiany hooków albo skryptów
+pętli w nocnym batchu, obce projekty) i czego nie sprawdzono: `plugin/README.md`,
+sekcja „Praca nad pluginem: dyspozytor na pluginie z brancha sprintu”.
+<!-- /runtime:claude-code -->
 
 W głównej tabeli 6 punktów wiersz "Flagi `MONOLYNX_*`" dostaje stan
 informacyjny, nigdy BRAK - to nie jest usterka:
@@ -248,8 +290,16 @@ informacyjny, nigdy BRAK - to nie jest usterka:
 - **Wykaz niepusty** - `INFO (N jawnie ustawionych)`, gdzie `N` to liczba
   flag w wykazie. Gdy co najmniej jedna z nich ma uwagę "niewidoczna dla
   worktree", dopisz to do stanu, np. `INFO (3 jawnie ustawionych, 2
-  niewidoczne dla worktree)`.
+  niewidoczne dla worktree)`. Przy rozbieżnych `MONOLYNX_BASE_BRANCH` i
+  `MONOLYNX_MR_TARGET` dopisz `ostrzeżenie: różne BASE_BRANCH i MR_TARGET`,
+  np. `INFO (2 jawnie ustawionych, ostrzeżenie: różne BASE_BRANCH i
+  MR_TARGET)` - stan zostaje informacyjny, bo punkt 6 nie ma skilla
+  naprawczego.
 - **Wykaz pusty** - `INFO (wszystkie domyślne)`.
+- **`CLAUDE_CODE_PLUGIN_DIRS` niepusta** (tylko Claude Code, patrz wyżej) -
+  dopisz do stanu `plugin z checkoutu: <ścieżka>`, np. `INFO (wszystkie
+  domyślne, plugin z checkoutu: /sciezka/do/repo/plugin)`. Stan zostaje
+  informacyjny.
 
 ---
 
@@ -264,7 +314,7 @@ Wypisz dokładnie sześć wierszy:
 | 3. LLM Wiki (`wiki_llm_enabled`) | OK / BRAK / nie sprawdzono / BŁĄD: <treść> | `/monolynx:wiki-init` |
 | 4. Graf zależności w CI | OK / BRAK | `/monolynx:create-graph-ci-script` |
 | 5. Testy mutacyjne w CI | OK / BRAK / BRAK (bez opcji w KROK 8) | `/monolynx:create-mutation-ci-script` |
-| 6. Flagi `MONOLYNX_*` | INFO (N jawnie ustawionych) / INFO (wszystkie domyślne) | - |
+| 6. Flagi `MONOLYNX_*` | INFO (N jawnie ustawionych) / INFO (wszystkie domyślne), opcjonalnie z `plugin z checkoutu: <ścieżka>` | - |
 
 Zaraz pod tabelą, przed wykazem flag: uwagi z KROK 4 (alternatywa
 `/monolynx:graph-sync` przy stanie BRAK) i z KROK 5 (wskazanie narzędzia

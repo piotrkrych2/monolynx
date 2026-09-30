@@ -6,11 +6,9 @@ import asyncio
 import base64
 import contextlib
 import json
-import logging
 import math
 import os
 import re
-import secrets
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
@@ -20,7 +18,7 @@ from typing import Any
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -29,30 +27,23 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from monolynx.config import settings as app_settings
 from monolynx.constants import (
     ACTIVITY_ENTITY_TYPES,
-    BOARD_STATUSES,
     GRAPH_EDGE_TYPES,
     GRAPH_NODE_TYPES,
     INTERVAL_UNITS,
-    INVITATION_DAYS,
-    LABEL_COLOR_PALETTE,
     PERMISSION_ACTIONS,
     PERMISSION_MODULES,
     PIPELINE_JOB_STATUSES,
     PIPELINE_STATUSES,
     PIPELINE_TYPES,
     PRIORITIES,
-    TICKET_STATUSES,
     TIME_TRACKING_STATUSES,
 )
-from monolynx.dashboard.helpers import SLUG_PATTERN
 from monolynx.dashboard.monitoring import _is_url_safe
-from monolynx.dashboard.projects import CODE_PATTERN
 from monolynx.dashboard.reports import _get_user_project_ids
 from monolynx.database import async_session_factory
 from monolynx.models.event import Event
 from monolynx.models.heartbeat import Heartbeat
 from monolynx.models.issue import Issue
-from monolynx.models.label import Label, TicketLabel
 from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.pipeline import Pipeline, PipelineJob, PipelineStep
@@ -63,12 +54,8 @@ from monolynx.models.settlement import Settlement
 from monolynx.models.settlement_project import SettlementProject
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
-from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
 from monolynx.models.ticket_attachment import TicketAttachment
-from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.user import User
-from monolynx.models.wiki_attachment import WikiAttachment
-from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.models.work_plan import WorkPlanEntry
 from monolynx.schemas.pipelines import build_list_item, build_pipeline_response
@@ -76,7 +63,9 @@ from monolynx.schemas.time_tracking import TimeTrackingEntryResponse, TimeTracki
 from monolynx.schemas.work_plan import WorkPlanEntryResponse
 from monolynx.services import graph as graph_service
 from monolynx.services import pipelines as pipelines_service
-from monolynx.services import ticket_dependencies
+from monolynx.services import projects as projects_service
+from monolynx.services import tickets as tickets_service
+from monolynx.services import wiki_attachments as wiki_attachments_service
 from monolynx.services import work_plan as work_plan_service
 from monolynx.services.activity import get_activity_log as svc_get_activity_log
 from monolynx.services.burndown import get_burndown_data as svc_get_burndown_data
@@ -85,7 +74,7 @@ from monolynx.services.heartbeat import create_heartbeat as svc_create_heartbeat
 from monolynx.services.heartbeat import delete_heartbeat as svc_delete_heartbeat
 from monolynx.services.heartbeat import get_heartbeat_status
 from monolynx.services.heartbeat import update_heartbeat as svc_update_heartbeat
-from monolynx.services.mcp_auth import verify_mcp_token
+from monolynx.services.mcp_auth import verify_bearer_token, verify_mcp_token
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
 from monolynx.services.minio_client import upload_object as minio_upload_object
@@ -104,7 +93,6 @@ from monolynx.services.settlements import (
 )
 from monolynx.services.settlements import (
     get_settlement_attachment_bytes,
-    is_ticket_frozen,
     validate_settlement_ticket_link,
 )
 from monolynx.services.settlements import (
@@ -137,11 +125,22 @@ from monolynx.services.wiki import (
 )
 from monolynx.services.wiki import (
     get_page_content,
-    get_page_tree,
     is_wiki_llm_enabled,
 )
 from monolynx.services.wiki import (
+    get_wiki_config as svc_get_wiki_config,
+)
+from monolynx.services.wiki import (
+    get_wiki_page_detail as svc_get_wiki_page_detail,
+)
+from monolynx.services.wiki import (
+    list_pages_flat as svc_list_pages_flat,
+)
+from monolynx.services.wiki import (
     regenerate_index as svc_regenerate_wiki_index,
+)
+from monolynx.services.wiki import (
+    set_wiki_config as svc_set_wiki_config,
 )
 from monolynx.services.wiki import (
     update_wiki_page as svc_update_wiki_page,
@@ -151,8 +150,6 @@ from monolynx.services.wiki_bootstrap import (
 )
 from monolynx.services.wiki_lint import lint_wiki as svc_lint_wiki
 from monolynx.services.work_plan import _UNSET as _WORK_PLAN_UNSET
-
-logger = logging.getLogger("monolynx.mcp")
 
 _STATIC_SKILLS_DIR = Path(__file__).resolve().parent / "static" / "skills"
 _SKILL_SLUG_PLACEHOLDERS = ("<PROJECT-SLUG>", "<PROJECT-ID>")
@@ -217,21 +214,17 @@ async def _get_auth_header(ctx: Context[Any, Any]) -> str:
 
 
 async def _verify_token(raw_token: str) -> User:
-    """Zwaliduj token (OAuth + legacy) i zwroc uzytkownika."""
-    # Sprobuj najpierw OAuth access token
-    try:
-        from monolynx.services.oauth import verify_oauth_access_token
+    """Zwaliduj token (OAuth + legacy) i zwroc uzytkownika.
 
-        async with async_session_factory() as db:
-            user = await verify_oauth_access_token(raw_token, db)
-        if user is not None:
-            return user
-    except Exception:
-        logger.debug("OAuth verification skipped (tables may not exist)")
-
-    # Fallback na legacy osk_* token
+    Cienki wrapper nad verify_bearer_token (MON-140, wspoldzielony z API v2) --
+    ta funkcja i jej sygnatura zostaja, bo _auth(), _MCPBearerAuthMiddleware i
+    _get_user_and_project() ja wolaja, a ~440 istniejacych testow MCP patchuje
+    monolynx.mcp_server.verify_mcp_token (nie nazwe w services/mcp_auth.py) i
+    oczekuje, ze podmiana zadziala tutaj -- stad explicite
+    legacy_verifier=verify_mcp_token (modulowy import ponizej).
+    """
     async with async_session_factory() as db:
-        user = await verify_mcp_token(raw_token, db)
+        user = await verify_bearer_token(raw_token, db, legacy_verifier=verify_mcp_token)
     if user is None:
         raise ValueError("Nieprawidlowy lub nieaktywny token API")
     return user
@@ -785,11 +778,6 @@ def _format_tickets_table(
     return "\n".join(rows)
 
 
-async def _can_read_settlements(db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID) -> bool:
-    """Sprawdza czy user ma rozliczenia:read w projekcie."""
-    return await check_permission(db, user_id, project_id, "rozliczenia", "read")
-
-
 async def _get_user_and_project(ctx: Context[Any, Any], project_slug: str) -> tuple[User, Project]:
     """Autoryzuj uzytkownika i sprawdz dostep do projektu."""
     raw_token = await _get_auth_header(ctx)
@@ -832,36 +820,6 @@ async def _get_user_member_and_project(ctx: Context[Any, Any], project_slug: str
     return user, member, project
 
 
-_TICKET_KEY_RE = re.compile(r"^([A-Za-z]{1,10})-(\d+)$")
-
-
-async def _resolve_ticket_uuid(ticket_id: str, project_id: uuid.UUID) -> uuid.UUID:
-    """Zamien ticket_id (UUID lub klucz jak MNX-12) na UUID ticketa."""
-    # Sprobuj UUID
-    try:
-        return uuid.UUID(ticket_id)
-    except ValueError:
-        pass
-
-    # Sprobuj klucz (np. MNX-12)
-    match = _TICKET_KEY_RE.match(ticket_id.strip())
-    if not match:
-        raise ValueError(f"Nieprawidlowy identyfikator ticketa: '{ticket_id}'. Podaj UUID lub klucz (np. MNX-12)")
-
-    number = int(match.group(2))
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(Ticket.id).where(
-                Ticket.project_id == project_id,
-                Ticket.number == number,
-            )
-        )
-        ticket_uuid = result.scalar_one_or_none()
-        if ticket_uuid is None:
-            raise ValueError(f"Ticket '{ticket_id}' nie istnieje w projekcie")
-        return ticket_uuid
-
-
 # --- Projekty ---
 
 
@@ -871,25 +829,16 @@ async def list_projects(ctx: Context[Any, Any]) -> list[dict[str, Any]]:
     user = await _auth(ctx)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(Project, ProjectMember.role)
-            .join(ProjectMember, ProjectMember.project_id == Project.id)
-            .where(
-                ProjectMember.user_id == user.id,
-                Project.is_active.is_(True),
-            )
-            .order_by(Project.name)
-        )
-        rows = result.all()
+        items = await projects_service.list_projects(db, user)
 
     return [
         {
-            "name": project.name,
-            "slug": project.slug,
-            "role": role,
-            "created_at": project.created_at.isoformat(),
+            "name": item.project.name,
+            "slug": item.project.slug,
+            "role": item.role,
+            "created_at": item.project.created_at.isoformat(),
         }
-        for project, role in rows
+        for item in items
     ]
 
 
@@ -902,82 +851,20 @@ async def get_project(
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        # Rola uzytkownika
-        role_result = await db.execute(
-            select(ProjectMember.role).where(
-                ProjectMember.project_id == project.id,
-                ProjectMember.user_id == user.id,
-            )
-        )
-        role = role_result.scalar_one()
-
-        # Liczba czlonkow
-        members_count = (
-            await db.execute(
-                select(func.count(ProjectMember.id)).where(
-                    ProjectMember.project_id == project.id,
-                )
-            )
-        ).scalar() or 0
-
-        # Liczba ticketow
-        tickets_count = (
-            await db.execute(
-                select(func.count(Ticket.id)).where(
-                    Ticket.project_id == project.id,
-                )
-            )
-        ).scalar() or 0
-
-        # Aktywny sprint
-        sprint_result = await db.execute(
-            select(Sprint).where(
-                Sprint.project_id == project.id,
-                Sprint.status == "active",
-            )
-        )
-        sprint = sprint_result.scalar_one_or_none()
-
-        active_sprint = None
-        if sprint:
-            ticket_stats = await db.execute(select(Ticket.status, func.count(Ticket.id)).where(Ticket.sprint_id == sprint.id).group_by(Ticket.status))
-            status_counts: dict[str, int] = {row[0]: row[1] for row in ticket_stats.all()}
-            active_sprint = {
-                "name": sprint.name,
-                "goal": sprint.goal,
-                "tickets_by_status": status_counts,
-            }
-
-        # Liczba monitorow
-        monitors_count = (
-            await db.execute(
-                select(func.count(Monitor.id)).where(
-                    Monitor.project_id == project.id,
-                )
-            )
-        ).scalar() or 0
-
-        # Liczba heartbeatow
-        heartbeats_count = (
-            await db.execute(
-                select(func.count(Heartbeat.id)).where(
-                    Heartbeat.project_id == project.id,
-                )
-            )
-        ).scalar() or 0
+        summary = await projects_service.get_project(db, user, project)
 
     return {
-        "id": str(project.id),
-        "name": project.name,
-        "slug": project.slug,
-        "description": project.description,
-        "created_at": project.created_at.isoformat(),
-        "role": role,
-        "members_count": members_count,
-        "tickets_count": tickets_count,
-        "active_sprint": active_sprint,
-        "monitors_count": monitors_count,
-        "heartbeats_count": heartbeats_count,
+        "id": str(summary.project.id),
+        "name": summary.project.name,
+        "slug": summary.project.slug,
+        "description": summary.project.description,
+        "created_at": summary.project.created_at.isoformat(),
+        "role": summary.role,
+        "members_count": summary.members_count,
+        "tickets_count": summary.tickets_count,
+        "active_sprint": summary.active_sprint,
+        "monitors_count": summary.monitors_count,
+        "heartbeats_count": summary.heartbeats_count,
     }
 
 
@@ -993,46 +880,7 @@ async def update_project(
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        # Sprawdz uprawnienia - settings:write
-        if not await check_permission(db, user.id, project.id, "settings", "write"):
-            raise ValueError("Brak uprawnienia do edycji projektu (settings:write)")
-
-        # Walidacja new_slug
-        if new_slug is not None:
-            if len(new_slug) > 255:
-                raise ValueError("Slug moze miec maksymalnie 255 znakow")
-            if not SLUG_PATTERN.match(new_slug):
-                raise ValueError("Slug moze zawierac tylko male litery, cyfry i myslniki")
-            # Sprawdz unikalnosc
-            existing = await db.execute(select(Project.id).where(Project.slug == new_slug, Project.id != project.id))
-            if existing.scalar_one_or_none() is not None:
-                raise ValueError(f"Slug '{new_slug}' jest juz zajety")
-
-        # Pobierz projekt do edycji w tej sesji
-        proj_result = await db.execute(select(Project).where(Project.id == project.id))
-        proj = proj_result.scalar_one()
-
-        if name is not None:
-            stripped_name = name.strip()
-            if not stripped_name:
-                raise ValueError("Nazwa nie moze byc pusta")
-            if len(stripped_name) > 255:
-                raise ValueError("Nazwa moze miec maksymalnie 255 znakow")
-            proj.name = stripped_name
-        if description is not None:
-            stripped_desc = description.strip()
-            if len(stripped_desc) > 1000:
-                raise ValueError("Opis moze miec maksymalnie 1000 znakow")
-            proj.description = stripped_desc if stripped_desc else None
-        if new_slug is not None:
-            proj.slug = new_slug
-
-        try:
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()
-            raise ValueError("Projekt z takim slugiem juz istnieje") from None
-        await db.refresh(proj)
+        proj = await projects_service.update_project(db, user, project, name=name, description=description, new_slug=new_slug)
 
         return {
             "id": str(proj.id),
@@ -1057,20 +905,9 @@ async def delete_project(
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        # Sprawdz uprawnienia - settings:delete
-        if not await check_permission(db, user.id, project.id, "settings", "delete"):
-            raise ValueError("Brak uprawnienia do usuniecia projektu (settings:delete)")
+        await projects_service.delete_project(db, user, project)
 
-        # Pobierz projekt do edycji w tej sesji
-        proj_result = await db.execute(select(Project).where(Project.id == project.id))
-        proj = proj_result.scalar_one()
-
-        proj.is_active = False
-        await db.commit()
-
-        deleted_at = datetime.now(UTC).isoformat()
-
-    return {"message": f"Projekt '{proj.name}' usuniety", "deleted_at": deleted_at}
+    return {"message": f"Projekt '{project.name}' usuniety", "deleted_at": datetime.now(UTC).isoformat()}
 
 
 @mcp.tool(annotations=WRITE)
@@ -1100,124 +937,32 @@ async def invite_member(
     Zwraca: { message, user_email, role } oraz opcjonalnie
     { invitation_id, expires_at } jesli wyslano zaproszenie emailowe.
     """
-    # Walidacja roli
-    if role not in ("member", "admin"):
-        raise ValueError("Rola musi byc 'member' lub 'admin' (owner nie moze byc przyznany przez zaproszenie)")
-
-    # Sprawdz uprawnienia wywołujacego
     calling_user, _calling_member, project = await _get_user_member_and_project(ctx, project_slug)
 
-    email = email.strip().lower()
-    if not email:
-        raise ValueError("Email nie moze byc pusty")
-    if "@" not in email or len(email) > 255:
-        raise ValueError("Nieprawidlowy format adresu email")
-
     async with async_session_factory() as db:
-        if not await check_permission(db, calling_user.id, project.id, "users", "write"):
-            raise ValueError("Brak uprawnienia do zapraszania czlonkow do projektu (users:write)")
-        # Sprawdz czy user juz istnieje w systemie (takze nieaktywny)
-        any_user_result = await db.execute(select(User).where(User.email == email))
-        any_user = any_user_result.scalar_one_or_none()
-        if any_user is not None and not any_user.is_active:
-            raise ValueError(f"Uzytkownik {email} jest dezaktywowany")
+        invite = await projects_service.invite_member(db, calling_user, project, email, role=role)
 
-        existing_user = any_user if (any_user is not None and any_user.is_active) else None
-
-        # Sprawdz czy uzytkownik jest juz czlonkiem projektu
-        if existing_user is not None:
-            existing_member_result = await db.execute(
-                select(ProjectMember).where(
-                    ProjectMember.project_id == project.id,
-                    ProjectMember.user_id == existing_user.id,
-                )
-            )
-            if existing_member_result.scalar_one_or_none() is not None:
-                raise ValueError(f"Uzytkownik '{email}' jest juz czlonkiem projektu '{project_slug}'")
-
-            # Dodaj istniejacego uzytkownika bezposrednio jako czlonka
-            new_member = ProjectMember(
-                project_id=project.id,
-                user_id=existing_user.id,
-                role=role,
-            )
-            db.add(new_member)
-            try:
-                await db.commit()
-            except IntegrityError:
-                await db.rollback()
-                raise ValueError(f"Uzytkownik '{email}' jest juz czlonkiem projektu '{project_slug}'") from None
-
-            return {
-                "message": f"Uzytkownik '{email}' zostal dodany do projektu '{project_slug}' jako {role}.",
-                "user_email": email,
-                "role": role,
-            }
-
-        # Nowy uzytkownik — utworz konto z tokenem zaproszenia
-        invitation_token = uuid.uuid4()
-        expires_at = datetime.now(UTC) + timedelta(days=INVITATION_DAYS)
-
-        new_user = User(
-            email=email,
-            first_name="",
-            last_name="",
-            password_hash=None,
-            invitation_token=invitation_token,
-            invitation_expires_at=expires_at,
-        )
-        db.add(new_user)
-
-        try:
-            await db.flush()
-        except IntegrityError:
-            await db.rollback()
-            raise ValueError(f"Uzytkownik z emailem '{email}' juz istnieje w systemie") from None
-
-        new_member = ProjectMember(
-            project_id=project.id,
-            user_id=new_user.id,
-            role=role,
-        )
-        db.add(new_member)
-        await db.commit()
-
-        # Wysylaj email z zaproszeniem
-        send_invitation_email(email, "", invitation_token)
-
+    if not invite.is_new_user:
         return {
-            "message": (
-                f"Zaproszenie wyslane na adres '{email}'. Uzytkownik zostanie dodany do projektu '{project_slug}' jako {role} po aktywacji konta."
-            ),
-            "user_email": email,
-            "role": role,
-            "invitation_id": str(invitation_token),
-            "expires_at": expires_at.isoformat(),
+            "message": f"Uzytkownik '{invite.email}' zostal dodany do projektu '{project_slug}' jako {invite.role}.",
+            "user_email": invite.email,
+            "role": invite.role,
         }
 
+    # Wysylaj email z zaproszeniem
+    assert invite.invitation_token is not None and invite.expires_at is not None
+    send_invitation_email(invite.email, "", invite.invitation_token)
 
-def _slugify(name: str) -> str:
-    """Zamien nazwe projektu na slug (male litery, myslniki zamiast spacji/znakow)."""
-    slug = name.lower()
-    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
-    slug = re.sub(r"[\s-]+", "-", slug)
-    slug = slug.strip("-")
-    return slug or "projekt"
-
-
-def _code_from_slug(slug: str) -> str:
-    """Wygeneruj kod projektu ze sluga (np. 'anna-miastkowska' -> 'ANNAM')."""
-    parts = slug.split("-")
-    code = slug[:5].upper() if len(parts) == 1 else "".join(p[0] for p in parts if p)[:10].upper()
-    if not code:
-        code = "PROJ"
-    # Upewnij sie ze kod zaczyna sie od litery
-    if not code[0].isalpha():
-        code = "P" + code[:9]
-    # Upewnij sie ze kod ma minimum 2 znaki
-    if len(code) < 2:
-        code = code * 2
-    return code
+    return {
+        "message": (
+            f"Zaproszenie wyslane na adres '{invite.email}'. "
+            f"Uzytkownik zostanie dodany do projektu '{project_slug}' jako {invite.role} po aktywacji konta."
+        ),
+        "user_email": invite.email,
+        "role": invite.role,
+        "invitation_id": str(invite.invitation_token),
+        "expires_at": invite.expires_at.isoformat(),
+    }
 
 
 @mcp.tool(annotations=WRITE)
@@ -1240,76 +985,18 @@ async def create_project(
     """
     user = await _auth(ctx)
 
-    # Walidacja nazwy
-    name = name.strip()
-    if not name:
-        raise ValueError("Nazwa projektu nie moze byc pusta.")
-    if len(name) > 255:
-        raise ValueError("Nazwa projektu nie moze przekraczac 255 znakow.")
-    if description is not None and len(description) > 1000:
-        raise ValueError("Opis projektu nie moze przekraczac 1000 znakow.")
-
-    # Przygotuj slug
-    slug = slug.strip().lower() if slug else _slugify(name)
-
-    if not SLUG_PATTERN.match(slug):
-        raise ValueError(f"Nieprawidlowy slug '{slug}'. Slug moze zawierac tylko male litery, cyfry i myslniki (np. 'anna-miastkowska').")
-
-    # Przygotuj kod projektu
-    code = code.strip().upper() if code else _code_from_slug(slug)
-
-    if not CODE_PATTERN.match(code):
-        raise ValueError(f"Nieprawidlowy kod '{code}'. Kod musi miec 2-10 znakow: wielkie litery i cyfry, zaczynac sie od litery (np. PIM, PROJ2).")
-
     async with async_session_factory() as db:
-        # Sprawdz unikalnosc sluga
-        existing = await db.execute(select(Project.id).where(Project.slug == slug))
-        if existing.scalar_one_or_none() is not None:
-            raise ValueError(f"Projekt ze slugiem '{slug}' juz istnieje. Podaj inny slug.")
+        project = await projects_service.create_project(db, user, name, slug=slug, description=description, code=code)
 
-        # Sprawdz unikalnosc kodu
-        existing_code = await db.execute(select(Project.id).where(Project.code == code))
-        if existing_code.scalar_one_or_none() is not None:
-            # Sprobuj dodac suffix numeryczny do kodu (batch query)
-            candidates = [(code + str(i))[:10] for i in range(2, 100) if CODE_PATTERN.match((code + str(i))[:10])]
-            taken_result = await db.execute(select(Project.code).where(Project.code.in_(candidates)))
-            taken_codes = {row[0] for row in taken_result.all()}
-            code = next((c for c in candidates if c not in taken_codes), None)
-            if code is None:
-                raise ValueError(f"Kod '{code}' jest juz zajety i nie udalo sie znalezc wolnego wariantu. Podaj inny kod.")
-
-        project = Project(
-            name=name,
-            slug=slug,
-            code=code,
-            description=description,
-            api_key=secrets.token_urlsafe(32),
-        )
-        db.add(project)
-        try:
-            await db.flush()
-        except IntegrityError as e:
-            await db.rollback()
-            raise ValueError("Projekt z takim slugiem lub kodem juz istnieje.") from e
-
-        member = ProjectMember(
-            project_id=project.id,
-            user_id=user.id,
-            role="owner",
-        )
-        db.add(member)
-        await db.commit()
-        await db.refresh(project)
-
-        return {
-            "id": str(project.id),
-            "name": project.name,
-            "slug": project.slug,
-            "description": project.description,
-            "code": project.code,
-            "created_at": project.created_at.isoformat(),
-            "message": f"Projekt '{project.name}' zostal utworzony pomyslnie.",
-        }
+    return {
+        "id": str(project.id),
+        "name": project.name,
+        "slug": project.slug,
+        "description": project.description,
+        "code": project.code,
+        "created_at": project.created_at.isoformat(),
+        "message": f"Projekt '{project.name}' zostal utworzony pomyslnie.",
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -1326,30 +1013,17 @@ async def list_members(
     _user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(ProjectMember, User)
-            .join(User, User.id == ProjectMember.user_id)
-            .where(ProjectMember.project_id == project.id)
-            .order_by(
-                case(
-                    (ProjectMember.role == "owner", 1),
-                    (ProjectMember.role == "admin", 2),
-                    else_=3,
-                ),
-                (User.first_name + " " + User.last_name),
-            )
-        )
-        rows = result.all()
+        members = await projects_service.list_members(db, _user, project)
 
     return [
         {
-            "user_id": str(member.user_id),
-            "name": f"{user.first_name} {user.last_name}".strip() or user.email,
-            "email": user.email,
-            "role": member.role,
-            "joined_at": member.created_at.isoformat(),
+            "user_id": str(m.user_id),
+            "name": m.name,
+            "email": m.email,
+            "role": m.role,
+            "joined_at": m.joined_at.isoformat(),
         }
-        for member, user in rows
+        for m in members
     ]
 
 
@@ -1373,40 +1047,10 @@ async def remove_member(
     """
     calling_user, _calling_member, project = await _get_user_member_and_project(ctx, project_slug)
 
-    email = email.strip().lower()
-    if not email:
-        raise ValueError("Email nie moze byc pusty")
-    if "@" not in email or len(email) > 255:
-        raise ValueError("Nieprawidlowy format adresu email")
-
     async with async_session_factory() as db:
-        if not await check_permission(db, calling_user.id, project.id, "users", "delete"):
-            raise ValueError("Brak uprawnienia do usuniecia czlonkow z projektu (users:delete)")
-        # Znajdz uzytkownika po emailu
-        user_result = await db.execute(select(User).where(User.email == email))
-        target_user = user_result.scalar_one_or_none()
-        if target_user is None:
-            raise ValueError(f"Uzytkownik z emailem '{email}' nie istnieje w systemie")
+        await projects_service.remove_member(db, calling_user, project, email)
 
-        # Znajdz membership
-        member_result = await db.execute(
-            select(ProjectMember).where(
-                ProjectMember.project_id == project.id,
-                ProjectMember.user_id == target_user.id,
-            )
-        )
-        member = member_result.scalar_one_or_none()
-        if member is None:
-            raise ValueError(f"Uzytkownik '{email}' nie jest czlonkiem projektu '{project_slug}'")
-
-        # Nie mozna usunac ownera
-        if member.role == "owner":
-            raise ValueError("Nie mozna usunac ownera projektu. Zmien najpierw role ownera na innego czlonka.")
-
-        await db.delete(member)
-        await db.commit()
-
-    return {"message": f"Uzytkownik '{email}' zostal usuniety z projektu '{project_slug}'"}
+    return {"message": f"Uzytkownik '{email.strip().lower()}' zostal usuniety z projektu '{project_slug}'"}
 
 
 # --- 500ki (Error Tracking) ---
@@ -2011,42 +1655,15 @@ async def get_board(
     Format wiersza: CODE-N | Tytul | priority | @assignee | Nsp [label1, label2]
     Jesli brak aktywnego sprintu — zwraca "(Brak aktywnego sprintu)".
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        sprint_result = await db.execute(
-            select(Sprint).where(
-                Sprint.project_id == project.id,
-                Sprint.status == "active",
-            )
-        )
-        sprint = sprint_result.scalar_one_or_none()
-        if sprint is None:
-            return "(Brak aktywnego sprintu)"
+        result = await tickets_service.get_board(db, user, project)
 
-        result = await db.execute(
-            select(Ticket)
-            .options(selectinload(Ticket.assignee), selectinload(Ticket.labels))
-            .where(Ticket.sprint_id == sprint.id)
-            .order_by(Ticket.order, Ticket.created_at)
-        )
-        tickets = result.scalars().all()
+    if result.sprint is None:
+        return "(Brak aktywnego sprintu)"
 
-    columns: dict[str, list[dict[str, Any]]] = {s: [] for s in BOARD_STATUSES}
-    for t in tickets:
-        if t.status in columns:
-            columns[t.status].append(
-                {
-                    "key": f"{project.code}-{t.number}",
-                    "title": t.title,
-                    "priority": t.priority,
-                    "story_points": t.story_points,
-                    "assignee": t.assignee.email if t.assignee else None,
-                    "labels": [lbl.name for lbl in t.labels] if t.labels else [],
-                }
-            )
-
-    return _format_board(sprint, project.code, columns)
+    return _format_board(result.sprint, project.code, result.columns)
 
 
 # --- Podsumowanie projektu ---
@@ -2058,98 +1675,18 @@ async def get_project_summary(
     project_slug: str,
 ) -> dict[str, Any]:
     """Zagregowane statystyki projektu: otwarte bledy, monitory, aktywny sprint."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
-    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        # 500ki: nierozwiazane issues
-        issues_count = (
-            await db.execute(
-                select(func.count(Issue.id)).where(
-                    Issue.project_id == project.id,
-                    Issue.status == "unresolved",
-                )
-            )
-        ).scalar() or 0
-
-        # Monitoring: failing + uptime 24h
-        latest_check_sq = (
-            select(
-                MonitorCheck.monitor_id,
-                func.max(MonitorCheck.checked_at).label("max_checked_at"),
-            )
-            .group_by(MonitorCheck.monitor_id)
-            .subquery()
-        )
-        failing_result = await db.execute(
-            select(func.count(Monitor.id))
-            .join(latest_check_sq, Monitor.id == latest_check_sq.c.monitor_id)
-            .join(
-                MonitorCheck,
-                (MonitorCheck.monitor_id == latest_check_sq.c.monitor_id) & (MonitorCheck.checked_at == latest_check_sq.c.max_checked_at),
-            )
-            .where(
-                Monitor.project_id == project.id,
-                Monitor.is_active.is_(True),
-                MonitorCheck.is_success.is_(False),
-            )
-        )
-        monitors_failing = failing_result.scalar() or 0
-
-        uptime_result = await db.execute(
-            select(
-                func.count(MonitorCheck.id),
-                func.count(case((MonitorCheck.is_success.is_(True), 1))),
-            )
-            .join(Monitor, MonitorCheck.monitor_id == Monitor.id)
-            .where(
-                Monitor.project_id == project.id,
-                Monitor.is_active.is_(True),
-                MonitorCheck.checked_at >= twenty_four_hours_ago,
-            )
-        )
-        uptime_row = uptime_result.one()
-        uptime_24h: float | None = None
-        if uptime_row[0] > 0:
-            uptime_24h = round((uptime_row[1] / uptime_row[0]) * 100, 1)
-
-        # Scrum: aktywny sprint
-        sprint_result = await db.execute(
-            select(Sprint).where(
-                Sprint.project_id == project.id,
-                Sprint.status == "active",
-            )
-        )
-        sprint = sprint_result.scalar_one_or_none()
-
-        sprint_summary = None
-        if sprint:
-            ticket_stats = await db.execute(select(Ticket.status, func.count(Ticket.id)).where(Ticket.sprint_id == sprint.id).group_by(Ticket.status))
-            status_counts: dict[str, int] = {row[0]: row[1] for row in ticket_stats.all()}
-            sprint_summary = {
-                "name": sprint.name,
-                "goal": sprint.goal,
-                "tickets_by_status": status_counts,
-                "total_tickets": sum(status_counts.values()),
-            }
-
-        # Backlog count
-        backlog_count = (
-            await db.execute(
-                select(func.count(Ticket.id)).where(
-                    Ticket.project_id == project.id,
-                    Ticket.status == "backlog",
-                )
-            )
-        ).scalar() or 0
+        summary = await projects_service.get_project_summary(db, user, project)
 
     return {
         "project": {"name": project.name, "slug": project.slug},
-        "issues_unresolved": issues_count,
-        "monitors_failing": monitors_failing,
-        "uptime_24h": uptime_24h,
-        "active_sprint": sprint_summary,
-        "backlog_count": backlog_count,
+        "issues_unresolved": summary.issues_unresolved,
+        "monitors_failing": summary.monitors_failing,
+        "uptime_24h": summary.uptime_24h,
+        "active_sprint": summary.active_sprint,
+        "backlog_count": summary.backlog_count,
     }
 
 
@@ -2182,62 +1719,30 @@ async def list_tickets(
     label_id: UUID etykiety — filtruj tickety z tym labelem
     Paginacja po 20.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-    per_page = 20
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        conditions = [Ticket.project_id == project.id]
-        if status and status in TICKET_STATUSES:
-            conditions.append(Ticket.status == status)
-        if priority and priority in PRIORITIES:
-            conditions.append(Ticket.priority == priority)
-        if sprint_id:
-            conditions.append(Ticket.sprint_id == uuid.UUID(sprint_id))
-        if search:
-            conditions.append(Ticket.title.ilike(f"%{search}%"))
-        if due_date_before:
-            try:
-                conditions.append(Ticket.due_date <= date.fromisoformat(due_date_before))
-            except ValueError as e:
-                raise ValueError(f"Nieprawidlowy format due_date_before: '{due_date_before}'. Uzyj YYYY-MM-DD") from e
-        if due_date_after:
-            try:
-                conditions.append(Ticket.due_date >= date.fromisoformat(due_date_after))
-            except ValueError as e:
-                raise ValueError(f"Nieprawidlowy format due_date_after: '{due_date_after}'. Uzyj YYYY-MM-DD") from e
-        if overdue:
-            today = date.today()
-            conditions.append(Ticket.due_date < today)
-            conditions.append(Ticket.due_date.is_not(None))
-            conditions.append(Ticket.status != "done")
-        if label_id:
-            conditions.append(Ticket.id.in_(select(TicketLabel.ticket_id).where(TicketLabel.label_id == uuid.UUID(label_id))))
-
-        total = (await db.execute(select(func.count(Ticket.id)).where(*conditions))).scalar() or 0
-        total_pages = max(1, (total + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))
-
-        result = await db.execute(
-            select(Ticket)
-            .options(
-                selectinload(Ticket.assignee),
-                selectinload(Ticket.sprint),
-                selectinload(Ticket.labels),
-                selectinload(Ticket.settlements),
-            )
-            .where(*conditions)
-            .order_by(Ticket.order, Ticket.created_at.desc())
-            .limit(per_page)
-            .offset((page - 1) * per_page)
+        result = await tickets_service.list_tickets(
+            db,
+            user,
+            project,
+            status=status,
+            priority=priority,
+            search=search,
+            sprint_id=sprint_id,
+            due_date_before=due_date_before,
+            due_date_after=due_date_after,
+            overdue=overdue,
+            label_id=label_id,
+            page=page,
         )
-        tickets = result.scalars().all()
 
     return _format_tickets_table(
-        tickets=list(tickets),
+        tickets=result.tickets,
         project_code=project.code,
-        page=page,
-        total_pages=total_pages,
-        total=total,
+        page=result.page,
+        total_pages=result.total_pages,
+        total=result.total,
     )
 
 
@@ -2265,100 +1770,28 @@ async def search_tickets(
     due_after: tickety z due_date >= data (YYYY-MM-DD)
     page: strona wynikow (domyslnie 1), 20 wynikow na strone
     """
-    from sqlalchemy import or_
-
     user, project = await _get_user_and_project(ctx, project_slug)
-    per_page = 20
 
     async with async_session_factory() as db:
-        conditions = [Ticket.project_id == project.id]
-
-        if query:
-            pattern = f"%{query}%"
-            conditions.append(
-                or_(
-                    Ticket.title.ilike(pattern),
-                    Ticket.description.ilike(pattern),
-                )
-            )
-
-        if status and status in TICKET_STATUSES:
-            conditions.append(Ticket.status == status)
-
-        if priority and priority in PRIORITIES:
-            conditions.append(Ticket.priority == priority)
-
-        if sprint_id:
-            conditions.append(Ticket.sprint_id == uuid.UUID(sprint_id))
-
-        if due_before:
-            try:
-                conditions.append(Ticket.due_date <= date.fromisoformat(due_before))
-            except ValueError as e:
-                raise ValueError(f"Nieprawidlowy format due_before: '{due_before}'. Uzyj YYYY-MM-DD") from e
-
-        if due_after:
-            try:
-                conditions.append(Ticket.due_date >= date.fromisoformat(due_after))
-            except ValueError as e:
-                raise ValueError(f"Nieprawidlowy format due_after: '{due_after}'. Uzyj YYYY-MM-DD") from e
-
-        if assignee_email:
-            assignee_result = await db.execute(select(User).where(User.email == assignee_email))
-            assignee = assignee_result.scalar_one_or_none()
-            if assignee is None:
-                return {"results": [], "total": 0, "page": 1, "total_pages": 1}
-            conditions.append(Ticket.assignee_id == assignee.id)
-
-        total = (await db.execute(select(func.count(Ticket.id)).where(*conditions))).scalar() or 0
-        total_pages = max(1, (total + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))
-
-        result = await db.execute(
-            select(Ticket)
-            .options(
-                selectinload(Ticket.assignee),
-                selectinload(Ticket.sprint),
-                selectinload(Ticket.settlements),
-            )
-            .where(*conditions)
-            .order_by(Ticket.order, Ticket.created_at.desc())
-            .limit(per_page)
-            .offset((page - 1) * per_page)
+        result = await tickets_service.search_tickets(
+            db,
+            user,
+            project,
+            query=query,
+            status=status,
+            priority=priority,
+            assignee_email=assignee_email,
+            sprint_id=sprint_id,
+            due_before=due_before,
+            due_after=due_after,
+            page=page,
         )
-        tickets = result.scalars().all()
-        can_read = await _can_read_settlements(db, user.id, project.id)
-
-    def _settlement_dict(s: Settlement) -> dict[str, Any]:
-        return {
-            "id": str(s.id),
-            "number": s.number,
-            "name": s.name,
-            "status": s.status,
-            "period_from": s.period_from.isoformat() if s.period_from else None,
-            "period_to": s.period_to.isoformat() if s.period_to else None,
-        }
-
-    def _ticket_row(t: Ticket) -> dict[str, Any]:
-        row: dict[str, Any] = {
-            "id": str(t.id),
-            "key": f"{project.code}-{t.number}",
-            "title": t.title,
-            "status": t.status,
-            "priority": t.priority,
-            "story_points": t.story_points,
-            "assignee": t.assignee.email if t.assignee else None,
-            "due_date": t.due_date.isoformat() if t.due_date else None,
-        }
-        if can_read:
-            row["settlements"] = [_settlement_dict(s) for s in t.settlements if s.is_active]
-        return row
 
     return {
-        "results": [_ticket_row(t) for t in tickets],
-        "total": total,
-        "page": page,
-        "total_pages": total_pages,
+        "results": result.results,
+        "total": result.total,
+        "page": result.page,
+        "total_pages": result.total_pages,
     }
 
 
@@ -2377,36 +1810,14 @@ async def get_ticket(
     liste zalacznikow oraz komentarze.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(Ticket)
-            .options(
-                selectinload(Ticket.assignee),
-                selectinload(Ticket.sprint),
-                selectinload(Ticket.comments).selectinload(TicketComment.author),
-                selectinload(Ticket.labels),
-                selectinload(Ticket.attachments),
-                selectinload(Ticket.acceptance_criteria),
-                selectinload(Ticket.settlements),
-                selectinload(Ticket.blocked_by),
-                selectinload(Ticket.blocking),
-            )
-            .where(
-                Ticket.id == resolved_id,
-                Ticket.project_id == project.id,
-            )
-        )
-        ticket = result.scalar_one_or_none()
-        if ticket is None:
-            raise ValueError("Ticket nie istnieje")
+        detail_result = await tickets_service.get_ticket(db, user, project, ticket_id)
 
-        can_read = await _can_read_settlements(db, user.id, project.id)
-
+    ticket = detail_result.ticket
     detail = _format_ticket_detail(ticket, project.code)
 
-    if can_read and ticket.settlements:
+    if detail_result.can_read_settlements and ticket.settlements:
         active_settlements = [s for s in ticket.settlements if s.is_active]
         if active_settlements:
             lines = [detail, "", "## Rozliczenia"]
@@ -2442,95 +1853,27 @@ async def create_ticket(
     spec_page_id: opcjonalny UUID strony wiki jako specyfikacja techniczna ticketa
     blocked_by_ids: opcjonalna lista UUID ticketow-blokerow (musza byc w tym samym projekcie, bez self-reference i cyklu bezposredniego)
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    if not title.strip():
-        raise ValueError("Tytul jest wymagany")
-    if priority not in PRIORITIES:
-        priority = "medium"
-
-    parsed_due_date: date | None = None
-    if due_date:
-        try:
-            parsed_due_date = date.fromisoformat(due_date)
-        except ValueError as e:
-            raise ValueError(f"Nieprawidlowy format daty due_date: '{due_date}'. Uzyj YYYY-MM-DD") from e
-
-    parsed_blocked_by_ids: list[uuid.UUID] | None = None
-    if blocked_by_ids is not None:
-        parsed_blocked_by_ids = []
-        for bid in blocked_by_ids:
-            try:
-                parsed_blocked_by_ids.append(uuid.UUID(bid))
-            except ValueError as e:
-                raise ValueError(f"Nieprawidlowy UUID blokera: '{bid}'") from e
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        assignee_id = None
-        if assignee_email:
-            result = await db.execute(select(User).where(User.email == assignee_email))
-            assignee = result.scalar_one_or_none()
-            if assignee:
-                assignee_id = assignee.id
-
-        resolved_sprint_id = None
-        if sprint_id:
-            resolved_sprint_id = uuid.UUID(sprint_id)
-
-        next_number = await get_next_ticket_number(project.id, db)
-
-        ticket = Ticket(
-            project_id=project.id,
-            number=next_number,
-            title=title.strip(),
-            description=description.strip() if description else None,
+        create_result = await tickets_service.create_ticket(
+            db,
+            user,
+            project,
+            title,
+            description=description,
             priority=priority,
             story_points=story_points,
-            sprint_id=resolved_sprint_id,
-            assignee_id=assignee_id,
-            status="backlog" if resolved_sprint_id is None else "todo",
-            created_via_ai=True,
-            due_date=parsed_due_date,
+            sprint_id=sprint_id,
+            assignee_email=assignee_email,
+            due_date=due_date,
+            label_ids=label_ids,
+            acceptance_criteria=acceptance_criteria,
+            spec_page_id=spec_page_id,
+            blocked_by_ids=blocked_by_ids,
         )
-        if spec_page_id:
-            ticket.spec_page_id = uuid.UUID(spec_page_id)
-        db.add(ticket)
-        await db.flush()
 
-        if label_ids:
-            label_uuids = [uuid.UUID(lid) for lid in label_ids]
-            labels_result = await db.execute(
-                select(Label).where(
-                    Label.id.in_(label_uuids),
-                    Label.project_id == project.id,
-                )
-            )
-            labels = labels_result.scalars().all()
-            for lb in labels:
-                db.add(TicketLabel(ticket_id=ticket.id, label_id=lb.id))
-
-        criteria_count = 0
-        if acceptance_criteria:
-            for idx, desc in enumerate(acceptance_criteria):
-                desc_stripped = desc.strip()
-                if desc_stripped:
-                    db.add(
-                        TicketAcceptanceCriterion(
-                            ticket_id=ticket.id,
-                            description=desc_stripped,
-                            position=idx,
-                            created_by_user_id=_user.id,
-                            created_via_ai=True,
-                        )
-                    )
-                    criteria_count += 1
-
-        if parsed_blocked_by_ids:
-            await ticket_dependencies.set_blockers(db, ticket, parsed_blocked_by_ids)
-
-        await db.commit()
-        await db.refresh(ticket)
-
+    ticket = create_result.ticket
     return {
         "id": str(ticket.id),
         "key": f"{project.code}-{ticket.number}",
@@ -2539,7 +1882,7 @@ async def create_ticket(
         "due_date": ticket.due_date.isoformat() if ticket.due_date else None,
         "spec_page_id": str(ticket.spec_page_id) if ticket.spec_page_id else None,
         "created_via_ai": True,
-        "acceptance_criteria_count": criteria_count,
+        "acceptance_criteria_count": create_result.criteria_count,
         "message": f"Ticket '{ticket.title}' utworzony",
     }
 
@@ -2568,104 +1911,25 @@ async def update_ticket(
     label_ids: lista UUID etykiet — zastepuje wszystkie poprzednie etykiety; [] = usun etykiety
     blocked_by_ids: lista UUID ticketow-blokerow — zastepuje wszystkie poprzednie; [] = usun blokery; brak = bez zmian
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
-
-    parsed_blocked_by_ids: list[uuid.UUID] | None = None
-    if blocked_by_ids is not None:
-        parsed_blocked_by_ids = []
-        for bid in blocked_by_ids:
-            try:
-                parsed_blocked_by_ids.append(uuid.UUID(bid))
-            except ValueError as e:
-                raise ValueError(f"Nieprawidlowy UUID blokera: '{bid}'") from e
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(Ticket)
-            .options(selectinload(Ticket.settlements))
-            .where(
-                Ticket.id == resolved_id,
-                Ticket.project_id == project.id,
-            )
+        ticket = await tickets_service.update_ticket(
+            db,
+            user,
+            project,
+            ticket_id,
+            title=title,
+            description=description,
+            status=status,
+            priority=priority,
+            story_points=story_points,
+            sprint_id=sprint_id,
+            assignee_email=assignee_email,
+            due_date=due_date,
+            label_ids=label_ids,
+            blocked_by_ids=blocked_by_ids,
         )
-        ticket = result.scalar_one_or_none()
-        if ticket is None:
-            raise ValueError("Ticket nie istnieje")
-
-        if is_ticket_frozen(ticket):
-            # Frozen ticket: dozwolona tylko zmiana statusu (wszystkie inne pola musza byc None)
-            other_fields = (title, description, priority, story_points, sprint_id, assignee_email, due_date, label_ids, blocked_by_ids)
-            if any(f is not None for f in other_fields):
-                raise ValueError("Ticket zamrozony — dozwolona tylko zmiana statusu. Pelna edycja zablokowana dla rozliczen sent/paid.")
-
-        if title is not None:
-            title = title.strip()
-            if not title:
-                raise ValueError("Tytul nie moze byc pusty")
-            ticket.title = title
-
-        if description is not None:
-            ticket.description = description.strip() or None
-
-        if status is not None:
-            if status not in TICKET_STATUSES:
-                raise ValueError(f"Nieprawidlowy status: {status}")
-            ticket.status = status
-
-        if priority is not None:
-            if priority not in PRIORITIES:
-                raise ValueError(f"Nieprawidlowy priorytet: {priority}")
-            ticket.priority = priority
-
-        if story_points is not None:
-            ticket.story_points = story_points
-
-        if sprint_id is not None:
-            if sprint_id == "":
-                ticket.sprint_id = None
-            else:
-                ticket.sprint_id = uuid.UUID(sprint_id)
-
-        if assignee_email is not None:
-            if assignee_email == "me":
-                assignee_email = _user.email
-            if assignee_email == "":
-                ticket.assignee_id = None
-            else:
-                result = await db.execute(select(User).where(User.email == assignee_email))
-                assignee = result.scalar_one_or_none()
-                if assignee:
-                    ticket.assignee_id = assignee.id
-
-        if due_date is not None:
-            if due_date == "":
-                ticket.due_date = None
-            else:
-                try:
-                    ticket.due_date = date.fromisoformat(due_date)
-                except ValueError as e:
-                    raise ValueError(f"Nieprawidlowy format daty due_date: '{due_date}'. Uzyj YYYY-MM-DD") from e
-
-        if label_ids is not None:
-            # Usun stare etykiety
-            await db.execute(delete(TicketLabel).where(TicketLabel.ticket_id == ticket.id))
-            if label_ids:
-                label_uuids = [uuid.UUID(lid) for lid in label_ids]
-                labels_result = await db.execute(
-                    select(Label).where(
-                        Label.id.in_(label_uuids),
-                        Label.project_id == project.id,
-                    )
-                )
-                labels = labels_result.scalars().all()
-                for lb in labels:
-                    db.add(TicketLabel(ticket_id=ticket.id, label_id=lb.id))
-
-        if parsed_blocked_by_ids is not None:
-            await ticket_dependencies.set_blockers(db, ticket, parsed_blocked_by_ids)
-
-        await db.commit()
 
     return {
         "id": str(ticket.id),
@@ -2684,28 +1948,10 @@ async def delete_ticket(
     ticket_id: str,
 ) -> dict[str, Any]:
     """Usun ticket z projektu. ticket_id: UUID lub klucz (np. MNX-12)."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(Ticket)
-            .options(selectinload(Ticket.settlements))
-            .where(
-                Ticket.id == resolved_id,
-                Ticket.project_id == project.id,
-            )
-        )
-        ticket = result.scalar_one_or_none()
-        if ticket is None:
-            raise ValueError("Ticket nie istnieje")
-
-        if is_ticket_frozen(ticket):
-            raise ValueError("Ticket zamrozony — powiazany z rozliczeniem w statusie sent/paid")
-
-        title = ticket.title
-        await db.delete(ticket)
-        await db.commit()
+        title = await tickets_service.delete_ticket(db, user, project, ticket_id)
 
     return {"message": f"Ticket '{title}' usuniety"}
 
@@ -2722,31 +1968,19 @@ async def list_labels(
 
     Zwraca: lista obiektow { id, name, color, tickets_count }.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(
-                Label.id,
-                Label.name,
-                Label.color,
-                func.count(TicketLabel.ticket_id).label("tickets_count"),
-            )
-            .outerjoin(TicketLabel, TicketLabel.label_id == Label.id)
-            .where(Label.project_id == project.id)
-            .group_by(Label.id, Label.name, Label.color)
-            .order_by(Label.name)
-        )
-        rows = result.all()
+        labels = await projects_service.list_labels(db, user, project)
 
     return [
         {
-            "id": str(row.id),
-            "name": row.name,
-            "color": row.color,
-            "tickets_count": row.tickets_count,
+            "id": str(lb.id),
+            "name": lb.name,
+            "color": lb.color,
+            "tickets_count": lb.tickets_count,
         }
-        for row in rows
+        for lb in labels
     ]
 
 
@@ -2765,39 +1999,10 @@ async def create_label(
 
     Zwraca: { id, name, color, message }
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    name = name.strip()
-    if not name:
-        raise ValueError("Nazwa etykiety nie moze byc pusta.")
-    if len(name) > 100:
-        raise ValueError("Nazwa etykiety nie moze przekraczac 100 znakow.")
-
-    if color is not None:
-        color = color.strip()
-        if not color.startswith("#") or len(color) != 7:
-            raise ValueError("Kolor musi byc w formacie hex np. '#e74c3c'.")
-    else:
-        color = secrets.choice(LABEL_COLOR_PALETTE)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        existing = await db.execute(
-            select(Label.id).where(
-                Label.project_id == project.id,
-                Label.name == name,
-            )
-        )
-        if existing.scalar_one_or_none() is not None:
-            raise ValueError(f"Etykieta o nazwie '{name}' juz istnieje w tym projekcie.")
-
-        label = Label(
-            project_id=project.id,
-            name=name,
-            color=color,
-        )
-        db.add(label)
-        await db.commit()
-        await db.refresh(label)
+        label = await projects_service.create_label(db, user, project, name, color=color)
 
     return {
         "id": str(label.id),
@@ -2826,94 +2031,24 @@ async def bulk_update_tickets(
     due_date: data YYYY-MM-DD lub pusty string = usun date
     Zwraca: {"updated": N, "failed": [{"id": "...", "reason": "..."}]}
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    if len(ticket_ids) > 100:
-        raise ValueError(f"Zbyt duzo ticketow: {len(ticket_ids)}. Limit to 100 na jedno wywolanie.")
-
-    # Walidacja statusu i priorytetu przed petla (fail fast)
-    if status is not None and status not in TICKET_STATUSES:
-        raise ValueError(f"Nieprawidlowy status: {status}. Dozwolone: {', '.join(TICKET_STATUSES)}")
-    if priority is not None and priority not in PRIORITIES:
-        raise ValueError(f"Nieprawidlowy priorytet: {priority}. Dozwolone: {', '.join(PRIORITIES)}")
-
-    # Parsowanie due_date przed petla (fail fast)
-    # clear_due_date=True oznacza ze nalezy ustawic None; parsed_due_date=date = nowa wartosc
-    clear_due_date = False
-    parsed_due_date: date | None = None
-    if due_date is not None:
-        if due_date == "":
-            clear_due_date = True
-        else:
-            try:
-                parsed_due_date = date.fromisoformat(due_date)
-            except ValueError as e:
-                raise ValueError(f"Nieprawidlowy format daty due_date: '{due_date}'. Uzyj YYYY-MM-DD") from e
-
-    updated = 0
-    failed: list[dict[str, str]] = []
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        # Wyszukaj assignee raz (jesli podano email)
-        resolved_assignee_id = None
-        if assignee_email is not None and assignee_email != "":
-            assignee_result = await db.execute(select(User).where(User.email == assignee_email))
-            assignee = assignee_result.scalar_one_or_none()
-            if assignee:
-                resolved_assignee_id = assignee.id
-
-        # Resolve ticket identifiers (UUID or key like MNX-12)
-        valid_uuids: dict[uuid.UUID, str] = {}
-        for ticket_id_str in ticket_ids:
-            try:
-                resolved = await _resolve_ticket_uuid(ticket_id_str, project.id)
-                valid_uuids[resolved] = ticket_id_str
-            except ValueError:
-                failed.append({"id": ticket_id_str, "reason": "Nieprawidlowy identyfikator ticketa"})
-
-        if valid_uuids:
-            tickets_result = await db.execute(
-                select(Ticket)
-                .options(selectinload(Ticket.settlements))
-                .where(
-                    Ticket.id.in_(valid_uuids.keys()),
-                    Ticket.project_id == project.id,
-                )
-            )
-            found_tickets = {t.id: t for t in tickets_result.scalars().all()}
-
-            for ticket_uuid, ticket_id_str in valid_uuids.items():
-                ticket = found_tickets.get(ticket_uuid)
-                if ticket is None:
-                    failed.append({"id": ticket_id_str, "reason": "Ticket nie istnieje"})
-                    continue
-
-                # Frozen ticket: dozwolona tylko zmiana statusu (wszystkie inne pola musza byc None)
-                if is_ticket_frozen(ticket) and any(f is not None for f in (priority, assignee_email, sprint_id, due_date)):
-                    failed.append({"id": ticket_id_str, "reason": "Ticket zamrozony — dozwolona tylko zmiana statusu"})
-                    continue
-
-                try:
-                    if status is not None:
-                        ticket.status = status
-                    if priority is not None:
-                        ticket.priority = priority
-                    if sprint_id is not None:
-                        ticket.sprint_id = None if sprint_id == "" else uuid.UUID(sprint_id)
-                    if assignee_email is not None:
-                        ticket.assignee_id = None if assignee_email == "" else resolved_assignee_id
-                    if due_date is not None:
-                        ticket.due_date = None if clear_due_date else parsed_due_date
-
-                    updated += 1
-                except Exception as e:
-                    failed.append({"id": ticket_id_str, "reason": str(e)})
-
-        await db.commit()
+        result = await tickets_service.bulk_update_tickets(
+            db,
+            user,
+            project,
+            ticket_ids,
+            status=status,
+            priority=priority,
+            assignee_email=assignee_email,
+            sprint_id=sprint_id,
+            due_date=due_date,
+        )
 
     return {
-        "updated": updated,
-        "failed": failed,
+        "updated": result.updated,
+        "failed": result.failed,
     }
 
 
@@ -3061,40 +2196,25 @@ async def list_sprints(
     status: str | None = None,
 ) -> list[dict[str, Any]]:
     """Lista sprintow w projekcie ze statystykami (liczba ticketow, suma SP)."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        conditions = [Sprint.project_id == project.id]
-        if status:
-            conditions.append(Sprint.status == status)
+        summaries = await tickets_service.list_sprints(db, user, project, status)
 
-        result = await db.execute(select(Sprint).where(*conditions).order_by(Sprint.created_at.desc()))
-        sprints = result.scalars().all()
-
-        sprint_data = []
-        for s in sprints:
-            stats_result = await db.execute(
-                select(
-                    func.count(Ticket.id),
-                    func.coalesce(func.sum(Ticket.story_points), 0),
-                ).where(Ticket.sprint_id == s.id)
-            )
-            row = stats_result.one()
-            sprint_data.append(
-                {
-                    "id": str(s.id),
-                    "name": s.name,
-                    "goal": s.goal,
-                    "status": s.status,
-                    "start_date": s.start_date.isoformat(),
-                    "end_date": s.end_date.isoformat() if s.end_date else None,
-                    "ticket_count": row[0],
-                    "story_points_total": row[1],
-                    "created_at": s.created_at.isoformat(),
-                }
-            )
-
-    return sprint_data
+    return [
+        {
+            "id": str(item.sprint.id),
+            "name": item.sprint.name,
+            "goal": item.sprint.goal,
+            "status": item.sprint.status,
+            "start_date": item.sprint.start_date.isoformat(),
+            "end_date": item.sprint.end_date.isoformat() if item.sprint.end_date else None,
+            "ticket_count": item.ticket_count,
+            "story_points_total": item.story_points_total,
+            "created_at": item.sprint.created_at.isoformat(),
+        }
+        for item in summaries
+    ]
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -3109,20 +2229,10 @@ async def get_sprint(
     oraz tabela ticketow (klucz, tytul, status, priorytet, assignee, SP).
     ID sprintu jest zawarte w naglowku i mozna go uzyc do operacji start/complete.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(Sprint)
-            .options(selectinload(Sprint.tickets).selectinload(Ticket.assignee))
-            .where(
-                Sprint.id == uuid.UUID(sprint_id),
-                Sprint.project_id == project.id,
-            )
-        )
-        sprint = result.scalar_one_or_none()
-        if sprint is None:
-            raise ValueError("Sprint nie istnieje")
+        sprint = await tickets_service.get_sprint(db, user, project, sprint_id)
 
     tickets = [
         {
@@ -3149,22 +2259,10 @@ async def create_sprint(
     end_date: str | None = None,
 ) -> dict[str, Any]:
     """Utworz nowy sprint (status: planning). start_date w formacie YYYY-MM-DD."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    if not name.strip():
-        raise ValueError("Nazwa sprintu jest wymagana")
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        sprint = Sprint(
-            project_id=project.id,
-            name=name.strip(),
-            goal=goal.strip() if goal else None,
-            start_date=date.fromisoformat(start_date),
-            end_date=date.fromisoformat(end_date) if end_date else None,
-        )
-        db.add(sprint)
-        await db.commit()
-        await db.refresh(sprint)
+        sprint = await tickets_service.create_sprint(db, user, project, name, start_date, goal=goal, end_date=end_date)
 
     return {
         "id": str(sprint.id),
@@ -3190,47 +2288,19 @@ async def update_sprint(
     Zmiana dat jest zablokowana dla sprintow o statusie 'completed'.
     Walidacja: end_date musi byc pozniejsza niz start_date.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(Sprint).where(
-                Sprint.id == uuid.UUID(sprint_id),
-                Sprint.project_id == project.id,
-            )
+        sprint = await tickets_service.update_sprint(
+            db,
+            user,
+            project,
+            sprint_id,
+            name=name,
+            goal=goal,
+            start_date=start_date,
+            end_date=end_date,
         )
-        sprint = result.scalar_one_or_none()
-        if sprint is None:
-            raise ValueError("Sprint nie istnieje")
-
-        if name is not None:
-            name = name.strip()
-            if not name:
-                raise ValueError("Nazwa sprintu nie moze byc pusta")
-            if len(name) > 255:
-                raise ValueError("Nazwa sprintu nie moze przekraczac 255 znakow")
-            sprint.name = name
-
-        if goal is not None:
-            sprint.goal = goal.strip() or None
-
-        if start_date is not None or end_date is not None:
-            if sprint.status == "completed":
-                raise ValueError("Nie mozna zmienic dat zakonczonego sprintu")
-
-            new_start = date.fromisoformat(start_date) if start_date is not None else sprint.start_date
-            new_end = None if end_date == "" else (date.fromisoformat(end_date) if end_date is not None else sprint.end_date)
-
-            if new_end is not None and new_end <= new_start:
-                raise ValueError("Data zakonczenia musi byc pozniejsza niz data rozpoczecia")
-
-            if start_date is not None:
-                sprint.start_date = new_start
-            if end_date is not None:
-                sprint.end_date = new_end
-
-        await db.commit()
-        await db.refresh(sprint)
 
     return {
         "id": str(sprint.id),
@@ -3290,26 +2360,10 @@ async def list_comments(
     ticket_id: str,
 ) -> list[dict[str, Any]]:
     """Lista komentarzy do ticketa. ticket_id: UUID lub klucz (np. MNX-12)."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        ticket_result = await db.execute(
-            select(Ticket).where(
-                Ticket.id == resolved_id,
-                Ticket.project_id == project.id,
-            )
-        )
-        if ticket_result.scalar_one_or_none() is None:
-            raise ValueError("Ticket nie istnieje")
-
-        comment_result = await db.execute(
-            select(TicketComment)
-            .options(selectinload(TicketComment.author))
-            .where(TicketComment.ticket_id == resolved_id)
-            .order_by(TicketComment.created_at)
-        )
-        comments = comment_result.scalars().all()
+        comments = await tickets_service.list_comments(db, user, project, ticket_id)
 
     return [
         {
@@ -3332,30 +2386,9 @@ async def add_comment(
 ) -> dict[str, Any]:
     """Dodaj komentarz do ticketa. ticket_id: UUID lub klucz (np. MNX-12). Oznaczany jako created_via_ai=True."""
     user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
-
-    if not content.strip():
-        raise ValueError("Tresc komentarza nie moze byc pusta")
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(Ticket).where(
-                Ticket.id == resolved_id,
-                Ticket.project_id == project.id,
-            )
-        )
-        if result.scalar_one_or_none() is None:
-            raise ValueError("Ticket nie istnieje")
-
-        comment = TicketComment(
-            ticket_id=resolved_id,
-            user_id=user.id,
-            content=content.strip(),
-            created_via_ai=True,
-        )
-        db.add(comment)
-        await db.commit()
-        await db.refresh(comment)
+        comment = await tickets_service.add_comment(db, user, project, ticket_id, content)
 
     return {
         "id": str(comment.id),
@@ -3381,7 +2414,6 @@ async def add_attachment(
     max_size = 200 * 1024 * 1024  # 200MB
 
     _user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     # Walidacja i sanityzacja filename
     if not filename or not filename.strip():
@@ -3415,6 +2447,8 @@ async def add_attachment(
         mime_type = "application/octet-stream"
 
     async with async_session_factory() as db:
+        resolved_id = await tickets_service.resolve_ticket_uuid(ticket_id, project.id, db)
+
         # Sprawdz czy ticket istnieje w projekcie
         result = await db.execute(
             select(Ticket).where(
@@ -3475,7 +2509,6 @@ async def log_time(
     date_logged w formacie YYYY-MM-DD. duration_minutes musi byc > 0.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     if duration_minutes <= 0:
         raise ValueError("Czas musi byc wiekszy niz 0")
@@ -3483,6 +2516,7 @@ async def log_time(
     parsed_date = date.fromisoformat(date_logged)
 
     async with async_session_factory() as db:
+        resolved_id = await tickets_service.resolve_ticket_uuid(ticket_id, project.id, db)
         result = await add_time_entry(
             ticket_id=resolved_id,
             user_id=user.id,
@@ -3704,27 +2738,12 @@ async def list_wiki_pages(
     Kolumny: ID (pelne UUID), Title (z wcieciem 2 spacje na poziom), Updated (YYYY-MM-DD).
     Uzyj ID strony do wywolania get_wiki_page, update_wiki_page lub delete_wiki_page.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        tree = await get_page_tree(project.id, db)
+        pages = await svc_list_pages_flat(db, user, project)
 
-    def _flatten(nodes: list[dict[str, Any]], depth: int = 0) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
-        for node in nodes:
-            p = node["page"]
-            result.append(
-                {
-                    "id": str(p.id),
-                    "title": p.title,
-                    "depth": depth,
-                    "updated_at": p.updated_at.isoformat(),
-                }
-            )
-            result.extend(_flatten(node["children"], depth + 1))
-        return result
-
-    return _format_wiki_tree(_flatten(tree))
+    return _format_wiki_tree([{"id": str(p.id), "title": p.title, "depth": p.depth, "updated_at": p.updated_at.isoformat()} for p in pages])
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -3734,34 +2753,23 @@ async def get_wiki_page(
     page_id: str,
 ) -> dict[str, Any]:
     """Szczegoly strony wiki z pelna trescia markdown."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        from sqlalchemy.orm import selectinload
-
-        result = await db.execute(
-            select(WikiPage)
-            .options(selectinload(WikiPage.created_by), selectinload(WikiPage.last_edited_by))
-            .where(WikiPage.id == uuid.UUID(page_id), WikiPage.project_id == project.id)
-        )
-        page = result.scalar_one_or_none()
-        if page is None:
-            raise ValueError("Strona wiki nie istnieje")
-
-        content = get_page_content(page)
+        detail = await svc_get_wiki_page_detail(db, user, project, page_id, content_fn=get_page_content)
 
     return {
-        "id": str(page.id),
-        "title": page.title,
-        "slug": page.slug,
-        "parent_id": str(page.parent_id) if page.parent_id else None,
-        "position": page.position,
-        "content": content,
-        "is_ai_touched": page.is_ai_touched,
-        "created_by": page.created_by.email,
-        "last_edited_by": page.last_edited_by.email,
-        "created_at": page.created_at.isoformat(),
-        "updated_at": page.updated_at.isoformat(),
+        "id": str(detail.id),
+        "title": detail.title,
+        "slug": detail.slug,
+        "parent_id": str(detail.parent_id) if detail.parent_id else None,
+        "position": detail.position,
+        "content": detail.content,
+        "is_ai_touched": detail.is_ai_touched,
+        "created_by": detail.created_by,
+        "last_edited_by": detail.last_edited_by,
+        "created_at": detail.created_at.isoformat(),
+        "updated_at": detail.updated_at.isoformat(),
     }
 
 
@@ -3913,23 +2921,16 @@ async def get_wiki_config(
     Nie wymaga wiki_llm_enabled=True - używaj do sprawdzenia stanu przed włączeniem.
     Zwraca: wiki_llm_enabled, id stron systemowych (wiki-index, wiki-log, wiki-schema) lub null.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        system_slugs = ("wiki-index", "wiki-log", "wiki-schema")
-        result = await db.execute(
-            select(WikiPage.slug, WikiPage.id).where(
-                WikiPage.project_id == project.id,
-                WikiPage.slug.in_(system_slugs),
-            )
-        )
-        slug_to_id: dict[str, str] = {row.slug: str(row.id) for row in result.all()}
+        config = await svc_get_wiki_config(db, user, project)
 
     return {
-        "wiki_llm_enabled": project.wiki_llm_enabled,
-        "index_page_id": slug_to_id.get("wiki-index"),
-        "log_page_id": slug_to_id.get("wiki-log"),
-        "schema_page_id": slug_to_id.get("wiki-schema"),
+        "wiki_llm_enabled": config.wiki_llm_enabled,
+        "index_page_id": str(config.index_page_id) if config.index_page_id else None,
+        "log_page_id": str(config.log_page_id) if config.log_page_id else None,
+        "schema_page_id": str(config.schema_page_id) if config.schema_page_id else None,
     }
 
 
@@ -3943,16 +2944,10 @@ async def set_wiki_config(
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        if not await check_permission(db, user.id, project.id, "settings", "write"):
-            raise ValueError("Brak uprawnienia do zmiany konfiguracji projektu (settings:write)")
-
-        proj_result = await db.execute(select(Project).where(Project.id == project.id))
-        proj = proj_result.scalar_one()
-        proj.wiki_llm_enabled = enabled
-        await db.commit()
+        proj = await svc_set_wiki_config(db, user, project, enabled)
 
     return {
-        "wiki_llm_enabled": enabled,
+        "wiki_llm_enabled": proj.wiki_llm_enabled,
         "message": f"Wiki LLM {'włączone' if enabled else 'wyłączone'} dla projektu '{project_slug}'",
     }
 
@@ -4743,9 +3738,9 @@ async def get_attachment(
 ) -> dict[str, Any]:
     """Pobierz zawartosc zalacznika z ticketa (base64). ticket_id: UUID lub klucz (np. MNX-12). Obrazki zwracane jako data URI."""
     _user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
 
     async with async_session_factory() as db:
+        resolved_id = await tickets_service.resolve_ticket_uuid(ticket_id, project.id, db)
         result = await db.execute(
             select(TicketAttachment)
             .join(Ticket, TicketAttachment.ticket_id == Ticket.id)
@@ -4790,40 +3785,16 @@ async def get_wiki_attachment(
     attachment_filename: str,
 ) -> dict[str, Any]:
     """Pobierz zawartosc zalacznika ze strony Wiki (base64)."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(WikiAttachment)
-            .join(WikiPage, WikiAttachment.wiki_page_id == WikiPage.id)
-            .where(
-                WikiAttachment.filename == attachment_filename,
-                WikiPage.id == uuid.UUID(page_id),
-                WikiPage.project_id == project.id,
-            )
-            .order_by(WikiAttachment.created_at.desc())
-            .limit(1)
-        )
-        attachment = result.scalar_one_or_none()
-        if attachment is None:
-            raise ValueError("Zalacznik nie istnieje")
-
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            data, content_type = await loop.run_in_executor(
-                executor,
-                lambda: minio_get_attachment(attachment.storage_path),
-            )
-
-    content_b64 = base64.b64encode(data).decode("ascii")
-    if content_type.startswith("image/"):
-        content_b64 = f"data:{content_type};base64,{content_b64}"
+        content = await wiki_attachments_service.get_wiki_attachment(db, user, project, page_id, attachment_filename, get_object=minio_get_attachment)
 
     return {
-        "filename": attachment.filename,
-        "mime_type": attachment.mime_type,
-        "size": attachment.size,
-        "content_base64": content_b64,
+        "filename": content.attachment.filename,
+        "mime_type": content.attachment.mime_type,
+        "size": content.attachment.size,
+        "content_base64": content.content_base64,
     }
 
 
@@ -4837,69 +3808,12 @@ async def add_wiki_page_attachment(
     mime_type: str | None = None,
 ) -> dict[str, Any]:
     """Dodaj zalacznik do strony Wiki. Plik zakodowany w base64. Maksymalny rozmiar: 200MB."""
-    max_size = 200 * 1024 * 1024
-
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    if not filename or not filename.strip():
-        raise ValueError("Nazwa pliku nie moze byc pusta")
-    filename = os.path.basename(filename.strip())
-    filename = re.sub(r'[\x00-\x1f"\\]', "_", filename)
-    if not filename or filename in (".", ".."):
-        raise ValueError("Nieprawidlowa nazwa pliku")
-    if len(filename) > 255:
-        raise ValueError("Nazwa pliku nie moze przekraczac 255 znakow")
-
-    if not file_base64 or not file_base64.strip():
-        raise ValueError("Zawartosc pliku (file_base64) nie moze byc pusta")
-
-    try:
-        file_bytes = base64.b64decode(file_base64, validate=True)
-    except Exception as exc:
-        raise ValueError("Nieprawidlowy format base64") from exc
-
-    if len(file_bytes) > max_size:
-        raise ValueError(f"Plik za duzy: max 200MB, otrzymano {len(file_bytes) / 1024 / 1024:.1f}MB")
-
-    if mime_type is not None:
-        if not re.match(r"^[a-z]+/[a-z0-9.+\-]+$", mime_type):
-            raise ValueError("Nieprawidlowy format mime_type")
-    else:
-        mime_type = "application/octet-stream"
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(WikiPage).where(
-                WikiPage.id == uuid.UUID(page_id),
-                WikiPage.project_id == project.id,
-            )
+        attachment = await wiki_attachments_service.add_wiki_page_attachment(
+            db, user, project, page_id, file_base64, filename, mime_type, upload_object=minio_upload_object
         )
-        if result.scalar_one_or_none() is None:
-            raise ValueError("Strona wiki nie istnieje")
-
-        ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
-        now = datetime.now(UTC)
-        date_prefix = f"{now.year}/{now.month:02d}/{now.day:02d}"
-        storage_path = f"{project_slug}/wiki-attachments/{page_id}/{date_prefix}/{uuid.uuid4().hex}.{ext}"
-
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            await loop.run_in_executor(
-                executor,
-                lambda: minio_upload_object(storage_path, file_bytes, mime_type),
-            )
-
-        attachment = WikiAttachment(
-            wiki_page_id=uuid.UUID(page_id),
-            filename=filename,
-            storage_path=storage_path,
-            mime_type=mime_type,
-            size=len(file_bytes),
-            created_via_ai=True,
-        )
-        db.add(attachment)
-        await db.commit()
-        await db.refresh(attachment)
 
     return {
         "attachment_id": str(attachment.id),
@@ -4916,22 +3830,10 @@ async def list_wiki_page_attachments(
     page_id: str,
 ) -> list[dict[str, Any]]:
     """Zwroc liste zalacznikow strony Wiki. Nie zwraca zawartosci plikow - tylko metadane."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        page_result = await db.execute(
-            select(WikiPage).where(
-                WikiPage.id == uuid.UUID(page_id),
-                WikiPage.project_id == project.id,
-            )
-        )
-        if page_result.scalar_one_or_none() is None:
-            raise ValueError("Strona wiki nie istnieje")
-
-        attachments_result = await db.execute(
-            select(WikiAttachment).where(WikiAttachment.wiki_page_id == uuid.UUID(page_id)).order_by(WikiAttachment.created_at)
-        )
-        attachments = attachments_result.scalars().all()
+        attachments = await wiki_attachments_service.list_wiki_page_attachments(db, user, project, page_id)
 
     return [
         {
@@ -4959,61 +3861,12 @@ async def add_wiki_file(
     description: str | None = None,
 ) -> dict[str, Any]:
     """Dodaj globalny plik do repozytorium Wiki projektu. Plik zakodowany w base64. Maksymalny rozmiar: 200MB."""
-    max_size = 200 * 1024 * 1024
-
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    if not filename or not filename.strip():
-        raise ValueError("Nazwa pliku nie moze byc pusta")
-    filename = os.path.basename(filename.strip())
-    filename = re.sub(r'[\x00-\x1f"\\]', "_", filename)
-    if not filename or filename in (".", ".."):
-        raise ValueError("Nieprawidlowa nazwa pliku")
-    if len(filename) > 255:
-        raise ValueError("Nazwa pliku nie moze przekraczac 255 znakow")
-
-    if not file_base64 or not file_base64.strip():
-        raise ValueError("Zawartosc pliku (file_base64) nie moze byc pusta")
-
-    try:
-        file_bytes = base64.b64decode(file_base64, validate=True)
-    except Exception as exc:
-        raise ValueError("Nieprawidlowy format base64") from exc
-
-    if len(file_bytes) > max_size:
-        raise ValueError(f"Plik za duzy: max 200MB, otrzymano {len(file_bytes) / 1024 / 1024:.1f}MB")
-
-    if mime_type is not None:
-        if not re.match(r"^[a-z]+/[a-z0-9.+\-]+$", mime_type):
-            raise ValueError("Nieprawidlowy format mime_type")
-    else:
-        mime_type = "application/octet-stream"
-
-    ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
-    now = datetime.now(UTC)
-    date_prefix = f"{now.year}/{now.month:02d}/{now.day:02d}"
-    storage_path = f"{project_slug}/wiki-files/{date_prefix}/{uuid.uuid4().hex}.{ext}"
-
-    loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        await loop.run_in_executor(
-            executor,
-            lambda: minio_upload_object(storage_path, file_bytes, mime_type),
-        )
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        wiki_file = WikiFile(
-            project_id=project.id,
-            filename=filename,
-            storage_path=storage_path,
-            mime_type=mime_type,
-            size=len(file_bytes),
-            description=description,
-            created_via_ai=True,
+        wiki_file = await wiki_attachments_service.add_wiki_file(
+            db, user, project, file_base64, filename, mime_type, description, upload_object=minio_upload_object
         )
-        db.add(wiki_file)
-        await db.commit()
-        await db.refresh(wiki_file)
 
     return {
         "file_id": str(wiki_file.id),
@@ -5031,37 +3884,18 @@ async def get_wiki_file(
     file_id: str,
 ) -> dict[str, Any]:
     """Pobierz zawartosc globalnego pliku Wiki (base64)."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(WikiFile).where(
-                WikiFile.id == uuid.UUID(file_id),
-                WikiFile.project_id == project.id,
-            )
-        )
-        wiki_file = result.scalar_one_or_none()
-        if wiki_file is None:
-            raise ValueError("Plik nie istnieje")
-
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            data, content_type = await loop.run_in_executor(
-                executor,
-                lambda: minio_get_attachment(wiki_file.storage_path),
-            )
-
-    content_b64 = base64.b64encode(data).decode("ascii")
-    if content_type.startswith("image/"):
-        content_b64 = f"data:{content_type};base64,{content_b64}"
+        content = await wiki_attachments_service.get_wiki_file(db, user, project, file_id, get_object=minio_get_attachment)
 
     return {
-        "file_id": str(wiki_file.id),
-        "filename": wiki_file.filename,
-        "mime_type": wiki_file.mime_type,
-        "size": wiki_file.size,
-        "description": wiki_file.description,
-        "content_base64": content_b64,
+        "file_id": str(content.wiki_file.id),
+        "filename": content.wiki_file.filename,
+        "mime_type": content.wiki_file.mime_type,
+        "size": content.wiki_file.size,
+        "description": content.wiki_file.description,
+        "content_base64": content.content_base64,
     }
 
 
@@ -5074,28 +3908,10 @@ async def update_wiki_file(
     filename: str | None = None,
 ) -> dict[str, Any]:
     """Zaktualizuj globalny plik Wiki — opis lub nazwe. Podaj tylko pola do zmiany."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(WikiFile).where(
-                WikiFile.id == uuid.UUID(file_id),
-                WikiFile.project_id == project.id,
-            )
-        )
-        wiki_file = result.scalar_one_or_none()
-        if wiki_file is None:
-            raise ValueError("Plik nie istnieje")
-
-        if description is not None:
-            wiki_file.description = description or None
-        if filename is not None:
-            safe = re.sub(r"[^\w.\-]", "_", filename.strip())[:255]
-            if safe:
-                wiki_file.filename = safe
-
-        await db.commit()
-        await db.refresh(wiki_file)
+        wiki_file = await wiki_attachments_service.update_wiki_file(db, user, project, file_id, description, filename)
 
     return {
         "file_id": str(wiki_file.id),
@@ -5111,11 +3927,10 @@ async def list_wiki_files(
     project_slug: str,
 ) -> list[dict[str, Any]]:
     """Lista globalnych plikow w repozytorium Wiki projektu."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        result = await db.execute(select(WikiFile).where(WikiFile.project_id == project.id).order_by(WikiFile.created_at.desc()))
-        files = result.scalars().all()
+        files = await wiki_attachments_service.list_wiki_files(db, user, project)
 
     return [
         {
@@ -5143,24 +3958,10 @@ async def list_acceptance_criteria(
 
     Zwraca tabele z kolumnami: checkbox, opis, autor, data, AI.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        ticket_result = await db.execute(select(Ticket).where(Ticket.id == resolved_id, Ticket.project_id == project.id))
-        if ticket_result.scalar_one_or_none() is None:
-            raise ValueError("Ticket nie istnieje")
-
-        crit_result = await db.execute(
-            select(TicketAcceptanceCriterion)
-            .options(
-                selectinload(TicketAcceptanceCriterion.created_by_user),
-                selectinload(TicketAcceptanceCriterion.completed_by_user),
-            )
-            .where(TicketAcceptanceCriterion.ticket_id == resolved_id)
-            .order_by(TicketAcceptanceCriterion.position)
-        )
-        criteria = crit_result.scalars().all()
+        criteria = await tickets_service.list_acceptance_criteria(db, user, project, ticket_id)
 
     if not criteria:
         return "Brak kryteriów akceptacji."
@@ -5189,31 +3990,9 @@ async def add_acceptance_criterion(
 ) -> dict[str, Any]:
     """Dodaj kryterium akceptacji do ticketa. ticket_id: UUID lub klucz (np. MNX-12). Oznaczane jako created_via_ai=True."""
     user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
-
-    if not description.strip():
-        raise ValueError("Opis kryterium nie może być pusty")
 
     async with async_session_factory() as db:
-        ticket_result = await db.execute(select(Ticket).where(Ticket.id == resolved_id, Ticket.project_id == project.id))
-        if ticket_result.scalar_one_or_none() is None:
-            raise ValueError("Ticket nie istnieje")
-
-        max_pos_result = await db.execute(
-            select(func.coalesce(func.max(TicketAcceptanceCriterion.position), -1)).where(TicketAcceptanceCriterion.ticket_id == resolved_id)
-        )
-        max_pos: int = max_pos_result.scalar_one()
-
-        criterion = TicketAcceptanceCriterion(
-            ticket_id=resolved_id,
-            description=description.strip(),
-            position=max_pos + 1,
-            created_by_user_id=user.id,
-            created_via_ai=True,
-        )
-        db.add(criterion)
-        await db.commit()
-        await db.refresh(criterion)
+        criterion = await tickets_service.add_acceptance_criterion(db, user, project, ticket_id, description)
 
     return {
         "id": str(criterion.id),
@@ -5239,47 +4018,17 @@ async def update_acceptance_criterion(
     Przy ustawieniu is_completed=True: completed_via_ai=True.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
-
-    try:
-        crit_uuid = uuid.UUID(criterion_id)
-    except ValueError:
-        raise ValueError("Nieprawidlowy format criterion_id (oczekiwany UUID)") from None
 
     async with async_session_factory() as db:
-        ticket_result = await db.execute(select(Ticket).where(Ticket.id == resolved_id, Ticket.project_id == project.id))
-        if ticket_result.scalar_one_or_none() is None:
-            raise ValueError("Ticket nie istnieje")
-
-        crit_result = await db.execute(
-            select(TicketAcceptanceCriterion).where(
-                TicketAcceptanceCriterion.id == crit_uuid,
-                TicketAcceptanceCriterion.ticket_id == resolved_id,
-            )
+        criterion = await tickets_service.update_acceptance_criterion(
+            db,
+            user,
+            project,
+            ticket_id,
+            criterion_id,
+            description=description,
+            is_completed=is_completed,
         )
-        criterion = crit_result.scalar_one_or_none()
-        if criterion is None:
-            raise ValueError("Kryterium akceptacji nie istnieje w tym tickecie")
-
-        if description is not None:
-            if not description.strip():
-                raise ValueError("Opis kryterium nie może być pusty")
-            criterion.description = description.strip()
-
-        if is_completed is not None:
-            if is_completed and not criterion.is_completed:
-                criterion.is_completed = True
-                criterion.completed_by_user_id = user.id
-                criterion.completed_at = datetime.now(UTC)
-                criterion.completed_via_ai = True
-            elif not is_completed and criterion.is_completed:
-                criterion.is_completed = False
-                criterion.completed_by_user_id = None
-                criterion.completed_at = None
-                criterion.completed_via_ai = False
-
-        await db.commit()
-        await db.refresh(criterion)
 
     return {
         "id": str(criterion.id),
@@ -5297,31 +4046,10 @@ async def delete_acceptance_criterion(
     criterion_id: str,
 ) -> dict[str, Any]:
     """Usuń kryterium akceptacji. ticket_id: UUID lub klucz (np. MNX-12). criterion_id: UUID kryterium."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
-    resolved_id = await _resolve_ticket_uuid(ticket_id, project.id)
-
-    try:
-        crit_uuid = uuid.UUID(criterion_id)
-    except ValueError:
-        raise ValueError("Nieprawidlowy format criterion_id (oczekiwany UUID)") from None
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
-        ticket_result = await db.execute(select(Ticket).where(Ticket.id == resolved_id, Ticket.project_id == project.id))
-        if ticket_result.scalar_one_or_none() is None:
-            raise ValueError("Ticket nie istnieje")
-
-        crit_result = await db.execute(
-            select(TicketAcceptanceCriterion).where(
-                TicketAcceptanceCriterion.id == crit_uuid,
-                TicketAcceptanceCriterion.ticket_id == resolved_id,
-            )
-        )
-        criterion = crit_result.scalar_one_or_none()
-        if criterion is None:
-            raise ValueError("Kryterium akceptacji nie istnieje w tym tickecie")
-
-        await db.delete(criterion)
-        await db.commit()
+        await tickets_service.delete_acceptance_criterion(db, user, project, ticket_id, criterion_id)
 
     return {"message": "Kryterium akceptacji usunięte", "id": criterion_id}
 
@@ -6693,10 +5421,6 @@ async def create_pipeline(
     if ticket_id is not None and sprint_id is not None:
         raise ValueError("Nie można podać jednocześnie ticket_id i sprint_id")
 
-    resolved_ticket_id: uuid.UUID | None = None
-    if ticket_id is not None:
-        resolved_ticket_id = await _resolve_ticket_uuid(ticket_id, project.id)
-
     resolved_sprint_id: uuid.UUID | None = None
     if sprint_id is not None:
         try:
@@ -6705,7 +5429,11 @@ async def create_pipeline(
             raise ValueError(f"Nieprawidlowy format sprint_id: {sprint_id!r}") from None
 
     async with async_session_factory() as db:
-        # Weryfikacja przynaleznosci ticketa do projektu (galaz czystego UUID nie jest filtrowana w _resolve_ticket_uuid)
+        resolved_ticket_id: uuid.UUID | None = None
+        if ticket_id is not None:
+            resolved_ticket_id = await tickets_service.resolve_ticket_uuid(ticket_id, project.id, db)
+
+        # Weryfikacja przynaleznosci ticketa do projektu (galaz czystego UUID nie jest filtrowana w resolve_ticket_uuid)
         if resolved_ticket_id is not None:
             ticket_check = await db.execute(select(Ticket.id).where(Ticket.id == resolved_ticket_id, Ticket.project_id == project.id))
             if ticket_check.scalar_one_or_none() is None:

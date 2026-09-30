@@ -1281,7 +1281,39 @@ ticketu - patrz 6.7b i 7f.
 2. **Krytyk zwrocil NEEDS WORK bez punktacji** (czerwony lint/test dotarl do
    review - nie powinien) -> wroc do KROK 6.5 i napraw lint/testy agentem
    odpowiedzialnym za wadliwy obszar; taka runda NIE jest ocena krytyka
-3. **Krytyk dal < 82 jakiemus agentowi** - iteracja poprawkowa TYLKO tego agenta:
+3. **Krytyk dal < 82 agentowi, a wszystkie jego odjecia to blokady zewnetrzne**
+   -> sprawdz to PRZED iteracja z punktu 4:
+   <!-- shared:blokada-zewnetrzna -->
+   **Same blokady zewnetrzne po review krytyka.** Dotyczy agenta ponizej progu,
+   ktorego KAZDE odjecie w ostatnim review ma znacznik `BLOKADA-ZEWNĘTRZNA`
+   (definicja w `review-rubric.md`). Wady w zasiegu agentow sa juz poprawione,
+   wiec kolejna iteracja nie zmieni wyniku. Odjecia mieszane (blokady i wady
+   w zasiegu) -> zwykla iteracja poprawkowa, tylko dla wad w zasiegu; ten blok
+   stosujesz dopiero, gdy zostaja same blokady.
+
+   Najpierw zweryfikuj kazda blokade: powod musi wskazywac zrodlo poza repo
+   i narzedziami agentow (srodowisko, uprawnienia, decyzja czlowieka). Blokada
+   watpliwa albo bez powodu -> traktujesz ja jak zwykle odjecie.
+
+   - Nie zlecasz kolejnej iteracji; blokada nie zuzywa limitu poprawek. Score
+     zostaje ponizej progu, wiec nie ma auto-commita, a ticket nie przechodzi
+     do `in_review`.
+   - Dodaj komentarz do ticketu (`add_comment`):
+     `**BLOKADA ZEWNĘTRZNA**\n\nAgent: [typ] ([score]/100)\nBlokady:\n- [-N] [plik:linia] [wada] - powod: [zdanie]\n\nOpcje decyzji:\n(a) usun blokade i uruchom skill ponownie dla ticketu - wznowienie podejmie prace od pierwszego niedomknietego etapu\n(b) zaakceptuj mimo score ponizej progu - zamkniecie na zadanie uzytkownika\n(c) zmien zakres ticketu albo wydziel blokade do nowego ticketu\n\nSugestia: etykieta needs-local (obsluge w dyspozytorze sprint-run wprowadza osobny ticket; dzis informacyjna).`
+   - `MONOLYNX_SPRINT_RUN=1` -> po komentarzu zatrzymaj sie wg reguly trybu
+     sesji w tle z WAZNYCH ZASAD (komentarz SPRINT-RUN STOP z "Co odblokuje:
+     decyzja z komentarza BLOKADA ZEWNĘTRZNA", domkniecie instrumentacji),
+     ostatnia linia odpowiedzi: `SPRINT-RUN STOP: blokada zewnetrzna - <krotki powod>`.
+     Nie wybierasz wariantu za uzytkownika.
+   - Tryb interaktywny (`MONOLYNX_SPRINT_RUN=0`) -> po komentarzu od razu zadaj
+     uzytkownikowi to samo pytanie z opcjami (a)/(b)/(c), bez dodatkowej rundy.
+     (a) blokada usunieta w tej sesji -> dalej zwykla iteracja poprawkowa
+     (licznik poprawek obowiazuje); (b) -> zamkniecie z adnotacja "zamkniete ze
+     score ponizej progu na zadanie uzytkownika", bez auto-commita; (c) ->
+     konczysz prace z uczciwym raportem stanu i domykasz instrumentacje jak
+     przy przerwaniu pracy.
+   <!-- /shared:blokada-zewnetrzna -->
+4. **Krytyk dal < 82 jakiemus agentowi** - iteracja poprawkowa TYLKO tego agenta:
    - **Regula do pamieci agenta**: krytyk przy NEEDS WORK zwraca linie
      `REGULA: <zdanie>` (format w `review-rubric.md`). Dopisz ja do
      `.claude/agent-memory/<subagent_type>/MEMORY.md` - sciezka liczona od
@@ -1581,7 +1613,9 @@ ich tutaj. Dodatkowo:
     bez zmiany statusu), praca na `main`/`master`, branch bez numeru ticketu, brudne
     drzewo, brak strony `toolchain`, brak sekcji `## Worktree` na stronie
     `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony
-    wynik, wyczerpany limit poprawek, `STOP:` od developera, ktorego nie
+    wynik, wyczerpany limit poprawek, same odjecia `BLOKADA-ZEWNĘTRZNA` po
+    review krytyka (6.6b, blok `blokada-zewnetrzna`, powod
+    `blokada zewnetrzna - <krotki powod>`), `STOP:` od developera, ktorego nie
     rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu
     `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [krok skilla]\nCo odblokuje: [jedno zdanie]`;
     (2) domknij instrumentacje wg zasady 7 (`running` -> `failed`,

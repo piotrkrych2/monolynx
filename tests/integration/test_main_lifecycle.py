@@ -143,6 +143,27 @@ class TestRegisterRouters:
         # "/mcp" mount always present; root mount registered last with path ""
         assert any(getattr(route, "path", None) == "/mcp" for route in main_app.routes)
 
+    def test_api_v2_prefix_registered(self):
+        """MON-140: router API v2 (prefix /api/v2) jest zarejestrowany na glownej apce."""
+        paths = [getattr(route, "path", "") for route in _flatten_routes(main_app.routes)]
+
+        assert any(p.startswith("/api/v2") for p in paths)
+
+    def test_api_v2_registered_before_root_mcp_mount(self):
+        """MON-140: /api/v2/ stoi w app.routes PRZED mountem "/" (MCP), inaczej
+        Route-priority FastAPI i tak by wygral, ale kolejnosc rejestracji jest
+        czescia kontraktu (register_api_v2 w _register_routers(), przed
+        app.mount("/", ...) w main.py) -- mutant przenoszacy rejestracje v2
+        PO mouncie "/" ma zabic ten test."""
+        from starlette.routing import Mount
+
+        flat = _flatten_routes(main_app.routes)
+
+        v2_index = next(i for i, route in enumerate(flat) if getattr(route, "path", "") == "/api/v2/")
+        root_mount_index = next(i for i, route in enumerate(flat) if isinstance(route, Mount) and route.path == "")
+
+        assert v2_index < root_mount_index
+
 
 @pytest.mark.integration
 class TestHealthCheck:

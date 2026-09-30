@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "command": "claude --bg --allowedTools \"Bash(echo *)\" Agent SendMessage TeamCreate TeamDelete --name <slug>-probe-sonnet --model sonnet --settings <dump-hook.json> \"<prompt: 1) echo bg-main-probe, 2) Agent bez name (general-purpose): echo bg-subagent-probe, 3) teammate Agent Teams name=probe: echo bg-teammate-probe>\"",
+    "tool_version": "2.1.284",
+    "captured": "2026-09-29",
+    "note": "Payload przechwycony hookiem PreToolUse (matcher Bash) z --settings, ktory zapisywal stdin 1:1 do pliku; CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 w srodowisku. Zwykly subagent (Agent bez name) w tej samej sesji --bg: agent_id + agent_type = typ agenta (general-purpose), session_id jak lider.",
+    "anonymized": "sciezka domowa /Users/<login> -> /Users/USER; reszta payloadu bez zmian"
+  },
+  "session_id": "02274bb2-3126-44a7-8dc9-49f8e7baab4a",
+  "transcript_path": "/Users/USER/.claude/projects/-Users-USER-projects-monolynx-monolynx--claude-worktrees-MON-224/02274bb2-3126-44a7-8dc9-49f8e7baab4a.jsonl",
+  "cwd": "/Users/USER/projects/monolynx/monolynx/.claude/worktrees/MON-224",
+  "scratchpad_dir": "/private/tmp/claude-501/-Users-USER-projects-monolynx-monolynx--claude-worktrees-MON-224/02274bb2-3126-44a7-8dc9-49f8e7baab4a/scratchpad",
+  "prompt_id": "47f13036-b898-4563-899a-5c145909a13f",
+  "permission_mode": "acceptEdits",
+  "agent_id": "a7bcb6d62e155aa75",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo bg-subagent-probe",
+    "description": "Echo probe string"
+  },
+  "tool_use_id": "toolu_01LuUXyovQ4vAwzP9bEcK2MJ"
+}

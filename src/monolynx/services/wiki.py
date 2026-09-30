@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,9 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from monolynx.models.project import Project
+from monolynx.models.user import User
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.minio_client import delete_object, get_markdown, upload_markdown
+from monolynx.services.permissions import check_permission
 
 logger = logging.getLogger("monolynx.wiki")
 
@@ -679,3 +683,127 @@ async def backfill_backlinks(db: AsyncSession) -> int:
         content = get_markdown(page.minio_path)
         await sync_backlinks(page=page, content=content, db=db)
     return len(pages)
+
+
+# --- Listowanie i szczegoly stron (MCP tools list_wiki_pages / get_wiki_page) ---
+
+
+@dataclass
+class WikiPageFlat:
+    id: uuid.UUID
+    title: str
+    depth: int
+    updated_at: datetime
+    parent_id: uuid.UUID | None = None
+
+
+async def list_pages_flat(db: AsyncSession, user: User, project: Project) -> list[WikiPageFlat]:
+    """Plaska lista stron wiki projektu w kolejnosci pre-order DFS, z glebokoscia zagniezdzenia."""
+    tree = await get_page_tree(project.id, db)
+
+    def _flatten(nodes: list[dict[str, Any]], depth: int, parent_id: uuid.UUID | None) -> list[WikiPageFlat]:
+        flat: list[WikiPageFlat] = []
+        for node in nodes:
+            page = node["page"]
+            flat.append(WikiPageFlat(id=page.id, title=page.title, depth=depth, updated_at=page.updated_at, parent_id=parent_id))
+            flat.extend(_flatten(node["children"], depth + 1, page.id))
+        return flat
+
+    return _flatten(tree, 0, None)
+
+
+@dataclass
+class WikiPageDetail:
+    id: uuid.UUID
+    title: str
+    slug: str
+    parent_id: uuid.UUID | None
+    position: int
+    content: str
+    is_ai_touched: bool
+    created_by: str
+    last_edited_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+async def get_wiki_page_detail(
+    db: AsyncSession,
+    user: User,
+    project: Project,
+    page_id: str,
+    *,
+    content_fn: Callable[[WikiPage], str] | None = None,
+) -> WikiPageDetail:
+    """Szczegoly strony wiki z pelna trescia markdown.
+
+    content_fn -- wstrzykiwana funkcja pobierania tresci (domyslnie get_page_content z tego
+    modulu). Pozwala wrapperowi MCP przekazac swoja WLASNA referencje get_page_content, ktora
+    tests/unit/test_mcp_server.py patchuje jako monolynx.mcp_server.get_page_content.
+    """
+    result = await db.execute(
+        select(WikiPage)
+        .options(selectinload(WikiPage.created_by), selectinload(WikiPage.last_edited_by))
+        .where(WikiPage.id == uuid.UUID(page_id), WikiPage.project_id == project.id)
+    )
+    page = result.scalar_one_or_none()
+    if page is None:
+        raise ValueError("Strona wiki nie istnieje")
+
+    fetch_content = content_fn or get_page_content
+    content = fetch_content(page)
+
+    return WikiPageDetail(
+        id=page.id,
+        title=page.title,
+        slug=page.slug,
+        parent_id=page.parent_id,
+        position=page.position,
+        content=content,
+        is_ai_touched=page.is_ai_touched,
+        created_by=page.created_by.email,
+        last_edited_by=page.last_edited_by.email,
+        created_at=page.created_at,
+        updated_at=page.updated_at,
+    )
+
+
+# --- Konfiguracja LLM Wiki (MCP tools get_wiki_config / set_wiki_config) ---
+
+
+@dataclass
+class WikiConfig:
+    wiki_llm_enabled: bool
+    index_page_id: uuid.UUID | None
+    log_page_id: uuid.UUID | None
+    schema_page_id: uuid.UUID | None
+
+
+async def get_wiki_config(db: AsyncSession, user: User, project: Project) -> WikiConfig:
+    """Konfiguracja LLM Wiki projektu: flaga i id stron systemowych (lub None gdy brak)."""
+    result = await db.execute(
+        select(WikiPage.slug, WikiPage.id).where(
+            WikiPage.project_id == project.id,
+            WikiPage.slug.in_(RESERVED_SLUGS),
+        )
+    )
+    slug_to_id: dict[str, uuid.UUID] = {row.slug: row.id for row in result.all()}
+
+    return WikiConfig(
+        wiki_llm_enabled=project.wiki_llm_enabled,
+        index_page_id=slug_to_id.get("wiki-index"),
+        log_page_id=slug_to_id.get("wiki-log"),
+        schema_page_id=slug_to_id.get("wiki-schema"),
+    )
+
+
+async def set_wiki_config(db: AsyncSession, user: User, project: Project, enabled: bool) -> Project:
+    """Wlacz lub wylacz LLM Wiki dla projektu. Wymaga uprawnien settings:write."""
+    if not await check_permission(db, user.id, project.id, "settings", "write"):
+        raise ValueError("Brak uprawnienia do zmiany konfiguracji projektu (settings:write)")
+
+    proj_result = await db.execute(select(Project).where(Project.id == project.id))
+    proj = proj_result.scalar_one()
+    proj.wiki_llm_enabled = enabled
+    await db.commit()
+    return proj

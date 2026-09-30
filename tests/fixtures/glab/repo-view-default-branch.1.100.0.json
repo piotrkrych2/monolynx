@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "command": "glab repo view -F json",
+    "tool_version": "1.100.0",
+    "captured": "2026-09-29",
+    "note": "Pole default_branch z glab repo view -F json (reszta odpowiedzi pominieta)."
+  },
+  "output": {
+    "default_branch": "main"
+  }
+}

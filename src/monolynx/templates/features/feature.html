@@ -90,7 +90,7 @@
         <p class="text-gray-600 dark:text-gray-400 mb-6 max-w-2xl">{{ f.ai_intro }}</p>
         <div class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-6">
             <p class="text-xs text-gray-500 font-mono mb-4">
-                {% if lang == "pl" %}Dostępne narzędzia MCP{% else %}Available MCP tools{% endif %}
+                {% if f.tools_label %}{{ f.tools_label }}{% elif lang == "pl" %}Dostępne narzędzia MCP{% else %}Available MCP tools{% endif %}
             </p>
             <div class="grid sm:grid-cols-2 gap-3">
                 {% for tool in f.mcp_tools %}

@@ -1,0 +1,5 @@
+# command: git rev-list --left-right --count HEAD...HEAD
+# tool_version: git 2.40.1
+# captured: 2026-09-29
+# note: linie "#" to meta (testy je pomijaja); ponizej realne wyjscie: <lewa><TAB><prawa>
+0	0

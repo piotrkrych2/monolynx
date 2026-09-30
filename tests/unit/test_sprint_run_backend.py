@@ -1422,6 +1422,31 @@ class TestLogs:
         assert tail
         assert all("\x1b" not in line for line in tail)
 
+    def test_claude_logs_equal_render_log_of_spinner_fixture(self):
+        """MON-227: parytet z render_log (emulacja ekranu, filtr spinnera, dedup) na realnym
+        fixture logs-spinner-redraw.2.1.284.txt -- nie tylko "bez bajtow ESC"."""
+        fixture_path = CLAUDE_FIXTURES_DIR / "logs-spinner-redraw.2.1.284.txt"
+        record = backend.normalize_record(
+            "claude",
+            slug="monolynx",
+            key="MON-227",
+            model="opus",
+            runtime_id="a2222222",
+            pid=None,
+            name="monolynx-MON-227-opus",
+            state="running",
+            started_at=1000.0,
+            log_path=str(fixture_path),
+        )
+        expected = state.render_log(fixture_path.read_bytes().decode("utf-8", errors="replace"))
+
+        tail = backend.logs(record, n=60)
+
+        assert tail == expected[-60:]
+        assert backend.logs(record, n=3) == expected[-3:]
+        assert not [line for line in tail if "Blanching" in line]
+        assert "Logi dostępne tylko dla żywych sesji." in "\n".join(tail)
+
     def test_missing_log_path_returns_empty_list(self):
         record = backend.normalize_record(
             "codex",

@@ -52,11 +52,18 @@ ochrony byl widoczny zamiast cichy, kazde wywolanie z rozpoznanym
 `session_id` dotyka best-effort markera `~/.cache/monolynx/hook-active/
 <session_id>` (patrz `touch_hook_active_marker` nizej) - jego NIEOBECNOSC
 dla biezacej sesji jest sygnalem, ze hook nie zdazyl jeszcze zadzialac albo
-nie jest zaladowany/zaufany. Marker niesie tez, czy ten konkretny payload
-mial pole `agent_id` - Codex CLI nigdy go nie wysyla w PreToolUse (patrz
-tests/fixtures/codex/README.md, Znalezisko 1), wiec seria markerow bez tego
-pola w calej sesji sygnalizuje degradacje ochrony subagenta, nie tylko brak
-hooka. Zapis markera jest fail-open: blad IO nigdy nie zmienia decyzji.
+nie jest zaladowany/zaufany. Marker niesie tez `subagent_identification`:
+true = w tej sesji hook widzial co najmniej jeden payload z niepustym
+`agent_id` (sticky w obrebie sesji, bo lider i agenci in-process dziela
+`session_id`). Codex CLI nigdy nie wysyla `agent_id` w PreToolUse (patrz
+tests/fixtures/codex/README.md, Znalezisko 1), wiec sesja z samym false
+sygnalizuje degradacje ochrony agenta pomocniczego, nie tylko brak hooka.
+Zapis markera jest fail-open: blad IO nigdy nie zmienia decyzji.
+
+Agent pomocniczy (MON-224) = wywolanie z niepustym `agent_id`: subagent
+i teammate Agent Teams in-process. Ograniczenie: teammate w trybie tmux nie ma
+`agent_id` i jest nieodroznialny od sesji glownej uruchomionej z `--agent`,
+wiec dostaje zachowanie sesji glownej (ask / flagi AUTO*), nie subagenta.
 """
 
 import json
@@ -76,24 +83,40 @@ def hook_active_marker_path(session_id: str) -> Path:
     return Path.home() / ".cache" / "monolynx" / "hook-active" / safe
 
 
-def touch_hook_active_marker(session_id: str, agent_fields_present: bool) -> None:
+def touch_hook_active_marker(session_id: str, is_subagent: bool) -> None:
     """Best-effort marker potwierdzajacy, ze hook zyje i przetworzyl to
-    wywolanie PreToolUse (AC6, MON-184). Fail-open: kazdy blad IO jest
-    polykany i NIGDY nie zmienia decyzji hooka (jak brief_guard.py:69-75).
-    Brak `session_id` -> marker sie nie zapisuje, hook dziala dalej normalnie.
-    `agent_fields_present` niesie, czy TEN payload mial niepuste `agent_id` -
-    to sygnal, czy klient w ogole identyfikuje subagentow w PreToolUse (patrz
-    docstring modulu)."""
+    wywolanie PreToolUse (AC6, MON-184). Fail-open: kazdy blad odczytu lub
+    zapisu jest polykany i NIGDY nie zmienia decyzji hooka (jak
+    brief_guard.py:69-75). Brak `session_id` -> marker sie nie zapisuje, hook
+    dziala dalej normalnie.
+
+    `subagent_identification` = true oznacza, ze w tej sesji hook widzial co
+    najmniej jeden payload agenta pomocniczego (niepuste `agent_id`), czyli
+    klient identyfikuje takich agentow w PreToolUse. Wartosc jest sticky-true
+    w obrebie sesji: lider i agenci in-process dziela `session_id`, wiec
+    komenda lidera (takze `find`, ktore czyta marker w skillu work 6d)
+    nadpisywala true wartoscia false i stan "ochrona potwierdzona" byl
+    nieosiagalny (objaw z MON-143). Poprzedni marker nieistniejacy,
+    nieczytelny, niebedacy JSON-owym dictem albo bez true liczy sie jak brak
+    wczesniejszego true. Teammate tmux nie ma `agent_id` (nieodroznialny od
+    sesji glownej), wiec sam nigdy nie ustawi true."""
     session_id = (session_id or "").strip()
     if not session_id:
         return
     try:
         marker = hook_active_marker_path(session_id)
         marker.parent.mkdir(parents=True, exist_ok=True)
+        identified = is_subagent
+        if not identified:
+            try:
+                previous = json.loads(marker.read_text(encoding="utf-8"))
+                identified = isinstance(previous, dict) and previous.get("subagent_identification") is True
+            except (OSError, ValueError):
+                pass
         marker.write_text(
             json.dumps(
                 {
-                    "subagent_identification": agent_fields_present,
+                    "subagent_identification": identified,
                     "checked_at": datetime.now(timezone.utc).isoformat(),
                 }
             ),
@@ -159,15 +182,23 @@ if data.get("tool_name") != "Bash":
 
 cmd = (data.get("tool_input") or {}).get("command") or ""
 
-# Pola agent_id/agent_type sa obecne, gdy tool wywoluje subagent. Brak pol
-# traktujemy jak glowna sesje (bezpieczny default: nie blokowac uzytkownika).
-agent_type = (data.get("agent_type") or "").strip()
-is_subagent = bool(data.get("agent_id")) and agent_type not in ("", "main")
+# Agentem pomocniczym (subagent albo teammate Agent Teams in-process) jest
+# wywolanie z niepustym `agent_id`. Nie sprawdzamy `agent_type`: u teammate'a
+# in-process to jego dowolna nazwa (fixture pretooluse-bash-teammate-inprocess.
+# 2.1.284.json: agent_type="probe"), wiec teammate nazwany "main" omijalby
+# regule, a literalu "main" nie ma w zadnym fixture. Zaden payload sesji
+# glownej (pretooluse-bash-main / -lead-tmux / -main-agent-flag) nie ma
+# `agent_id`. Teammate tmux (pretooluse-bash-teammate-tmux.2.1.284.json) nie ma
+# `agent_id` i ksztaltem jest nieodroznialny od sesji glownej z `--agent`
+# (pretooluse-bash-main-agent-flag.2.1.284.json), wiec traktujemy go jak sesje
+# glowna - bez heurystyk (ograniczenie opisane w plugin/README.md). Brak pola =
+# sesja glowna (bezpieczny default: nie blokowac uzytkownika).
+is_subagent = bool(data.get("agent_id"))
 
 # Marker aktywnego hooka: dotyka KAZDE wywolanie Bash, ktore dotrze tu dalej
 # (kazda galaz ponizej konczy sie explicit allow/ask/deny) - patrz docstring
 # modulu i touch_hook_active_marker.
-touch_hook_active_marker(str(data.get("session_id") or "").strip(), bool(data.get("agent_id")))
+touch_hook_active_marker(str(data.get("session_id") or "").strip(), is_subagent)
 
 GIT_WRITE = re.compile(
     r"\bgit\b[^|;&]*?\b(push|commit|add|reset\s+--hard|rebase|clean\s+(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b)"

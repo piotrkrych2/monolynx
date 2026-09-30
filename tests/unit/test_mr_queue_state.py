@@ -5,6 +5,8 @@ i tests/fixtures/gh/ (pole "output"; "_meta" opisuje komende i date zrzutu),
 zgodnie z .claude/rules/external-tool-output.md. Warianty, ktorych nie da sie
 zlapac bez prawdziwego merge (np. zielony pipeline na otwartym MR), powstaja jako
 kopia fixture ze zmienionym JEDNYM polem - reszta ksztaltu zostaje realna.
+Kolejnosc w classify: konflikt jest sprawdzany PRZED stanem CI (MON-220), a werdykt
+`conflict` niesie pipeline_id/pipeline_status aktywnego pipeline'u HEAD.
 """
 
 import copy
@@ -132,14 +134,62 @@ class TestClassifyGlab:
         assert result["verdict"] == "wait"
         assert "nieznany status" in result["reason"]
 
-    def test_conflict_checked_after_ci(self, mr_green, no_approvals):
+    @pytest.mark.parametrize("status", ["running", "pending", "created", "waiting_for_resource"])
+    def test_conflict_wins_over_active_pipeline_and_carries_it(self, mr_green, no_approvals, status):
+        """Konflikt przed CI (MON-220): aktywny pipeline nie maskuje konfliktu, a werdykt niesie jego id i status."""
+        mr_green["head_pipeline"]["status"] = status
         mr_green["has_conflicts"] = True
-        assert state.classify_glab(mr_green, no_approvals)["verdict"] == "conflict"
+        result = state.classify_glab(mr_green, no_approvals)
+        assert result["verdict"] == "conflict"
+        assert result["pipeline_id"] == mr_green["head_pipeline"]["id"]
+        assert result["pipeline_status"] == status
 
-    def test_failed_ci_wins_over_conflict(self, mr_green, no_approvals):
-        mr_green["head_pipeline"]["status"] = "failed"
+    @pytest.mark.parametrize("status", ["failed", "canceled", "success"])
+    def test_conflict_wins_over_finished_pipeline_without_pipeline_to_cancel(self, mr_green, no_approvals, status):
+        """Zakonczony pipeline nie jest do anulowania: pipeline_id i pipeline_status to None (nie id zakonczonego)."""
+        mr_green["head_pipeline"]["status"] = status
         mr_green["has_conflicts"] = True
-        assert state.classify_glab(mr_green, no_approvals)["verdict"] == "ci_failed"
+        result = state.classify_glab(mr_green, no_approvals)
+        assert result["verdict"] == "conflict"
+        assert result["pipeline_id"] is None
+        assert result["pipeline_status"] is None
+
+    def test_conflict_without_head_pipeline_is_conflict_with_no_pipeline(self, mr_green, no_approvals):
+        mr_green["head_pipeline"] = None
+        mr_green["has_conflicts"] = True
+        result = state.classify_glab(mr_green, no_approvals)
+        assert result["verdict"] == "conflict"
+        assert result["pipeline_id"] is None
+        assert result["pipeline_status"] is None
+
+    def test_conflict_from_detailed_merge_status_wins_over_running_pipeline(self):
+        """MR !70 (realny fixture, pipeline running): has_conflicts=False, ale detailed_merge_status=conflict."""
+        mr = copy.deepcopy(glab("mr-view-opened-pipeline-running"))
+        assert mr["has_conflicts"] is False
+        mr["detailed_merge_status"] = "conflict"
+        result = state.classify_glab(mr, glab("mr-approvals-none-required"))
+        assert result["verdict"] == "conflict"
+        assert result["pipeline_id"] == mr["head_pipeline"]["id"]
+        assert result["pipeline_status"] == "running"
+
+    def test_need_rebase_wins_over_running_pipeline(self):
+        mr = copy.deepcopy(glab("mr-view-opened-pipeline-running"))
+        mr["detailed_merge_status"] = "need_rebase"
+        assert state.classify_glab(mr, glab("mr-approvals-none-required"))["verdict"] == "conflict"
+
+    def test_draft_wins_over_conflict(self, mr_green, no_approvals):
+        mr_green["draft"] = True
+        mr_green["has_conflicts"] = True
+        assert state.classify_glab(mr_green, no_approvals)["verdict"] == "needs_human"
+
+    def test_canceled_pipeline_without_conflict_needs_human_and_is_not_retried(self, mr_green, no_approvals):
+        """Anulowany pipeline HEAD bez konfliktu: needs_human (czlowiek anulowal celowo), nie ci_failed ani wait."""
+        mr_green["head_pipeline"]["status"] = "canceled"
+        assert mr_green["has_conflicts"] is False
+        result = state.classify_glab(mr_green, no_approvals)
+        assert result["verdict"] == "needs_human"
+        assert "canceled" in result["reason"]
+        assert "pipeline_id" not in result
 
     def test_approved_true_without_approvers_is_not_approval(self, mr_green, no_approvals):
         """approvals_required=0 daje approved=true, ale approved_by=[] - nikt nie zatwierdzil."""
@@ -221,6 +271,57 @@ class TestClassifyGh:
         pr = copy.deepcopy(gh("pr-view-mergeable-review-required"))
         pr["reviewDecision"] = "CHANGES_REQUESTED"
         assert state.classify_gh(pr)["verdict"] == "needs_human"
+
+    def test_conflict_wins_over_running_checks(self):
+        """Wariant pr-view-approved-conflicting (CONFLICTING/DIRTY) z statusCheckRollup z pr-view-statuscontext-pending."""
+        pr = copy.deepcopy(gh("pr-view-approved-conflicting"))
+        pr["statusCheckRollup"] = copy.deepcopy(gh("pr-view-statuscontext-pending")["statusCheckRollup"])
+        result = state.classify_gh(pr)
+        assert result["verdict"] == "conflict"
+        assert result["pipeline_id"] is None
+        assert result["pipeline_status"] == "running"
+
+    def test_conflict_wins_over_failed_checks(self):
+        """Wariant pr-view-draft-conflicting-check-failure (CONFLICTING/DIRTY, check FAILURE) z isDraft=False."""
+        pr = copy.deepcopy(gh("pr-view-draft-conflicting-check-failure"))
+        pr["isDraft"] = False
+        result = state.classify_gh(pr)
+        assert result["verdict"] == "conflict"
+        assert result["pipeline_id"] is None
+        assert result["pipeline_status"] is None
+
+    def test_conflict_with_green_checks_has_no_pipeline(self):
+        result = state.classify_gh(gh("pr-view-approved-conflicting"))
+        assert result["verdict"] == "conflict"
+        assert result["pipeline_id"] is None
+        assert result["pipeline_status"] is None
+
+    @pytest.mark.parametrize(
+        "mergeable, merge_state",
+        [("CONFLICTING", "DIRTY"), ("CONFLICTING", "BLOCKED"), ("MERGEABLE", "DIRTY")],
+    )
+    def test_each_conflict_signal_alone_wins_over_running_checks(self, mergeable, merge_state):
+        """pr-view-statuscontext-pending (checki w toku) ze zmienionymi mergeable/mergeStateStatus: kazdy sygnal osobno."""
+        pr = copy.deepcopy(gh("pr-view-statuscontext-pending"))
+        pr["mergeable"] = mergeable
+        pr["mergeStateStatus"] = merge_state
+        result = state.classify_gh(pr)
+        assert result["verdict"] == "conflict"
+        assert result["pipeline_status"] == "running"
+
+    def test_behind_does_not_outrank_failed_checks(self):
+        """pr-view-draft-conflicting-check-failure z isDraft=False, mergeable=MERGEABLE, BEHIND: CI przed BEHIND."""
+        pr = copy.deepcopy(gh("pr-view-draft-conflicting-check-failure"))
+        pr["isDraft"] = False
+        pr["mergeable"] = "MERGEABLE"
+        pr["mergeStateStatus"] = "BEHIND"
+        assert state.classify_gh(pr)["verdict"] == "ci_failed"
+
+    def test_behind_with_green_checks_is_conflict(self):
+        """BEHIND bez CONFLICTING zostaje za CI: zielone checki -> conflict (wciagniecie brancha docelowego)."""
+        pr = copy.deepcopy(gh("pr-view-mergeable-review-required"))
+        pr["mergeStateStatus"] = "BEHIND"
+        assert state.classify_gh(pr)["verdict"] == "conflict"
 
 
 @pytest.mark.unit
@@ -350,12 +451,130 @@ class TestQueueFile:
 
 
 @pytest.mark.unit
+class TestQueueAppend:
+    """MON-142: kolejne ticki dopisuja nowe otwarte MR/PR na koniec kolejki."""
+
+    def test_appends_only_missing_refs_in_proposed_order(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["#14451", "#14450"])
+        state.queue_update(queue_file, "#14451", None, None, True, None)
+
+        result = state.queue_append(queue_file, "gh", gh("pr-list-open"))
+
+        proposed = state.queue_propose("gh", gh("pr-list-open"))["order"]
+        expected_appended = [ref for ref in proposed if ref not in ("#14450", "#14451")]
+        assert result["appended"] == expected_appended
+        refs = [item["ref"] for item in result["items"]]
+        assert refs == ["#14451", "#14450", *expected_appended]
+        assert result["items"][0]["fix_rounds"] == 1
+        assert result["next"] == "#14451"
+        new_item = next(item for item in result["items"] if item["ref"] == expected_appended[0])
+        assert new_item["status"] == "pending"
+        assert new_item["provider"] == "gh"
+        assert new_item["number"] == int(expected_appended[0][1:])
+
+    def test_stacked_child_of_queued_mr_lands_after_it(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["#14450"])
+
+        refs = [item["ref"] for item in state.queue_append(queue_file, "gh", gh("pr-list-open"))["items"]]
+
+        stack = ["#14450", "#14451", "#14452", "#14453", "#14454", "#14455", "#14456"]
+        positions = [refs.index(ref) for ref in stack]
+        assert positions == sorted(positions)
+
+    @pytest.mark.parametrize("status", ["stopped", "done", "closed"])
+    def test_ref_already_in_queue_is_never_appended_again(self, tmp_path, status):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["#14447"])
+        state.queue_update(queue_file, "#14447", status, None, False, None)
+
+        result = state.queue_append(queue_file, "gh", gh("pr-list-open"))
+
+        assert "#14447" not in result["appended"]
+        matching = [item for item in result["items"] if item["ref"] == "#14447"]
+        assert len(matching) == 1
+        assert matching[0]["status"] == status
+
+    def test_nothing_new_leaves_queue_file_untouched(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70"])
+        before = queue_file.read_text()
+
+        result = state.queue_append(queue_file, "glab", glab("mr-list-open"))
+
+        assert result["appended"] == []
+        assert result["next"] == "!70"
+        assert queue_file.read_text() == before
+
+    def test_missing_queue_file_gets_whole_proposed_order(self, tmp_path):
+        queue_file = tmp_path / "monolynx" / "mr-queue.json"
+
+        result = state.queue_append(queue_file, "glab", glab("mr-list-open"))
+
+        assert result["appended"] == ["!70"]
+        assert result["next"] == "!70"
+        assert json.loads(queue_file.read_text())["items"][0]["ref"] == "!70"
+
+    def test_skipped_lists_only_refs_outside_queue(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["#14348"])
+
+        result = state.queue_append(queue_file, "gh", gh("pr-list-open"))
+
+        skipped = {item["ref"] for item in result["skipped"]}
+        assert "#14348" not in skipped
+        assert "#14349" in skipped
+        assert not skipped & set(result["appended"])
+
+    def test_cli_appends_and_prints_json(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        list_file = write_json(tmp_path, "list.json", glab("mr-list-open"))
+
+        result = run_cli("queue-append", "--queue-file", str(queue_file), "--provider", "glab", "--list-file", list_file)
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["appended"] == ["!70"]
+
+    def test_cli_bad_list_element_exits_2_without_writing(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!72"])
+        before = queue_file.read_text()
+        entries = copy.deepcopy(glab("mr-list-open"))
+        del entries[0]["source_branch"]
+        list_file = write_json(tmp_path, "list.json", entries)
+
+        result = run_cli("queue-append", "--queue-file", str(queue_file), "--provider", "glab", "--list-file", list_file)
+
+        assert result.returncode == 2
+        assert "list-file[0]" in result.stderr
+        assert queue_file.read_text() == before
+
+    def test_cli_without_provider_exits_64(self, tmp_path):
+        list_file = write_json(tmp_path, "list.json", glab("mr-list-open"))
+        result = run_cli("queue-append", "--queue-file", str(tmp_path / "q.json"), "--list-file", list_file)
+        assert result.returncode == 64
+
+
+@pytest.mark.unit
 class TestCli:
     def test_classify_gh_prints_json(self, tmp_path):
         pr_file = write_json(tmp_path, "pr.json", gh("pr-view-approved-conflicting"))
         result = run_cli("classify", "--provider", "gh", "--pr-file", pr_file)
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["verdict"] == "conflict"
+
+    def test_classify_glab_conflict_with_running_pipeline_prints_pipeline_id(self, tmp_path):
+        mr = copy.deepcopy(glab("mr-view-opened-pipeline-running"))
+        mr["has_conflicts"] = True
+        mr_file = write_json(tmp_path, "mr.json", mr)
+        approvals_file = write_json(tmp_path, "ap.json", glab("mr-approvals-none-required"))
+        result = run_cli("classify", "--provider", "glab", "--mr-file", mr_file, "--approvals-file", approvals_file)
+        assert result.returncode == 0, result.stderr
+        out = json.loads(result.stdout)
+        assert out["verdict"] == "conflict"
+        assert out["pipeline_id"] == mr["head_pipeline"]["id"]
+        assert out["pipeline_status"] == "running"
 
     def test_classify_glab_requires_approvals_file(self, tmp_path):
         mr_file = write_json(tmp_path, "mr.json", glab("mr-view-merged"))
@@ -477,3 +696,783 @@ class TestTicketKey:
         result = run_cli("ticket-key")
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout) == {"key": None}
+
+
+GIT_FIXTURE = FIXTURES / "git" / "rev-list-left-right-count.2.40.1.txt"
+
+
+def git_revlist_counts():
+    """(lewa, prawa) z realnego wyjscia `git rev-list --left-right --count` (linie `#` to meta)."""
+    lines = [ln for ln in GIT_FIXTURE.read_text().splitlines() if ln.strip() and not ln.startswith("#")]
+    assert len(lines) == 1
+    left, right = lines[0].split()
+    return int(left), int(right)
+
+
+def target_sync(target="main", current="main", ahead=0, behind=1, dirty="false"):
+    result = run_cli(
+        "target-sync",
+        "--target-branch",
+        target,
+        "--current-branch",
+        current,
+        "--ahead",
+        str(ahead),
+        "--behind",
+        str(behind),
+        "--dirty",
+        dirty,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def assert_no_destructive_git(payload):
+    texts = [*payload["commands"], payload["manual"] or ""]
+    for text in texts:
+        tokens = text.split()
+        for forbidden in ("reset", "rebase", "stash", "--force", "-f", "--force-with-lease"):
+            assert forbidden not in tokens, f"{forbidden!r} w {text!r}"
+        assert "+" not in text, f"refspec z + w {text!r}"
+
+
+@pytest.mark.unit
+class TestTargetSync:
+    def test_git_fixture_is_real_capture_with_meta(self):
+        header = [ln for ln in GIT_FIXTURE.read_text().splitlines() if ln.startswith("#")]
+        assert any("git rev-list --left-right --count" in ln for ln in header)
+        assert any("git 2." in ln for ln in header)
+        assert any("captured" in ln for ln in header)
+
+    def test_up_to_date_from_real_fixture_counts_is_none(self):
+        ahead, behind = git_revlist_counts()
+        payload = target_sync(ahead=ahead, behind=behind)
+        assert payload["action"] == "none"
+        assert payload["commands"] == []
+        assert payload["manual"] is None
+
+    def test_up_to_date_wins_over_dirty(self):
+        payload = target_sync(ahead=0, behind=0, dirty="true")
+        assert payload["action"] == "none"
+        assert payload["commands"] == []
+        assert payload["manual"] is None
+
+    def test_on_target_clean_behind_is_ff_merge_with_exact_command(self):
+        payload = target_sync(target="main", current="main", ahead=0, behind=3, dirty="false")
+        assert payload["action"] == "ff-merge"
+        assert payload["commands"] == ["git merge --ff-only origin/main"]
+        assert payload["manual"] is None
+
+    def test_ff_merge_uses_the_target_branch_name(self):
+        payload = target_sync(target="sprint/cli", current="sprint/cli", behind=1)
+        assert payload["commands"] == ["git merge --ff-only origin/sprint/cli"]
+
+    def test_on_target_dirty_skips_with_manual_ff_merge(self):
+        payload = target_sync(target="main", current="main", ahead=0, behind=2, dirty="true")
+        assert payload["action"] == "skip"
+        assert payload["commands"] == []
+        assert payload["manual"] == "git merge --ff-only origin/main"
+
+    def test_on_other_branch_is_ff_fetch_with_exact_command(self):
+        payload = target_sync(target="main", current="feature-x", ahead=0, behind=2)
+        assert payload["action"] == "ff-fetch"
+        assert payload["commands"] == ["git fetch origin main:main"]
+        assert payload["manual"] is None
+
+    def test_ff_fetch_refspec_has_no_plus_prefix(self):
+        payload = target_sync(target="sprint/cli", current="main", behind=1)
+        assert payload["commands"] == ["git fetch origin sprint/cli:sprint/cli"]
+
+    def test_detached_head_is_treated_like_other_branch(self):
+        payload = target_sync(target="main", current="HEAD", behind=1)
+        assert payload["action"] == "ff-fetch"
+        assert payload["commands"] == ["git fetch origin main:main"]
+
+    def test_dirty_does_not_block_ff_fetch_on_other_branch(self):
+        payload = target_sync(target="main", current="feature-x", behind=1, dirty="true")
+        assert payload["action"] == "ff-fetch"
+        assert payload["commands"] == ["git fetch origin main:main"]
+
+    @pytest.mark.parametrize("current", ["main", "feature-x", "HEAD"])
+    @pytest.mark.parametrize("dirty", ["true", "false"])
+    @pytest.mark.parametrize("behind", [0, 4])
+    def test_local_commits_skip_without_commands_and_never_reset(self, current, dirty, behind):
+        payload = target_sync(target="main", current=current, ahead=2, behind=behind, dirty=dirty)
+        assert payload["action"] == "skip"
+        assert payload["commands"] == []
+        assert isinstance(payload["manual"], str) and payload["manual"].strip()
+        assert "main" in payload["manual"]
+        assert_no_destructive_git(payload)
+
+    def test_ahead_only_is_skip_and_behind_only_is_ff(self):
+        """Rozroznia ahead od behind: zamiana kolumn odwrocilaby oba wyniki."""
+        assert target_sync(ahead=5, behind=0)["action"] == "skip"
+        assert target_sync(ahead=0, behind=5)["action"] == "ff-merge"
+
+    def test_manual_for_local_commits_is_not_the_ff_command(self):
+        payload = target_sync(ahead=1, behind=1, dirty="false")
+        assert payload["manual"] != "git merge --ff-only origin/main"
+
+    @pytest.mark.parametrize("target", ["main", "sprint/cli-monolynx"])
+    @pytest.mark.parametrize("current", ["main", "sprint/cli-monolynx", "other", "HEAD"])
+    @pytest.mark.parametrize("dirty", ["true", "false"])
+    @pytest.mark.parametrize("ahead", [0, 1, 3])
+    @pytest.mark.parametrize("behind", [0, 1, 3])
+    def test_no_result_contains_destructive_git(self, target, current, dirty, ahead, behind):
+        assert_no_destructive_git(target_sync(target, current, ahead, behind, dirty))
+
+    @pytest.mark.parametrize("target", ["", "   "])
+    def test_blank_target_branch_exits_2(self, target):
+        result = run_cli("target-sync", "--target-branch", target, "--current-branch", "main", "--ahead", "0", "--behind", "1", "--dirty", "false")
+        assert result.returncode == 2
+        assert result.stdout.strip() == ""
+
+    @pytest.mark.parametrize("flag", ["--ahead", "--behind"])
+    def test_negative_count_exits_2(self, flag):
+        values = {"--ahead": "0", "--behind": "1"}
+        values[flag] = "-1"
+        result = run_cli(
+            "target-sync",
+            "--target-branch",
+            "main",
+            "--current-branch",
+            "main",
+            f"--ahead={values['--ahead']}",
+            f"--behind={values['--behind']}",
+            "--dirty",
+            "false",
+        )
+        assert result.returncode == 2
+        assert result.stdout.strip() == ""
+
+    @pytest.mark.parametrize("dirty", ["maybe", "", "1", "TRUE"])
+    def test_dirty_outside_true_false_exits_2_and_never_ff(self, dirty):
+        result = run_cli("target-sync", "--target-branch", "main", "--current-branch", "main", "--ahead", "0", "--behind", "1", "--dirty", dirty)
+        assert result.returncode == 2
+        assert "ff-" not in result.stdout
+
+    @pytest.mark.parametrize("missing", ["--target-branch", "--current-branch", "--ahead", "--behind", "--dirty"])
+    def test_missing_required_argument_exits_64(self, missing):
+        full = {
+            "--target-branch": "main",
+            "--current-branch": "main",
+            "--ahead": "0",
+            "--behind": "1",
+            "--dirty": "false",
+        }
+        del full[missing]
+        argv = [item for pair in full.items() for item in pair]
+        assert run_cli("target-sync", *argv).returncode == 64
+
+    def test_non_integer_count_exits_64(self):
+        result = run_cli("target-sync", "--target-branch", "main", "--current-branch", "main", "--ahead", "x", "--behind", "1", "--dirty", "false")
+        assert result.returncode == 64
+
+
+def config_check(base="", target=""):
+    return run_cli("config-check", "--base-branch", base, "--mr-target", target)
+
+
+@pytest.mark.unit
+class TestConfigCheck:
+    def test_different_values_exit_2_and_name_both_variables(self):
+        result = config_check("develop", "release")
+        assert result.returncode == 2
+        assert "MONOLYNX_BASE_BRANCH" in result.stderr
+        assert "MONOLYNX_MR_TARGET" in result.stderr
+        assert "develop" in result.stderr
+        assert "release" in result.stderr
+        assert result.stdout.strip() == ""
+
+    def test_equal_values_exit_0_with_target(self):
+        result = config_check("develop", "develop")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"target": "develop"}
+
+    def test_only_base_branch_gives_its_value(self):
+        result = config_check(base="develop")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"target": "develop"}
+
+    def test_only_mr_target_gives_its_value(self):
+        result = config_check(target="release")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"target": "release"}
+
+    def test_both_empty_gives_null_target(self):
+        result = config_check()
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"target": None}
+
+    def test_no_arguments_gives_null_target(self):
+        result = run_cli("config-check")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"target": None}
+
+    def test_whitespace_only_value_counts_as_empty(self):
+        result = config_check("  ", "release")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"target": "release"}
+
+    def test_values_differing_only_by_surrounding_whitespace_are_equal(self):
+        result = config_check(" develop ", "develop\t")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"target": "develop"}
+
+    def test_target_is_stripped(self):
+        result = config_check(" develop ", "")
+        assert json.loads(result.stdout) == {"target": "develop"}
+
+    def test_case_difference_is_a_difference(self):
+        assert config_check("Develop", "develop").returncode == 2
+
+
+# --- MON-221: kolejka na branchu integracyjnym nie czeka na CI brancha docelowego ---
+#
+# Fixture'y sprintu (tests/fixtures/glab/*sprint-success*, repo-view-default-branch)
+# to realne przechwycenie z 2026-09-29 (pipeline commita MON-220 na
+# sprint/cli-monolynx). Realnego pipeline'u `failed` na branchu sprintu w chwili
+# zrzutu nie bylo - wariant czerwony to kopia fixture'a z JEDNYM zmienionym polem
+# (status pipeline'u) plus realne joby `pipeline-jobs-failed`.
+# Kontrakt `failed_jobs`: pole jest TYLKO w wyniku o statusie `failed`
+# (w `success`/`wait`/`needs_human` go nie ma).
+
+
+def cli_json(*args):
+    result = run_cli(*args)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def cli_update(queue_file, ref, *extra):
+    return cli_json("queue-update", "--queue-file", str(queue_file), "--ref", ref, *extra)
+
+
+def cli_show(queue_file):
+    return cli_json("queue-show", "--queue-file", str(queue_file))
+
+
+def item_of(result, ref):
+    return next(i for i in result["items"] if i["ref"] == ref)
+
+
+@pytest.fixture
+def sprint_default_branch():
+    return glab("repo-view-default-branch")["default_branch"]
+
+
+@pytest.mark.unit
+class TestSprintFixtures:
+    def test_sprint_pipeline_fixture_is_on_integration_branch(self):
+        pipelines = glab("pipelines-by-sha-sprint-success")
+        assert pipelines[0]["ref"] == "sprint/cli-monolynx"
+        assert pipelines[0]["status"] == "success"
+
+    def test_sprint_jobs_runner_ip_is_redacted(self):
+        for job in glab("pipeline-jobs-sprint-success"):
+            manager = job.get("runner_manager") or {}
+            assert manager.get("ip_address") in (None, "REDACTED")
+
+
+@pytest.mark.unit
+class TestPostMerge:
+    """post-merge: target != domyslny branch -> verifying, inaczej (tez przy pustych wartosciach) merging."""
+
+    @pytest.mark.parametrize(
+        "target, default, expected",
+        [
+            ("sprint/cli-monolynx", "main", "verifying"),
+            ("sprint/cli-monolynx", " main ", "verifying"),
+            (" sprint/cli-monolynx ", "main", "verifying"),
+            ("main", "main", "merging"),
+            (" main ", "main", "merging"),
+            ("main", " main ", "merging"),
+            ("sprint/cli-monolynx", "", "merging"),
+            ("sprint/cli-monolynx", "   ", "merging"),
+            ("", "main", "merging"),
+            ("   ", "main", "merging"),
+            ("", "", "merging"),
+        ],
+    )
+    def test_status_by_target_and_default(self, target, default, expected):
+        out = cli_json("post-merge", "--target-branch", target, "--default-branch", default)
+        assert out["status"] == expected
+        assert isinstance(out["reason"], str) and out["reason"]
+
+    def test_default_branch_from_repo_view_fixture(self, sprint_default_branch):
+        integration = cli_json("post-merge", "--target-branch", "sprint/cli-monolynx", "--default-branch", sprint_default_branch)
+        default = cli_json("post-merge", "--target-branch", sprint_default_branch, "--default-branch", sprint_default_branch)
+        assert integration["status"] == "verifying"
+        assert default["status"] == "merging"
+
+    def test_missing_default_branch_flag_exits_64(self):
+        assert run_cli("post-merge", "--target-branch", "sprint/cli-monolynx").returncode == 64
+
+    def test_missing_target_branch_flag_exits_64(self):
+        assert run_cli("post-merge", "--default-branch", "main").returncode == 64
+
+    def test_status_is_accepted_by_queue_update(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        status = cli_json("post-merge", "--target-branch", "sprint/cli-monolynx", "--default-branch", "main")["status"]
+        result = cli_update(queue_file, "!70", "--status", status, "--merge-sha", "deadbeef")
+        assert item_of(result, "!70")["status"] == "verifying"
+
+
+@pytest.mark.unit
+class TestVerifyingStatus:
+    def test_verifying_is_accepted_and_stores_merge_sha(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        result = cli_update(queue_file, "!70", "--status", "verifying", "--merge-sha", "deadbeef")
+        item = item_of(result, "!70")
+        assert item["status"] == "verifying"
+        assert item["merge_sha"] == "deadbeef"
+
+    def test_verifying_item_is_not_next_pending_is(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        result = state.queue_update(queue_file, "!70", "verifying", None, False, "deadbeef")
+        assert result["next"] == "!72"
+        assert result["verifying"] == ["!70"]
+
+    def test_verifying_list_keeps_file_order(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72", "!74"])
+        state.queue_update(queue_file, "!74", "verifying", None, False, "aaa")
+        result = state.queue_update(queue_file, "!70", "verifying", None, False, "bbb")
+        assert result["verifying"] == ["!70", "!74"]
+        assert result["next"] == "!72"
+
+    def test_only_verifying_items_leave_no_next_and_no_halt(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70"])
+        result = state.queue_update(queue_file, "!70", "verifying", None, False, "deadbeef")
+        assert result["next"] is None
+        assert result["halted"] is None
+
+    def test_merging_still_wins_over_verifying_and_pending(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72", "!74"])
+        state.queue_update(queue_file, "!70", "verifying", None, False, "aaa")
+        result = state.queue_update(queue_file, "!72", "merging", None, False, "bbb")
+        assert result["next"] == "!72"
+        assert result["verifying"] == ["!70"]
+
+    def test_queue_show_carries_verifying_list_and_halted(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        cli_update(queue_file, "!70", "--status", "verifying", "--merge-sha", "deadbeef")
+        shown = cli_show(queue_file)
+        assert shown["verifying"] == ["!70"]
+        assert shown["halted"] is None
+        assert shown["next"] == "!72"
+
+    def test_verifying_done_after_green_ci_leaves_verifying_list(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70"])
+        state.queue_update(queue_file, "!70", "verifying", None, False, "deadbeef")
+        result = state.queue_update(queue_file, "!70", "done", None, False, None)
+        assert result["verifying"] == []
+        assert item_of(result, "!70")["merge_sha"] == "deadbeef"
+
+
+@pytest.mark.unit
+class TestDefaultBranchBehaviourUnchanged:
+    """Kryterium 4 MON-221: na domyslnym branchu (main) zachowanie kolejki bez zmian."""
+
+    def test_merging_item_still_blocks_pending(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        result = state.queue_update(queue_file, "!70", "merging", None, False, "deadbeef")
+        assert result["next"] == "!70"
+        assert result["halted"] is None
+        assert result["verifying"] == []
+
+    def test_merging_item_listed_later_still_goes_before_pending(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        result = state.queue_update(queue_file, "!72", "merging", None, False, "deadbeef")
+        assert result["next"] == "!72"
+
+    def test_stopped_without_stop_reason_does_not_halt_queue(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        result = state.queue_update(queue_file, "!70", "stopped", None, False, None)
+        assert item_of(result, "!70")["status"] == "stopped"
+        assert result["next"] == "!72"
+        assert result["halted"] is None
+
+    def test_stopped_via_cli_without_stop_reason_does_not_halt_queue(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        cli_update(queue_file, "!70", "--status", "stopped")
+        shown = cli_show(queue_file)
+        assert shown["next"] == "!72"
+        assert shown["halted"] is None
+
+    def test_plain_queue_has_empty_verifying_and_no_halt(self, tmp_path):
+        result = state.queue_set(tmp_path / "mr-queue.json", ["!70"])
+        assert result["verifying"] == []
+        assert result["halted"] is None
+        assert result["next"] == "!70"
+
+    def test_default_branch_target_never_yields_verifying(self):
+        out = cli_json("post-merge", "--target-branch", "main", "--default-branch", "main")
+        assert out["status"] == "merging"
+
+
+@pytest.mark.unit
+class TestStopReason:
+    def test_target_ci_failed_halts_queue_despite_pending(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        result = cli_update(queue_file, "!70", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        assert item_of(result, "!70")["stop_reason"] == "target_ci_failed"
+        assert result["next"] is None
+        assert result["halted"] == "!70"
+
+    def test_halt_is_persisted_in_queue_file(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        cli_update(queue_file, "!70", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        shown = cli_show(queue_file)
+        assert shown["next"] is None
+        assert shown["halted"] == "!70"
+
+    def test_first_halting_item_in_file_order_is_reported(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72", "!74"])
+        cli_update(queue_file, "!72", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        result = cli_update(queue_file, "!70", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        assert result["halted"] == "!70"
+
+    def test_other_stop_reason_does_not_halt_queue(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        result = cli_update(queue_file, "!70", "--status", "stopped", "--stop-reason", "needs_review")
+        assert item_of(result, "!70")["stop_reason"] == "needs_review"
+        assert result["next"] == "!72"
+        assert result["halted"] is None
+
+    @pytest.mark.parametrize("new_status", ["closed", "done", "pending"])
+    def test_leaving_stopped_clears_stop_reason_and_releases_queue(self, tmp_path, new_status):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        cli_update(queue_file, "!70", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        result = cli_update(queue_file, "!70", "--status", new_status)
+        assert item_of(result, "!70")["stop_reason"] is None
+        assert result["halted"] is None
+        assert result["next"] == ("!70" if new_status == "pending" else "!72")
+
+    def test_update_without_status_keeps_stop_reason(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        cli_update(queue_file, "!70", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        result = cli_update(queue_file, "!70", "--fix-round")
+        assert item_of(result, "!70")["stop_reason"] == "target_ci_failed"
+        assert result["halted"] == "!70"
+        assert result["next"] is None
+
+
+@pytest.mark.unit
+class TestQueueSetKeepsHaltingItem:
+    """MON-228 A5: queue-set nie gubi pozycji `stopped` + `target_ci_failed` spoza nowej listy.
+
+    Bez tego ponowne `queue-set` (np. po odswiezeniu propozycji) kasowalo zatrzymanie kolejki
+    i czerwony commit merge na branchu integracyjnym przestawal blokowac kolejne MR (MON-221).
+    """
+
+    def test_halting_item_outside_new_list_is_kept_and_keeps_halting(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72", "!74"])
+        state.queue_update(queue_file, "!72", "stopped", None, False, None, "target_ci_failed")
+
+        result = state.queue_set(queue_file, ["!70", "!74"])
+
+        halting = item_of(result, "!72")
+        assert halting["status"] == "stopped"
+        assert halting["stop_reason"] == "target_ci_failed"
+        assert result["halted"] == "!72"
+        assert result["next"] is None
+
+    def test_kept_halting_item_survives_in_queue_file(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        cli_update(queue_file, "!72", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        state.queue_set(queue_file, ["!70"])
+
+        shown = cli_show(queue_file)
+
+        assert shown["halted"] == "!72"
+        assert shown["next"] is None
+        assert {item["ref"] for item in shown["items"]} == {"!70", "!72"}
+
+    def test_halting_item_inside_new_list_keeps_status_and_reason(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        state.queue_update(queue_file, "!72", "stopped", None, False, None, "target_ci_failed")
+
+        result = state.queue_set(queue_file, ["!72", "!70"])
+
+        assert item_of(result, "!72")["stop_reason"] == "target_ci_failed"
+        assert result["halted"] == "!72"
+        assert [item["ref"] for item in result["items"]].count("!72") == 1
+
+    def test_halting_and_verifying_items_outside_new_list_are_both_kept(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72", "!74"])
+        state.queue_update(queue_file, "!72", "stopped", None, False, None, "target_ci_failed")
+        state.queue_update(queue_file, "!74", "verifying", None, False, "deadbeef")
+
+        result = state.queue_set(queue_file, ["!70"])
+
+        assert {item["ref"] for item in result["items"]} == {"!70", "!72", "!74"}
+        assert result["halted"] == "!72"
+        assert result["verifying"] == ["!74"]
+
+    @pytest.mark.parametrize("stop_reason", ["needs_review", None])
+    def test_stopped_item_with_other_reason_outside_new_list_is_dropped(self, tmp_path, stop_reason):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        state.queue_update(queue_file, "!72", "stopped", None, False, None, stop_reason)
+
+        result = state.queue_set(queue_file, ["!70"])
+
+        assert [item["ref"] for item in result["items"]] == ["!70"]
+        assert result["halted"] is None
+        assert result["next"] == "!70"
+
+    @pytest.mark.parametrize("status", ["done", "closed"])
+    def test_non_halting_non_verifying_item_outside_new_list_is_dropped(self, tmp_path, status):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        state.queue_update(queue_file, "!72", status, None, False, None)
+
+        result = state.queue_set(queue_file, ["!70"])
+
+        assert [item["ref"] for item in result["items"]] == ["!70"]
+
+    def test_released_halting_item_outside_new_list_is_dropped(self, tmp_path):
+        # Po odblokowaniu przez czlowieka (status wraca do pending, stop_reason wyczyszczony)
+        # pozycja spoza listy jest zwykla pozycja i znika.
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        state.queue_update(queue_file, "!72", "stopped", None, False, None, "target_ci_failed")
+        state.queue_update(queue_file, "!72", "pending", None, False, None)
+
+        result = state.queue_set(queue_file, ["!70"])
+
+        assert [item["ref"] for item in result["items"]] == ["!70"]
+        assert result["halted"] is None
+
+    def test_cleared_stop_reason_is_persisted(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        cli_update(queue_file, "!70", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        cli_update(queue_file, "!70", "--status", "closed")
+        assert json.loads(queue_file.read_text())["items"][0]["stop_reason"] is None
+
+    @pytest.mark.parametrize("bad", [5, ["target_ci_failed"], {"a": 1}, True])
+    def test_non_string_stop_reason_in_file_exits_2(self, tmp_path, bad):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70"])
+        data = json.loads(queue_file.read_text())
+        data["items"][0]["stop_reason"] = bad
+        queue_file.write_text(json.dumps(data))
+        result = run_cli("queue-show", "--queue-file", str(queue_file))
+        assert result.returncode == 2
+        assert "stop_reason" in result.stderr
+
+    def test_missing_stop_reason_key_in_old_queue_file_is_accepted(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70"])
+        data = json.loads(queue_file.read_text())
+        del data["items"][0]["stop_reason"]
+        queue_file.write_text(json.dumps(data))
+        assert cli_show(queue_file)["next"] == "!70"
+
+    def test_null_and_string_stop_reason_in_file_are_accepted(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        data = json.loads(queue_file.read_text())
+        data["items"][0]["stop_reason"] = None
+        data["items"][1]["stop_reason"] = "target_ci_failed"
+        queue_file.write_text(json.dumps(data))
+        assert cli_show(queue_file)["items"][1]["stop_reason"] == "target_ci_failed"
+
+
+@pytest.mark.unit
+class TestNewItemsStopReason:
+    def test_queue_set_items_have_null_stop_reason(self, tmp_path):
+        result = state.queue_set(tmp_path / "mr-queue.json", ["!70", "!72"])
+        assert [i["stop_reason"] for i in result["items"]] == [None, None]
+
+    def test_queue_append_items_have_null_stop_reason(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["#14451"])
+        result = state.queue_append(queue_file, "gh", gh("pr-list-open"))
+        assert result["appended"]
+        appended = [i for i in result["items"] if i["ref"] in result["appended"]]
+        assert appended
+        assert all(i["stop_reason"] is None for i in appended)
+
+    def test_queue_set_keeps_stop_reason_of_existing_ref(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        cli_update(queue_file, "!70", "--status", "stopped", "--stop-reason", "target_ci_failed")
+        result = state.queue_set(queue_file, ["!72", "!70"])
+        assert item_of(result, "!70")["stop_reason"] == "target_ci_failed"
+        assert result["halted"] == "!70"
+
+
+@pytest.mark.unit
+class TestQueueSetKeepsVerifying:
+    def test_verifying_outside_new_list_is_kept_at_front_in_old_order(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72", "!74"])
+        state.queue_update(queue_file, "!74", "verifying", None, False, "sha74")
+        state.queue_update(queue_file, "!70", "verifying", None, False, "sha70")
+        result = state.queue_set(queue_file, ["!76", "!78"])
+        assert [i["ref"] for i in result["items"]] == ["!70", "!74", "!76", "!78"]
+        assert result["verifying"] == ["!70", "!74"]
+        assert item_of(result, "!70")["merge_sha"] == "sha70"
+        assert item_of(result, "!74")["merge_sha"] == "sha74"
+        assert result["next"] == "!76"
+
+    def test_verifying_inside_new_list_keeps_list_position_without_duplicate(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        state.queue_update(queue_file, "!72", "verifying", None, False, "sha72")
+        result = state.queue_set(queue_file, ["!76", "!72"])
+        assert [i["ref"] for i in result["items"]] == ["!76", "!72"]
+        assert item_of(result, "!72")["status"] == "verifying"
+
+    def test_other_items_outside_new_list_are_dropped_as_before(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72", "!74", "!76", "!78"])
+        state.queue_update(queue_file, "!72", "merging", None, False, "s")
+        state.queue_update(queue_file, "!74", "stopped", None, False, None)
+        state.queue_update(queue_file, "!76", "done", None, False, None)
+        result = state.queue_set(queue_file, ["!80"])
+        assert [i["ref"] for i in result["items"]] == ["!80"]
+
+    def test_queue_append_leaves_verifying_untouched(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["#14451"])
+        state.queue_update(queue_file, "#14451", "verifying", None, False, "sha")
+        result = state.queue_append(queue_file, "gh", gh("pr-list-open"))
+        assert item_of(result, "#14451")["status"] == "verifying"
+        assert item_of(result, "#14451")["merge_sha"] == "sha"
+
+
+@pytest.mark.unit
+class TestTargetCiFailedJobs:
+    def test_glab_manual_pipeline_failed_jobs_are_named(self):
+        result = state.target_ci_glab([{"id": 1, "status": "manual"}], glab("pipeline-jobs-failed"))
+        assert result["status"] == "failed"
+        assert result["failed_jobs"] == ["clean-code"]
+        assert "clean-code" in result["reason"]
+
+    def test_glab_failed_pipeline_with_jobs_names_red_jobs(self):
+        result = state.target_ci_glab([{"id": 7, "status": "failed"}], glab("pipeline-jobs-failed"))
+        assert result["status"] == "failed"
+        assert result["failed_jobs"] == ["clean-code"]
+        assert "clean-code" in result["reason"]
+        assert "pipeline 7" in result["reason"]
+
+    def test_glab_failed_pipeline_lists_every_red_job_in_order(self):
+        jobs = copy.deepcopy(glab("pipeline-jobs-failed"))
+        for job in jobs:
+            if job["name"] == "plugin-consistency":
+                job["status"] = "failed"
+        result = state.target_ci_glab([{"id": 7, "status": "failed"}], jobs)
+        assert result["failed_jobs"] == ["plugin-consistency", "clean-code"]
+        assert "plugin-consistency" in result["reason"]
+        assert "clean-code" in result["reason"]
+
+    def test_glab_failed_pipeline_ignores_red_job_with_allow_failure(self):
+        jobs = copy.deepcopy(glab("pipeline-jobs-failed"))
+        for job in jobs:
+            if job["name"] == "clean-code":
+                job["allow_failure"] = True
+        result = state.target_ci_glab([{"id": 7, "status": "failed"}], jobs)
+        assert result["status"] == "failed"
+        assert result["failed_jobs"] == []
+
+    def test_glab_failed_pipeline_without_jobs_has_empty_failed_jobs_and_old_reason(self):
+        result = state.target_ci_glab([{"id": 7, "status": "failed"}], None)
+        assert result["status"] == "failed"
+        assert result["failed_jobs"] == []
+        assert result["reason"] == "pipeline 7 failed"
+
+    @pytest.mark.parametrize("pipeline_status, expected", [("success", "success"), ("running", "wait")])
+    def test_glab_non_failed_results_carry_no_failed_jobs(self, pipeline_status, expected):
+        result = state.target_ci_glab([{"id": 7, "status": pipeline_status}], glab("pipeline-jobs-failed"))
+        assert result["status"] == expected
+        assert "failed_jobs" not in result
+
+    def test_glab_no_pipeline_carries_no_failed_jobs(self):
+        assert "failed_jobs" not in state.target_ci_glab([], None)
+
+    def test_gh_failed_runs_are_named(self):
+        result = state.target_ci_gh(gh("run-list-failure"))
+        assert result["status"] == "failed"
+        assert result["failed_jobs"] == ["Dependabot PR Triage (skills-driven)", "Unit and Integration Tests", "Code Scanning"]
+        assert "Code Scanning" in result["reason"]
+
+    def test_gh_success_carries_no_failed_jobs(self):
+        assert "failed_jobs" not in state.target_ci_gh(gh("run-list-commit-success"))
+
+    def test_gh_waiting_carries_no_failed_jobs(self):
+        runs = copy.deepcopy(gh("run-list-commit-success"))
+        runs[0]["status"] = "in_progress"
+        runs[0]["conclusion"] = ""
+        assert "failed_jobs" not in state.target_ci_gh(runs)
+
+    def test_cli_glab_failed_prints_failed_jobs(self, tmp_path):
+        pipelines = write_json(tmp_path, "p.json", [{"id": 7, "status": "failed"}])
+        jobs = write_json(tmp_path, "j.json", glab("pipeline-jobs-failed"))
+        out = cli_json("target-ci", "--provider", "glab", "--pipelines-file", pipelines, "--jobs-file", jobs)
+        assert out["status"] == "failed"
+        assert out["failed_jobs"] == ["clean-code"]
+
+    def test_cli_gh_failed_prints_failed_jobs(self, tmp_path):
+        runs = write_json(tmp_path, "r.json", gh("run-list-failure"))
+        out = cli_json("target-ci", "--provider", "gh", "--runs-file", runs)
+        assert out["failed_jobs"] == ["Dependabot PR Triage (skills-driven)", "Unit and Integration Tests", "Code Scanning"]
+
+
+@pytest.mark.unit
+class TestTargetCiIntegrationBranch:
+    """target-ci na realnym pipeline'ie commita na sprint/* (fixture z 2026-09-29)."""
+
+    def test_green_sprint_pipeline_is_success_with_jobs(self):
+        result = state.target_ci_glab(glab("pipelines-by-sha-sprint-success"), glab("pipeline-jobs-sprint-success"))
+        assert result["status"] == "success"
+        assert "2894038602" in result["reason"]
+        assert "failed_jobs" not in result
+
+    def test_green_sprint_pipeline_is_success_without_jobs(self):
+        assert state.target_ci_glab(glab("pipelines-by-sha-sprint-success"), None)["status"] == "success"
+
+    def test_cli_green_sprint_pipeline_is_success(self, tmp_path):
+        pipelines = write_json(tmp_path, "p.json", glab("pipelines-by-sha-sprint-success"))
+        jobs = write_json(tmp_path, "j.json", glab("pipeline-jobs-sprint-success"))
+        out = cli_json("target-ci", "--provider", "glab", "--pipelines-file", pipelines, "--jobs-file", jobs)
+        assert out["status"] == "success"
+
+    def test_sprint_pipeline_turned_red_names_failed_jobs_and_pipeline(self):
+        pipelines = copy.deepcopy(glab("pipelines-by-sha-sprint-success"))
+        pipelines[0]["status"] = "failed"
+        result = state.target_ci_glab(pipelines, glab("pipeline-jobs-failed"))
+        assert result["status"] == "failed"
+        assert result["failed_jobs"] == ["clean-code"]
+        assert "2894038602" in result["reason"]
+
+    def test_sprint_pipeline_still_running_waits(self):
+        pipelines = copy.deepcopy(glab("pipelines-by-sha-sprint-success"))
+        pipelines[0]["status"] = "running"
+        result = state.target_ci_glab(pipelines, glab("pipeline-jobs-sprint-success"))
+        assert result["status"] == "wait"
+        assert "failed_jobs" not in result

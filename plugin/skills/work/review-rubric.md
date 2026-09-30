@@ -50,6 +50,30 @@ przerwij review i zwroc NEEDS WORK bez punktacji.
 
 ---
 
+## Blokada zewnetrzna
+
+Znacznik `BLOKADA-ZEWNĘTRZNA` dopisujesz do odjecia, ktorego zaden agent nie
+usunie z poziomu repo i swoich narzedzi. Trzy klasy:
+
+- **srodowisko** lokalne - brak narzedzia, uslugi albo danych na maszynie
+  (np. brak runnera, bazy, pliku spoza repo),
+- **uprawnienia** - odmowa klasyfikatora uprawnien albo hooka, brak dostepu
+  do systemu zewnetrznego,
+- **decyzja czlowieka** - wybor wariantu, sekret albo token, zmiana poza
+  kontraktem ticketu.
+
+Przy znaczniku obowiazkowy jest jednozdaniowy powod, ktory wskazuje zrodlo
+blokady (czego brakuje i kto to dostarcza). Znacznik bez powodu jest niewazny,
+odjecie traktujesz jak zwykle.
+
+Odjecie z blokada liczy sie do score jak kazde inne: prog 82 bez zmian,
+znacznik NIE podnosi oceny. Mowi tylko, ze kolejna iteracja developera nie
+zmieni wyniku. Nie oznaczasz nim wady, ktora agent moze naprawic
+w przydzielonych plikach - ani brakujacego testu, ktory da sie napisac bez
+zewnetrznej uslugi. Format zapisu - sekcja "Format odpowiedzi".
+
+---
+
 ## Zasady projektu - skad je brac
 
 Trwale reguly projektu zyja W REPOZYTORIUM, jako zwykle pliki Markdown -
@@ -103,6 +127,18 @@ developera -> jedna linia i ogolna ocena rowna jego ocenie; format zostaje ten s
 
 Bez odjec -> `100/100, APPROVED`. Nie zanizaj "dla zasady".
 
+**Odjecie z blokada zewnetrzna** - znacznik i powod w nawiasie odjecia, po
+lokalizacji i wadzie, oddzielone srednikiem:
+
+```
+<agent-3>: 100 -15 (.gitlab-ci.yml:40 brak joba bump-homebrew; BLOKADA-ZEWNĘTRZNA: job wymaga tokenu Homebrew, ktory ustawia czlowiek w zmiennych CI) = 85/100
+  -> APPROVED
+
+<agent-4>: 100 -15 (plugin/formula.rb:12 brak bloku resource; BLOKADA-ZEWNĘTRZNA: sumy SHA wymagaja opublikowanych archiwow, ktorych nie ma przed wydaniem) -10 (docs/install.md:5 niedzialajaca komenda) = 75/100
+  -> NEEDS WORK: popraw komende w docs/install.md
+  REGULA: Kazda komenda w dokumentacji jest sprawdzona wobec --help narzedzia.
+```
+
 **Linia `REGULA:`** - obowiazkowa przy kazdym NEEDS WORK, jedna na agenta:
 jedno zdanie w trybie oznajmujacym, ktore developer tego typu ma zapamietac,
 zeby ta sama wada nie wrocila (Team Manager DOPISUJE je do
@@ -110,7 +146,10 @@ zeby ta sama wada nie wrocila (Team Manager DOPISUJE je do
 zapis addytywny, nigdy nadpisanie pliku, zeby wczesniejsze reguly zostaly
 i wrocily w kolejnym przebiegu dowolnego klienta). Regula opisuje WZORZEC, nie ten
 konkretny plik ("kazdy zapis konczy sie commitem", nie "dodaj commit
-w pipelines.py:142"). Kilka odjec -> regula dla najwyzszego.
+w pipelines.py:142"). Kilka odjec -> regula dla najwyzszego. Odjecia
+z `BLOKADA-ZEWNĘTRZNA` nie sa wzorcem bledu developera: regule wyprowadzasz
+tylko z odjec bez znacznika, a NEEDS WORK z samymi blokadami nie ma linii
+`REGULA:`.
 
 ---
 
@@ -121,3 +160,5 @@ w pipelines.py:142"). Kilka odjec -> regula dla najwyzszego.
   albo w sygnale startu review - lint i testy ida PRZED review i nie podlegaja
   punktacji (patrz uwaga pod tabela).
 - **Nie ocenia decyzji produktowych** z ticketu. Ocenia realizacje, nie zasadnosc zadania.
+- **Nie decyduje o zatrzymaniu pracy.** Znacznik `BLOKADA-ZEWNĘTRZNA` jest
+  informacja dla Team Managera; kolejna iteracja albo stop to jego decyzja.

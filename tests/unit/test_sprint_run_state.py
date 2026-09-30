@@ -10,6 +10,8 @@ Te testy SA specyfikacja jego kontraktu dla backend-developera (MON-167):
     classify(ticket_status, session_state, log_tail) -> tuple[str, str]
     build_report(slug, tickets, agents, logs_dir) -> dict
     summarize(rows) -> dict
+    parse_max_waiting(raw) -> int                          (MON-222)
+    dispatch_capacity(summary, slots, max_waiting) -> dict (MON-222)
     main(argv: list[str]) -> int
 
 MON-172 (pierwszy realny przebieg dyspozytora) zmienia kontrakt session_state: zamiast
@@ -352,11 +354,12 @@ class TestReadLogTail:
         verdict, _ = state.classify("in_progress", "running", tail)
         assert verdict == "waiting"
 
-    def test_carriage_return_is_treated_as_line_separator(self, tmp_path):
-        """Render TUI nadpisuje linie przez \\r zamiast dopisywac \\n -- patrz
-        struktura realnego pliku tests/fixtures/claude/logs-tui.2.1.270.txt."""
+    def test_carriage_return_with_cursor_down_starts_new_line(self, tmp_path):
+        """Render TUI przechodzi do nastepnej linii przez \\r + \\x1b[1B (powrot karetki i
+        kursor w dol), nie przez samo \\n -- patrz struktura realnego pliku
+        tests/fixtures/claude/logs-tui.2.1.270.txt. Goly \\r to powrot karetki (nadpisanie)."""
         log_file = tmp_path / "sid-cr.log"
-        log_file.write_text("linia1\rlinia2\rlinia3")
+        log_file.write_bytes(b"linia1\r\x1b[1Blinia2\r\x1b[1Blinia3")
         tail = state.read_log_tail(tmp_path, "sid-cr", n=5)
         assert tail == ["linia1", "linia2", "linia3"]
 
@@ -384,10 +387,9 @@ class TestReadLogTail:
 
     def test_real_stop_fixture_restores_space_between_sprint_run_and_stop(self, tmp_path):
         """MON-191: `claude logs` przesuwa kursor miedzy 'SPRINT-RUN' i 'STOP:' sekwencja
-        \\x1b[NG (skok kolumny), NIE spacja -- po zdjeciu samych sekwencji CSI marker
-        sklejalby sie w 'SPRINT-RUNSTOP:' i przestawal pasowac. read_log_tail musi
-        zamienic \\x1b[NG/\\x1b[NC (przesuniecie kursora w poziomie) na spacje PRZED
-        zdjeciem reszty ANSI. Patrz tests/fixtures/claude/logs-stop-tui.2.1.278.txt
+        \\x1b[NG (skok kolumny), NIE spacja -- emulacja ekranu zostawia luke N komorek jako
+        N spacji, wiec marker zachowuje spacje miedzy 'SPRINT-RUN' i 'STOP:' i pasuje do
+        _STOP_MARKER_RE. Patrz tests/fixtures/claude/logs-stop-tui.2.1.278.txt
         (naglowek pliku: komenda `claude logs 20a4496b`, `claude 2.1.278`, 2026-09-19).
 
         Asercja celuje w KONKRETNA linie odpowiedzi asystenta (zaczyna sie od
@@ -395,7 +397,7 @@ class TestReadLogTail:
         tez echo promptu sondy ('Druga linia: SPRINT-RUN STOP: fixture probe...')
         ktore ma marker ze zwykla spacja JUZ w surowym tekscie (bez udzialu
         \\x1b[NG), wiec samo `"SPRINT-RUN STOP:" in line` przechodziloby nawet gdyby
-        zamiana kursor->spacja byla wylaczona (nie zabijaloby mutanta)."""
+        emulacja kursora byla wylaczona (nie zabijaloby mutanta)."""
         fixture_path = FIXTURES_DIR / "logs-stop-tui.2.1.278.txt"
         copy_path = tmp_path / "sid-stop.log"
         copy_path.write_bytes(fixture_path.read_bytes())
@@ -406,18 +408,20 @@ class TestReadLogTail:
         assert verdict == "waiting"
 
     def test_cursor_forward_g_and_c_sequences_become_space(self, tmp_path):
-        """Test syntetyczny celowany wprost w normalizacje kursora (MON-191, niezalezny
-        od fixture realnego, ktory uzywa wylacznie wariantu G): \\x1b[<n>G (ustawienie
-        kolumny kursora) i \\x1b[<n>C (przesuniecie kursora w prawo) musza obie zostac
-        zamienione na POJEDYNCZA spacje PRZED zdjeciem reszty ANSI -- inaczej marker
-        sklejony bez spacji przechodzi obecny (goly) regex CSI bez sladu."""
+        """Test syntetyczny celowany wprost w emulacje kursora (MON-191, niezalezny od
+        fixture realnego, ktory uzywa wylacznie wariantu G): \\x1b[<n>G (ustawienie
+        kolumny kursora) i \\x1b[<n>C (przesuniecie kursora w prawo) zostawiaja luke
+        N komorek, czyli N spacji -- tu dokladnie jedna, wiec marker zachowuje
+        pojedyncza spacje."""
         log_file_g = tmp_path / "sid-g.log"
-        log_file_g.write_bytes(b"SPRINT-RUN\x1b[14GSTOP: przyklad g\n")
+        # MON-227: luka o szerokosci N komorek to N spacji (emulator ekranu); po 10 znakach
+        # kursor stoi w kol. 11, wiec skok na kol. 12 zostawia dokladnie jedna komorke.
+        log_file_g.write_bytes(b"SPRINT-RUN\x1b[12GSTOP: przyklad g\n")
         tail_g = state.read_log_tail(tmp_path, "sid-g", n=5)
         assert tail_g == ["SPRINT-RUN STOP: przyklad g"]
 
         log_file_c = tmp_path / "sid-c.log"
-        log_file_c.write_bytes(b"SPRINT-RUN\x1b[2CSTOP: przyklad c\n")
+        log_file_c.write_bytes(b"SPRINT-RUN\x1b[1CSTOP: przyklad c\n")
         tail_c = state.read_log_tail(tmp_path, "sid-c", n=5)
         assert tail_c == ["SPRINT-RUN STOP: przyklad c"]
 
@@ -425,6 +429,274 @@ class TestReadLogTail:
 # ---------------------------------------------------------------------------
 # classify
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# render_log (MON-227)
+# ---------------------------------------------------------------------------
+
+SPINNER_FIXTURE_NAME = "logs-spinner-redraw.2.1.284.txt"
+STOP_FIXTURE_NAME = "logs-stop-tui.2.1.278.txt"
+_SPINNER_GLYPH_LINE_RE = re.compile(r"^[✢✳✶✻✽·]")
+_TIMER_TOKEN_STATUS_RE = re.compile(r"\d+s · ↓ \d")
+
+
+def _fixture_raw(name):
+    """Surowe wyjscie `claude logs` BEZ tlumaczenia \\r na \\n.
+
+    Text-mode read_text()/subprocess text=True zamienia \\r na \\n (universal newlines),
+    a render TUI uzywa \\r jako powrotu karetki - emulator musi dostac \\r nietkniete.
+    """
+    return (FIXTURES_DIR / name).read_bytes().decode("utf-8", errors="replace")
+
+
+@pytest.mark.unit
+class TestRenderLogSpinnerFixture:
+    """MON-227: render_log na realnym zrzucie tests/fixtures/claude/logs-spinner-redraw.2.1.284.txt
+    (`claude logs ecfb94a4`, claude 2.1.284, zywa sesja w tle). Ekran koncowy po emulacji
+    kursora (CSI B/C/G/H/K + \\r) zawiera tekst bez zgubionych liter i bez zdublowanych
+    blokow; naiwny strip ANSI (stary potok) daje "Bash( laude", "zmian .", "analiz  ticketu"
+    i kazdy blok po 2-3 razy (przerysowanie od \\x1b[H dopisuje kopie)."""
+
+    @pytest.fixture
+    def lines(self):
+        return state.render_log(_fixture_raw(SPINNER_FIXTURE_NAME))
+
+    def test_lines_are_nonempty_stripped_and_free_of_control_characters(self, lines):
+        assert lines
+        assert all(line and line == line.strip() for line in lines)
+        assert all("\x1b" not in line and "\r" not in line for line in lines)
+
+    def test_no_line_is_a_spinner_frame_or_timer_status(self, lines):
+        """Ekran koncowy fixture ma wiersz "· Blanching…  1m 58s · ↓ 8.0k tokens)" oraz
+        wiersz statusu subagenta z licznikiem "45s · ↓ 109" -- oba maja zniknac."""
+        assert not [line for line in lines if "Blanching" in line]
+        assert not [line for line in lines if _SPINNER_GLYPH_LINE_RE.match(line)]
+        assert not [line for line in lines if _TIMER_TOKEN_STATUS_RE.search(line)]
+        assert not [line for line in lines if line == "thinking" or "· thinking)" in line]
+
+    @pytest.mark.parametrize(
+        "line_marker",
+        [
+            "Sesje z ticketu",
+            "Researcher pracuje.",
+            "Tryb sesji w tle",
+            "Logi dostępne tylko",
+            "\u276f /monolynx:work MON-227",
+        ],
+    )
+    def test_assistant_block_line_appears_exactly_once(self, lines, line_marker):
+        assert len([line for line in lines if line_marker in line]) == 1
+
+    @pytest.mark.parametrize(
+        ("intact", "corrupted"),
+        [
+            ("Logi dostępne tylko dla żywych sesji.", "dostępn  tylko"),
+            ("Ticket MON-227, TRYB: zmiana. Bloker MON-222 done. Branch worktree-MON-227 pasuje.", "zmian ."),
+            ("Explore(Researcher - analiza ticketu) Sonnet 5.5", "analiz  ticketu"),
+            ("Bash(claude agents --json --all 2>&1 | head -c 3000)", "Bash( laude"),
+        ],
+    )
+    def test_words_keep_letters_skipped_by_cursor_jumps(self, lines, intact, corrupted):
+        """Ink przerysowuje tylko zmienione komorki i przeskakuje kursorem (G/C) nad
+        niezmienionymi literami -- poprawny tekst istnieje wylacznie na ekranie po
+        emulacji, nie w strumieniu po zdjeciu sekwencji."""
+        joined = "\n".join(lines)
+        assert intact in joined
+        assert corrupted not in joined
+
+    def test_line_redrawn_from_column_four_does_not_lose_its_first_letter(self, lines):
+        """Druga kopia wiersza "Ticket MON-227..." jest w strumieniu rysowana od kolumny 4
+        ("icket ..."); litera "T" z kolumny 3 zostaje z wczesniejszego rysowania."""
+        assert not [line for line in lines if line.startswith("icket")]
+
+    def test_lines_are_in_display_order(self, lines):
+        joined = "\n".join(lines)
+        positions = [
+            joined.index("Tryb sesji w tle"),
+            joined.index("Ticket MON-227, TRYB"),
+            joined.index("Researcher pracuje."),
+            joined.index("Sesje z ticketu"),
+            joined.index("Logi dostępne tylko"),
+        ]
+        assert positions == sorted(positions)
+
+    def test_render_of_rendered_output_is_unchanged(self, lines):
+        assert state.render_log("\n".join(lines)) == lines
+
+
+@pytest.mark.unit
+class TestRenderLogStopFixture:
+    """MON-227: ten sam render_log na starszym fixture MON-191 (claude 2.1.278)."""
+
+    @pytest.fixture
+    def lines(self):
+        return state.render_log(_fixture_raw(STOP_FIXTURE_NAME))
+
+    def test_prompt_echo_keeps_words_split_by_cursor_jumps(self, lines):
+        """Echo promptu ma w strumieniu "fixture. N[54G uzywaj" (litera "i"/"e" z
+        wczesniejszego rysowania) -- naiwny strip daje "N  uzywaj"."""
+        joined = "\n".join(lines)
+        assert "Nie uzywaj zadnych narzedzi" in joined
+        assert "N  uzywaj" not in joined
+        assert "Tr cking" not in joined
+
+    def test_stop_marker_line_is_intact_and_single(self, lines):
+        stop_lines = [line for line in lines if line.startswith("SPRINT-RUN STOP:")]
+        assert stop_lines == ["SPRINT-RUN STOP: fixture probe MON-191 - czekam na decyzję człowieka w sprawie migracji bazy danych przed merge"]
+
+    def test_assistant_answer_block_is_not_duplicated(self, lines):
+        answers = [line for line in lines if line.startswith("⏺ Brak odpowiedzi użytkownika")]
+        assert len(answers) == 1
+
+    def test_render_of_rendered_output_is_unchanged(self, lines):
+        assert state.render_log("\n".join(lines)) == lines
+
+    def test_stop_marker_verdict_is_still_waiting(self, lines):
+        verdict, _ = state.classify("in_progress", "running", lines[-60:])
+        assert verdict == "waiting"
+
+
+@pytest.mark.unit
+class TestRenderLogTerminalSemantics:
+    """MON-227: kontrakt emulatora na syntetycznych wejsciach (jedno zachowanie na test)."""
+
+    def test_cursor_jump_over_unchanged_cells_keeps_them(self):
+        """Rysowanie "Tr" i "ing" z skokiem nad "ack" nie moze zgubic srodka."""
+        assert state.render_log("Tracking\rTr\x1b[6Ging") == ["Tracking"]
+
+    def test_gap_of_one_cell_is_one_space(self):
+        assert state.render_log("SPRINT-RUN\x1b[12GSTOP: x") == ["SPRINT-RUN STOP: x"]
+
+    def test_cursor_forward_over_empty_cells_gives_spaces(self):
+        assert state.render_log("SPRINT-RUN\x1b[1CSTOP: x") == ["SPRINT-RUN STOP: x"]
+
+    def test_carriage_return_without_line_feed_overwrites_the_line(self):
+        assert state.render_log("abcdef\rXY") == ["XYcdef"]
+
+    def test_cursor_down_moves_to_next_row_and_blank_rows_are_dropped(self):
+        assert state.render_log("a\r\x1b[1Bb\r\x1b[2Bc") == ["a", "b", "c"]
+
+    def test_cursor_home_then_text_overwrites_from_top_left(self):
+        assert state.render_log("old text\x1b[Hnew") == ["new text"]
+
+    def test_absolute_cursor_position_overwrites_cells(self):
+        assert state.render_log("abcdef\x1b[1;3HXY") == ["abXYef"]
+
+    def test_erase_to_end_of_line_clears_the_tail(self):
+        assert state.render_log("abcdef\r\x1b[3G\x1b[K") == ["ab"]
+
+    def test_erase_then_rewrite_does_not_leave_stale_tail(self):
+        assert state.render_log("dluga stara linia\r\x1b[K" + "krotka") == ["krotka"]
+
+    def test_color_sequences_do_not_shift_columns(self):
+        assert state.render_log("\x1b[38;2;1;2;3mred\x1b[0m ok") == ["red ok"]
+
+    def test_line_feed_starts_next_line_and_trailing_blanks_are_stripped(self):
+        assert state.render_log("a   \n\n   \nb\n") == ["a", "b"]
+
+    def test_long_plain_text_is_not_truncated_to_a_screen(self):
+        """Plik logu zapisany przez poprzedni tick (do 60 linii) to zwykly tekst -
+        emulator nie moze gubic linii ponad wysokosc ekranu (idempotencja)."""
+        plain = [f"linia {i}" for i in range(1, 121)]
+        assert state.render_log("\n".join(plain)) == plain
+
+    def test_single_adjacent_repeated_line_is_kept(self):
+        """Zwijane sa tylko bloki co najmniej 2 linii; pojedyncza powtorzona linia
+        (klamra zamykajaca) to tresc."""
+        assert state.render_log("{\n}\n}\n") == ["{", "}", "}"]
+
+    def test_cursor_down_is_clamped_to_screen_height_set_by_absolute_position(self):
+        """Wysokosc ekranu (5) wynika z \\x1b[5;1H; \\x1b[99B nie wychodzi poza dolny wiersz,
+        wiec tekst nadpisuje "old" z wiersza 5 zamiast trafic do wiersza 100."""
+        assert state.render_log("\x1b[5;1Hold\x1b[H\x1b[99BNEW") == ["NEW"]
+
+    @pytest.mark.parametrize("dropped", ["thinking", "(2s · thinking)"])
+    def test_thinking_status_line_is_dropped(self, dropped):
+        assert state.render_log(f"tresc odpowiedzi\n{dropped}\n") == ["tresc odpowiedzi"]
+
+    def test_line_starting_with_thinking_but_longer_is_kept(self):
+        assert state.render_log("thinking about it\n") == ["thinking about it"]
+
+    def test_empty_input_gives_empty_list(self):
+        assert state.render_log("") == []
+
+    def test_adjacent_identical_multiline_block_is_collapsed(self):
+        block = ["⏺ Odpowiedź asystenta", "  pierwsza linia szczegółów", "  druga linia szczegółów"]
+        raw = "\n".join([*block, "", *block])
+        assert state.render_log(raw) == [line.strip() for line in block]
+
+    def test_identical_status_line_under_different_tool_calls_is_kept(self):
+        raw = "\n".join(
+            [
+                "⏺ Bash(pierwsze)",
+                "  ⎿  Allowed by auto mode classifier",
+                "⏺ Bash(drugie)",
+                "  ⎿  Allowed by auto mode classifier",
+            ]
+        )
+        assert state.render_log(raw) == [
+            "⏺ Bash(pierwsze)",
+            "⎿  Allowed by auto mode classifier",
+            "⏺ Bash(drugie)",
+            "⎿  Allowed by auto mode classifier",
+        ]
+
+    def test_plain_text_is_idempotent(self):
+        raw = "a\n\n  b  \n⏺ c\n  ⎿  d"
+        once = state.render_log(raw)
+        assert state.render_log("\n".join(once)) == once
+
+    def test_collapse_reaches_fixed_point_when_collapse_exposes_earlier_repeat(self):
+        """Zwiniecie w srodku moze utworzyc powtorzenie zaczynajace sie wczesniej -
+        bez restartu od poczatku wynik zostawialby blok "B C C A" dwa razy."""
+        assert state.render_log("\n".join(list("BCCCCABCCACCAB"))) == list("BCCAB")
+
+    def test_csi_with_private_prefix_does_not_raise(self):
+        assert state.render_log("\x1b[?5H") == []
+
+
+@pytest.mark.unit
+class TestReadLogTailUsesRenderLog:
+    """MON-227: read_log_tail zwraca ostatnie n linii z render_log, nie z naiwnego stripu."""
+
+    def test_fixture_tail_equals_tail_of_rendered_fixture(self, tmp_path):
+        (tmp_path / "sid-spin.log").write_bytes((FIXTURES_DIR / SPINNER_FIXTURE_NAME).read_bytes())
+        expected = state.render_log(_fixture_raw(SPINNER_FIXTURE_NAME))
+        assert state.read_log_tail(tmp_path, "sid-spin", n=60) == expected[-60:]
+        assert state.read_log_tail(tmp_path, "sid-spin", n=3) == expected[-3:]
+
+    def test_carriage_return_is_not_translated_to_newline_when_reading_the_file(self, tmp_path):
+        """Odczyt pliku w trybie tekstowym zamienia \\r na \\n i emulator widzialby dwie
+        linie ("Tracking", "Tr ing") zamiast jednej."""
+        (tmp_path / "sid-cr2.log").write_bytes(b"Tracking\rTr\x1b[6Ging\n")
+        assert state.read_log_tail(tmp_path, "sid-cr2", n=5) == ["Tracking"]
+
+    def test_spinner_fixture_has_no_spinner_line_in_tail(self, tmp_path):
+        (tmp_path / "sid-spin2.log").write_bytes((FIXTURES_DIR / SPINNER_FIXTURE_NAME).read_bytes())
+        tail = state.read_log_tail(tmp_path, "sid-spin2", n=60)
+        assert not [line for line in tail if "Blanching" in line]
+
+    def test_question_in_last_block_is_waiting_after_spinner_filter(self, tmp_path):
+        raw = "⏺ Migracja gotowa.\n  Czy mam uruchomić migrację na produkcji?\n\n✢ Blanching… 4s · ↓ 12 tokens\n\u276f\n"
+        (tmp_path / "sid-q.log").write_text(raw)
+        tail = state.read_log_tail(tmp_path, "sid-q", n=60)
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "waiting"
+
+    def test_question_in_older_block_is_running_after_spinner_filter(self, tmp_path):
+        raw = "⏺ Czy kontynuować?\n\n⏺ Kontynuuję pracę.\n\n✢ Blanching… 4s · ↓ 12 tokens\n\u276f\n"
+        (tmp_path / "sid-q2.log").write_text(raw)
+        tail = state.read_log_tail(tmp_path, "sid-q2", n=60)
+        verdict, _ = state.classify("in_progress", "running", tail)
+        assert verdict == "running"
+
+    def test_build_report_with_raw_stop_fixture_is_waiting_via_render_log(self, tmp_path):
+        tickets = [{"key": "MON-1", "status": "in_progress", "assignee": None}]
+        agents = [bg_agent("monolynx-MON-1", agent_id="a2222222", session_id="uuid-2", agent_state="running")]
+        (tmp_path / "a2222222.log").write_bytes((FIXTURES_DIR / STOP_FIXTURE_NAME).read_bytes())
+        report = state.build_report("monolynx", tickets, agents, tmp_path)
+        assert report["tickets"][0]["verdict"] == "waiting"
 
 
 @pytest.mark.unit
@@ -1090,3 +1362,104 @@ class TestClassifyBackendAgnostic:
         verdict, reason = state.classify("in_progress", "exited", [])
         assert verdict == "needs_human"
         assert reason
+
+
+# ---------------------------------------------------------------------------
+# MON-222: sesje waiting poza pula slotow + limit MONOLYNX_SPRINT_MAX_WAITING
+# ---------------------------------------------------------------------------
+
+
+def _summary(running=0, waiting=0, remaining=0, done=0, needs_human=0):
+    return {"remaining": remaining, "running": running, "waiting": waiting, "done": done, "needs_human": needs_human}
+
+
+@pytest.mark.unit
+class TestParseMaxWaiting:
+    def test_default_constant_is_two(self):
+        assert state.DEFAULT_MAX_WAITING == 2
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [("3", 3), (" 5 ", 5), ("1", 1), ("2", 2), ("10", 10)],
+    )
+    def test_positive_integer_is_returned(self, raw, expected):
+        assert state.parse_max_waiting(raw) == expected
+
+    @pytest.mark.parametrize("raw", [None, "", "   ", "abc", "0", "-1", "2.5"])
+    def test_invalid_or_non_positive_falls_back_to_default(self, raw):
+        assert state.parse_max_waiting(raw) == state.DEFAULT_MAX_WAITING == 2
+
+
+@pytest.mark.unit
+class TestDispatchCapacity:
+    def test_waiting_session_does_not_consume_a_slot(self):
+        """Regresja MON-138: sesja czekajaca na czlowieka nie moze zabierac slotu
+        przez cala noc - wolne = sloty - running, bez waiting."""
+        result = state.dispatch_capacity(_summary(running=0, waiting=1), slots=2, max_waiting=2)
+
+        assert result["free_slots"] == 2
+        assert result["waiting_blocked"] is False
+        assert result["can_start"] == 2
+
+    def test_running_session_consumes_a_slot_waiting_does_not(self):
+        result = state.dispatch_capacity(_summary(running=1, waiting=1), slots=2, max_waiting=2)
+
+        assert result["free_slots"] == 1
+        assert result["can_start"] == 1
+
+    def test_all_slots_taken_by_running_gives_zero(self):
+        result = state.dispatch_capacity(_summary(running=1), slots=1, max_waiting=2)
+
+        assert result["free_slots"] == 0
+        assert result["can_start"] == 0
+        assert result["waiting_blocked"] is False
+
+    def test_running_above_slots_is_clamped_to_zero_not_negative(self):
+        result = state.dispatch_capacity(_summary(running=3), slots=2, max_waiting=2)
+
+        assert result["free_slots"] == 0
+        assert result["can_start"] == 0
+
+    def test_waiting_at_limit_blocks_start_but_free_slots_still_computed(self):
+        result = state.dispatch_capacity(_summary(running=0, waiting=2), slots=3, max_waiting=2)
+
+        assert result["waiting_blocked"] is True
+        assert result["free_slots"] == 3
+        assert result["can_start"] == 0
+
+    def test_waiting_above_limit_blocks_start(self):
+        result = state.dispatch_capacity(_summary(running=1, waiting=5), slots=3, max_waiting=2)
+
+        assert result["waiting_blocked"] is True
+        assert result["free_slots"] == 2
+        assert result["can_start"] == 0
+
+    def test_waiting_just_below_limit_does_not_block(self):
+        """Granica: waiting == max blokuje (>=), waiting == max-1 nie."""
+        result = state.dispatch_capacity(_summary(waiting=1), slots=2, max_waiting=2)
+
+        assert result["waiting_blocked"] is False
+        assert result["can_start"] == 2
+
+    def test_limit_of_one_blocks_at_single_waiting_session(self):
+        result = state.dispatch_capacity(_summary(waiting=1), slots=2, max_waiting=1)
+
+        assert result["waiting_blocked"] is True
+        assert result["can_start"] == 0
+
+    def test_result_has_exactly_the_contract_keys_and_echoes_inputs(self):
+        result = state.dispatch_capacity(_summary(running=1), slots=4, max_waiting=3)
+
+        assert set(result) == {"slots", "max_waiting", "free_slots", "waiting_blocked", "can_start"}
+        assert result["slots"] == 4
+        assert result["max_waiting"] == 3
+
+    def test_ignores_other_summary_keys_and_does_not_mutate_input(self):
+        summary = _summary(running=1, waiting=0, remaining=7, done=9, needs_human=4)
+        snapshot = dict(summary)
+
+        result = state.dispatch_capacity(summary, slots=3, max_waiting=2)
+
+        assert summary == snapshot
+        assert result["free_slots"] == 2
+        assert result["can_start"] == 2

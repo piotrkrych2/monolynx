@@ -41,6 +41,15 @@ Znane granice (stan po MON-147):
 - Testy hooka: subprocess ze stdin (`run_hook`), helpery `assert_allow/deny/ask`, `SUBAGENT` vs `MAIN_SESSION`.
   Uwaga: `MAIN_SESSION` to pusty dict przekazywany jako `env_extra` - mylaca nazwa, znana od MON-144.
 
+## Identyfikacja agenta i marker hook-active (MON-224)
+- `is_subagent = bool(agent_id)`; payloady CC 2.1.284 w `tests/fixtures/claude/pretooluse-bash-*.json`
+  (teammate in-process: agent_type = nazwa teammate'a; tmux: brak agent_id, jak `claude --agent`).
+- Marker sticky-true per session_id (lider i agenci in-process dziela session_id). Odczyt poprzedniego
+  pliku lapie tylko OSError/ValueError - dlatego `isinstance(previous, dict)` jest nosny (lista -> AttributeError
+  = crash hooka); mutant bez isinstance zabija test `json_list`. `is True` (nie truthy) nie ma testu na
+  `"true"`-string - drobiazg, nie odjecie.
+- `tests/fixtures/codex/README.md:64` wciaz cytuje stara formule (historyczne znalezisko Codex).
+
 ## `is_readonly_ruff` (MON-176)
 Allow przed `TEST_LINT` dla `ruff check` bez flag / `ruff format --check|--diff` (+ prefiksy docker).
 Reuzywa `TMP_CLEANUP_COMPOUND` (`[|;&`\n\r]|\$\(`), ktory NIE zawiera `<`/`>` -> przekierowanie

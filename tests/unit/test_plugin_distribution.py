@@ -17,6 +17,7 @@ RESOURCES = [
     ("sprint-run", "scripts/sprint_run_state.py"),
     ("sprint-run", "scripts/sprint_run.sh"),
     ("mr-queue", "scripts/mr_queue_state.py"),
+    ("ticket-review", "scripts/ticket_overlap.py"),
     ("mutation-check", "scripts/mutation_report.py"),
     ("create-mutation-ci-script", "scripts/mutation_report.py"),
     ("create-mutation-ci-script", "scripts/mutation_baseline.py"),

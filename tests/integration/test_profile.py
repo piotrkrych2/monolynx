@@ -5,6 +5,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from monolynx.config import settings
 from monolynx.models.user_api_token import UserApiToken
 from tests.conftest import login_session
 
@@ -191,3 +192,21 @@ class TestMcpGuide:
         resp = await client.get("/dashboard/profile/mcp-guide")
         assert resp.status_code == 200
         assert "MCP" in resp.text
+
+
+@pytest.mark.integration
+class TestCliGuide:
+    async def test_cli_guide_requires_auth(self, client):
+        """GET /dashboard/profile/cli-guide bez sesji redirectuje na login."""
+        resp = await client.get("/dashboard/profile/cli-guide", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    async def test_cli_guide_loads(self, client, db_session, monkeypatch):
+        """GET /dashboard/profile/cli-guide z sesja zwraca 200 z instrukcja logowania CLI i adresem z APP_URL."""
+        monkeypatch.setattr(settings, "APP_URL", "https://cli-guide.example.test")
+        await login_session(client, db_session, email="prof_tokens_11@test.com")
+        resp = await client.get("/dashboard/profile/cli-guide")
+        assert resp.status_code == 200
+        assert "auth login" in resp.text
+        assert "--endpoint https://cli-guide.example.test" in resp.text

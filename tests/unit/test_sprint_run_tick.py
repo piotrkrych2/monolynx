@@ -1,4 +1,5 @@
-r"""Testy skryptu plugin/scripts/sprint_run_tick.py (MON-190): preflight i state.
+r"""Testy skryptu plugin/scripts/sprint_run_tick.py (MON-190): preflight, state,
+start/stop (MON-185) i sync-base (MON-142, osobny fake `git` z logiem wywolan).
 
 Skrypt jest wywolywany jako podproces, nigdy importowany -- to odzwierciedla
 realny kontrakt: tick w `claude -p` ma tylko regule Bash(python3:*), wiec
@@ -517,19 +518,50 @@ class TestBaseBranchResolution:
         assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
         assert "BASE_BRANCH=develop" in result.stdout.splitlines()
 
-    def test_base_branch_takes_priority_over_mr_target(self, tick_sandbox):
-        """Serce lancucha fallbacku: gdy obie zmienne sa ustawione,
-        MONOLYNX_BASE_BRANCH wygrywa - MONOLYNX_MR_TARGET opisuje branch
-        integracyjny MR (MON-192) i nie musi byc tym samym branchem co punkt
-        startu worktree ticketu."""
+    def test_different_base_branch_and_mr_target_fail_preflight(self, tick_sandbox):
+        """MON-219: jeden branch docelowy dla sprint-run i mr-queue. Obie
+        zmienne ustawione i rozne to blad konfiguracji (wczesniej MON-197:
+        BASE_BRANCH po cichu wygrywal), bo mr-queue merguje do MR_TARGET, a
+        sesje startuja z BASE_BRANCH - rozbieznosc zostawialaby checkout
+        dyspozytora za branchem, do ktorego trafiaja merge."""
         env_extra = full_flags_env({"MONOLYNX_BASE_BRANCH": "develop", "MONOLYNX_MR_TARGET": "release"})
 
         result = run_preflight(tick_sandbox, env_extra=env_extra)
 
+        assert result.returncode == 2, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        errs = error_lines(result)
+        assert len(errs) == 1
+        assert "MONOLYNX_BASE_BRANCH" in errs[0]
+        assert "MONOLYNX_MR_TARGET" in errs[0]
+        assert result.stdout.splitlines()[-1] == "PREFLIGHT: failed problems=1"
+
+    def test_equal_base_branch_and_mr_target_pass_preflight(self, tick_sandbox):
+        env_extra = full_flags_env({"MONOLYNX_BASE_BRANCH": "develop", "MONOLYNX_MR_TARGET": "develop"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
         assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert error_lines(result) == []
         lines = result.stdout.splitlines()
         assert "BASE_BRANCH=develop" in lines
-        assert "BASE_BRANCH=release" not in lines
+        assert lines[-1] == "PREFLIGHT: ok"
+
+    def test_base_branch_and_mr_target_differing_only_by_whitespace_pass_preflight(self, tick_sandbox):
+        env_extra = full_flags_env({"MONOLYNX_BASE_BRANCH": " develop ", "MONOLYNX_MR_TARGET": "develop"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "BASE_BRANCH=develop" in result.stdout.splitlines()
+
+    def test_only_mr_target_set_passes_preflight_and_becomes_base_branch(self, tick_sandbox):
+        env_extra = full_flags_env({"MONOLYNX_MR_TARGET": "release"})
+
+        result = run_preflight(tick_sandbox, env_extra=env_extra)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert error_lines(result) == []
+        assert "BASE_BRANCH=release" in result.stdout.splitlines()
 
     def test_base_branch_falls_back_to_mr_target_when_unset(self, tick_sandbox):
         env_extra = full_flags_env({"MONOLYNX_MR_TARGET": "release"})
@@ -585,6 +617,178 @@ class TestBaseBranchResolution:
         assert "BASE_BRANCH_STALE=false" in result.stdout.splitlines()
 
 
+# MON-142: fake `git` dla `sync-base`. Osobny od GIT_SCRIPT_TEMPLATE, bo
+# loguje kazde wywolanie do FAKE_GIT_CALLS - testy asertuja nie tylko wynik,
+# ale tez to, ze skrypt nigdy nie wola reset/rebase/checkout/pull/switch.
+# Obraz Dockera aplikacji nie ma prawdziwego `git` (python:3.12-slim), wiec
+# realne repo z bare originem nie zadzialaloby w CI.
+SYNC_BASE_GIT_TEMPLATE = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$FAKE_GIT_CALLS"
+case "$*" in
+  "-C {project_dir} rev-parse --show-toplevel")
+    if [ "${{FAKE_GIT_NOT_REPO:-0}}" = "1" ]; then
+      echo "fatal: not a git repository" >&2
+      exit 128
+    fi
+    echo "{project_dir}" ;;
+  "-C {project_dir} rev-parse --abbrev-ref HEAD")
+    echo "${{FAKE_GIT_CURRENT_BRANCH:-main}}" ;;
+  "-C {project_dir} status --porcelain --untracked-files=no")
+    printf '%s' "${{FAKE_GIT_STATUS:-}}" ;;
+  "-C {project_dir} fetch origin "*)
+    exit "${{FAKE_GIT_FETCH_EXIT:-0}}" ;;
+  "-C {project_dir} rev-parse HEAD")
+    echo "${{FAKE_GIT_LOCAL_SHA:-sha-local}}" ;;
+  "-C {project_dir} rev-parse origin/"*)
+    echo "${{FAKE_GIT_REMOTE_SHA:-sha-remote}}" ;;
+  "-C {project_dir} merge-base --is-ancestor HEAD origin/"*)
+    exit "${{FAKE_GIT_HEAD_IS_ANCESTOR_EXIT:-0}}" ;;
+  "-C {project_dir} merge-base --is-ancestor origin/"*" HEAD")
+    exit "${{FAKE_GIT_REMOTE_IS_ANCESTOR_EXIT:-1}}" ;;
+  "-C {project_dir} merge --ff-only origin/"*)
+    exit "${{FAKE_GIT_MERGE_EXIT:-0}}" ;;
+  *)
+    echo "git-stub: nieobslugiwane argumenty: $*" >&2
+    exit 128 ;;
+esac
+"""
+
+_FORBIDDEN_GIT_WORDS = ("reset", "rebase", "checkout", "pull", "switch")
+
+
+@pytest.fixture
+def sync_base_sandbox(tmp_path):
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    git_script = fakebin / "git"
+    git_script.write_text(SYNC_BASE_GIT_TEMPLATE.format(project_dir=project_dir))
+    git_script.chmod(0o755)
+    return SimpleNamespace(tmp_path=tmp_path, project_dir=project_dir, fakebin=fakebin, calls=tmp_path / "git-calls.log")
+
+
+def run_sync_base(sandbox, base_branch="main", env_extra=None, extra_args=None):
+    env = _base_env(sandbox, {"FAKE_GIT_CALLS": str(sandbox.calls), **(env_extra or {})})
+    args = [sys.executable, str(SCRIPT), "sync-base", "--project-dir", str(sandbox.project_dir)]
+    if base_branch is not None:
+        args += ["--base-branch", base_branch]
+    args += extra_args or []
+    return subprocess.run(args, cwd=str(sandbox.project_dir), env=env, capture_output=True, text=True, timeout=30)
+
+
+def git_calls(sandbox):
+    if not sandbox.calls.exists():
+        return []
+    prefix = f"-C {sandbox.project_dir} "
+    return [line.removeprefix(prefix) for line in sandbox.calls.read_text().splitlines()]
+
+
+def assert_no_forbidden_git(calls):
+    for call in calls:
+        subcommand = call.split()[0]
+        assert subcommand not in _FORBIDDEN_GIT_WORDS, f"sync-base wywolal zakazane git {call!r}"
+
+
+@pytest.mark.unit
+class TestSyncBase:
+    """MON-142: `sync-base` przewija glowny checkout dyspozytora do
+    `origin/<BASE_BRANCH>` wylacznie przez fetch + merge --ff-only, tylko gdy
+    checkout stoi na branchu bazowym i sledzone pliki sa czyste. Wyjscie to
+    jedna zamrozona linia `SYNC-BASE: ok|skipped|failed reason=<powod>`."""
+
+    def test_fast_forwards_when_on_base_branch_clean_and_behind(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, base_branch="develop", env_extra={"FAKE_GIT_CURRENT_BRANCH": "develop"})
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert result.stdout.splitlines() == ["SYNC-BASE: ok reason=fast-forwarded"]
+        calls = git_calls(sync_base_sandbox)
+        assert "fetch origin develop" in calls
+        assert "merge --ff-only origin/develop" in calls
+        assert calls.index("fetch origin develop") < calls.index("merge --ff-only origin/develop")
+        assert_no_forbidden_git(calls)
+
+    def test_up_to_date_does_not_merge(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, env_extra={"FAKE_GIT_LOCAL_SHA": "abc", "FAKE_GIT_REMOTE_SHA": "abc"})
+
+        assert result.returncode == 0
+        assert result.stdout.splitlines() == ["SYNC-BASE: ok reason=up-to-date"]
+        calls = git_calls(sync_base_sandbox)
+        assert "fetch origin main" in calls
+        assert not [call for call in calls if call.startswith("merge ")]
+
+    def test_other_branch_is_skipped_without_fetch(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, env_extra={"FAKE_GIT_CURRENT_BRANCH": "feature-1"})
+
+        assert result.returncode == 0
+        assert result.stdout.splitlines() == ["SYNC-BASE: skipped reason=not-on-base-branch"]
+        calls = git_calls(sync_base_sandbox)
+        assert not [call for call in calls if call.startswith(("fetch", "merge"))]
+        assert_no_forbidden_git(calls)
+
+    def test_dirty_tracked_files_are_skipped_without_fetch(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, env_extra={"FAKE_GIT_STATUS": " M src/app.py\n"})
+
+        assert result.returncode == 0
+        assert result.stdout.splitlines() == ["SYNC-BASE: skipped reason=dirty-tracked-files"]
+        calls = git_calls(sync_base_sandbox)
+        assert "status --porcelain --untracked-files=no" in calls
+        assert not [call for call in calls if call.startswith(("fetch", "merge"))]
+
+    def test_local_commits_ahead_are_skipped(self, sync_base_sandbox):
+        env = {"FAKE_GIT_HEAD_IS_ANCESTOR_EXIT": "1", "FAKE_GIT_REMOTE_IS_ANCESTOR_EXIT": "0"}
+
+        result = run_sync_base(sync_base_sandbox, env_extra=env)
+
+        assert result.returncode == 0
+        assert result.stdout.splitlines() == ["SYNC-BASE: skipped reason=local-ahead"]
+        assert not [call for call in git_calls(sync_base_sandbox) if call.startswith("merge ")]
+
+    def test_diverged_history_is_skipped(self, sync_base_sandbox):
+        env = {"FAKE_GIT_HEAD_IS_ANCESTOR_EXIT": "1", "FAKE_GIT_REMOTE_IS_ANCESTOR_EXIT": "1"}
+
+        result = run_sync_base(sync_base_sandbox, env_extra=env)
+
+        assert result.returncode == 0
+        assert result.stdout.splitlines() == ["SYNC-BASE: skipped reason=diverged"]
+        calls = git_calls(sync_base_sandbox)
+        assert not [call for call in calls if call.startswith("merge ")]
+        assert_no_forbidden_git(calls)
+
+    def test_fetch_failure_is_failed_exit_2_without_merge(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, env_extra={"FAKE_GIT_FETCH_EXIT": "1"})
+
+        assert result.returncode == 2
+        assert result.stdout.splitlines() == ["SYNC-BASE: failed reason=fetch-failed"]
+        assert not [call for call in git_calls(sync_base_sandbox) if call.startswith("merge ")]
+
+    def test_rejected_fast_forward_is_failed_exit_2(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, env_extra={"FAKE_GIT_MERGE_EXIT": "128"})
+
+        assert result.returncode == 2
+        assert result.stdout.splitlines() == ["SYNC-BASE: failed reason=merge-failed"]
+        assert_no_forbidden_git(git_calls(sync_base_sandbox))
+
+    def test_not_a_git_repo_is_failed_exit_2(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, env_extra={"FAKE_GIT_NOT_REPO": "1"})
+
+        assert result.returncode == 2
+        assert result.stdout.splitlines() == ["SYNC-BASE: failed reason=not-a-git-repo"]
+
+    def test_missing_base_branch_is_usage_error_64(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, base_branch=None)
+
+        assert result.returncode == 64
+        assert result.stdout == ""
+        assert git_calls(sync_base_sandbox) == []
+
+    def test_blank_base_branch_is_usage_error_64(self, sync_base_sandbox):
+        result = run_sync_base(sync_base_sandbox, base_branch="  ")
+
+        assert result.returncode == 64
+        assert git_calls(sync_base_sandbox) == []
+
+
 @pytest.mark.unit
 class TestState:
     """Testy podkomendy `state`. Slug/klucz dobrane pod fixture agentow (patrz
@@ -593,6 +797,8 @@ class TestState:
 
     AGENTS_FIXTURE = FIXTURES_DIR / "agents-json-all.2.1.270.json"
     LOGS_TUI_FIXTURE = FIXTURES_DIR / "logs-tui.2.1.270.txt"
+    LOGS_SPINNER_FIXTURE = FIXTURES_DIR / "logs-spinner-redraw.2.1.284.txt"
+    LOGS_STOP_FIXTURE = FIXTURES_DIR / "logs-stop-tui.2.1.278.txt"
     PROBE_SESSION_ID = "9cf45f1d"
 
     def test_writes_tick_files_and_returns_report_with_clean_log(self, tick_sandbox):
@@ -620,7 +826,73 @@ class TestState:
         assert log_file.is_file(), "sesja fixture-probe powinna dopasowac ticket 'probe' i dostac zapisany log"
         content = log_file.read_text()
         assert "\x1b" not in content, "log ma zawierac zdjete sekwencje ANSI (patrz uwaga w docstringu modulu)"
-        assert "\r" not in content, "\\r ma byc zamieniony na \\n przed zapisem"
+        assert "\r" not in content, "\\r ma byc zinterpretowany jako powrot karetki (render_log) przed zapisem"
+
+    def _run_state_with_running_probe(self, tick_sandbox, logs_fixture):
+        """Zywa sesja "fixture-probe" (id 9cf45f1d) z logiem = surowy fixture `claude logs`.
+
+        Wpis agenta z fixture agents-json-all ma state=done, wiec build_report nie
+        klasyfikowalby jej po logu; tutaj ta sama sesja jest "running".
+        """
+        agents = [
+            {
+                "id": self.PROBE_SESSION_ID,
+                "kind": "background",
+                "startedAt": 1,
+                "sessionId": "9cf45f1d-76c2-48f0-a4b2-328ec7a5466d",
+                "name": "fixture-probe",
+                "state": "running",
+            }
+        ]
+        agents_file = tick_sandbox.tmp_path / "agents-running.json"
+        agents_file.write_text(json.dumps(agents))
+        tick_dir = tick_sandbox.tmp_path / "tick"
+        tickets = [{"key": "probe", "status": "in_progress", "assignee": None}]
+        env_extra = {
+            "FAKE_CLAUDE_AGENTS_FILE": str(agents_file),
+            f"FAKE_CLAUDE_LOGS_{self.PROBE_SESSION_ID}": str(logs_fixture),
+        }
+        result = run_state(tick_sandbox, "fixture", tickets=tickets, tick_dir=tick_dir, env_extra=env_extra)
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        log_file = tick_dir / "logs" / f"{self.PROBE_SESSION_ID}.log"
+        return json.loads(result.stdout), log_file.read_text().splitlines()
+
+    def test_spinner_redraw_fixture_is_written_without_spinner_frames_or_duplicates(self, tick_sandbox):
+        """MON-227: plik w TICK_DIR/logs i tak trafia do komentarza ticketu przy
+        needs_human - ma byc czytelny (fixture logs-spinner-redraw.2.1.284.txt)."""
+        _, lines = self._run_state_with_running_probe(tick_sandbox, self.LOGS_SPINNER_FIXTURE)
+
+        assert lines
+        assert not [line for line in lines if "Blanching" in line]
+        assert not [line for line in lines if line[:1] in "✢✳✶✻✽·"]
+        assert len([line for line in lines if "Sesje z ticketu" in line]) == 1
+        assert len([line for line in lines if "Researcher pracuje." in line]) == 1
+        content = "\n".join(lines)
+        assert "Logi dostępne tylko dla żywych sesji." in content
+        assert "dostępn  tylko" not in content
+        assert "Bash( laude" not in content
+        assert "\x1b" not in content
+
+    def test_raw_stop_fixture_written_by_tick_is_classified_waiting(self, tick_sandbox):
+        """MON-191 po MON-227: surowy fixture -> _write_session_log (render, ogon) ->
+        build_report (read_log_tail + classify) daje "waiting", a plik ma jedna linie
+        markera."""
+        payload, lines = self._run_state_with_running_probe(tick_sandbox, self.LOGS_STOP_FIXTURE)
+
+        assert payload["tickets"][0]["verdict"] == "waiting"
+        stop_lines = [line for line in lines if line.startswith("SPRINT-RUN STOP:")]
+        assert stop_lines == ["SPRINT-RUN STOP: fixture probe MON-191 - czekam na decyzję człowieka w sprawie migracji bazy danych przed merge"]
+        assert "Nie uzywaj zadnych narzedzi" in "\n".join(lines)
+
+    def test_written_log_keeps_only_last_60_lines_of_plain_output(self, tick_sandbox, tmp_path):
+        """Ogon 60 linii dziala na czystym tekscie dluzszym niz ekran (emulator nie
+        obcina do wysokosci ekranu, zapis nie przekracza _LOG_TAIL_LINES)."""
+        plain = tmp_path / "plain.txt"
+        plain.write_text("\n".join(f"linia {i}" for i in range(1, 101)) + "\n")
+
+        _, lines = self._run_state_with_running_probe(tick_sandbox, plain)
+
+        assert lines == [f"linia {i}" for i in range(41, 101)]
 
     def test_invalid_json_in_tickets_json_exits_2(self, tick_sandbox):
         result = run_state(tick_sandbox, "fixture", tickets_json="{niepoprawny json")
@@ -1270,3 +1542,202 @@ class TestCliStopCommand:
         result = run_cli_stop(tick_sandbox_with_codex, "gpt5", "monolynx", "MON-12")
 
         assert result.returncode == 64
+
+
+# ---------------------------------------------------------------------------
+# MON-222: sesje waiting poza pula slotow. preflight raportuje MAX_WAITING
+# (zmienna MONOLYNX_SPRINT_MAX_WAITING, domyslnie 2), `state --slots N
+# [--max-waiting M]` dokleja do raportu klucz "dispatch" z
+# sprint_run_state.dispatch_capacity. Bez --slots raport nie ma tego klucza
+# (kompatybilnosc wsteczna - skill `next` czyta `state` bez slotow).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestPreflightMaxWaiting:
+    def test_max_waiting_defaults_to_two_and_follows_parallel_line(self, tick_sandbox):
+        result = run_preflight(tick_sandbox, env_extra=full_flags_env())
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        lines = result.stdout.splitlines()
+        assert "MAX_WAITING=2" in lines
+        parallel_index = next(i for i, line in enumerate(lines) if line.startswith("PARALLEL="))
+        assert lines[parallel_index + 1] == "MAX_WAITING=2"
+
+    def test_max_waiting_reads_positive_integer_from_env(self, tick_sandbox):
+        result = run_preflight(tick_sandbox, env_extra=full_flags_env({"MONOLYNX_SPRINT_MAX_WAITING": "4"}))
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "MAX_WAITING=4" in result.stdout.splitlines()
+
+    @pytest.mark.parametrize("raw", ["abc", "0", "-1", "2.5", ""])
+    def test_max_waiting_invalid_value_falls_back_to_default(self, tick_sandbox, raw):
+        result = run_preflight(tick_sandbox, env_extra=full_flags_env({"MONOLYNX_SPRINT_MAX_WAITING": raw}))
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "MAX_WAITING=2" in result.stdout.splitlines()
+
+    def test_max_waiting_reported_for_codex_runtime_too(self, tick_sandbox_with_codex):
+        result = run_preflight_runtime(tick_sandbox_with_codex, "codex", env_extra=full_flags_env({"MONOLYNX_SPRINT_MAX_WAITING": "3"}))
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "MAX_WAITING=3" in result.stdout.splitlines()
+
+
+def run_state_dispatch(sandbox, tickets, slots=None, max_waiting=None, backend=None, env_extra=None, timeout=30):
+    """`state` z opcjonalnymi --slots/--max-waiting/--backend. Wartosci podawane
+    jako napisy, zeby test mogl wyslac tez zla wartosc (np. "x")."""
+    env = _base_env(sandbox, env_extra)
+    args = [sys.executable, str(SCRIPT), "state", "--slug", "fixture", "--tickets-json", json.dumps(tickets)]
+    if slots is not None:
+        args += ["--slots", str(slots)]
+    if max_waiting is not None:
+        args += ["--max-waiting", str(max_waiting)]
+    if backend is not None:
+        args += ["--backend", backend]
+    return subprocess.run(args, cwd=str(sandbox.project_dir), env=env, capture_output=True, text=True, timeout=timeout)
+
+
+def _bg_session(name, session_id):
+    return {
+        "id": session_id,
+        "cwd": "/repo",
+        "kind": "background",
+        "startedAt": 1000,
+        "sessionId": f"full-{session_id}",
+        "name": name,
+        "state": "running",
+    }
+
+
+def _dispatch_env(sandbox, running_keys=(), waiting_keys=()):
+    """Env dla fake `claude`: sesje w tle dla podanych kluczy ticketow. Sesja
+    `waiting` to sesja zywa z markerem SPRINT-RUN STOP w logu (werdykt liczy
+    build_report, nie ten helper)."""
+    agents = []
+    env = {}
+    for key in running_keys:
+        agents.append(_bg_session(f"fixture-{key}", f"r{key}"))
+    for key in waiting_keys:
+        session_id = f"w{key}"
+        agents.append(_bg_session(f"fixture-{key}", session_id))
+        log_file = sandbox.tmp_path / f"{session_id}.txt"
+        log_file.write_text("robie rzeczy\nSPRINT-RUN STOP: czekam na decyzje\n")
+        env[f"FAKE_CLAUDE_LOGS_{session_id}"] = str(log_file)
+    agents_file = sandbox.tmp_path / "dispatch-agents.json"
+    agents_file.write_text(json.dumps(agents))
+    env["FAKE_CLAUDE_AGENTS_FILE"] = str(agents_file)
+    return env
+
+
+def _in_progress(*keys):
+    return [{"key": key, "status": "in_progress", "assignee": None} for key in keys]
+
+
+@pytest.mark.unit
+class TestStateDispatchCapacity:
+    def test_report_without_slots_has_no_dispatch_key(self, tick_sandbox):
+        result = run_state_dispatch(tick_sandbox, [{"key": "probe", "status": "todo", "assignee": None}])
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "dispatch" not in json.loads(result.stdout)
+
+    def test_slots_adds_dispatch_with_defaults_when_no_sessions(self, tick_sandbox):
+        result = run_state_dispatch(tick_sandbox, [{"key": "probe", "status": "todo", "assignee": None}], slots=3)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert json.loads(result.stdout)["dispatch"] == {
+            "slots": 3,
+            "max_waiting": 2,
+            "free_slots": 3,
+            "waiting_blocked": False,
+            "can_start": 3,
+        }
+
+    def test_running_session_takes_a_slot_waiting_session_does_not(self, tick_sandbox):
+        """Kluczowy przypadek MON-222 przez realna sciezke state: 1 running +
+        1 waiting przy slots=2 daje wolny slot 1. Odwrocone liczenie
+        slots - (running + waiting) dalo by 0."""
+        env = _dispatch_env(tick_sandbox, running_keys=["a"], waiting_keys=["b"])
+
+        result = run_state_dispatch(tick_sandbox, _in_progress("a", "b"), slots=2, env_extra=env)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        payload = json.loads(result.stdout)
+        assert payload["summary"]["running"] == 1
+        assert payload["summary"]["waiting"] == 1
+        assert payload["dispatch"] == {
+            "slots": 2,
+            "max_waiting": 2,
+            "free_slots": 1,
+            "waiting_blocked": False,
+            "can_start": 1,
+        }
+
+    def test_max_waiting_option_blocks_start_when_reached(self, tick_sandbox):
+        env = _dispatch_env(tick_sandbox, waiting_keys=["b"])
+
+        result = run_state_dispatch(tick_sandbox, _in_progress("b"), slots=2, max_waiting=1, env_extra=env)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        payload = json.loads(result.stdout)
+        assert payload["summary"]["waiting"] == 1
+        assert payload["dispatch"]["max_waiting"] == 1
+        assert payload["dispatch"]["waiting_blocked"] is True
+        assert payload["dispatch"]["free_slots"] == 2
+        assert payload["dispatch"]["can_start"] == 0
+
+    def test_default_max_waiting_two_allows_one_waiting_session(self, tick_sandbox):
+        """Granica >=: przy jednej sesji waiting i limicie 2 (domyslnym) dispatch
+        nie jest zablokowany - test wiaze ten sam stan co poprzedni, ale bez
+        --max-waiting."""
+        env = _dispatch_env(tick_sandbox, waiting_keys=["b"])
+
+        result = run_state_dispatch(tick_sandbox, _in_progress("b"), slots=2, env_extra=env)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        payload = json.loads(result.stdout)
+        assert payload["dispatch"]["waiting_blocked"] is False
+        assert payload["dispatch"]["can_start"] == 2
+
+    def test_two_waiting_sessions_reach_default_limit(self, tick_sandbox):
+        env = _dispatch_env(tick_sandbox, waiting_keys=["b", "c"])
+
+        result = run_state_dispatch(tick_sandbox, _in_progress("b", "c"), slots=3, env_extra=env)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        payload = json.loads(result.stdout)
+        assert payload["summary"]["waiting"] == 2
+        assert payload["dispatch"]["waiting_blocked"] is True
+        assert payload["dispatch"]["can_start"] == 0
+
+    def test_invalid_max_waiting_falls_back_to_default_two(self, tick_sandbox):
+        result = run_state_dispatch(tick_sandbox, [{"key": "probe", "status": "todo", "assignee": None}], slots=2, max_waiting="abc")
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert json.loads(result.stdout)["dispatch"]["max_waiting"] == 2
+
+    @pytest.mark.parametrize("bad_slots", ["0", "-1", "x", "1.5"])
+    def test_non_positive_or_non_integer_slots_exits_64(self, tick_sandbox, bad_slots):
+        result = run_state_dispatch(tick_sandbox, [{"key": "probe", "status": "todo", "assignee": None}], slots=bad_slots)
+
+        assert result.returncode == 64
+
+    def test_codex_backend_also_reports_dispatch(self, tick_sandbox_with_codex):
+        (tick_sandbox_with_codex.fakebin / "claude").unlink()
+
+        result = run_state_dispatch(
+            tick_sandbox_with_codex,
+            [{"key": "MON-1", "status": "todo", "assignee": None}],
+            slots=3,
+            backend="codex",
+        )
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert json.loads(result.stdout)["dispatch"] == {
+            "slots": 3,
+            "max_waiting": 2,
+            "free_slots": 3,
+            "waiting_blocked": False,
+            "can_start": 3,
+        }

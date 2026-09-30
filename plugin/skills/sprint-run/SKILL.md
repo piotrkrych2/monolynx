@@ -82,9 +82,9 @@ Podstaw `<katalog skilla>` literalnie (rozwiniętą absolutną ścieżkę) - bez
 
 Zakres checków zależy od wybranego backendu. Przy `--runtime codex` skrypt **w ogóle nie czyta** `.claude/settings.json` ani `.claude/settings.local.json`, ignoruje `MONOLYNX_SPRINT_PERMISSION_MODE` i nie woła `claude --version` ani `claude agents --json --all`; zamiast tego sprawdza `codex --version` oraz `codex login status` (wymaga napisu `Logged in` w wyjściu). Wspólne dla obu backendów zostają: repozytorium git, `MONOLYNX_PROJECT_SLUG`, flagi `MONOLYNX_AUTOTEST` / `AUTOCOMMIT` / `AUTOPUSH` (wymagane `true`), ostrzeżenie o `MONOLYNX_AUTOMR` oraz `BASE_BRANCH`/`BASE_BRANCH_STALE` - one gatują działania samego ticku, niezależnie od tego, który klient go prowadzi. W wyjściu dochodzi klucz `RUNTIME=<claude|codex>`; przy `codex` `CLAUDE_VERSION` jest puste, a `PERMISSION_MODE` wypisane tylko informacyjnie.
 
-Przy `--runtime claude` skrypt sprawdza, jako pierwszy check, że `MONOLYNX_SPRINT_PERMISSION_MODE` nie jest `bypassPermissions` ani nie zawiera `dangerously-skip-permissions` (ten tryb w sesji auto odrzuca domyślna reguła soft_deny "Create Unsafe Agents" - bez tego checku tick przechodził cały preflight i odpadał dopiero w KROKU 4 bez startu żadnej sesji), potem `claude --version`, `claude agents --json --all`, repozytorium git, kształt `.claude/settings.json` i `.claude/settings.local.json`, flagi `MONOLYNX_*` w środowisku procesu oraz `BASE_BRANCH`/`BASE_BRANCH_STALE` (MON-197: lancuch fallbacku `MONOLYNX_BASE_BRANCH` -> `MONOLYNX_MR_TARGET` -> `git symbolic-ref refs/remotes/origin/HEAD` -> `glab repo view`, i rozjazd głównego checkoutu dyspozytora wobec tego brancha), i wypisuje na stdout wyłącznie linie `KLUCZ=wartość` (`SLUG`, `MODE`, `PARALLEL`, `SPRINT_MODEL`, `PERMISSION_MODE`, `AUTOTEST`, `AUTOCOMMIT`, `AUTOPUSH`, `AUTOMR`, `CONTRACT`, `SPRINT_RUN`, `CLAUDE_VERSION`, `PROJECT_DIR`, `TICK_DIR`, `BASE_BRANCH`, `BASE_BRANCH_STALE`, `RUNTIME`), potem ewentualne `WARN: ...`, potem `ERROR: ...`, a na końcu dokładnie jedną linię `PREFLIGHT: ok` albo `PREFLIGHT: failed problems=<n>`. Nigdy nie wypisuje wartości zmiennych spoza tej listy ani całego `env` pliku settings - nie próbuj tego obejść dociąganiem pliku ręcznie. `BASE_BRANCH` i `BASE_BRANCH_STALE` są informacyjne - puste/nieznane nigdy nie trafiają do `problems`, więc same z siebie nie blokują ticku (blokadę dla `BASE_BRANCH_STALE=true` w trybie `batch` robi dopiero KROK 4).
+Przy `--runtime claude` skrypt sprawdza, jako pierwszy check, że `MONOLYNX_SPRINT_PERMISSION_MODE` nie jest `bypassPermissions` ani nie zawiera `dangerously-skip-permissions` (ten tryb w sesji auto odrzuca domyślna reguła soft_deny "Create Unsafe Agents" - bez tego checku tick przechodził cały preflight i odpadał dopiero w KROKU 4 bez startu żadnej sesji), potem `claude --version`, `claude agents --json --all`, repozytorium git, kształt `.claude/settings.json` i `.claude/settings.local.json`, flagi `MONOLYNX_*` w środowisku procesu oraz `BASE_BRANCH`/`BASE_BRANCH_STALE` (MON-197: lancuch fallbacku `MONOLYNX_BASE_BRANCH` -> `MONOLYNX_MR_TARGET` -> `git symbolic-ref refs/remotes/origin/HEAD` -> `glab repo view`, i rozjazd głównego checkoutu dyspozytora wobec tego brancha), i wypisuje na stdout wyłącznie linie `KLUCZ=wartość` (`SLUG`, `MODE`, `PARALLEL`, `MAX_WAITING`, `SPRINT_MODEL`, `PERMISSION_MODE`, `AUTOTEST`, `AUTOCOMMIT`, `AUTOPUSH`, `AUTOMR`, `CONTRACT`, `SPRINT_RUN`, `CLAUDE_VERSION`, `PROJECT_DIR`, `TICK_DIR`, `BASE_BRANCH`, `BASE_BRANCH_STALE`, `RUNTIME`), potem ewentualne `WARN: ...`, potem `ERROR: ...`, a na końcu dokładnie jedną linię `PREFLIGHT: ok` albo `PREFLIGHT: failed problems=<n>`. Nigdy nie wypisuje wartości zmiennych spoza tej listy ani całego `env` pliku settings - nie próbuj tego obejść dociąganiem pliku ręcznie. `BASE_BRANCH` i `BASE_BRANCH_STALE` są informacyjne - puste/nieznane nigdy nie trafiają do `problems`, więc same z siebie nie blokują ticku (przy `BASE_BRANCH_STALE=true` KROK 4 najpierw próbuje `sync-base`, a blokadę w trybie `batch` robi dopiero wtedy, gdy przewinięcie się nie uda). Jedyny wyjątek (MON-219): gdy `MONOLYNX_BASE_BRANCH` i `MONOLYNX_MR_TARGET` są ustawione jednocześnie i różne, preflight dopisuje linię `ERROR:` (kod `2`, `PREFLIGHT: failed`), bo dyspozytor i `mr-queue` musiałyby celować w różne branche - wystarczy ustawić jedną z nich albo obie na ten sam branch.
 
-**`PREFLIGHT: ok`** (kod wyjścia `0`): przejdź do KROK 2. Weź `SLUG` (patrz "Ustalenie slug projektu"), `PARALLEL` jako domyślną liczbę slotów, `SPRINT_MODEL` i `PERMISSION_MODE` do KROK 4, `MODE` do KROK 5, `BASE_BRANCH` i `BASE_BRANCH_STALE` do sprawdzenia na początku KROK 4, a `RUNTIME` jako potwierdzenie backendu, z którym pracujesz w tym ticku (wypisz go w raporcie KROK 5). Każdą linię `WARN:` (np. brak `MONOLYNX_AUTOMR`) dopisz do raportu jako ostrzeżenie, bez zatrzymywania ticku.
+**`PREFLIGHT: ok`** (kod wyjścia `0`): przejdź do KROK 2. Weź `SLUG` (patrz "Ustalenie slug projektu"), `PARALLEL` jako domyślną liczbę slotów, `MAX_WAITING` jako limit żywych sesji `waiting` (z `MONOLYNX_SPRINT_MAX_WAITING`, dodatnia liczba całkowita, inaczej `2`; podajesz go skryptowi stanu w KROK 2, a skutek widzisz w KROK 4), `SPRINT_MODEL` i `PERMISSION_MODE` do KROK 4, `MODE` do KROK 5, `BASE_BRANCH` i `BASE_BRANCH_STALE` do sprawdzenia na początku KROK 4, a `RUNTIME` jako potwierdzenie backendu, z którym pracujesz w tym ticku (wypisz go w raporcie KROK 5). Każdą linię `WARN:` (np. brak `MONOLYNX_AUTOMR`) dopisz do raportu jako ostrzeżenie, bez zatrzymywania ticku.
 
 **`PREFLIGHT: failed problems=<n>`** (kod wyjścia `2`): wypisz użytkownikowi dosłownie każdą linię `ERROR:` i zakończ turę **bez startowania jakiejkolwiek sesji**. Pokaż gotową konfigurację do wklejenia:
 
@@ -178,21 +178,23 @@ Zbuduj z ticketów listę JSON w kształcie, którego oczekuje skrypt stanu (klu
 
 **Identyfikator sesji to pole `id`, nie `sessionId`.** W wyjściu `claude agents --json --all` każdy wpis ma oba. `id` jest krótki (8 znaków) i występuje wyłącznie dla wpisów o `kind` równym `background`; `sessionId` to UUID wątku i żadna komenda go nie przyjmuje. `claude logs`, `claude attach` i `claude rm` działają **tylko** na `id`. Wszędzie dalej w tym skillu `<session_id>` oznacza właśnie to krótkie `id`: tak nazywasz plik ogona logu, tak wpisujesz identyfikator do komentarza ticketu i taki podajesz człowiekowi w komendzie `claude attach`. Pole `session_id` w JSON-ie ze skryptu stanu niesie tę samą wartość.
 
-**Wylicz stan** jednym wywołaniem. Podkomenda `state` sama woła `claude agents --json --all`, dla każdej sesji dopasowanej do ticketu (nazwa `<PROJECT_SLUG>-<KEY>` z dowolnym sufiksem modelu) woła `claude logs <id>`, zamienia skoki kolumny (`\x1b[NG`/`\x1b[NC`) na spację, zdejmuje pozostałe kody ANSI i zamienia `\r` na `\n` w renderze terminala (`claude logs` nie zwraca czystego tekstu - kolory, ruch kursora, przerysowania spinnera), bierze ostatnie 60 niepustych linii i zapisuje pliki stanu w `TICK_DIR` (`.git/monolynx/tick/`, **nigdy** w `/tmp`):
+**Wylicz stan** jednym wywołaniem. Podkomenda `state` sama woła `claude agents --json --all`, dla każdej sesji dopasowanej do ticketu (nazwa `<PROJECT_SLUG>-<KEY>` z dowolnym sufiksem modelu) woła `claude logs <id>` i przepuszcza render terminala przez `render_log` ze `scripts/sprint_run_state.py` (`claude logs` nie zwraca czystego tekstu - kolory, ruch kursora, przerysowania spinnera): minimalny emulator ekranu odtwarza, co widać na ekranie, odrzuca linie samego spinnera i statusu (glif `✢✳✶✻✽·` na początku, liczniki czasu i tokenów) i skleja przylegające identyczne bloki w jeden. Potem bierze ostatnie 60 niepustych linii i zapisuje pliki stanu w `TICK_DIR` (`.git/monolynx/tick/`, **nigdy** w `/tmp`):
 
 ```bash
-python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT_SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>'
+python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT_SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>' --slots <sloty> --max-waiting <MAX_WAITING>
 ```
 
 Backend `codex` - ta sama komenda z jawną flagą:
 
 ```bash
-python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT_SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>' --backend codex
+python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT_SLUG>" --tickets-json '<JSON ticketów z kroku wyżej>' --slots <sloty> --max-waiting <MAX_WAITING> --backend codex
 ```
+
+`<sloty>` to liczba slotów ustalona w KROK 1 (argument `[sloty]` albo `PARALLEL`), `<MAX_WAITING>` to wartość z wyjścia preflightu. Obie wpisujesz jako literalne liczby, np. `--slots 2 --max-waiting 2`.
 
 Domyślną wartością `--backend` jest `claude`, więc w Claude Code flagi nie dopisujesz. Wariant `codex` bierze stan **wyłącznie** z rejestru dyspozytora (`sessions.json` w `TICK_DIR`), odświeżanego przed klasyfikacją, i nie woła binarki `claude` ani razu - `codex exec` nie ma odpowiednika `claude agents --json --all`. Ogon logu pochodzi wtedy z JSONL sesji (`codex-logs/<PROJECT_SLUG>-<KEY>-<runtime_id>.jsonl`), a nie z `claude logs`.
 
-Podstaw `<katalog skilla>` i JSON ticketów literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, zdjęcie ANSI, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Kolejność ma znaczenie: między słowami w długiej linii `claude logs` czasem wstawia skok kolumny zamiast literalnej spacji, więc zdjęcie go razem z resztą ANSI skleja słowa (marker `SPRINT-RUN STOP:` przychodził jako `SPRINT-RUNSTOP:`), a ogon 60 linii mieści cały ostatni blok odpowiedzi asystenta (od ostatniej linii `⏺`), w którym klasyfikator szuka markera i pytania (MON-191). Plik czyta też człowiek (ogon trafia do komentarza przy `needs_human`), więc ma być czytelny. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
+Podstaw `<katalog skilla>`, JSON ticketów i obie liczby literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, render ekranu, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Zwykłe zdjęcie kodów ANSI nie wystarcza: render TUI przerysowuje ekran różnicowo i przeskakuje kursorem nad komórkami, które się nie zmieniły, więc strip gubi litery i spacje (marker `SPRINT-RUN STOP:` przychodził jako `SPRINT-RUNSTOP:`, w ogonach z nocy 28/29.09 było `com it`), a każde przerysowanie od początku dopisuje kopię tych samych bloków. Emulator traktuje skok kursora o N komórek jako N spacji, a `\r` jako powrót karetki, nie koniec linii. Ogon 60 linii mieści cały ostatni blok odpowiedzi asystenta (od ostatniej linii `⏺`), w którym klasyfikator szuka markera i pytania (MON-191). Plik czyta też człowiek (ogon trafia do komentarza przy `needs_human`), więc ma być czytelny. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
 
 `claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching" - podkomenda `state` i tak zapisuje to, co dostała (bez przerywania), a taki przypadek klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
 
@@ -206,9 +208,16 @@ Skrypt zwraca na stdout JSON:
      "session_state": "running", "ticket_status": "in_progress",
      "verdict": "running", "reason": "sesja zyje, brak sygnalu stopu"}
   ],
-  "summary": {"remaining": 3, "running": 1, "waiting": 0, "done": 2, "needs_human": 0}
+  "summary": {"remaining": 3, "running": 1, "waiting": 0, "done": 2, "needs_human": 0},
+  "dispatch": {"slots": 2, "max_waiting": 2, "free_slots": 1, "waiting_blocked": false, "can_start": 1}
 }
 ```
+
+Klucz `dispatch` pojawia się, gdy komenda dostała `--slots`, i niesie przepustowość KROK 4 policzoną przez skrypt (`sprint_run_state.dispatch_capacity`), nie przez Ciebie:
+
+- `free_slots = max(0, slots - running)` - sesja `waiting` **nie zajmuje slotu**;
+- `waiting_blocked = waiting >= max_waiting` - limit żywych sesji `waiting` osiągnięty;
+- `can_start` - `0`, gdy `waiting_blocked` jest `true`, w przeciwnym razie `free_slots`.
 
 Kody wyjścia: `0` (stan policzony), `2` (błąd wejścia - niepoprawny JSON ticketów, zły kształt ticketu, albo `claude agents --json --all` nie działa), `64` (złe argumenty). Kod inny niż `0` traktuj jak awarię ticka: wypisz stderr skryptu, nie startuj żadnej sesji i zakończ turę linią `SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0`.
 
@@ -216,9 +225,9 @@ Werdykty i to, co z nimi robisz:
 
 | Werdykt | Co znaczy | Twoje działanie |
 |---|---|---|
-| `free` | brak sesji, ticket w `todo` | kandydat do startu, o ile nie ma niezamkniętego blokera (KROK 4) |
+| `free` | brak sesji, ticket w `todo` | kandydat do startu, o ile nie ma niezamkniętego blokera ani etykiety `needs-local` (KROK 4) |
 | `running` | sesja żyje i pracuje | nic nie rób, zajmuje slot |
-| `waiting` | sesja żyje, ale czeka na człowieka (`SPRINT-RUN STOP:` w ostatnich 5 liniach albo ostatnia linia z pytajnikiem) | nic nie rusz, zaraportuj (KROK 3) |
+| `waiting` | sesja żyje, ale czeka na człowieka (`SPRINT-RUN STOP:` w ostatnich 5 liniach albo ostatnia linia z pytajnikiem) | nic nie rusz, zaraportuj (KROK 3); nie zajmuje slotu, ale liczy się do limitu `MAX_WAITING` |
 | `done` | ticket w `in_review` albo `done` | komentarz i sprzątnięcie sesji (KROK 3) |
 | `needs_human` | sesja padła bez domknięcia ticketu albo ticket wisi w `in_progress` bez sesji | ogon logu do komentarza, jedno auto-wznowienie (KROK 3) |
 
@@ -340,29 +349,38 @@ Dla backendu `codex` takiej komendy nie ma - `codex exec` nie udostępnia sesji 
 
 ## KROK 4: Dispatch wolnych slotów
 
-**Sprawdz punkt startu przed dispatchem (MON-197).** `BASE_BRANCH` i `BASE_BRANCH_STALE` pochodza z preflightu (KROK 1) i opisuja **glowny checkout dyspozytora** (katalog roboczy procesu ticku) - nie worktree ticketu, ktory dopiero powstanie w tym kroku. `claude --bg --worktree` bierze **HEAD glownego checkoutu w chwili startu sesji**, wiec kazda sesja wystartowana teraz dziedziczy ten sam rozjazd, jesli checkout jest przestarzaly.
+**Sprawdź punkt startu przed dispatchem (MON-197, MON-142).** `BASE_BRANCH` i `BASE_BRANCH_STALE` pochodzą z preflightu (KROK 1) i opisują **główny checkout dyspozytora** (katalog roboczy procesu ticku) - nie worktree ticketu, który dopiero powstanie w tym kroku. `claude --bg --worktree` bierze **HEAD głównego checkoutu w chwili startu sesji**, więc każda sesja wystartowana teraz dziedziczy ten sam rozjazd, jeśli checkout jest przestarzały.
 
 - **`BASE_BRANCH_STALE` puste albo `false`** - kontynuuj dispatch normalnie.
-- **`BASE_BRANCH_STALE=true`** i `MODE=interactive` - dopisz do raportu (KROK 5) ostrzezenie: _"Glowny checkout nie stoi na branchu bazowym `<BASE_BRANCH>` albo jest za `origin/<BASE_BRANCH>` - nowe sesje odziedzicza przestarzaly punkt startu. Zaktualizuj checkout (`git checkout <BASE_BRANCH> && git pull`) przed kolejnym tickiem."_ i **kontynuuj dispatch** mimo to - czlowiek dostaje ostrzezenie, tick nie blokuje sam siebie bez koniecznosci.
-- **`BASE_BRANCH_STALE=true`** i `MODE=batch` - **nie startuj zadnej sesji** w tym ticku, pomin reszte tego kroku i zakoncz cala odpowiedz dokladnie taka linia (zamiast linii statusu z KROK 5):
+- **`BASE_BRANCH_STALE=true`** - najpierw spróbuj przewinąć główny checkout jedną samodzielną komendą (bez `&&`, potoków i zmiennych; `<katalog skilla>`, `<BASE_BRANCH>` i `<PROJECT_DIR>` z preflightu wpisz literalnie):
 
+  ```bash
+  python3 "<katalog skilla>/scripts/sprint_run_tick.py" sync-base --base-branch <BASE_BRANCH> --project-dir <PROJECT_DIR>
   ```
-  SPRINT-RUN STOP: glowny checkout dyspozytora nie jest aktualny wobec brancha bazowego <BASE_BRANCH>
-  ```
 
-  Analogicznie do blokady brakujacych flag w KROK 1 (sentinel `remaining=-1`): pętla ma się dowiedzieć, że tick wymaga ręcznej interwencji na hoście (aktualizacja głównego checkoutu), a nie kręcić się dalej, startując sesje ze złego punktu startu.
+  Skrypt robi `git fetch origin <BASE_BRANCH>` i `git merge --ff-only origin/<BASE_BRANCH>` wyłącznie wtedy, gdy checkout stoi na `<BASE_BRANCH>` i śledzone pliki są czyste; nigdy reset, rebase ani checkout. Wypisuje jedną linię `SYNC-BASE: ok|skipped|failed reason=<powód>` (kod `0` dla `ok`/`skipped`, `2` dla `failed`). Dopisz tę linię do raportu (KROK 5).
 
-Policz wolne sloty:
+  - **`SYNC-BASE: ok`** - checkout jest aktualny; kontynuuj dispatch normalnie.
+  - **`skipped` albo `failed`** (inny branch, lokalne zmiany, lokalne commity, rozjechana historia, brak sieci) i `MODE=interactive` - dopisz do raportu ostrzeżenie: _"Główny checkout nie stoi na branchu bazowym `<BASE_BRANCH>` albo jest za `origin/<BASE_BRANCH>`, a `sync-base` go nie przewinął (`reason=<powód>`) - nowe sesje odziedziczą przestarzały punkt startu. Zaktualizuj checkout ręcznie przed kolejnym tickiem."_ i **kontynuuj dispatch** mimo to - człowiek dostaje ostrzeżenie, tick nie blokuje sam siebie bez konieczności.
+  - **`skipped` albo `failed`** i `MODE=batch` - **nie startuj żadnej sesji** w tym ticku, pomiń resztę tego kroku i zakończ całą odpowiedź dokładnie taką linią (zamiast linii statusu z KROK 5):
 
-```
-wolne = sloty - (running + waiting)
-```
+    ```
+    SPRINT-RUN STOP: glowny checkout dyspozytora nie jest aktualny wobec brancha bazowego <BASE_BRANCH>
+    ```
 
-Sesje `waiting` żyją i trzymają worktree, więc liczą się do zajętości tak samo jak `running`. Gdy `wolne <= 0`, pomiń ten krok i przejdź do raportu.
+    Analogicznie do blokady brakujących flag w KROK 1 (sentinel `remaining=-1`): pętla ma się dowiedzieć, że tick wymaga ręcznej interwencji na hoście (aktualizacja głównego checkoutu), a nie kręcić się dalej, startując sesje ze złego punktu startu.
+
+**Wolne sloty bierzesz z `dispatch.can_start`** w JSON-ie skryptu stanu (KROK 2) - nie liczysz ich sam. Skrypt liczy `free_slots = max(0, sloty - running)`: sesja `waiting` nie zajmuje slotu. Żywe sesje `waiting` mają za to własny limit `MAX_WAITING`:
+
+- **`dispatch.waiting_blocked` = `true`** - dispatch jest wstrzymany (`can_start` = `0`). Nie startujesz żadnej sesji w tym ticku. Sesje `waiting` i ich worktree zostają nietknięte: bez `claude attach`, bez `claude rm`, bez odpowiadania za człowieka. W raporcie KROK 5 zapisz powód: `dispatch wstrzymany: <waiting>/<MAX_WAITING> sesji czeka na człowieka`.
+- **`dispatch.can_start <= 0`** (także bez blokady `waiting`, gdy wszystkie sloty zajmują sesje `running`) - pomiń resztę tego kroku i przejdź do raportu.
+- W przeciwnym razie startujesz najwyżej `can_start` sesji.
+
+WHY: przy `sloty - (running + waiting)` jedna sesja czekająca na odpowiedź człowieka zabierała slot na całą noc. Przy `PARALLEL=2` sesja MON-138 (pytanie o bloki `resource` Homebrew i job CI) trzymała połowę przepustowości sprintu od wieczora do rana. Limit `MAX_WAITING` zatrzymuje z kolei sprint, w którym sesje po kolei stają na pytaniach: zamiast mnożyć worktree czekające na człowieka, tick przestaje startować nowe.
 
 **Kolejność kandydatów** (tylko werdykt `free`): priorytet malejąco `high` > `medium` > `low`, a w ramach tego samego priorytetu rosnąco po kluczu ticketu. Deterministyczna kolejność sprawia, że dwa ticki pod rząd wybierają to samo i nie ma wyścigu o ten sam ticket.
 
-**Pełny ticket kandydata.** Skrypt stanu nie zna zależności między ticketami, a `list_tickets` i `get_board` ich nie zwracają. Dla **każdego** kandydata `free`, w kolejności wyżej, zanim zajmie slot, dociągnij pełny ticket - jedno wywołanie na kandydata, wspólne dla filtra blokerów i reguły migracyjnej niżej:
+**Pełny ticket kandydata.** Skrypt stanu nie zna zależności między ticketami, a `list_tickets` i `get_board` ich nie zwracają. Dla **każdego** kandydata `free`, w kolejności wyżej, zanim zajmie slot, dociągnij pełny ticket - jedno wywołanie na kandydata, wspólne dla filtra blokerów, reguły `needs-local` i reguły migracyjnej niżej:
 
 ```
 mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY>")
@@ -373,6 +391,16 @@ mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY>")
 WHY: sesja `work` wystartowana przy blokerze w `in_review` merguje do swojego brancha cudzy, niezmergowany branch, a jej MR niesie cudze commity (MON-150 i MON-152 zmergowały `worktree-MON-149` / `worktree-MON-150`).
 
 Gdy w sprincie zostały **wyłącznie** tickety z niezamkniętym blokerem (reszta `done`, nic nie biegnie), linia statusu ma `remaining>0 running=0`, więc `sprint_run.sh` nie uzna sprintu za wykonany i dalej tyka co interwał, aż człowiek zmerguje bloker (następny tick zobaczy `done` i wystartuje ticket) albo pętla dojdzie do `--max-ticks` (kod wyjścia 3). Wymień wtedy w sekcji "Czekają na człowieka" każdy pominięty ticket z kluczami blokerów do zmergowania.
+
+**Tickety z etykietą `needs-local` nie startują w tle.** Etykietę bierzesz z linii `... | Labels: <lista po przecinku>` w odpowiedzi tego samego `get_ticket` (np. `Story Points: 3 | ... | Labels: needs-local, skill`) - bez dodatkowego wywołania. Ticket bez etykiet ma w tym polu sam znak zastępczy (długi myślnik), który nie jest etykietą. Kandydat `free` z etykietą `needs-local` na liście jest pominięty: nie startujesz sesji, nie zajmuje slotu, nie wchodzi do `S` i zostaje w `remaining` (skrypt stanu liczy tam każdy werdykt `free`). Komentarza na tickecie nie dopisujesz - pominięcie powtarza się w każdym ticku. Ślad jest w raporcie KROK 5: wiersz `free -> pominięty` z powodem `needs-local` i wpis w sekcji "Czekają na człowieka" z komendą do uruchomienia interaktywnie, w sesji człowieka na jego maszynie:
+
+```
+/monolynx:work <KEY>
+```
+
+WHY: ticket z tą etykietą wymaga lokalnego środowiska albo decyzji człowieka, więc sesja w tle i tak stanęłaby na pytaniu i zajęła worktree. MON-138 potrzebował `brew update-python-resources` uruchomionego lokalnie i edycji `.gitlab-ci.yml`, której klasyfikator trybu automatycznego agentowi odmawia.
+
+Sprint, w którym zostały wyłącznie tickety `needs-local`, tickety z niezamkniętym blokerem i sesje `waiting`, ma w linii statusu `remaining>0`, więc `sprint_run.sh` nie uzna go za wykonany: zaloguje `UWAGA: nic nie biegnie` i tyka dalej, aż człowiek zrobi swoją część (przerobi ticket `needs-local` interaktywnie, zmerguje bloker, odpowie sesji `waiting`) albo pętla dojdzie do `--max-ticks` (kod wyjścia 3).
 
 **Tickety migracyjne idą solo.** Ticket z etykietą `migration` albo z opisem mówiącym o migracji bazy danych startuj wyłącznie wtedy, gdy `running = 0`, i nie startuj w tym samym ticku niczego więcej. Dwie równoległe sesje generujące migracje Alembica robią rozjechany łańcuch rewizji, którego nikt potem nie chce prostować. Etykiety i opis bierzesz z tego samego `get_ticket` co wyżej.
 
@@ -439,7 +467,7 @@ Komentarz z identyfikatorem sesji jest jedynym trwałym śladem, po którym czł
 
 Poniższe akapity o trybie uprawnień i modelu dotyczą backendu `claude`. Sesja Codeksa nie ma trybu uprawnień Claude Code ani modelu w komendzie: jej granicą jest sandbox (`MONOLYNX_SPRINT_CODEX_SANDBOX`, domyślnie `workspace-write`), a `--model` z komendy `start` służy tożsamości i nazewnictwu, bo `codex exec` nie przyjmuje aliasów `opus`/`sonnet`. Flagi AUTO* i `MONOLYNX_SPRINT_RUN=1` działają tak samo dla obu. Sesja Claude dostaje `MONOLYNX_SPRINT_RUN=1` z prefiksu komendy startu, sesja Codeksa ze środowiska procesu ticku (`sprint_run.sh` eksportuje tę zmienną), a flagi AUTO* obie dziedziczą ze środowiska procesu ticku.
 
-Sesja w tle startuje z trybem uprawnień `PERMISSION_MODE` z wyjścia preflightu (domyślnie `auto`, nadpisywalne przez `MONOLYNX_SPRINT_PERMISSION_MODE` w środowisku procesu ticku - preflight w KROK 1 blokuje tick, zanim wystartuje jakąkolwiek sesję, jeśli ta zmienna jest ustawiona na `bypassPermissions` albo `--dangerously-skip-permissions`). WHY: worktree tworzony przez `claude --bg --worktree` zawiera wyłącznie pliki śledzone przez gita, a `.claude/settings.local.json` jest ignorowany, więc ani `permissions`, ani flagi AUTO* z niego nie docierają do sesji roboczej i sesja bez człowieka zawisłaby na pierwszym pytaniu o zgodę. Granicą jest wtedy hook `bash_guard.py` (deny na git write, lint, testy i `glab mr create` dla subagentów) oraz kontrakt autonomii skilla `work`, a nie dialog uprawnień. Flagi `MONOLYNX_AUTOTEST`, `MONOLYNX_AUTOCOMMIT` i `MONOLYNX_AUTOPUSH` mogą leżeć w **śledzonym** `.claude/settings.json` (pole `env`) albo w środowisku procesu odpalającego tick: `sprint_run.sh` je eksportuje, a `claude --bg` dziedziczy środowisko. `MONOLYNX_SPRINT_RUN=1` idzie wyłącznie w środowisko startowanej sesji - prefiks komendy startu wyżej - bo w śledzonym pliku działałby także poza sprintem. `MONOLYNX_BASE_BRANCH` i `MONOLYNX_MR_TARGET` należą do środowiska procesu dyspozytora albo do `.claude/settings.local.json` na czas sprintu, nigdy do śledzonego `.claude/settings.json` na `main` (walidator `--release` je odrzuca). Dodatkowo (MON-197): `claude --bg --worktree` tworzy worktree ticketu z **HEAD głównego checkoutu dyspozytora w chwili startu sesji** - stąd sprawdzenie `BASE_BRANCH`/`BASE_BRANCH_STALE` na początku KROK 4, zanim ten krok wystartuje jakąkolwiek sesję.
+Sesja w tle startuje z trybem uprawnień `PERMISSION_MODE` z wyjścia preflightu (domyślnie `auto`, nadpisywalne przez `MONOLYNX_SPRINT_PERMISSION_MODE` w środowisku procesu ticku - preflight w KROK 1 blokuje tick, zanim wystartuje jakąkolwiek sesję, jeśli ta zmienna jest ustawiona na `bypassPermissions` albo `--dangerously-skip-permissions`). WHY: worktree tworzony przez `claude --bg --worktree` zawiera wyłącznie pliki śledzone przez gita, a `.claude/settings.local.json` jest ignorowany, więc ani `permissions`, ani flagi AUTO* z niego nie docierają do sesji roboczej i sesja bez człowieka zawisłaby na pierwszym pytaniu o zgodę. Granicą jest wtedy hook `bash_guard.py` (deny na git write, lint, testy i `glab mr create` dla subagentów) oraz kontrakt autonomii skilla `work`, a nie dialog uprawnień. Flagi `MONOLYNX_AUTOTEST`, `MONOLYNX_AUTOCOMMIT` i `MONOLYNX_AUTOPUSH` mogą leżeć w **śledzonym** `.claude/settings.json` (pole `env`) albo w środowisku procesu odpalającego tick: `sprint_run.sh` je eksportuje, a `claude --bg` dziedziczy środowisko. `MONOLYNX_SPRINT_RUN=1` idzie wyłącznie w środowisko startowanej sesji - prefiks komendy startu wyżej - bo w śledzonym pliku działałby także poza sprintem. `MONOLYNX_BASE_BRANCH` i `MONOLYNX_MR_TARGET` należą do środowiska procesu dyspozytora albo do `.claude/settings.local.json` na czas sprintu, nigdy do śledzonego `.claude/settings.json` na `main` (walidator `--release` je odrzuca). Dodatkowo (MON-197): `claude --bg --worktree` tworzy worktree ticketu z **HEAD głównego checkoutu dyspozytora w chwili startu sesji** - stąd sprawdzenie `BASE_BRANCH`/`BASE_BRANCH_STALE` (z próbą fast-forwardu przez `sync-base`) na początku KROK 4, zanim ten krok wystartuje jakąkolwiek sesję.
 
 Model sesji roboczej to `SPRINT_MODEL` z wyjścia preflightu (domyślnie `opus`, nadpisywalne przez `MONOLYNX_SPRINT_MODEL`). Nie usuwaj `--model` i nie zastępuj go modelem tej sesji dyspozytora. WHY: sesja w tle bez `--model` bierze domyślny model konta, a ten bywa najdroższy (Fable); jeden sprint na nim kosztuje wielokrotność przebiegu na Opusie. Droższy model dla koordynatora ticketu włącza się świadomie, ustawiając `MONOLYNX_SPRINT_MODEL` w środowisku procesu odpalającego tick albo w śledzonym `.claude/settings.json`. Subagenci sesji `work` dostają model według sekcji „Model subagentów” skilla `work` (i `work-simple`), niezależnie od modelu koordynatora.
 
@@ -457,10 +485,19 @@ Wypisz tabelę stanu po tym ticku:
 | MON-168 | `def456` | running | bez zmian |
 | MON-169 | - | free -> uruchomiona | start sesji `ghi789` |
 | MON-170 | - | free -> pominięty | czeka na merge MON-166 (niezamknięty bloker, `in_review`) |
+| MON-138 | - | free -> pominięty | `needs-local` - uruchom interaktywnie `/monolynx:work MON-138` |
 
-Każdy kandydat pominięty w KROK 4 przez niezamknięty bloker ma w tabeli wiersz z werdyktem `free -> pominięty` i w kolumnie "Działanie" powód `czeka na merge <KEY-B>` ze statusem każdego niezamkniętego blokera, np. `czeka na merge MON-149 (in_review), MON-150 (todo)`. Linia statusu niżej się nie zmienia.
+Każdy kandydat pominięty w KROK 4 przez niezamknięty bloker ma w tabeli wiersz z werdyktem `free -> pominięty` i w kolumnie "Działanie" powód `czeka na merge <KEY-B>` ze statusem każdego niezamkniętego blokera, np. `czeka na merge MON-149 (in_review), MON-150 (todo)`. Kandydat pominięty przez etykietę `needs-local` ma wiersz `free -> pominięty` z powodem `needs-local`. Linia statusu niżej się nie zmienia.
 
-Potem sekcja **"Czekają na człowieka"** ze wszystkimi ticketami o werdykcie `waiting` oraz tymi `needs_human`, które wyczerpały auto-wznowienie. Ticket pominięty przez niezamknięty bloker trafia tu tylko wtedy, gdy nic w sprincie już nie biegnie (patrz KROK 4) - z kluczami blokerów do zmergowania zamiast komendy `claude attach`. Dla każdego: klucz ticketu, powód jednym zdaniem i komenda `claude attach <session_id>`. Gdy lista jest pusta, napisz jedno zdanie, że nic nie czeka.
+Gdy KROK 4 wstrzymał dispatch przez limit sesji `waiting` (`dispatch.waiting_blocked` = `true`), pod tabelą napisz jednym zdaniem: `Dispatch wstrzymany: <waiting>/<MAX_WAITING> sesji czeka na człowieka - odpowiedz im, żeby tick znów startował sesje.`
+
+Potem sekcja **"Czekają na człowieka"** ze wszystkimi ticketami o werdykcie `waiting` oraz tymi `needs_human`, które wyczerpały auto-wznowienie. Dla każdego: klucz ticketu, powód jednym zdaniem i komenda `claude attach <session_id>`. Dochodzą do niej:
+
+- każdy ticket pominięty przez etykietę `needs-local` - z powodem `needs-local` i komendą `/monolynx:work <KEY>` do uruchomienia interaktywnie zamiast `claude attach` (sesji w tle nie ma);
+- ticket pominięty przez niezamknięty bloker, ale tylko wtedy, gdy nic w sprincie już nie biegnie (patrz KROK 4) - z kluczami blokerów do zmergowania zamiast komendy `claude attach`;
+- przy wstrzymanym dispatchu - liczby `waiting` i `MAX_WAITING` jako powód, dla którego wolne tickety nie wystartowały.
+
+Gdy lista jest pusta, napisz jedno zdanie, że nic nie czeka.
 
 Wiersz, którego `reason` mówi o nieznanym stanie sesji (`nieznany stan '<x>'`, czyli literał z CLI spoza listy znanej skryptowi stanu), wypisz w tabeli wprost, razem z tym powodem. Człowiek ma zobaczyć anomalię od razu, a nie domyślać się jej z zachowania pętli.
 
@@ -508,7 +545,7 @@ SPRINT-RUN: remaining=<n> running=<m> waiting=<k> done=<d>
 
 Wartości bierzesz z `summary` skryptu stanu i korygujesz **wyłącznie** o efekt KROK 4: `remaining = summary.remaining - S`, `running = summary.running + S`. `waiting` i `done` przepisujesz bez zmian. Gdy KROK 4 nic nie wystartował, `S = 0`. Żadnych innych przeliczeń i żadnego zaokrąglania.
 
-Przykład: `summary` ma `remaining=5 running=0 waiting=0 done=1`, KROK 4 wystartował dwie sesje (`S = 2`). Ostatnia linia to `SPRINT-RUN: remaining=3 running=2 waiting=0 done=1` (`5 - 2 = 3`, `0 + 2 = 2`). Linia `remaining=5 running=2` jest błędna: to korekta samego `running` bez odjęcia `S` od `remaining` (MON-167 raportował dokładnie tak). Ticket pominięty przez niezamknięty bloker nie wchodzi do `S`, więc zostaje w `remaining`.
+Przykład: `summary` ma `remaining=5 running=0 waiting=0 done=1`, KROK 4 wystartował dwie sesje (`S = 2`). Ostatnia linia to `SPRINT-RUN: remaining=3 running=2 waiting=0 done=1` (`5 - 2 = 3`, `0 + 2 = 2`). Linia `remaining=5 running=2` jest błędna: to korekta samego `running` bez odjęcia `S` od `remaining` (MON-167 raportował dokładnie tak). Ticket pominięty przez niezamknięty bloker albo przez etykietę `needs-local` nie wchodzi do `S`, więc zostaje w `remaining`. Tick wstrzymany limitem `MAX_WAITING` ma `S = 0`.
 
 WHY: skrypt stanu policzył `summary` **przed** dispatchem. Bez tej korekty tick, który wystartował ostatnie wolne tickety, poda `remaining=0 running=0`, a pętla (`sprint_run.sh`, hub MON-169) uzna sprint za wykonany i zostawi świeże sesje bez nadzoru.
 
@@ -518,7 +555,7 @@ Format samej linii jest bez zmian: to kontrakt z `sprint_run.sh`, który po niej
 
 ## Ważne zasady
 
-1. **Nigdy nie pracujesz nad ticketem sam.** Żadnej edycji plików, żadnego commita, żadnego lintu. Widzisz coś do naprawienia w kodzie - to materiał na ticket, nie na Twoją turę.
+1. **Nigdy nie pracujesz nad ticketem sam.** Żadnej edycji plików, żadnego commita, żadnego lintu. Widzisz coś do naprawienia w kodzie - to materiał na ticket, nie na Twoją turę. Jedyna zmiana w repozytorium, którą robi tick, to fast-forward głównego checkoutu przez `sprint_run_tick.py sync-base` w KROK 4.
 2. **Tick jest idempotentny.** Przed startem sesji sprawdzasz, czy taka nazwa już nie żyje; przed auto-wznowieniem sprawdzasz komentarze. Dwa ticki pod rząd nie mogą zdublować sesji ani komentarza.
 3. **Nie kasujesz sesji bez werdyktu `done`.** `claude rm` (backend `claude`) i `sprint_run_tick.py stop` (backend `codex`) tylko po tym, jak ticket jest w `in_review` albo `done`. Sesja `waiting` czeka na człowieka i musi go doczekać.
 4. **Nie zmieniasz statusów ticketów.** Statusy przestawia `/monolynx:work` w swojej sesji. Ty tylko czytasz je i komentujesz.

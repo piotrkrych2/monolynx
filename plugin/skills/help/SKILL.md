@@ -30,8 +30,8 @@ Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runti
 
 ## Planowanie
 
-- `/monolynx:ticket-create [krotki opis zadania]` - ticket z kontekstem z wiki, kodu i grafu (cel, zakres, nie ruszać, odwracalność, kryteria)
-- `/monolynx:ticket-review [ticket-id lub klucz np. MNX-12]` - recenzja formy i zgodności z wiki oraz kodem; powtarzaj, aż raport pokaże same OK
+- `/monolynx:ticket-create [krotki opis zadania]` - ticket z kontekstem z wiki, kodu i grafu (cel, zakres, pliki dotykane, nie ruszać, odwracalność, kryteria)
+- `/monolynx:ticket-review [ticket-id lub klucz np. MNX-12 | sprint]` - recenzja formy i zgodności z wiki oraz kodem; powtarzaj, aż raport pokaże same OK; `sprint` porównuje pliki dotykane ticketów `todo` i proponuje blokery
 - `/monolynx:brief [goly opis zadania, np. "napraw build na CI"]` - kontrakt pracy bez ticketu (gotowe / nie ruszać / stop przed), jawna akceptacja = start
 
 ## Praca
@@ -46,7 +46,7 @@ Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runti
 
 ## Integracja
 
-- `/monolynx:mr-queue [!iid | #pr | URL ...]` - kolejka merge MR/PR: jeden tick, jedno działanie (CI -> konflikt -> approve -> merge)
+- `/monolynx:mr-queue [!iid | #pr | URL ...]` - kolejka merge MR/PR: jeden tick, jedno działanie (konflikt -> CI -> approve -> merge)
 - `/monolynx:wiki-sync-merge [ticket-id lub lista ticket-id, np. MON-75 MON-76]` - po merge do `main`: INGEST wiedzy z ticketów do wiki
 
 ## Sprint

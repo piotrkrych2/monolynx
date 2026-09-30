@@ -19,6 +19,7 @@ SCRIPT_RESOURCES = {
     "next": ("sprint_run_state.py", "mr_queue_state.py"),
     "sprint-run": ("sprint_run_state.py", "sprint_run.sh", "sprint_run_tick.py", "sprint_run_backend.py"),
     "mr-queue": ("mr_queue_state.py",),
+    "ticket-review": ("ticket_overlap.py",),
     "mutation-check": ("mutation_report.py",),
     "create-mutation-ci-script": ("mutation_report.py", "mutation_baseline.py"),
 }

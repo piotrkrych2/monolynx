@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "command": "glab api projects/piotrkrych%2Fmonolynx/pipelines?sha=6ed33787db3c245b5c197b291642947a61591fb5&ref=sprint/cli-monolynx",
+    "tool_version": "1.100.0",
+    "captured": "2026-09-29",
+    "note": "Pipeline commita merge (MON-220) na branchu integracyjnym sprintu: ref=sprint/cli-monolynx, status=success, source=push."
+  },
+  "output": [
+    {
+      "id": 2894038602,
+      "iid": 353,
+      "project_id": 79777900,
+      "sha": "6ed33787db3c245b5c197b291642947a61591fb5",
+      "ref": "sprint/cli-monolynx",
+      "status": "success",
+      "source": "push",
+      "created_at": "2026-09-29T15:51:43.474Z",
+      "updated_at": "2026-09-29T17:02:35.265Z",
+      "web_url": "https://gitlab.com/piotrkrych/monolynx/-/pipelines/2894038602",
+      "name": null
+    }
+  ]
+}

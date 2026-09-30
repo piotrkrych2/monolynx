@@ -1,0 +1,147 @@
+{
+  "_meta": {
+    "command": "curl -s https://pypi.org/pypi/platformdirs/4.3.6/json",
+    "tool_version": "PyPI JSON API (schema wersja 1, endpoint per-wersja)",
+    "captured": "2026-09-28",
+    "note": "monolynx-cli nie jest jeszcze opublikowany na PyPI (404), wiec przechwycono realna odpowiedz endpointu wersji innej paczki z tym samym schematem: platformdirs 4.3.6 - jedna z zaleznosci CLI, ma dokladnie 2 wpisy w \"urls\" (bdist_wheel + sdist), wiec pozwala odrozniic wybor sdista od wheela. Klucz info.description (9673 znakow, opis PyPI w Markdown/reST) usuniety - nieuzywany przez skrypt (parser czyta tylko info.version i urls[].packagetype/url/digests.sha256); wszystkie pozostale wartosci (w tym info.version, oba wpisy urls z digests) sa bajt w bajt takie jak w przechwyconej odpowiedzi."
+  },
+  "info": {
+    "author": null,
+    "author_email": null,
+    "bugtrack_url": null,
+    "classifiers": [
+      "Development Status :: 5 - Production/Stable",
+      "Intended Audience :: Developers",
+      "License :: OSI Approved :: MIT License",
+      "Operating System :: OS Independent",
+      "Programming Language :: Python",
+      "Programming Language :: Python :: 3 :: Only",
+      "Programming Language :: Python :: 3.10",
+      "Programming Language :: Python :: 3.11",
+      "Programming Language :: Python :: 3.12",
+      "Programming Language :: Python :: 3.13",
+      "Programming Language :: Python :: 3.8",
+      "Programming Language :: Python :: 3.9",
+      "Programming Language :: Python :: Implementation :: CPython",
+      "Programming Language :: Python :: Implementation :: PyPy",
+      "Topic :: Software Development :: Libraries :: Python Modules"
+    ],
+    "description_content_type": "text/x-rst",
+    "docs_url": null,
+    "download_url": null,
+    "downloads": {
+      "last_day": -1,
+      "last_month": -1,
+      "last_week": -1
+    },
+    "dynamic": null,
+    "home_page": null,
+    "keywords": "appdirs, application, cache, directory, log, user",
+    "license": null,
+    "license_expression": null,
+    "license_files": null,
+    "maintainer": null,
+    "maintainer_email": "Bernát Gábor <gaborjbernat@gmail.com>, Julian Berman <Julian@GrayVines.com>, Ofek Lev <oss@ofek.dev>, Ronny Pfannschmidt <opensource@ronnypfannschmidt.de>",
+    "name": "platformdirs",
+    "package_url": "https://pypi.org/project/platformdirs/",
+    "platform": null,
+    "project_url": "https://pypi.org/project/platformdirs/",
+    "project_urls": {
+      "Changelog": "https://github.com/tox-dev/platformdirs/releases",
+      "Documentation": "https://platformdirs.readthedocs.io",
+      "Homepage": "https://github.com/tox-dev/platformdirs",
+      "Source": "https://github.com/tox-dev/platformdirs",
+      "Tracker": "https://github.com/tox-dev/platformdirs/issues"
+    },
+    "provides_extra": [
+      "docs",
+      "test",
+      "type"
+    ],
+    "release_url": "https://pypi.org/project/platformdirs/4.3.6/",
+    "requires_dist": [
+      "furo>=2024.8.6; extra == \"docs\"",
+      "proselint>=0.14; extra == \"docs\"",
+      "sphinx-autodoc-typehints>=2.4; extra == \"docs\"",
+      "sphinx>=8.0.2; extra == \"docs\"",
+      "appdirs==1.4.4; extra == \"test\"",
+      "covdefaults>=2.3; extra == \"test\"",
+      "pytest-cov>=5; extra == \"test\"",
+      "pytest-mock>=3.14; extra == \"test\"",
+      "pytest>=8.3.2; extra == \"test\"",
+      "mypy>=1.11.2; extra == \"type\""
+    ],
+    "requires_python": ">=3.8",
+    "summary": "A small Python package for determining appropriate platform-specific dirs, e.g. a `user data dir`.",
+    "version": "4.3.6",
+    "yanked": false,
+    "yanked_reason": null
+  },
+  "last_serial": 41537342,
+  "ownership": {
+    "organization": "tox",
+    "roles": [
+      {
+        "role": "Owner",
+        "user": "Julian"
+      },
+      {
+        "role": "Owner",
+        "user": "Ofekmeister"
+      },
+      {
+        "role": "Owner",
+        "user": "ronny"
+      }
+    ]
+  },
+  "urls": [
+    {
+      "comment_text": "",
+      "core-metadata": {
+        "sha256": "d3ce46811168e54d6773d351f1eeae9c458ac548c332c8121c3c9a0844ec090e"
+      },
+      "digests": {
+        "blake2b_256": "3ca6bc1012356d8ece4d66dd75c4b9fc6c1f6650ddd5991e421177d9f8f671be",
+        "md5": "af541db972a1daa6e5be0ffd576e63b8",
+        "sha256": "73e575e1408ab8103900836b97580d5307456908a03e92031bab39e4554cc3fb"
+      },
+      "downloads": -1,
+      "filename": "platformdirs-4.3.6-py3-none-any.whl",
+      "has_sig": false,
+      "md5_digest": "af541db972a1daa6e5be0ffd576e63b8",
+      "packagetype": "bdist_wheel",
+      "python_version": "py3",
+      "requires_python": ">=3.8",
+      "size": 18439,
+      "upload_time": "2024-09-17T19:06:49",
+      "upload_time_iso_8601": "2024-09-17T19:06:49.212928Z",
+      "url": "https://files.pythonhosted.org/packages/3c/a6/bc1012356d8ece4d66dd75c4b9fc6c1f6650ddd5991e421177d9f8f671be/platformdirs-4.3.6-py3-none-any.whl",
+      "yanked": false,
+      "yanked_reason": null
+    },
+    {
+      "comment_text": "",
+      "core-metadata": false,
+      "digests": {
+        "blake2b_256": "13fc128cc9cb8f03208bdbf93d3aa862e16d376844a14f9a0ce5cf4507372de4",
+        "md5": "9f63e7b2b462ee13ee2bf857f2839926",
+        "sha256": "357fb2acbc885b0419afd3ce3ed34564c13c9b95c89360cd9563f73aa5e2b907"
+      },
+      "downloads": -1,
+      "filename": "platformdirs-4.3.6.tar.gz",
+      "has_sig": false,
+      "md5_digest": "9f63e7b2b462ee13ee2bf857f2839926",
+      "packagetype": "sdist",
+      "python_version": "source",
+      "requires_python": ">=3.8",
+      "size": 21302,
+      "upload_time": "2024-09-17T19:06:50",
+      "upload_time_iso_8601": "2024-09-17T19:06:50.688807Z",
+      "url": "https://files.pythonhosted.org/packages/13/fc/128cc9cb8f03208bdbf93d3aa862e16d376844a14f9a0ce5cf4507372de4/platformdirs-4.3.6.tar.gz",
+      "yanked": false,
+      "yanked_reason": null
+    }
+  ],
+  "vulnerabilities": []
+}

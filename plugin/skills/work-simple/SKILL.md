@@ -911,7 +911,7 @@ Zmierz czas: `date +%s` start + end.
 mcp__monolynx__add_comment(
   project_slug='<PROJECT_SLUG>',
   ticket_id='[UUID]',
-  content='**Krytyk - Review**\n\nOcena: [X]/100\nWerdykt: [APPROVED | NEEDS WORK]\n\nOdjecia:\n- [-N (plik:linia - wada) lub brak]\n\nREGULA: [zdanie przy NEEDS WORK, inaczej brak]\n\nCo sprawdzono:\n- [1-3 punkty]\n\nCzas review: [Y] min'
+  content='**Krytyk - Review**\n\nOcena: [X]/100\nWerdykt: [APPROVED | NEEDS WORK]\n\nOdjecia:\n- [-N (plik:linia - wada[; BLOKADA-ZEWNĘTRZNA: powod]) lub brak]\n\nREGULA: [zdanie przy NEEDS WORK z odjeciem bez blokady, inaczej brak]\n\nCo sprawdzono:\n- [1-3 punkty]\n\nCzas review: [Y] min'
 )
 
 mcp__monolynx__log_time(
@@ -938,6 +938,40 @@ Format zwrotu do TM: `NEEDS WORK [score] | REGULA: [zdanie] | UWAGI: [lista]`."
 ### 3.5.2. Reakcja na werdykt
 
 **APPROVED (>=82)** -> przejdz do FAZY 4.
+
+**NEEDS WORK (<82) z samymi blokadami zewnetrznymi** -> sprawdz to PRZED
+iteracja ponizej:
+
+<!-- shared:blokada-zewnetrzna -->
+**Same blokady zewnetrzne po review krytyka.** Dotyczy agenta ponizej progu,
+ktorego KAZDE odjecie w ostatnim review ma znacznik `BLOKADA-ZEWNĘTRZNA`
+(definicja w `review-rubric.md`). Wady w zasiegu agentow sa juz poprawione,
+wiec kolejna iteracja nie zmieni wyniku. Odjecia mieszane (blokady i wady
+w zasiegu) -> zwykla iteracja poprawkowa, tylko dla wad w zasiegu; ten blok
+stosujesz dopiero, gdy zostaja same blokady.
+
+Najpierw zweryfikuj kazda blokade: powod musi wskazywac zrodlo poza repo
+i narzedziami agentow (srodowisko, uprawnienia, decyzja czlowieka). Blokada
+watpliwa albo bez powodu -> traktujesz ja jak zwykle odjecie.
+
+- Nie zlecasz kolejnej iteracji; blokada nie zuzywa limitu poprawek. Score
+  zostaje ponizej progu, wiec nie ma auto-commita, a ticket nie przechodzi
+  do `in_review`.
+- Dodaj komentarz do ticketu (`add_comment`):
+  `**BLOKADA ZEWNĘTRZNA**\n\nAgent: [typ] ([score]/100)\nBlokady:\n- [-N] [plik:linia] [wada] - powod: [zdanie]\n\nOpcje decyzji:\n(a) usun blokade i uruchom skill ponownie dla ticketu - wznowienie podejmie prace od pierwszego niedomknietego etapu\n(b) zaakceptuj mimo score ponizej progu - zamkniecie na zadanie uzytkownika\n(c) zmien zakres ticketu albo wydziel blokade do nowego ticketu\n\nSugestia: etykieta needs-local (obsluge w dyspozytorze sprint-run wprowadza osobny ticket; dzis informacyjna).`
+- `MONOLYNX_SPRINT_RUN=1` -> po komentarzu zatrzymaj sie wg reguly trybu
+  sesji w tle z WAZNYCH ZASAD (komentarz SPRINT-RUN STOP z "Co odblokuje:
+  decyzja z komentarza BLOKADA ZEWNĘTRZNA", domkniecie instrumentacji),
+  ostatnia linia odpowiedzi: `SPRINT-RUN STOP: blokada zewnetrzna - <krotki powod>`.
+  Nie wybierasz wariantu za uzytkownika.
+- Tryb interaktywny (`MONOLYNX_SPRINT_RUN=0`) -> po komentarzu od razu zadaj
+  uzytkownikowi to samo pytanie z opcjami (a)/(b)/(c), bez dodatkowej rundy.
+  (a) blokada usunieta w tej sesji -> dalej zwykla iteracja poprawkowa
+  (licznik poprawek obowiazuje); (b) -> zamkniecie z adnotacja "zamkniete ze
+  score ponizej progu na zadanie uzytkownika", bez auto-commita; (c) ->
+  konczysz prace z uczciwym raportem stanu i domykasz instrumentacje jak
+  przy przerwaniu pracy.
+<!-- /shared:blokada-zewnetrzna -->
 
 **NEEDS WORK (<82)** - iteracja poprawkowa:
 
@@ -1192,6 +1226,6 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 18. **Prawa decyzyjne ustalane RAZ, na starcie** (2.2) - kontrakt autonomii i STOP CONDITIONS zastepuja sterowanie przez przerywanie. Przerwanie usera w trakcie = kontrakt byl niekompletny; brakujaca pozycje odnotuj w 4.8. Przy `SPRINT_RUN=1` patrz regula 21.
 19. **Tryb defektu** (0.2) - research kodu obowiazkowy, test regresyjny przed fixem, krytyk ocenia nazwany mechanizm, nie znikniecie symptomu.
 20. **Ostatni przebieg lint+test jest pelny** (3.5.3) - iteracja moze testowac obszar, zamkniecie testuje calosc.
-21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, niezamkniety bloker ticketu (0.25, powod `czeka na merge <KEY>`, bez zmiany statusu), praca na `main`/`master`, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
+21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, niezamkniety bloker ticketu (0.25, powod `czeka na merge <KEY>`, bez zmiany statusu), praca na `main`/`master`, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, same odjecia `BLOKADA-ZEWNĘTRZNA` po review krytyka (3.5.2, blok `blokada-zewnetrzna`, powod `blokada zewnetrzna - <krotki powod>`), `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
 22. **Trwale reguly projektowe zyja w repozytorium**, nie w prywatnej pamieci klienta. Dwie lokalizacje, obie liczone od KORZENIA REPOZYTORIUM: `.claude/rules/*.md` (reguly projektu; krytyk czyta je na starcie review, naruszenie to -25) i `.claude/agent-memory/<typ-agenta>/MEMORY.md` (reguly z review per rola, zapisywane w 3.5.2). To zwykle pliki Markdown w repo: czyta je KAZDY klient wykonujacy te instrukcje, wersjonuje je git i widzi je kolejny przebieg niezaleznie od tego, w czym go uruchomiono. Nie zakladaj prywatnego formatu pamieci zadnego klienta i nie migruj tych plikow do niego. Nazwa katalogu `.claude/` jest HISTORYCZNA - katalog jest wspolny dla klientow, nie zastrzezony dla jednego. Kazdy zapis jest ADDYTYWNY: dopisujesz do sekcji, nigdy nie nadpisujesz pliku.
 23. **Fallback solo nie jest niezaleznym review** (2.1) - stosujesz go wylacznie przy faktycznym braku delegacji stwierdzonym po dostepnych narzedziach, nigdy po nazwie klienta, i zawsze z jawna adnotacja o ograniczeniu niezaleznosci w komentarzu planu, komentarzu podsumowujacym i w 4.8.

@@ -15,6 +15,7 @@ _ICON_REPORTS = '<svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentC
 _ICON_SETTLEMENTS = '<svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V12Zm-12 0h.008v.008H6V12Z"/></svg>'
 _ICON_WORK_PLAN = '<svg class="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"/></svg>'
 _ICON_PIPELINES = '<svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg>'
+_ICON_CLI = '<svg class="w-6 h-6 text-teal-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>'
 
 
 def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
@@ -65,6 +66,12 @@ def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
             "name": "Pipelines",
             "short": "AI agent work observability" if lang == "en" else "Obserwowalność pracy agentów AI",
         },
+        {
+            "slug": "cli",
+            "color": "teal",
+            "name": "CLI",
+            "short": "Work from the terminal" if lang == "en" else "Praca z terminala",
+        },
     ]
     return [m for m in all_modules if m["slug"] != exclude]
 
@@ -106,6 +113,9 @@ def feature_markdown(slug: str, lang: str) -> str | None:
         lines.append("")
         if f.get("ai_intro"):
             lines.append(f["ai_intro"])
+            lines.append("")
+        if f.get("tools_label") and f.get("mcp_tools"):
+            lines.append(f"**{f['tools_label']}:**")
             lines.append("")
         for tool in f.get("mcp_tools", []):
             lines.append(f"- `{tool['name']}`: {tool['desc']}")
@@ -1770,6 +1780,250 @@ def _feature_pipelines(lang: str) -> dict[str, Any]:
     }
 
 
+def _feature_cli(lang: str) -> dict[str, Any]:
+    if lang == "pl":
+        return {
+            "title": "CLI - Monolynx z terminala",
+            "screenshot": None,
+            "screenshot_2": None,
+            "color": "teal",
+            "icon": _ICON_CLI,
+            "badge": "Command Line",
+            "headline": "Cała platforma z terminala - bez klikania w UI",
+            "description": (
+                "Klient wiersza poleceń monolynx (alias mnx) daje dostęp do projektów, ticketów, sprintów i wiki "
+                "prosto z terminala. Komendy wykonują te same operacje co narzędzia MCP, a wyjście w formacie JSON "
+                "jest gotowe do potoku - wystarczy jq, żeby wpiąć Monolynx w skrypty, hooki Gita i zadania CI."
+            ),
+            "screenshot_hint": "Tabela ticketów w terminalu: monolynx ticket list",
+            "screenshot_hint_2": "Potok z jq: monolynx -o json ticket list | jq",
+            "features": [
+                {
+                    "title": "Instalacja jedną komendą",
+                    "desc": "pipx install monolynx-cli, uv tool install monolynx-cli albo pip install monolynx-cli. Na macOS i Linuksie także przez Homebrew z tapu monolynx/tap. Wymagany Python 3.10+.",
+                },
+                {
+                    "title": "Cztery formaty wyjścia",
+                    "desc": "Przełącznik -o wybiera table, json, yaml albo csv. Poza terminalem (potok, plik) CLI samo przełącza się na JSON, więc nie trzeba pamiętać o fladze.",
+                },
+                {
+                    "title": "Potoki z jq",
+                    "desc": "Listy ticketów zwracają kopertę paginacji {items, page, per_page, total, total_pages}, np. monolynx -o json ticket list | jq '.items[] | .key'. Dane idą na stdout, stopka strony na stderr.",
+                },
+                {
+                    "title": "Profile dla wielu instancji",
+                    "desc": "Plik config.toml przechowuje dowolną liczbę profili (endpoint, projekt, token). Przełączasz je przez --profile, MONOLYNX_PROFILE albo config set general.active_profile.",
+                },
+                {
+                    "title": "Kody wyjścia dla CI",
+                    "desc": "0 sukces, 1 błąd API, 2 błąd użycia lub walidacji, 3 błąd autoryzacji, 4 błąd sieci. Skrypt reaguje na kod zamiast parsować komunikaty.",
+                },
+                {
+                    "title": "Logowanie w przeglądarce lub tokenem",
+                    "desc": "monolynx auth login otwiera przeglądarkę i loguje przez OAuth. Na runnerze CI albo przez SSH użyj monolynx auth login --token osk_... lub zmiennej MONOLYNX_TOKEN.",
+                },
+                {
+                    "title": "Alias mnx i parytet z MCP",
+                    "desc": "Pakiet instaluje dwie równoważne komendy: monolynx i mnx. Grupy project, member, ticket, sprint i wiki pokrywają te same operacje co narzędzia MCP, bo obie strony korzystają z jednej warstwy serwisów.",
+                },
+            ],
+            "steps": [
+                {
+                    "title": "Zainstaluj CLI",
+                    "desc": "pipx install monolynx-cli, uv tool install monolynx-cli albo pip install monolynx-cli. Homebrew: brew install monolynx/tap/monolynx, albo najpierw brew tap monolynx/tap, a potem brew install monolynx.",
+                },
+                {
+                    "title": "Zaloguj się",
+                    "desc": "monolynx auth login otwiera przeglądarkę i loguje przez OAuth. Bez przeglądarki: monolynx auth login --token osk_..., z tokenem wygenerowanym w profilu.",
+                },
+                {
+                    "title": "Zobacz swoje projekty",
+                    "desc": "monolynx project list wypisuje projekty, do których masz dostęp. Domyślny projekt ustawisz przez monolynx config set profile.default.project <slug>.",
+                },
+                {
+                    "title": "Pracuj na ticketach",
+                    "desc": "monolynx --project <slug> ticket list pokazuje tickety projektu, a ticket create, ticket update i ticket comment add zmieniają ich stan bez otwierania dashboardu.",
+                },
+                {
+                    "title": "Wepnij w skrypt lub potok",
+                    "desc": "Wyjście JSON przekaż do jq, a kody wyjścia do instrukcji case. Tak zbudujesz hook Gita, zadanie CI albo raport w cronie.",
+                },
+            ],
+            "ai_intro": "CLI korzysta z REST API i tej samej warstwy serwisów co narzędzia MCP, więc agent AI i człowiek w terminalu wykonują te same operacje na tych samych danych. Poniżej reprezentatywny wybór komend z każdej grupy.",
+            "tools_label": "Dostępne komendy",
+            "mcp_tools": [
+                {"name": "monolynx project list", "desc": "Lista projektów, do których masz dostęp."},
+                {"name": "monolynx project get", "desc": "Szczegóły projektu: rola, liczba członków i ticketów, aktywny sprint."},
+                {"name": "monolynx project summary", "desc": "Podsumowanie projektu: błędy, monitory, uptime, aktywny sprint, backlog."},
+                {"name": "monolynx member list", "desc": "Lista członków projektu."},
+                {"name": "monolynx member invite", "desc": "Zaproś osobę do projektu z rolą member lub admin."},
+                {"name": "monolynx ticket list", "desc": "Lista ticketów projektu z filtrami statusu, priorytetu, sprintu i terminu."},
+                {"name": "monolynx ticket get", "desc": "Szczegóły ticketu po UUID albo kluczu, np. MON-42."},
+                {"name": "monolynx ticket create", "desc": "Utwórz ticket z opisem, priorytetem, story points i kryteriami akceptacji."},
+                {"name": "monolynx ticket update", "desc": "Zmień status, priorytet, opis lub przypisanie ticketu - wysyłane są tylko podane pola."},
+                {"name": "monolynx ticket search", "desc": "Szukaj ticketów po frazie i filtrach."},
+                {"name": "monolynx ticket comment add", "desc": "Dodaj komentarz markdown do ticketu; treść może iść ze stdin."},
+                {"name": "monolynx ticket ac list", "desc": "Lista kryteriów akceptacji ticketu."},
+                {"name": "monolynx sprint list", "desc": "Lista sprintów projektu, opcjonalnie filtrowana statusem."},
+                {"name": "monolynx sprint start", "desc": "Uruchom sprint (w danym momencie aktywny może być tylko jeden)."},
+                {"name": "monolynx sprint board", "desc": "Tablica Kanban aktywnego sprintu."},
+                {"name": "monolynx sprint burndown", "desc": "Burndown sprintu (domyślnie aktywnego)."},
+                {"name": "monolynx wiki list", "desc": "Lista stron wiki projektu, opcjonalnie jako drzewo."},
+                {"name": "monolynx wiki get", "desc": "Pokaż stronę wiki z treścią albo tylko surowy markdown."},
+                {"name": "monolynx wiki create", "desc": "Utwórz stronę wiki z treścią z opcji, pliku lub stdin."},
+                {"name": "monolynx wiki edit", "desc": "Edytuj treść strony w $EDITOR; zapis tylko po zmianie."},
+                {"name": "monolynx wiki search", "desc": "Semantyczne wyszukiwanie po stronach wiki."},
+            ],
+            "tech_details": [
+                {
+                    "label": "Framework",
+                    "value": "Typer z tabelami renderowanymi przez Rich. Teksty pomocy i komunikaty są po polsku.",
+                },
+                {
+                    "label": "Pakiet",
+                    "value": "monolynx-cli w PyPI, dwie binarki: monolynx i mnx (ten sam punkt wejścia). Python 3.10+.",
+                },
+                {
+                    "label": "Komunikacja",
+                    "value": "Wyłącznie przez REST API v2 (/api/v2). Uwierzytelnianie OAuth 2.1 z PKCE albo token API osk_.",
+                },
+                {
+                    "label": "Wspólna warstwa serwisów",
+                    "value": "Logika biznesowa żyje w src/monolynx/services/ i jest współdzielona przez narzędzia MCP oraz endpointy API v2, z których korzysta CLI.",
+                },
+                {
+                    "label": "Konfiguracja",
+                    "value": "Plik config.toml w katalogu konfiguracyjnym użytkownika (uprawnienia 0600) z profilami. Kolejność: opcja, zmienna środowiskowa, plik, wartość domyślna.",
+                },
+                {
+                    "label": "Ponowienia i limity",
+                    "value": "GET i DELETE ponawiane przy 429 i 5xx, POST i PATCH tylko przy 429. Maksymalnie 4 próby, timeout żądania ustawiasz przez --timeout.",
+                },
+            ],
+            "other_modules": _other_modules("cli", lang),
+        }
+    return {
+        "title": "CLI - Monolynx from the terminal",
+        "screenshot": None,
+        "screenshot_2": None,
+        "color": "teal",
+        "icon": _ICON_CLI,
+        "badge": "Command Line",
+        "headline": "The whole platform from your terminal - no clicking through the UI",
+        "description": (
+            "The monolynx command-line client (alias mnx) gives you projects, tickets, sprints and wiki "
+            "straight from the terminal. Its commands perform the same operations as the MCP tools, and the JSON "
+            "output is pipeline-ready - combine it with jq and Monolynx plugs into scripts, Git hooks and CI jobs."
+        ),
+        "screenshot_hint": "Ticket table in the terminal: monolynx ticket list",
+        "screenshot_hint_2": "Pipeline with jq: monolynx -o json ticket list | jq",
+        "features": [
+            {
+                "title": "One-command install",
+                "desc": "pipx install monolynx-cli, uv tool install monolynx-cli or pip install monolynx-cli. On macOS and Linux also through Homebrew from the monolynx/tap tap. Requires Python 3.10+.",
+            },
+            {
+                "title": "Four output formats",
+                "desc": "The -o switch picks table, json, yaml or csv. Outside a terminal (a pipe, a file) the CLI switches to JSON on its own, so you never have to remember the flag.",
+            },
+            {
+                "title": "Pipelines with jq",
+                "desc": "Ticket lists return a pagination envelope {items, page, per_page, total, total_pages}, e.g. monolynx -o json ticket list | jq '.items[] | .key'. Data goes to stdout, the page footer to stderr.",
+            },
+            {
+                "title": "Profiles for multiple instances",
+                "desc": "The config.toml file holds any number of profiles (endpoint, project, token). Switch with --profile, MONOLYNX_PROFILE or config set general.active_profile.",
+            },
+            {
+                "title": "Exit codes for CI",
+                "desc": "0 success, 1 API error, 2 usage or validation error, 3 authentication error, 4 network error. A script reacts to the code instead of parsing messages.",
+            },
+            {
+                "title": "Sign in with a browser or a token",
+                "desc": "monolynx auth login opens your browser and signs you in with OAuth. On a CI runner or over SSH use monolynx auth login --token osk_... or the MONOLYNX_TOKEN variable.",
+            },
+            {
+                "title": "The mnx alias and MCP parity",
+                "desc": "The package installs two equivalent commands: monolynx and mnx. The project, member, ticket, sprint and wiki groups cover the same operations as the MCP tools, because both sides use one shared service layer.",
+            },
+        ],
+        "steps": [
+            {
+                "title": "Install the CLI",
+                "desc": "pipx install monolynx-cli, uv tool install monolynx-cli or pip install monolynx-cli. Homebrew: brew install monolynx/tap/monolynx, or brew tap monolynx/tap first and then brew install monolynx.",
+            },
+            {
+                "title": "Sign in",
+                "desc": "monolynx auth login opens your browser and signs you in with OAuth. Without a browser: monolynx auth login --token osk_..., using a token generated in your profile.",
+            },
+            {
+                "title": "See your projects",
+                "desc": "monolynx project list prints the projects you can access. Set a default project with monolynx config set profile.default.project <slug>.",
+            },
+            {
+                "title": "Work with tickets",
+                "desc": "monolynx --project <slug> ticket list shows the project's tickets, while ticket create, ticket update and ticket comment add change them without opening the dashboard.",
+            },
+            {
+                "title": "Wire it into a script or pipeline",
+                "desc": "Feed the JSON output to jq and the exit codes to a case statement. That is how you build a Git hook, a CI job or a cron report.",
+            },
+        ],
+        "ai_intro": "The CLI uses the REST API and the same service layer as the MCP tools, so an AI agent and a human in the terminal perform the same operations on the same data. Below is a representative selection of commands from every group.",
+        "tools_label": "Available commands",
+        "mcp_tools": [
+            {"name": "monolynx project list", "desc": "List the projects you have access to."},
+            {"name": "monolynx project get", "desc": "Project details: your role, member and ticket counts, active sprint."},
+            {"name": "monolynx project summary", "desc": "Project summary: errors, monitors, uptime, active sprint, backlog."},
+            {"name": "monolynx member list", "desc": "List project members."},
+            {"name": "monolynx member invite", "desc": "Invite a person to the project with the member or admin role."},
+            {"name": "monolynx ticket list", "desc": "List project tickets with status, priority, sprint and due date filters."},
+            {"name": "monolynx ticket get", "desc": "Ticket details by UUID or key, e.g. MON-42."},
+            {"name": "monolynx ticket create", "desc": "Create a ticket with description, priority, story points and acceptance criteria."},
+            {"name": "monolynx ticket update", "desc": "Change a ticket's status, priority or assignee - only the given fields are sent."},
+            {"name": "monolynx ticket search", "desc": "Search tickets by phrase and filters."},
+            {"name": "monolynx ticket comment add", "desc": "Post a markdown comment on a ticket; the text can come from stdin."},
+            {"name": "monolynx ticket ac list", "desc": "List a ticket's acceptance criteria."},
+            {"name": "monolynx sprint list", "desc": "List project sprints, optionally filtered by status."},
+            {"name": "monolynx sprint start", "desc": "Start a sprint (only one sprint can be active at a time)."},
+            {"name": "monolynx sprint board", "desc": "Kanban board of the active sprint."},
+            {"name": "monolynx sprint burndown", "desc": "Sprint burndown (the active sprint by default)."},
+            {"name": "monolynx wiki list", "desc": "List the project's wiki pages, optionally as a tree."},
+            {"name": "monolynx wiki get", "desc": "Show a wiki page with its content, or just the raw markdown."},
+            {"name": "monolynx wiki create", "desc": "Create a wiki page with content from an option, a file or stdin."},
+            {"name": "monolynx wiki edit", "desc": "Edit a page's content in $EDITOR; saves only when the content changed."},
+            {"name": "monolynx wiki search", "desc": "Semantic search over wiki pages."},
+        ],
+        "tech_details": [
+            {
+                "label": "Framework",
+                "value": "Typer with Rich table rendering. Help texts and messages are in Polish.",
+            },
+            {
+                "label": "Package",
+                "value": "monolynx-cli on PyPI, two binaries: monolynx and mnx (the same entry point). Python 3.10+.",
+            },
+            {
+                "label": "Communication",
+                "value": "Exclusively through the REST API v2 (/api/v2). Authentication with OAuth 2.1 and PKCE or an osk_ API token.",
+            },
+            {
+                "label": "Shared service layer",
+                "value": "Business logic lives in src/monolynx/services/ and is shared by the MCP tools and the API v2 endpoints the CLI calls.",
+            },
+            {
+                "label": "Configuration",
+                "value": "A config.toml file in the per-user config directory (permissions 0600) with profiles. Precedence: option, environment variable, file, default.",
+            },
+            {
+                "label": "Retries and limits",
+                "value": "GET and DELETE are retried on 429 and 5xx, POST and PATCH only on 429. At most 4 attempts; set the request timeout with --timeout.",
+            },
+        ],
+        "other_modules": _other_modules("cli", lang),
+    }
+
+
 def feature_slugs() -> list[str]:
     """Public list of feature-page slugs (used by the sitemap)."""
     return list(_FEATURES)
@@ -1786,4 +2040,5 @@ _FEATURES: dict[str, Any] = {
     "settlements": _feature_settlements,
     "work_plan": _feature_work_plan,
     "pipelines": _feature_pipelines,
+    "cli": _feature_cli,
 }
