@@ -4,12 +4,78 @@ import pytest
 
 from monolynx.features import (
     _FEATURES,
+    _ICON_CLI,
     _other_modules,
     feature_markdown,
     get_feature_content,
 )
+from monolynx.main import _LANDING_I18N
 
 ALL_SLUGS = list(_FEATURES.keys())
+
+# Zrodlo: cli/src/monolynx_cli/commands/*.py. Wpis mcp_tools modulu CLI musi byc jedna z tych komend.
+ALLOWED_CLI_COMMANDS = {
+    "monolynx project list",
+    "monolynx project get",
+    "monolynx project create",
+    "monolynx project update",
+    "monolynx project delete",
+    "monolynx project summary",
+    "monolynx member list",
+    "monolynx member invite",
+    "monolynx member remove",
+    "monolynx ticket list",
+    "monolynx ticket search",
+    "monolynx ticket get",
+    "monolynx ticket create",
+    "monolynx ticket update",
+    "monolynx ticket delete",
+    "monolynx ticket bulk-update",
+    "monolynx ticket comment list",
+    "monolynx ticket comment add",
+    "monolynx ticket label list",
+    "monolynx ticket label create",
+    "monolynx ticket ac list",
+    "monolynx ticket ac add",
+    "monolynx ticket ac update",
+    "monolynx ticket ac delete",
+    "monolynx sprint list",
+    "monolynx sprint get",
+    "monolynx sprint create",
+    "monolynx sprint update",
+    "monolynx sprint start",
+    "monolynx sprint complete",
+    "monolynx sprint board",
+    "monolynx sprint burndown",
+    "monolynx wiki list",
+    "monolynx wiki get",
+    "monolynx wiki create",
+    "monolynx wiki update",
+    "monolynx wiki edit",
+    "monolynx wiki delete",
+    "monolynx wiki search",
+    "monolynx wiki config get",
+    "monolynx wiki config set",
+    "monolynx auth login",
+    "monolynx auth logout",
+    "monolynx auth whoami",
+    "monolynx config get",
+    "monolynx config set",
+    "monolynx config list",
+}
+REQUIRED_CLI_GROUPS = {"project", "member", "ticket", "sprint", "wiki"}
+TOOLS_LABEL = {"pl": "Dostępne komendy", "en": "Available commands"}
+MCP_LABEL = {"pl": "Dostępne narzędzia MCP", "en": "Available MCP tools"}
+
+
+def _all_strings(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [t for v in value.values() for t in _all_strings(v)]
+    if isinstance(value, list | tuple):
+        return [t for v in value for t in _all_strings(v)]
+    return []
 
 
 @pytest.mark.unit
@@ -216,3 +282,254 @@ class TestFeatureHttpEndpoints:
         response = await client.get("/features/scrum", params={"lang": "xx"})
 
         assert response.status_code == 200
+
+
+@pytest.mark.unit
+class TestCliFeatureContent:
+    def test_cli_registered_in_features(self):
+        assert "cli" in _FEATURES
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_builder_returns_complete_content(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        for key in (
+            "title",
+            "color",
+            "icon",
+            "badge",
+            "headline",
+            "description",
+            "features",
+            "steps",
+            "mcp_tools",
+            "tech_details",
+            "tools_label",
+            "other_modules",
+        ):
+            assert content.get(key), key
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_color_is_teal(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        assert content["color"] == "teal"
+
+    def test_icon_uses_teal_class(self):
+        assert "text-teal-400" in _ICON_CLI
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_icon_in_content_is_cli_icon(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        assert content["icon"] == _ICON_CLI
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_tools_label_exact_value(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        assert content["tools_label"] == TOOLS_LABEL[lang]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_every_mcp_tool_is_allowed_cli_command(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        names = [t["name"] for t in content["mcp_tools"]]
+        assert names
+        unknown = [n for n in names if n not in ALLOWED_CLI_COMMANDS]
+        assert unknown == []
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_mcp_tools_cover_all_required_groups(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        groups = {t["name"].split()[1] for t in content["mcp_tools"] if t["name"].startswith("monolynx ")}
+        assert groups >= REQUIRED_CLI_GROUPS
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_text_has_required_facts(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        text = "\n".join(_all_strings(content))
+        for fact in ("mnx", "3.10", "brew install monolynx/tap/monolynx", "brew tap monolynx/tap", ".items[]", "table", "yaml", "csv"):
+            assert fact in text, fact
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_output_flag_is_global_so_it_precedes_the_group_in_every_example(self, lang):
+        """MON-228 B1: `-o` istnieje tylko w root callbacku CLI, `monolynx ticket list -o json` konczy sie
+        bledem 'No such option'. Przyklady musza miec flage przed grupa."""
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        text = "\n".join(_all_strings(content))
+        assert "monolynx -o json ticket list" in text
+        assert "ticket list -o json" not in text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_markdown_shows_output_flag_before_the_group(self, lang):
+        md = feature_markdown("cli", lang)
+
+        assert md is not None
+        assert "monolynx -o json ticket list" in md
+        assert "ticket list -o json" not in md
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_text_has_no_mlx_or_em_dash(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        text = "\n".join(_all_strings(content))
+        assert "mlx" not in text.lower()
+        assert chr(0x2014) not in text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_ai_intro_has_no_command_counter(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        intro = content.get("ai_intro") or ""
+        assert not any(ch.isdigit() for ch in intro)
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_other_modules_of_cli_exclude_cli(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        assert all(m["slug"] != "cli" for m in content["other_modules"])
+
+    @pytest.mark.parametrize("slug", [s for s in ALL_SLUGS if s != "cli"])
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_other_modules_of_every_module_list_cli_teal(self, slug, lang):
+        content = get_feature_content(slug, lang)
+
+        assert content is not None
+        entries = [m for m in content["other_modules"] if m["slug"] == "cli"]
+        assert len(entries) == 1
+        assert entries[0]["name"] == "CLI"
+        assert entries[0]["color"] == "teal"
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_other_modules_helper_includes_cli(self, lang):
+        result = _other_modules("scrum", lang)
+
+        assert any(m["slug"] == "cli" and m["color"] == "teal" and m["name"] == "CLI" for m in result)
+
+    @pytest.mark.parametrize("slug", [s for s in ALL_SLUGS if s != "cli"])
+    def test_other_builders_have_no_tools_label(self, slug):
+        """Fallback: inne moduly nie definiuja tools_label, wiec szablon pokazuje tekst MCP."""
+        content = get_feature_content(slug, "pl")
+
+        assert content is not None
+        assert not content.get("tools_label")
+
+
+@pytest.mark.unit
+class TestCliFeatureMarkdown:
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_markdown_uses_commands_label_not_mcp_label(self, lang):
+        md = feature_markdown("cli", lang)
+
+        assert md is not None
+        assert TOOLS_LABEL[lang] in md
+        assert MCP_LABEL[lang] not in md
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_markdown_lists_commands(self, lang):
+        md = feature_markdown("cli", lang)
+
+        assert md is not None
+        assert "`monolynx ticket list`" in md
+        assert "`monolynx sprint board`" in md
+
+    def test_markdown_of_other_module_has_no_commands_label(self):
+        md = feature_markdown("pipelines", "pl")
+
+        assert md is not None
+        assert TOOLS_LABEL["pl"] not in md
+        assert "`create_pipeline`" in md
+
+
+@pytest.mark.integration
+class TestCliHttpAndLanding:
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_cli_feature_page_returns_200(self, client, monkeypatch, lang):
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        response = await client.get("/features/cli", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_cli_feature_page_shows_output_flag_before_the_group(self, client, monkeypatch, lang):
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        response = await client.get("/features/cli", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert "monolynx -o json ticket list" in response.text
+        assert "ticket list -o json" not in response.text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_cli_feature_page_uses_commands_label(self, client, monkeypatch, lang):
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        response = await client.get("/features/cli", params={"lang": lang})
+
+        assert TOOLS_LABEL[lang] in response.text
+        assert MCP_LABEL[lang] not in response.text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_other_feature_page_keeps_mcp_label(self, client, monkeypatch, lang):
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        response = await client.get("/features/pipelines", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert MCP_LABEL[lang] in response.text
+        assert TOOLS_LABEL[lang] not in response.text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_cli_markdown_endpoint_returns_commands_label(self, client, lang):
+        response = await client.get("/features/cli.md", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/markdown")
+        assert TOOLS_LABEL[lang] in response.text
+        assert MCP_LABEL[lang] not in response.text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_landing_has_cli_tile_with_lang_link(self, client, monkeypatch, lang):
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        response = await client.get("/", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert f"/features/cli?lang={lang}" in response.text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_index_markdown_links_cli(self, client, lang):
+        response = await client.get("/index.md", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert f"[CLI](https://monolynx.com/features/cli.md?lang={lang}): {_LANDING_I18N[lang]['m_cli']}" in response.text
+
+    async def test_llms_txt_links_cli(self, client):
+        response = await client.get("/llms.txt")
+
+        assert response.status_code == 200
+        assert "- [CLI](https://monolynx.com/features/cli?lang=en): " in response.text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_landing_i18n_has_non_empty_m_cli(self, lang):
+        assert _LANDING_I18N[lang]["m_cli"].strip()
+
+    def test_landing_i18n_m_cli_differs_between_languages(self):
+        assert _LANDING_I18N["pl"]["m_cli"] != _LANDING_I18N["en"]["m_cli"]

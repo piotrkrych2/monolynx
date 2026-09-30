@@ -21,11 +21,11 @@ session_state_reason zwraca czytelne ostrzezenie, gdy literal nie byl ani na
 liscie martwych, ani na liscie znanych zywych stanow, zeby taki przypadek byl
 widoczny w raporcie mimo ze werdykt sie nie zmienia.
 
-read_log_tail zdejmuje sekwencje ANSI (kolory, ruch kursora, czyszczenie
-ekranu) i zamienia \r na \n, bo realny render TUI (`claude logs`) nadpisuje
-linie przez \r zamiast dopisywac \n - patrz tests/fixtures/claude/
-logs-tui.2.1.270.txt. Okno n linii to okno n NIEPUSTYCH linii po tym
-przetworzeniu, inaczej puste przerysowania wypychaja sensowna tresc poza okno.
+read_log_tail bierze linie z render_log: minimalnego emulatora ekranu terminala
+(tests/fixtures/claude/logs-tui.2.1.270.txt, logs-spinner-redraw.2.1.284.txt),
+bo `claude logs` to strumien roznicowych przerysowan TUI, nie tekst. Okno n linii
+to okno n NIEPUSTYCH linii po emulacji, inaczej puste przerysowania wypychaja
+sensowna tresc poza okno.
 
 Wejscie jest granica systemu (plik JSON od zewnetrznego skryptu) - niepoprawny
 JSON, brak pliku i niepoprawny ksztalt nie powinny nigdy rzucic tracebacku,
@@ -74,36 +74,161 @@ _DEAD_SESSION_STATES = {"exited", "completed", "failed", "stopped", "killed", "d
 # od "nieznany, ale traktowany jako zywy" w komunikacie ostrzegawczym.
 _KNOWN_LIVE_SESSION_STATES = {"running", "working", "blocked", "waiting", "busy", "idle", "starting"}
 
-# Sekwencje ANSI w realnym renderze TUI `claude logs` (tests/fixtures/claude/
-# logs-tui.2.1.270.txt): CSI (kolory 24-bit, ruch kursora, czyszczenie ekranu),
-# OSC (tytul okna), wybor zestawu znakow, i catch-all na pozostale sekwencje
-# ESC+1-znak. Catch-all NIE gwarantuje zdjecia kazdego mozliwego bajtu \x1b -
-# "." bez re.DOTALL nie dopasuje ESC bezposrednio przed \n ani samotnego ESC
-# na koncu bufora. Nie zmieniamy na re.DOTALL/`\x1b(?:.|$)`, bo w zlapanych
-# fixture'ach renderer zawsze konczy sekwencje sterujaca przed \r/\n (nie ma
-# takiego rozerwania), a pojedynczy niedopasowany bajt \x1b - gdyby sie
-# pojawil - nie wplywa na dopasowanie markerow tekstowych w classify()
-# (SPRINT-RUN STOP:, koncowe "?"), wiec nie warto komplikowac regexu pod
-# przypadek, ktorego nie zaobserwowano.
-_ANSI_RE = re.compile(
-    r"\x1b\[[0-9;?]*[A-Za-z]"
-    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
-    r"|\x1b[()][A-Z0-9]"
-    r"|\x1b."
-)
+# Emulator ekranu zamiast regexu (MON-227). `claude logs` (Ink) nie wypisuje tekstu, tylko
+# roznicowe przerysowania: rysuje wylacznie zmienione komorki i przeskakuje kursorem
+# (CSI n G, n C, n B, r;c H, \x1b[H, K) nad niezmienionymi. Strip sekwencji gubil wiec
+# litery ("Bash( laude", "zmian .", "N  uzywaj" w tests/fixtures/claude/
+# logs-spinner-redraw.2.1.284.txt i logs-stop-tui.2.1.278.txt), a kazde przerysowanie od
+# \x1b[H dopisywalo w strumieniu kolejna kopie bloku. Poprawny tekst istnieje tylko na
+# ekranie po zastosowaniu ruchu kursora. Wczesniejsze regexy G/C -> spacja (MON-191)
+# lataly to punktowo i nie obejmowaly reszty sekwencji. Zbior obslugiwanych sekwencji to
+# to, co pojawia sie w fixture'ach (H, B, C, G, K, J, m) plus tanie A/D/f/ESC 7/8.
+_CSI_RE = re.compile(r"\x1b\[([0-9;?]*)[ -/]*([@-~])")
+_OTHER_ESC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[78]|\x1b[^\[\]()78]")
+_ESC_TOKEN_RE = re.compile(_CSI_RE.pattern + "|" + _OTHER_ESC_RE.pattern)
 
-# CSI Cursor Horizontal Absolute (\x1b[NG) i Cursor Forward (\x1b[NC) - w realnym
-# renderze `claude logs` (tests/fixtures/claude/logs-stop-tui.2.1.278.txt, komenda
-# `claude logs 20a4496b`, claude 2.1.278) sluza do wyrownania kolumn miedzy slowami
-# zamiast literalnej spacji, np. "SPRINT-RUN\x1b[14GSTOP:". Zdjecie ich ogolnym
-# _ANSI_RE (bez podmiany) sklejaloby slowa w "SPRINT-RUNSTOP:" i marker przestawalby
-# pasowac (MON-191). Trzeba je zamienic na POJEDYNCZA spacje PRZED ogolnym strip -
-# _ANSI_RE dopasowalby te same sekwencje (G/C sa w [A-Za-z]), wiec kolejnosc ma
-# znaczenie: ten regex idzie pierwszy w read_log_tail.
-_CSI_CURSOR_GAP_RE = re.compile(r"\x1b\[[0-9]*[CG]")
+# Linie samego spinnera/statusu, nie tresci odpowiedzi (MON-227): glif spinnera na
+# poczatku ("✢ Blanching…", "· Blanching… 1m 58s · ↓ 8.0k tokens)"), licznik czasu i
+# tokenow takze w wierszu statusu subagenta ("45s · ↓ 109 tokens") oraz "thinking".
+_SPINNER_LINE_RE = re.compile(r"^[✢✳✶✻✽·]|\d+s · ↓ \d|^thinking$|· thinking\)")
+
+
+def _csi_params(raw_params: str) -> list[int]:
+    """Parametry CSI jako liczby; puste i niecyfrowe ("?" w "\\x1b[?5H") daja 0 (= domyslna)."""
+    return [int(p) if p.isdigit() else 0 for p in raw_params.replace("?", "").split(";")]
+
+
+def _screen_rows(raw: str) -> list[str]:
+    """Zastosuj sekwencje sterujace terminala i zwroc tekst wierszy ekranu ze scrollbackiem.
+
+    Komorka bez zapisu to spacja, \\r wraca karetka bez zmiany wiersza, \\n = kolumna 1
+    + nastepny wiersz. Wiersze nie sa obcinane do wysokosci ekranu (scrollback), zeby
+    zwykly tekst (plik logu z poprzedniego ticku) przechodzil bez strat. Wysokosc
+    ekranu jest znana tylko z najwiekszego wiersza w CSI r;c H (fixture: \\x1b[50;1H)
+    i ogranicza wylacznie CSI B - `claude logs` nie scrolluje ruchem kursora w dol.
+    """
+    rows: list[list[str]] = [[]]
+    row = col = 0
+    saved = (0, 0)
+    height = max((_csi_params(m.group(1))[0] for m in _CSI_RE.finditer(raw) if m.group(2) in "Hf"), default=0)
+
+    def put(ch: str) -> None:
+        nonlocal col
+        line = rows[row]
+        if len(line) < col:
+            line.extend(" " * (col - len(line)))
+        if col < len(line):
+            line[col] = ch
+        else:
+            line.append(ch)
+        col += 1
+
+    def goto(new_row: int) -> None:
+        nonlocal row
+        row = max(0, new_row)
+        while len(rows) <= row:
+            rows.append([])
+
+    pos = 0
+    for token in _ESC_TOKEN_RE.finditer(raw):
+        for ch in raw[pos : token.start()]:
+            if ch == "\n":
+                col = 0
+                goto(row + 1)
+            elif ch == "\r":
+                col = 0
+            elif ch == "\b":
+                col = max(0, col - 1)
+            elif ch >= " " and ch != "\x7f":
+                put(ch)
+        pos = token.end()
+        final = token.group(2)
+        if final is None:
+            if token.group(0) == "\x1b7":
+                saved = (row, col)
+            elif token.group(0) == "\x1b8":
+                goto(saved[0])
+                col = saved[1]
+            continue
+        params = _csi_params(token.group(1))
+        n = params[0] or 1
+        if final in "Hf":
+            goto(n - 1)
+            col = max(0, (params[1] if len(params) > 1 and params[1] else 1) - 1)
+        elif final == "A":
+            goto(row - n)
+        elif final == "B":
+            goto(min(row + n, height - 1) if height else row + n)
+        elif final == "C":
+            col += n
+        elif final == "D":
+            col = max(0, col - n)
+        elif final == "G":
+            col = n - 1
+        elif final == "K":
+            mode = params[0]
+            line = rows[row]
+            if mode == 0:
+                del line[col:]
+            elif mode == 1:
+                line[:col] = [" "] * min(col, len(line))
+            else:
+                line.clear()
+        elif final == "J":
+            if params[0] == 0:
+                del rows[row][col:]
+                del rows[row + 1 :]
+            elif params[0] in (2, 3):
+                rows[:] = [[]]
+                row = 0
+    for ch in raw[pos:]:
+        if ch == "\n":
+            col = 0
+            goto(row + 1)
+        elif ch == "\r":
+            col = 0
+        elif ch >= " " and ch != "\x7f":
+            put(ch)
+    return ["".join(line) for line in rows]
+
+
+def _collapse_adjacent_repeats(lines: list[str]) -> list[str]:
+    """Zwin bezposrednio powtorzony blok co najmniej 2 linii do jednego.
+
+    WHY min. 2 linie: pojedyncza powtorzona linia ("}", "  ⎿  Allowed by auto mode
+    classifier" pod dwoma wywolaniami narzedzi) bywa trescia, a nie artefaktem
+    przerysowania - zwijamy tylko bloki, tak jak zdublowane odpowiedzi asystenta.
+    """
+    start = 0
+    while start < len(lines):
+        for size in range(2, (len(lines) - start) // 2 + 1):
+            if lines[start] == lines[start + size] and lines[start : start + size] == lines[start + size : start + 2 * size]:
+                # Restart od 0: zwiniecie moze utworzyc nowe powtorzenie zaczynajace sie
+                # wczesniej (B C C C C A B C C A ... -> B C C A B C C A ...); tylko
+                # przejscie do punktu stalego daje wynik idempotentny.
+                del lines[start + size : start + 2 * size]
+                start = 0
+                break
+        else:
+            start += 1
+    return lines
+
+
+def render_log(raw: str) -> list[str]:
+    """Surowe wyjscie `claude logs` -> czytelne, niepuste linie w kolejnosci wyswietlania.
+
+    Emuluje ekran (_screen_rows), odrzuca linie spinnera/statusu (_SPINNER_LINE_RE)
+    i zwija bezposrednio powtorzone bloki. Nie rusza linii odpowiedzi, wiec marker
+    `SPRINT-RUN STOP:` i pytanie w ostatnim bloku zostaja widoczne dla classify
+    (MON-191). Idempotentna na tekscie bez sekwencji sterujacych.
+    """
+    stripped = (row.strip() for row in _screen_rows(raw))
+    lines = [line for line in stripped if line and not _SPINNER_LINE_RE.search(line)]
+    return _collapse_adjacent_repeats(lines)
+
 
 # Marker odporny na zgubiona spacje miedzy "SPRINT-RUN" i "STOP:" (MON-191) - render
-# TUI czasem zjada spacje mimo podmiany powyzej (inne warianty przesuniecia kursora),
+# TUI czasem zjada spacje mimo emulacji kursora w render_log (inne warianty przesuniecia),
 # wiec dopasowanie dopuszcza zero albo wiecej bialych znakow miedzy czlonami. Dwukropek
 # po STOP zostaje wymagany, zeby proza tylko wspominajaca marker (np. tresc komentarza
 # cytujaca go) nie dawala falszywego "waiting".
@@ -193,27 +318,22 @@ def session_state_reason(session: dict[str, Any]) -> str | None:
 
 
 def read_log_tail(logs_dir: Path | str, session_id: str, n: int = 5) -> list[str]:
-    """Zwroc ostatnie n NIEPUSTYCH linii pliku logu `<session_id>.log` w logs_dir.
+    """Zwroc ostatnie n linii render_log pliku logu `<session_id>.log` w logs_dir.
 
     Brak katalogu albo pliku logu to normalny przypadek (sesja jeszcze nie
     napisala nic do logu) - zwraca wtedy pusta liste, bez wyjatku. Realny
     render TUI (`claude logs`, patrz tests/fixtures/claude/logs-tui.2.1.270.txt)
-    zawiera sekwencje ANSI i uzywa \\r zamiast \\n do przerysowan - obie rzeczy
-    trzeba zdjac/znormalizowac PRZED podzialem na linie, inaczej okno n linii
-    zapelnia sie smieciem zamiast tresci.
+    to roznicowe przerysowania z ruchem kursora, wiec linie daje dopiero
+    render_log (emulacja ekranu), a nie strip ANSI.
     """
     log_path = Path(logs_dir) / f"{session_id}.log"
     if not log_path.is_file():
         return []
-    text = log_path.read_text(errors="replace")
-    # Podmiana skokow kolumny na spacje MUSI isc przed ogolnym _ANSI_RE - patrz
-    # komentarz WHY przy _CSI_CURSOR_GAP_RE (MON-191).
-    text = _CSI_CURSOR_GAP_RE.sub(" ", text)
-    text = _ANSI_RE.sub("", text)
-    text = text.replace("\r", "\n")
-    lines = [line.strip() for line in text.split("\n")]
-    nonempty = [line for line in lines if line]
-    return nonempty[-n:] if n > 0 else []
+    # Bajty, nie read_text(): tryb tekstowy tlumaczy \r na \n, a emulator potrzebuje
+    # \r jako powrotu karetki (MON-227).
+    text = log_path.read_bytes().decode("utf-8", errors="replace")
+    lines = render_log(text)
+    return lines[-n:] if n > 0 else []
 
 
 def waits_for_permission(session: dict[str, Any]) -> bool:
@@ -290,6 +410,36 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, int]:
         elif verdict in counts:
             counts[verdict] += 1
     return counts
+
+
+DEFAULT_MAX_WAITING = 2
+
+
+def parse_max_waiting(raw: str | None) -> int:
+    """Limit zywych sesji waiting z MONOLYNX_SPRINT_MAX_WAITING; niepoprawna wartosc -> domyslny."""
+    if raw is None:
+        return DEFAULT_MAX_WAITING
+    text = raw.strip()
+    if text.isascii() and text.isdigit() and int(text) > 0:
+        return int(text)
+    return DEFAULT_MAX_WAITING
+
+
+def dispatch_capacity(summary: dict[str, int], slots: int, max_waiting: int) -> dict[str, Any]:
+    """Ile sesji wolno wystartowac w tym ticku.
+
+    Sloty zajmuja tylko sesje running; waiting ma osobny limit. MON-138: sesja
+    waiting trzymala slot cala noc i sprint stal.
+    """
+    free_slots = max(0, slots - summary["running"])
+    waiting_blocked = summary["waiting"] >= max_waiting
+    return {
+        "slots": slots,
+        "max_waiting": max_waiting,
+        "free_slots": free_slots,
+        "waiting_blocked": waiting_blocked,
+        "can_start": 0 if waiting_blocked else free_slots,
+    }
 
 
 def build_report(slug: str, tickets: list[dict[str, Any]], agents: list[Any], logs_dir: Path | str) -> dict[str, Any]:

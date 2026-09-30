@@ -2,7 +2,7 @@
 
 ## Konwencje pisania
 - Dokumenty PL: pełne diakrytyki (ą ć ę ł ń ó ś ź ż), ZERO em-dash `—` (sprawdź `grep -c "—" <plik>` = 0). Zamiana em-dash na hyphen `-` (NIE kasuj myślnika, NIE zamieniaj na przecinek). Bulk: `LC_ALL=en_US.UTF-8 perl -CSD -i -pe 's/\x{2014}/-/g' <plik>`. UWAGA: `grep -c $'\u2014'` daje FALSZYWE ZERO - bash 3.2 na macOS nie zna `$'\uXXXX'`. Licz Pythonem: `python3 -c "import pathlib;print(pathlib.Path('f.md').read_text().count(chr(8212)))"` albo wklej znak dosłownie do grepa. To samo dla podmiany perlem - weryfikuj wynik, cichy no-op jest łatwy.
-- CLAUDE.md jest w angielskim i używa strzałki `→` jako separatora sekwencji (już występuje w pliku, spójne). UWAGA: CLAUDE.md ma ~100 istniejących em-dash jako separator bulletów `nazwa.py — opis` (cudze, poza zakresem - NIE ruszać). Targetowane edycje: liczy się tylko czy MOJE dodane/nowe linie mają 0 em-dash. Check: `grep -c "—"` przed i po musi być równe (zero netto). Nowe bullety w sekcji Services pisz z hyphenem `-` jako separator, nie kopiuj em-dash z sąsiednich.
+- CLAUDE.md jest w angielskim i używa strzałki `→` jako separatora sekwencji (już występuje w pliku, spójne). UWAGA: CLAUDE.md ma ~100 istniejących em-dash jako separator bulletów `nazwa.py — opis` (cudze, poza zakresem - NIE ruszać). Targetowane edycje: liczy się tylko czy MOJE dodane/nowe linie mają 0 em-dash. Check: `grep -c "—"` przed i po musi być równe (zero netto). Najprostszy check "zero netto" dla targetowanych edycji: `git -C <repo> diff -U0 -G "—" --stat -- <pliki>` (puste = żadna dodana/usunięta linia nie ma em-dash; pojedyncza komenda przechodzi guard worktree). Nowe bullety w sekcji Services pisz z hyphenem `-` jako separator, nie kopiuj em-dash z sąsiednich.
 - Wszystkie komendy Pythona przez `docker compose exec app`, nigdy lokalnie.
 - [Konwencje docs pluginu](plugin_docs_conventions.md) — SKILL.md BEZ diakrytyk, README pluginu Z nimi; zero em/en-dash (walidator); static/skills generowane przez sync_skills.py.
 - `bash_guard.py` łapie literał `glab mr create` także w argumencie `grep` (deny dla subagenta). Szukaj fragmentem, np. `-e "mr crea"`. To samo dla `ruff` i `git add`: deny także w treści heredoca `python3 - <<EOF` i w `grep`. Grep: `r[u]ff`; podmiany z tymi słowami rób narzędziem Edit (MON-207).
@@ -16,6 +16,7 @@
 
 ## Raportowanie do ticketów (obowiązkowe)
 - Po każdej sesji: komentarz PL (`add_comment`) + log czasu (`log_time`, min 1 min) na tickecie. MCP: `mcp__claude_ai_Monolynx__*`.
+- WYJĄTEK: gdy prompt TM / `common-rules.md` mówi "NIE dodawaj komentarzy ani log_time - to robi TM", ten zakaz wygrywa z domyślnym obowiązkiem (inaczej dubel czasu). Raportujesz wtedy tylko do pipeline joba + SendMessage (MON-228).
 - Raport końcowy do Team Managera wysyłaj przez `SendMessage(to="main")`. Nazwa sesji z promptu (`monolynx-<KEY>-<model>`) adresuje TĘ sesję, nie TM - wysyłka na nią kończy się błędem "no agent reachable". W raporcie napisz, że komentarz i `log_time` już dodałeś, żeby TM nie zalogował czasu drugi raz.
 
 ## Changelog pluginu w tickecie

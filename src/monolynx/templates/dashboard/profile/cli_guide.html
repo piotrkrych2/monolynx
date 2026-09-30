@@ -1,0 +1,84 @@
+{% extends "layouts/base.html" %}
+
+{% block title %}Podłącz CLI - Monolynx{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <div class="mb-8">
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Podłącz CLI</h1>
+        <p class="text-gray-600 dark:text-gray-400 text-sm mt-1">Zaloguj terminalowego klienta <code class="text-indigo-400">monolynx</code> do swojego konta w Monolynx</p>
+    </div>
+
+    <!-- Instalacja -->
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">1</span>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Zainstaluj CLI</h2>
+        </div>
+        <p class="text-gray-700 dark:text-gray-300 text-sm">
+            Instrukcja instalacji jest w
+            <a href="https://gitlab.com/piotrkrych/monolynx/-/blob/main/cli/README.md" class="text-indigo-400 hover:text-indigo-300 underline" target="_blank" rel="noopener noreferrer">README paczki</a>
+            (paczka jest też na <a href="https://pypi.org/project/monolynx-cli/" class="text-indigo-400 hover:text-indigo-300 underline" target="_blank" rel="noopener noreferrer">PyPI</a>).
+        </p>
+    </div>
+
+    <!-- Logowanie -->
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">2</span>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Zaloguj się</h2>
+        </div>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">
+            Komenda otwiera przeglądarkę i loguje przez OAuth 2.1, bez wklejania tokenu:
+        </p>
+        <pre class="bg-gray-50 dark:bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded overflow-x-auto mb-4"><code>monolynx auth login</code></pre>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">
+            Domyślny adres to <code class="text-indigo-400">https://monolynx.com</code>. Dla innej instancji podaj jej adres:
+        </p>
+        <pre class="bg-gray-50 dark:bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded overflow-x-auto mb-4"><code>monolynx auth login --endpoint {{ app_url | e }}</code></pre>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">
+            Z <code class="text-indigo-400">--no-browser</code> CLI nie otwiera przeglądarki, tylko wypisuje adres autoryzacji na stderr.
+            Otwórz go w przeglądarce na tej samej maszynie, na której działa CLI: po zgodzie przeglądarka wraca na <code class="text-indigo-400">127.0.0.1</code>, gdzie czeka CLI.
+        </p>
+        <pre class="bg-gray-50 dark:bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded overflow-x-auto mb-4"><code>monolynx auth login --no-browser</code></pre>
+        <p class="text-gray-700 dark:text-gray-300 text-sm">
+            Przez SSH bez przekierowania portów ten adres nie zadziała. Zaloguj się wtedy tokenem API z <code class="text-indigo-400">monolynx auth login --token &lt;token&gt;</code> (krok 3).
+        </p>
+    </div>
+
+    <!-- CI / headless -->
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">3</span>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">CI i środowiska bez przeglądarki</h2>
+        </div>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">
+            Wygeneruj token na stronie <a href="/dashboard/profile/tokens" class="text-indigo-400 hover:text-indigo-300 underline">Tokeny API</a>.
+            Możesz go zapisać w profilu:
+        </p>
+        <pre class="bg-gray-50 dark:bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded overflow-x-auto mb-4"><code>monolynx auth login --token &lt;token&gt;</code></pre>
+        <p class="text-gray-700 dark:text-gray-300 text-sm mb-3">
+            Lepiej ustaw zmienne środowiskowe, wtedy token nie trafi do historii powłoki:
+        </p>
+        <pre class="bg-gray-50 dark:bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded overflow-x-auto mb-4"><code>export MONOLYNX_TOKEN=&lt;token&gt;
+export MONOLYNX_ENDPOINT={{ app_url | e }}</code></pre>
+        <p class="text-gray-600 dark:text-gray-400 text-sm">
+            <code class="text-indigo-400">MONOLYNX_TOKEN</code> ma pierwszeństwo przed tokenem zapisanym w profilu i nie jest odświeżany.
+        </p>
+    </div>
+
+    <!-- Sprawdzenie -->
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <span class="bg-indigo-600 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center">4</span>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Sprawdź logowanie</h2>
+        </div>
+        <pre class="bg-gray-50 dark:bg-gray-900 text-green-400 font-mono text-sm px-4 py-3 rounded overflow-x-auto mb-4"><code>monolynx auth whoami</code></pre>
+        <p class="text-gray-600 dark:text-gray-400 text-sm">
+            Uzupełnianie poleceń w powłoce: <code class="text-indigo-400">monolynx completion bash|zsh|fish</code>
+            (dla aliasu <code class="text-indigo-400">mnx</code> osobno: <code class="text-indigo-400">mnx completion &lt;powłoka&gt;</code>).
+            Szczegóły w <a href="https://gitlab.com/piotrkrych/monolynx/-/blob/main/cli/README.md" class="text-indigo-400 hover:text-indigo-300 underline" target="_blank" rel="noopener noreferrer">README paczki</a>.
+        </p>
+    </div>
+</div>
+{% endblock %}

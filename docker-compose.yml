@@ -75,6 +75,7 @@ services:
       - ./cicd:/app/cicd:cached
       - ./plugin:/app/plugin:cached
       - ./scripts:/app/scripts:cached
+      - ./cli:/app/cli:cached
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry_dev}@db:5432/${POSTGRES_DB:-open_sentry}
       ENVIRONMENT: ${ENVIRONMENT:-development}

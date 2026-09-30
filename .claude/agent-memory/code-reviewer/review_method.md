@@ -57,3 +57,7 @@ Gdy dwa tickety stoja na tym samym commicie, `git diff <branch-spod>` NIE jest c
 ## Nie ucinaj `head -N` grepowi, ktory ma DOWODZIC BRAKU (MON-188)
 Twierdzenie "zaden test nie pinuje realnej wersji pluginu" oparlem na `grep -rn '1\.19\.\|plugin.json' tests/ | head -10` - dziesiec pierwszych trafien wypelnil jeden plik i `tests/unit/test_plugin_distribution.py` wypadlo poza okno. Test jednak pinowal (rownosc wersji dwoch manifestow), wiec teza byla falszywa.
 **How to apply:** grep dowodzacy nieistnienia konczy sie `| wc -l` albo pelnym wyjsciem, nigdy `head`. Gdy trafien jest duzo, zawez wzorzec (`grep -rln`, lista plikow), a nie liczbe linii.
+
+## "Port zamkniety" przez `raises(URLError)` nic nie dowodzi (MON-143)
+`urllib.error.HTTPError` dziedziczy po `URLError`, wiec asercja przechodzi takze, gdy serwer dalej zyje i odpowiada 4xx (409 na drugi callback, 400 bez state). Mutant "usun zamykanie serwera w finally" przezywal we wszystkich testach zamykania.
+**How to apply:** test zamkniecia zasobu musi odroznic "brak zasobu" od "odpowiedz bledem": `ConnectionRefusedError` z `socket.create_connection` albo `not isinstance(exc, HTTPError)`. Przy kazdym `raises(<klasa bazowa>)` sprawdz, czy zywy kod nie rzuca podklasy.

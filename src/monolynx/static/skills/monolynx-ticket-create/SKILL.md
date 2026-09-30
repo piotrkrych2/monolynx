@@ -1,6 +1,6 @@
 ---
 name: monolynx-ticket-create
-description: "Utworz nowy ticket w projekcie Monolynx. Zbiera kontekst z wiki, kodu i grafu zaleznosci, generuje opis w ustalonej formie (cel, kontekst, zakres, kryteria akceptacji, zaleznosci). Uzyj gdy chcesz dodac zadanie do sprintu."
+description: "Utworz nowy ticket w projekcie Monolynx. Zbiera kontekst z wiki, kodu i grafu zaleznosci, generuje opis w ustalonej formie (cel, kontekst, zakres, pliki dotykane, nie ruszac, odwracalnosc, zaleznosci, kryteria akceptacji). Uzyj gdy chcesz dodac zadanie do sprintu."
 user-invocable: true
 argument-hint: [krotki opis zadania]
 ---
@@ -91,12 +91,17 @@ Zbadaj aktualny stan kodu:
 2. Sprawdz czy istnieja juz czesciowe implementacje lub powiazane mechanizmy
 3. Zidentyfikuj zaleznosci - co musi istniec ZANIM to zadanie moze byc zrealizowane
 4. Oszacuj zakres zmian (jakie pliki, ile modulow)
+5. Wypisz przewidywane sciezki, ktore ticket zmieni LUB utworzy (takze nowe pliki
+   i testy): repo-relatywne, bez globow, jedna na linie. Ta lista trafia do sekcji
+   "Pliki dotykane" opisu - na jej podstawie przeglad sprintu wykrywa tickety,
+   ktore nie powinny isc rownolegle.
 
 Odpowiedz w formacie:
 - Istniejacy kod: [co juz jest, sciezka:linia]
 - Brakujace elementy: [co trzeba zbudowac]
 - Zaleznosci: [od czego to zalezy - modele, serwisy, inne tickety]
 - Pliki do zmiany: [lista plikow z krotkim opisem co zmienic]
+- Pliki dotykane: [same sciezki z "Pliki do zmiany" plus pliki nowe, bez opisu; jedna repo-relatywna sciezka na linie, bez globow; nic w repo -> "brak (poza repo)"]
 - Szacowany zakres: maly (1-2 pliki) / sredni (3-5 plikow) / duzy (6+ plikow)
 ```
 
@@ -134,6 +139,8 @@ Na podstawie wynikow z kroku 3d:
   - **blokery** - tickety, ktore musza byc `done`, zanim nowy ticket da sie zaczac. Dla kazdego zapamietaj klucz ORAZ UUID (pole `id` z wyniku `search_tickets`; `key` to klucz) - UUID trafi do `blocked_by_ids` w KROK 7,
   - **powiazane** - kontekst bez blokady startu (ten sam modul, podobny temat). Tylko w opisie, nie w `blocked_by_ids`.
 
+Nie porownuj tu list plikow z innymi ticketami - pelne porownanie sekcji "Pliki dotykane" ticketow sprintu i propozycje blokerow robi `/monolynx:ticket-review sprint`.
+
 ---
 
 ## KROK 5: Zaproponuj ticket
@@ -168,6 +175,14 @@ Wygeneruj ticket w nastepujacym formacie i WYSWIETL go uzytkownikowi do akceptac
 
 [Kazdy obszar jako osobna podsekcja. Podaj nazwy plikow, endpointow, modeli gdzie to mozliwe.
 Uwzglednij powiazania z grafu zaleznosci jesli sa istotne.]
+
+## Pliki dotykane
+
+- `[sciezka/repo-relatywna/plik.py]`
+- `[sciezka/nowego/pliku_test.py]`
+
+[Kazda sciezka w osobnej linii jako `- ` + sciezka w backtickach, bez opisu, bez globow.
+Nowe pliki tez. Ticket bez plikow w repo -> jedna linia: `- brak (poza repo)`.]
 
 ## Nie ruszac
 
@@ -210,7 +225,8 @@ Pokryj: funkcjonalnosc, MCP tools (jesli dotyczy), UI (jesli dotyczy), testy (je
 5. **Kryteria akceptacji** - minimum 3, maksimum 10. Kazde weryfikowalne. Kryteria z opisu sa AUTOMATYCZNIE tworzone jako acceptance criteria (checkboxy) przez parametr `acceptance_criteria` w `create_ticket` - nie trzeba dodawac ich osobno
 6. **Nie ruszac** - granica jest czescia zadania, nie domyslem. Zrodla: sasiedztwo wezlow z grafu (3b) i pliki z raportu Explore (3c), ktorych zmiana NIE jest potrzebna; powiazane tickety w toku (3d) - ich pliki sa cudze; publiczne kontrakty (API, SDK, format eksportu). Kazda pozycja z powodem. "Brak ograniczen" wolno napisac tylko po sprawdzeniu tych zrodel, nie zamiast sprawdzenia
 7. **Odwracalnosc** - wypisz operacje, ktorych nie cofnie `git revert`: migracja z danymi, wysylka na zewnatrz, publikacja, zmiana schematu/API, kasowanie. To jest lista rzeczy, przed ktorymi agent realizujacy ticket ma sie zatrzymac i zapytac (`work` buduje z niej kontrakt autonomii). Zadanie bez takich operacji -> *brak*, ale napisane wprost
-8. **Jezyk** - polski (terminy techniczne w oryginale)
+8. **Pliki dotykane** - lista z pola "Pliki dotykane" Researchera (3c), zgodna z sekcja "Zakres": kazdy plik wymieniony w "Zakres" jest na liscie, nowe pliki i testy tez. Format sztywny, bo czyta go skrypt: jedna linia `- \`sciezka/repo-relatywna\`` na plik, bez opisu, bez globow (`*`, `**`), bez sciezek absolutnych i `..`. Ticket bez plikow w repo -> jedna linia `- brak (poza repo)`. Pliki "zawsze wspolne" (changelog, liczniki skilli, kopie w `src/monolynx/static/skills/`) tez wpisuj - przeglad sprintu sam je odfiltruje
+9. **Jezyk** - polski (terminy techniczne w oryginale)
 
 ---
 
@@ -271,7 +287,7 @@ Przejdz do KROK 7 bez `spec_page_id`.
 mcp__monolynx__create_ticket(
   project_slug="<PROJECT-SLUG>",
   title="<tytul>",
-  description="<pelny opis w markdown - sekcje Cel, Kontekst, Zakres, Nie ruszac, Odwracalnosc, Zaleznosci, Kryteria akceptacji>",
+  description="<pelny opis w markdown - sekcje Cel, Kontekst, Zakres, Pliki dotykane, Nie ruszac, Odwracalnosc, Zaleznosci, Kryteria akceptacji>",
   priority="<low/medium/high>",
   story_points=<liczba>,
   sprint_id="<UUID sprintu lub null dla backlogu>",
@@ -324,3 +340,4 @@ Jesli tak - powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
 9. **Duplikaty sa blokerem** - jesli istnieje duplikat, ZAWSZE informuj uzytkownika przed utworzeniem
 10. **Po utworzeniu zawsze pokazuj KEY + UUID** - uzytkownik potrzebuje obu identyfikatorow
 11. **Blokery strukturalnie** - ticket, ktory blokuje start, idzie do `blocked_by_ids` (UUID), nie do komentarza. Lista blokerow w sekcji "Zaleznosci" opisu = lista `blocked_by_ids`
+12. **Pliki dotykane zawsze** - kazdy opis ma sekcje "Pliki dotykane" w formacie z zasady generowania 8. Bez niej przeglad sprintu (`/monolynx:ticket-review sprint`) nie porowna ticketu z innymi i nie zaproponuje blokera, a dwa tickety na tych samych plikach pojda w `sprint-run` rownolegle

@@ -15,6 +15,7 @@ import pytest
 
 HOOK_PATH = Path(__file__).resolve().parents[2] / "plugin" / "hooks" / "bash_guard.py"
 CODEX_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "codex"
+CLAUDE_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "claude"
 
 # Twardy fail (nie skip) jesli hooka nie ma w obrazie -- to ma byc GLOSNE,
 # zeby nikt nie przeoczyl brakujacego pliku w Dockerze.
@@ -77,6 +78,15 @@ def hook_active_marker_path(home, session_id):
 def load_codex_fixture(name):
     with (CODEX_FIXTURES_DIR / name).open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def load_claude_fixture(name):
+    """Payload PreToolUse przechwycony z Claude Code, bez naglowka `_meta`
+    (klient go nie wysyla - to opis przechwycenia dla czlowieka)."""
+    with (CLAUDE_FIXTURES_DIR / name).open(encoding="utf-8") as fh:
+        payload = json.load(fh)
+    payload.pop("_meta")
+    return payload
 
 
 def bash_payload(command, agent_id=None, agent_type=None):
@@ -154,7 +164,12 @@ class TestBrokenInputAndNonBashTool:
 
 @pytest.mark.unit
 class TestIsSubagentComputation:
-    """is_subagent = bool(agent_id) AND agent_type not in ('', 'main')."""
+    """is_subagent = bool(agent_id) (MON-224).
+
+    `agent_type` nie bierze udzialu w decyzji: u teammate'a Agent Teams
+    (in-process) jest jego dowolna nazwa, wiec teammate nazwany "main" omijal
+    stara regule `agent_type not in ("", "main")`. Zaden przechwycony payload
+    sesji glownej nie ma `agent_id` (tests/fixtures/claude/)."""
 
     def test_no_agent_fields_is_main_session(self):
         payload = bash_payload("git push --force origin main")
@@ -166,19 +181,25 @@ class TestIsSubagentComputation:
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_ask(exit_code, decision)
 
-    def test_agent_type_empty_string_is_main_session(self):
+    def test_agent_type_without_agent_id_is_main_session(self):
+        """agent_type bez agent_id to sesja glowna (`claude --agent X`, teammate tmux)."""
+        payload = bash_payload("git push --force origin main", agent_type="qa-tester")
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    def test_agent_type_empty_string_with_agent_id_is_subagent(self):
         payload = bash_payload("git push --force origin main", agent_id="agent-1", agent_type="")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
-        assert_ask(exit_code, decision)
+        assert_deny(exit_code, decision)
 
-    def test_agent_type_main_is_main_session(self):
+    def test_agent_type_main_with_agent_id_is_subagent(self):
+        """Teammate in-process nazwany "main" ma agent_type="main" - to subagent."""
         payload = bash_payload("git push --force origin main", agent_id="agent-1", agent_type="main")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
-        assert_ask(exit_code, decision)
+        assert_deny(exit_code, decision)
 
-    def test_agent_type_case_sensitive_uppercase_main_is_subagent(self):
-        """Porownanie agent_type jest case-sensitive: 'MAIN' != 'main' -> subagent."""
-        payload = bash_payload("git push --force origin main", agent_id="agent-1", agent_type="MAIN")
+    def test_agent_id_without_agent_type_is_subagent(self):
+        payload = bash_payload("git push --force origin main", agent_id="agent-1")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_deny(exit_code, decision)
 
@@ -1169,6 +1190,220 @@ class TestHookActiveMarker:
         if marker_root.exists():
             for created in marker_root.rglob("*"):
                 assert created.resolve().is_relative_to(marker_root.resolve())
+
+
+FX_MAIN = "pretooluse-bash-main.2.1.284.json"
+FX_SUBAGENT = "pretooluse-bash-subagent.2.1.284.json"
+FX_TEAMMATE_INPROCESS = "pretooluse-bash-teammate-inprocess.2.1.284.json"
+FX_LEAD_TMUX = "pretooluse-bash-lead-tmux.2.1.284.json"
+FX_TEAMMATE_TMUX = "pretooluse-bash-teammate-tmux.2.1.284.json"
+FX_MAIN_AGENT_FLAG = "pretooluse-bash-main-agent-flag.2.1.284.json"
+
+ALL_AUTO_FLAGS = {"MONOLYNX_AUTOPUSH": "true", "MONOLYNX_AUTOTEST": "true", "MONOLYNX_AUTOMR": "true"}
+
+# Komendy z galezi git write, TEST_LINT i glab mr create: dla agenta pomocniczego
+# deny, dla sesji glownej z flagami AUTO* allow.
+HELPER_AGENT_DENIED_COMMANDS = [
+    pytest.param("git add .", id="git_add"),
+    pytest.param("git commit -m x", id="git_commit"),
+    pytest.param("git push origin x", id="git_push"),
+    pytest.param("pytest tests/", id="pytest"),
+    pytest.param("ruff check src/", id="ruff_check_without_no_fix"),
+    pytest.param("mypy src/", id="mypy"),
+    pytest.param("glab mr create --fill", id="glab_mr_create"),
+]
+
+
+def claude_payload(fixture, command, **overrides):
+    """Payload z fixture'u Claude Code z podmienionym `tool_input.command`;
+    `overrides` nadpisuje pola najwyzszego poziomu (np. agent_type, session_id)."""
+    payload = load_claude_fixture(fixture)
+    payload["tool_input"] = {**payload["tool_input"], "command": command}
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.unit
+class TestAgentTeamsFixtures:
+    """MON-224: bash_guard rozpoznaje teammate'a Agent Teams jako agenta
+    pomocniczego. Payloady pochodza z realnego przechwycenia Claude Code
+    2.1.284 (tests/fixtures/claude/pretooluse-bash-*.2.1.284.json, naglowek
+    `_meta` opisuje komende i tryb).
+
+    WHY: teammate in-process ma `agent_id` i `agent_type` rowny SWOJEJ NAZWIE
+    (nie typowi agenta), wiec regula oparta o wartosc `agent_type` nie
+    wytrzymuje. Kazdy test deny ustawia MONOLYNX_AUTOPUSH/AUTOTEST/AUTOMR=true,
+    z ktorymi sesja glowna dostaje allow - deny wynika wiec z rozpoznania
+    agenta, nie z braku flag."""
+
+    @pytest.mark.parametrize("fixture", [FX_TEAMMATE_INPROCESS, FX_SUBAGENT], ids=["teammate_inprocess", "subagent"])
+    @pytest.mark.parametrize("command", HELPER_AGENT_DENIED_COMMANDS)
+    def test_helper_agent_is_denied_even_with_auto_flags(self, fixture, command):
+        payload = claude_payload(fixture, command)
+        exit_code, decision = run_hook(payload, env_extra=ALL_AUTO_FLAGS)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("agent_type", ["main", ""], ids=["named_main", "empty_type"])
+    @pytest.mark.parametrize("command", ["git push origin x", "pytest tests/", "glab mr create --fill"])
+    def test_teammate_with_agent_type_bypassing_old_rule_is_denied(self, agent_type, command):
+        """Teammate in-process nazwany "main" (albo z pustym agent_type) omijal
+        stara regule `agent_type not in ("", "main")` - z flagami AUTO* dostawal allow."""
+        payload = claude_payload(FX_TEAMMATE_INPROCESS, command, agent_type=agent_type)
+        exit_code, decision = run_hook(payload, env_extra=ALL_AUTO_FLAGS)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("fixture", [FX_MAIN, FX_LEAD_TMUX, FX_MAIN_AGENT_FLAG], ids=["main_bg", "lead_tmux", "main_agent_flag"])
+    def test_main_session_git_push_without_flag_asks(self, fixture):
+        exit_code, decision = run_hook(claude_payload(fixture, "git push origin x"), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    @pytest.mark.parametrize("fixture", [FX_MAIN, FX_LEAD_TMUX, FX_MAIN_AGENT_FLAG], ids=["main_bg", "lead_tmux", "main_agent_flag"])
+    def test_main_session_git_push_with_autopush_allows(self, fixture):
+        payload = claude_payload(fixture, "git push origin x")
+        exit_code, decision = run_hook(payload, env_extra={"MONOLYNX_AUTOPUSH": "true"})
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("fixture", [FX_MAIN, FX_LEAD_TMUX, FX_MAIN_AGENT_FLAG], ids=["main_bg", "lead_tmux", "main_agent_flag"])
+    def test_main_session_pytest_without_flag_asks(self, fixture):
+        exit_code, decision = run_hook(claude_payload(fixture, "pytest tests/"), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    @pytest.mark.parametrize("fixture", [FX_MAIN, FX_LEAD_TMUX, FX_MAIN_AGENT_FLAG], ids=["main_bg", "lead_tmux", "main_agent_flag"])
+    def test_main_session_pytest_with_autotest_allows(self, fixture):
+        payload = claude_payload(fixture, "pytest tests/")
+        exit_code, decision = run_hook(payload, env_extra={"MONOLYNX_AUTOTEST": "true"})
+        assert_allow(exit_code, decision)
+
+    def test_teammate_tmux_git_push_without_flag_asks_known_limitation(self):
+        """UDOKUMENTOWANE OGRANICZENIE (MON-224, D2): teammate w trybie tmux to
+        osobny proces bez `agent_id` i z wlasnym session_id - jego payload ma ten
+        sam ksztalt co sesja glowna z `claude --agent general-purpose`, wiec hook
+        go nie odroznia i traktuje jak sesje glowna (ask bez flag). Patrz sekcja
+        o ograniczeniu w README pluginu (plugin/README.md). Zmiana tego testu
+        oznacza swiadoma zmiane kontraktu, nie poprawke."""
+        payload = claude_payload(FX_TEAMMATE_TMUX, "git push origin x")
+        exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    def test_teammate_tmux_git_push_with_autopush_allows_known_limitation(self):
+        """To samo ograniczenie co wyzej: z MONOLYNX_AUTOPUSH=true teammate tmux
+        przechodzi jak sesja glowna (plugin/README.md, sekcja o ograniczeniu)."""
+        payload = claude_payload(FX_TEAMMATE_TMUX, "git push origin x")
+        exit_code, decision = run_hook(payload, env_extra={"MONOLYNX_AUTOPUSH": "true"})
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("command", ["git push origin x", "pytest tests/", "glab mr create --fill"])
+    def test_teammate_tmux_is_indistinguishable_from_main_session_with_agent_flag(self, command):
+        """Ograniczenie wynika z identycznego ksztaltu payloadu: te same komendy
+        i flagi daja te sama decyzje dla teammate'a tmux i sesji `claude --agent`.
+        Rozjazd oznaczalby, ze hook zaczal cos rozpoznawac."""
+        for env in (MAIN_SESSION, ALL_AUTO_FLAGS):
+            tmux_result = run_hook(claude_payload(FX_TEAMMATE_TMUX, command), env_extra=env)
+            flag_result = run_hook(claude_payload(FX_MAIN_AGENT_FLAG, command), env_extra=env)
+            assert tmux_result == flag_result
+
+
+def read_marker(home, session_id):
+    return json.loads(hook_active_marker_path(home, session_id).read_text(encoding="utf-8"))
+
+
+@pytest.mark.unit
+class TestHookActiveMarkerAgentTeams:
+    """MON-224 (D3): marker `hook-active` niesie `subagent_identification`.
+    Lider i teammate'y/subagenci in-process dziela session_id, wiec wartosc jest
+    sticky-true w obrebie sesji: pozniejsza komenda lidera (bez agent_id) nie
+    zdejmuje potwierdzenia, ze klient identyfikuje agentow pomocniczych.
+    Marker nigdy nie zmienia decyzji hooka (fail-open)."""
+
+    def test_teammate_inprocess_marks_identification_true(self, tmp_path):
+        payload = load_claude_fixture(FX_TEAMMATE_INPROCESS)
+        exit_code, decision = run_hook_with_home(payload, tmp_path)
+        assert_allow(exit_code, decision)
+        assert read_marker(tmp_path, payload["session_id"])["subagent_identification"] is True
+
+    def test_teammate_tmux_marks_identification_false(self, tmp_path):
+        """Ograniczenie D2 widoczne w markerze: brak agent_id -> false."""
+        payload = load_claude_fixture(FX_TEAMMATE_TMUX)
+        exit_code, decision = run_hook_with_home(payload, tmp_path)
+        assert_allow(exit_code, decision)
+        assert read_marker(tmp_path, payload["session_id"])["subagent_identification"] is False
+
+    def test_main_session_alone_marks_identification_false(self, tmp_path):
+        payload = load_claude_fixture(FX_MAIN)
+        exit_code, decision = run_hook_with_home(payload, tmp_path)
+        assert_allow(exit_code, decision)
+        assert read_marker(tmp_path, payload["session_id"])["subagent_identification"] is False
+
+    def test_teammate_named_main_marks_identification_true(self, tmp_path):
+        payload = load_claude_fixture(FX_TEAMMATE_INPROCESS)
+        payload["agent_type"] = "main"
+        exit_code, decision = run_hook_with_home(payload, tmp_path)
+        assert_allow(exit_code, decision)
+        assert read_marker(tmp_path, payload["session_id"])["subagent_identification"] is True
+
+    def test_main_after_teammate_in_same_session_keeps_true(self, tmp_path):
+        """Fixture main i teammate-inprocess pochodza z tej samej sesji --bg
+        (wspolny session_id) - komenda lidera po teammacie nie zdejmuje true."""
+        teammate = load_claude_fixture(FX_TEAMMATE_INPROCESS)
+        lead = load_claude_fixture(FX_MAIN)
+        assert lead["session_id"] == teammate["session_id"]
+        run_hook_with_home(teammate, tmp_path)
+        exit_code, decision = run_hook_with_home(lead, tmp_path)
+        assert_allow(exit_code, decision)
+        assert read_marker(tmp_path, lead["session_id"])["subagent_identification"] is True
+
+    def test_teammate_after_main_in_same_session_sets_true(self, tmp_path):
+        teammate = load_claude_fixture(FX_TEAMMATE_INPROCESS)
+        lead = load_claude_fixture(FX_MAIN)
+        run_hook_with_home(lead, tmp_path)
+        assert read_marker(tmp_path, lead["session_id"])["subagent_identification"] is False
+        exit_code, decision = run_hook_with_home(teammate, tmp_path)
+        assert_allow(exit_code, decision)
+        assert read_marker(tmp_path, teammate["session_id"])["subagent_identification"] is True
+
+    def test_sticky_true_refreshes_checked_at(self, tmp_path):
+        payload = load_claude_fixture(FX_MAIN)
+        marker = hook_active_marker_path(tmp_path, payload["session_id"])
+        marker.parent.mkdir(parents=True)
+        old = "2000-01-01T00:00:00+00:00"
+        marker.write_text(json.dumps({"subagent_identification": True, "checked_at": old}), encoding="utf-8")
+        exit_code, decision = run_hook_with_home(payload, tmp_path)
+        assert_allow(exit_code, decision)
+        written = read_marker(tmp_path, payload["session_id"])
+        assert written["subagent_identification"] is True
+        assert written["checked_at"] != old
+
+    def test_sticky_true_does_not_leak_to_other_session(self, tmp_path):
+        teammate = load_claude_fixture(FX_TEAMMATE_INPROCESS)
+        other_lead = load_claude_fixture(FX_LEAD_TMUX)
+        assert other_lead["session_id"] != teammate["session_id"]
+        run_hook_with_home(teammate, tmp_path)
+        run_hook_with_home(other_lead, tmp_path)
+        assert read_marker(tmp_path, other_lead["session_id"])["subagent_identification"] is False
+
+    @pytest.mark.parametrize("previous", ["nie json", "", "[1]", "null"], ids=["not_json", "empty", "json_list", "json_null"])
+    def test_unreadable_previous_marker_is_treated_as_no_earlier_true(self, tmp_path, previous):
+        """Uszkodzony marker to brak wczesniejszego true: hook zwraca normalna
+        decyzje (fail-open), marker jest zapisany na nowo z false."""
+        payload = claude_payload(FX_MAIN, "git push origin x")
+        marker = hook_active_marker_path(tmp_path, payload["session_id"])
+        marker.parent.mkdir(parents=True)
+        marker.write_text(previous, encoding="utf-8")
+        exit_code, decision = run_hook_with_home(payload, tmp_path)
+        assert_ask(exit_code, decision)
+        assert read_marker(tmp_path, payload["session_id"])["subagent_identification"] is False
+
+    def test_sticky_marker_does_not_change_main_session_decision(self, tmp_path):
+        """Marker true po teammacie nie zmienia decyzji dla lidera: ask bez flag."""
+        run_hook_with_home(load_claude_fixture(FX_TEAMMATE_INPROCESS), tmp_path)
+        exit_code, decision = run_hook_with_home(claude_payload(FX_MAIN, "git push origin x"), tmp_path)
+        assert_ask(exit_code, decision)
+
+    def test_sticky_marker_does_not_weaken_teammate_deny(self, tmp_path):
+        run_hook_with_home(load_claude_fixture(FX_MAIN), tmp_path)
+        payload = claude_payload(FX_TEAMMATE_INPROCESS, "git push origin x")
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=ALL_AUTO_FLAGS)
+        assert_deny(exit_code, decision)
 
 
 @pytest.mark.unit

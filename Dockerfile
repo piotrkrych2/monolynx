@@ -39,6 +39,7 @@ COPY tests/ tests/
 COPY sdk/ sdk/
 COPY plugin/ plugin/
 COPY scripts/ scripts/
+COPY cli/ cli/
 RUN pip install --no-cache-dir -e ".[dev]"
 
 # ============================================================

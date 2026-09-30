@@ -80,6 +80,18 @@ async def mcp_guide(
     return templates.TemplateResponse(request, "dashboard/profile/mcp_guide.html", {"app_url": settings.APP_URL})
 
 
+@router.get("/profile/cli-guide", response_class=HTMLResponse, response_model=None)
+async def cli_guide(
+    request: Request,
+) -> HTMLResponse | RedirectResponse:
+    """Instrukcja logowania klienta CLI (OAuth, token dla CI)."""
+    user_id = _get_user_id(request)
+    if user_id is None:
+        return RedirectResponse("/auth/login", status_code=303)
+
+    return templates.TemplateResponse(request, "dashboard/profile/cli_guide.html", {"app_url": settings.APP_URL})
+
+
 @router.post("/profile/tokens/{token_id}/revoke", response_model=None)
 async def token_revoke(
     token_id: uuid.UUID,

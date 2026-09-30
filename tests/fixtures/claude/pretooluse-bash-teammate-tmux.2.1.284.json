@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "command": "tmux new-session -d <skrypt: env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --model sonnet --settings <dump-hook.json z \"teammateMode\": \"tmux\"> --allowedTools \"Bash(echo *)\" Agent SendMessage TeamCreate TeamDelete -- \"<prompt: 1) echo tmux-main-probe, 2) teammate Agent Teams name=probe: echo tmux-teammate-probe>\">",
+    "tool_version": "2.1.284",
+    "captured": "2026-09-29",
+    "note": "Payload przechwycony hookiem PreToolUse (matcher Bash) z --settings, ktory zapisywal stdin 1:1 do pliku; CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 w srodowisku. Teammate Agent Teams w trybie teammateMode=tmux: OSOBNY proces claude (w ps: --agent-id probe@session-<id> --agent-name probe --team-name session-<id> --parent-session-id <id lidera> --agent-type general-purpose), wlasny session_id, BRAK agent_id, agent_type = typ agenta, brak prompt_id. Zmienne CLAUDE_* w srodowisku hooka te same co u lidera (brak zmiennej wyrozniajacej teammate'a). Payload nie rozni sie ksztaltem od sesji glownej uruchomionej z --agent (pretooluse-bash-main-agent-flag.2.1.284.json) poza brakiem prompt_id.",
+    "anonymized": "sciezka domowa /Users/<login> -> /Users/USER; reszta payloadu bez zmian"
+  },
+  "session_id": "a2852091-a1a8-4535-9b93-b7b0f0fdaf6c",
+  "transcript_path": "/Users/USER/.claude/projects/-Users-USER-projects-monolynx-monolynx--claude-worktrees-MON-224/a2852091-a1a8-4535-9b93-b7b0f0fdaf6c.jsonl",
+  "cwd": "/Users/USER/projects/monolynx/monolynx/.claude/worktrees/MON-224",
+  "scratchpad_dir": "/private/tmp/claude-501/-Users-USER-projects-monolynx-monolynx--claude-worktrees-MON-224/a2852091-a1a8-4535-9b93-b7b0f0fdaf6c/scratchpad",
+  "permission_mode": "acceptEdits",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo tmux-teammate-probe",
+    "description": "Run probe echo"
+  },
+  "tool_use_id": "toolu_01BrFJAt5nSTShiR5rvsHLPS"
+}

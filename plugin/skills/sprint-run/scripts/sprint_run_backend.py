@@ -594,7 +594,9 @@ def logs(record: dict[str, Any], n: int = 60) -> list[str]:
     path = Path(log_path)
     if not path.is_file():
         return []
-    text = path.read_text(errors="replace")
+    # Bajty, nie read_text(): tryb tekstowy tlumaczy \r na \n, a render_log (galaz
+    # claude) potrzebuje \r jako powrotu karetki (MON-227). JSONL codex to nie rusza.
+    text = path.read_bytes().decode("utf-8", errors="replace")
 
     if record.get("backend") == "codex":
         parsed = parse_codex_jsonl(text)
@@ -602,15 +604,10 @@ def logs(record: dict[str, Any], n: int = 60) -> list[str]:
         nonempty = [line.strip() for line in lines if line and line.strip()]
         return nonempty[-n:] if n > 0 else []
 
-    # claude: parytet z sprint_run_state.read_log_tail (ANSI + \r -> \n) -
-    # reuzywamy jej regexy prywatne zamiast duplikowac je tutaj, na wzor
-    # sprint_run_tick.py::_write_session_log.
-    text = sprint_run_state._CSI_CURSOR_GAP_RE.sub(" ", text)
-    text = sprint_run_state._ANSI_RE.sub("", text)
-    text = text.replace("\r", "\n")
-    lines = [line.strip() for line in text.split("\n")]
-    nonempty = [line for line in lines if line]
-    return nonempty[-n:] if n > 0 else []
+    # claude: parytet z sprint_run_state.read_log_tail - ten sam render_log (emulacja
+    # ekranu, filtr spinnera, dedup) zamiast wlasnego stripu ANSI (MON-227).
+    lines = sprint_run_state.render_log(text)
+    return lines[-n:] if n > 0 else []
 
 
 # ---------------------------------------------------------------------------

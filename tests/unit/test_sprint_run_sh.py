@@ -857,3 +857,103 @@ class TestCodexPlainStatusLineFixtureContract:
             timeout=10,
         )
         assert with_tail.stdout.decode() == "SPRINT-RUN: remaining=2 running=1 waiting=0 done=3\n"
+
+
+# ---------------------------------------------------------------------------
+# MON-222: sprint z samymi ticketami needs-local i sesja waiting nie jest
+# "wykonany" (remaining>0, running=0, waiting>0), a petla mowi to glosno; limit
+# sesji waiting MONOLYNX_SPRINT_MAX_WAITING widoczny w logu startu i w env ticku.
+# ---------------------------------------------------------------------------
+
+
+def _start_line(sandbox):
+    log_path = sandbox.git_dir / "monolynx" / "sprint-run.log"
+    lines = [line for line in log_path.read_text().splitlines() if "start:" in line]
+    assert lines, "brak linii start: w logu petli"
+    return lines[0]
+
+
+@pytest.mark.unit
+class TestSprintRunNothingRunningWithRemainingWork:
+    def test_remaining_work_with_only_waiting_session_is_not_treated_as_finished(self, sandbox):
+        """Dwa tickety needs-local (remaining=2, nikt ich nie startuje w tle) i
+        jedna sesja waiting: petla nie moze oglosic sprintu wykonanym (kod 0) ani
+        zakonczyc sie kodem 4 (tylko waiting) - biegnie do bezpiecznika
+        --max-ticks (kod 3)."""
+        write_status(sandbox, "SPRINT-RUN: remaining=2 running=0 waiting=1 done=3")
+
+        result = run_script(sandbox, ["--max-ticks", "2"])
+
+        assert result.returncode == 3, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert len(arg_lines(sandbox)) == 2
+        assert "sprint wykonany" not in result.stdout
+
+    def test_remaining_work_with_nothing_running_logs_explicit_warning(self, sandbox):
+        write_status(sandbox, "SPRINT-RUN: remaining=2 running=0 waiting=1 done=3")
+
+        result = run_script(sandbox, ["--max-ticks", "2"])
+
+        assert result.returncode == 3, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        warning_lines = [line for line in result.stdout.splitlines() if "nic nie biegnie" in line]
+        assert warning_lines, f"brak ostrzezenia o tym, ze nic nie biegnie: {result.stdout!r}"
+        log_text = (sandbox.git_dir / "monolynx" / "sprint-run.log").read_text()
+        assert "nic nie biegnie" in log_text
+
+    def test_no_nothing_running_warning_while_a_session_is_running(self, sandbox):
+        """Ostrzezenie tylko gdy running=0 - przy pracujacej sesji petla robi
+        to, co ma robic, i nie krzyczy."""
+        write_status(sandbox, "SPRINT-RUN: remaining=2 running=1 waiting=1 done=0")
+
+        result = run_script(sandbox, ["--max-ticks", "2"])
+
+        assert result.returncode == 3, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "nic nie biegnie" not in result.stdout
+
+    def test_only_waiting_and_no_remaining_still_exits_4_without_nothing_running_warning(self, sandbox):
+        """Regresja: istniejacy kontrakt (remaining=0 running=0 waiting>0 -> kod 4)
+        zostaje, a ostrzezenie 'nic nie biegnie' dotyczy wylacznie remaining>0."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=1 done=2")
+
+        result = run_script(sandbox, [])
+
+        assert result.returncode == 4
+        assert "nic nie biegnie" not in result.stdout
+
+
+@pytest.mark.unit
+class TestSprintRunMaxWaiting:
+    def test_start_log_reports_default_max_waiting_of_two(self, sandbox):
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [])
+
+        assert result.returncode == 0
+        assert "max_waiting=2" in _start_line(sandbox)
+
+    def test_start_log_reports_max_waiting_from_environment(self, sandbox):
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [], env_overrides={"MONOLYNX_SPRINT_MAX_WAITING": "5"})
+
+        assert result.returncode == 0
+        start_line = _start_line(sandbox)
+        assert "max_waiting=5" in start_line
+        assert "max_waiting=2" not in start_line
+
+    def test_max_waiting_is_exported_to_the_tick_process(self, sandbox):
+        """Tick czyta limit z env (preflight -> MAX_WAITING), wiec petla musi go
+        przekazac dalej, takze gdy uzytkownik go nie ustawil (domyslne 2)."""
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [])
+
+        assert result.returncode == 0
+        assert "MONOLYNX_SPRINT_MAX_WAITING=2" in sandbox.fake_env_dump.read_text().splitlines()
+
+    def test_external_max_waiting_override_is_preserved_in_tick_env(self, sandbox):
+        write_status(sandbox, "SPRINT-RUN: remaining=0 running=0 waiting=0 done=0")
+
+        result = run_script(sandbox, [], env_overrides={"MONOLYNX_SPRINT_MAX_WAITING": "5"})
+
+        assert result.returncode == 0
+        assert "MONOLYNX_SPRINT_MAX_WAITING=5" in sandbox.fake_env_dump.read_text().splitlines()

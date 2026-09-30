@@ -4,6 +4,7 @@ stages:
   - test
   - push
   - deploy
+  - publish
 
 .docker-dind:
   image: docker:24
@@ -98,6 +99,29 @@ plugin-consistency:
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH =~ /^sprint\//
 
+# Runner jest shell executorem: `image:` jest ignorowane, a pip nie ma na hoscie,
+# wiec kontener startujemy z hosta przez `docker run` (jak clean-code). Repo
+# montowane read-only, a praca idzie na kopii w kontenerze: kontener dziala jako
+# root i pliki zapisane w build dirze (cache ruffa) zablokowalyby runnerowi
+# `git clean`. Kopiujemy tylko root pyproject.toml (config ruffa, cli/pyproject.toml
+# nie ma [tool.ruff]) i cli/. Osobny job bez matrixa: lint nie zalezy od wersji
+# Pythona. Wersja ruffa jak w requirements/dev.txt.
+lint:cli:
+  stage: lint
+  needs: []
+  script:
+    - |
+      docker run --rm -v "$CI_PROJECT_DIR":/src:ro python:3.12-slim sh -c "
+        mkdir /w && cp /src/pyproject.toml /w/ && cp -r /src/cli /w/cli && cd /w &&
+        pip install --no-cache-dir 'ruff>=0.8' &&
+        ruff check cli/ &&
+        ruff format --check cli/"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^sprint\//
+
 trivy-scan:
   stage: test
   extends: .docker-dind
@@ -113,22 +137,49 @@ trivy-scan:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
+# Runner jest shell executorem (`image:` jest ignorowane, na hoście nie ma apk),
+# więc dockle startuje jako kontener z hosta i czyta obraz przez socket dockera.
 dockle-scan:
   stage: test
   extends: .docker-dind
   variables:
     DOCKLE_VERSION: "0.4.14"
   before_script:
-    - apk add --no-cache curl tar
-    - curl -sfL https://github.com/goodwithtech/dockle/releases/download/v${DOCKLE_VERSION}/dockle_${DOCKLE_VERSION}_Linux-64bit.tar.gz | tar xzf - -C /usr/local/bin dockle
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
     - docker pull "$CI_REGISTRY_IMAGE:test"
-    - dockle --exit-code 1 "$CI_REGISTRY_IMAGE:test"
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock goodwithtech/dockle:v${DOCKLE_VERSION} --exit-code 1 "$CI_REGISTRY_IMAGE:test"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - Dockerfile
+
+# CLI jest samodzielna paczka (requires-python >=3.10), wiec sprawdzamy ja na
+# calym zakresie wersji, bez bazy. Runner jest shell executorem (`image:` jest
+# ignorowane), wiec kontener startuje z hosta przez `docker run`. Kopia w
+# kontenerze zamiast zapisu w build dirze: root zostawilby tam __pycache__,
+# .coverage i egg-info, na ktorych padlby `git clean` runnera. `cd /cli` jest
+# celowe: pytest i coverage wybieraja konfig po CWD, a w rootcie repo wzialyby
+# pyproject.toml serwera (asyncio, source=src/monolynx). Editable install +
+# --cov=monolynx_cli mierzy pakiet, nie sciezke plikow.
+test:cli:
+  stage: test
+  needs: []
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
+  script:
+    - |
+      docker run --rm -v "$CI_PROJECT_DIR/cli":/src:ro python:${PYTHON_VERSION}-slim sh -c "
+        cp -r /src /cli && cd /cli &&
+        pip install --no-cache-dir -e '.[test]' &&
+        pytest tests/ -m 'not e2e' --cov=monolynx_cli --cov-report=term --cov-fail-under=80"
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^sprint\//
 
 # --- Push ---
 
@@ -192,3 +243,163 @@ wiki-post-merge:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       when: on_success
+
+# --- Publish (monolynx-cli na PyPI) ---
+
+# Autoryzacja przez PyPI Trusted Publishing (OIDC) - zaden dlugozyjacy token
+# w zmiennych CI/CD. Twine (przez pakiet `id`) sam wymienia token OIDC na
+# krotkozyjacy token uploadu, wiec nic nie trafia do logu joba. Nazwa
+# zmiennej w `id_tokens` MUSI odpowiadac audience: `id` szuka `<AUD>_ID_TOKEN`
+# (uppercase), stad PYPI_ID_TOKEN dla aud=pypi i TESTPYPI_ID_TOKEN dla
+# aud=testpypi - to nie jest jedna stala nazwa dla obu jobow. Bramka wersji
+# stoi przed uploadem, bo ten jest nieodwracalny.
+#
+# Runner jest shell executorem: `image:` jest ignorowane (stad jego brak), a pip
+# nie ma na hoscie, wiec build, bramka i upload ida w jednym `docker run` (jak
+# lint:cli i test:cli). Repo montowane read-only, praca na kopii w kontenerze:
+# kontener dziala jako root i dist/ oraz egg-info w build dirze zablokowalyby
+# runnerowi `git clean`. Tokeny OIDC przechodza do kontenera przez `-e NAZWA` bez
+# wartosci (wartosc nie trafia do logu ani do `ps`); `GITLAB_CI` jest potrzebne,
+# bo pakiet `id` uzywany przez twine wykrywa srodowisko GitLaba po tej zmiennej.
+# Skrypt w kontenerze idzie przez zmienna, zeby `$` rozwijalo sie dopiero tam.
+.publish-cli:
+  stage: publish
+  script:
+    - |
+      IFS= read -r -d '' PUBLISH_SCRIPT <<'PUBLISH' || true
+      set -e
+      cp -r /src /w
+      cd /w
+      pip install --no-cache-dir build==1.6.1 twine==7.0.0
+      python -m build
+      twine check --strict dist/*
+      # Bramka wersji PRZED uploadem: numer paczki (jedyne zrodlo -
+      # src/monolynx_cli/version.py) musi byc identyczny z tagiem bez prefiksu
+      # cli-v, inaczej job konczy sie bledem i nic nie jest wysylane.
+      PKG_VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/monolynx_cli/version.py)"
+      TAG_VERSION="${CI_COMMIT_TAG#cli-v}"
+      if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+        echo "Wersja paczki ($PKG_VERSION) nie zgadza sie z tagiem $CI_COMMIT_TAG" >&2
+        exit 1
+      fi
+      twine upload --repository "$TWINE_REPOSITORY" dist/*
+      PUBLISH
+      docker run --rm \
+        -v "$CI_PROJECT_DIR/cli":/src:ro \
+        -e PYPI_ID_TOKEN -e TESTPYPI_ID_TOKEN -e GITLAB_CI -e TWINE_REPOSITORY -e CI_COMMIT_TAG \
+        python:3.12-slim bash -c "$PUBLISH_SCRIPT"
+
+publish-pypi:
+  extends: .publish-cli
+  variables:
+    TWINE_REPOSITORY: pypi
+  id_tokens:
+    PYPI_ID_TOKEN:
+      aud: pypi
+  environment: pypi
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^cli-v\d+\.\d+\.\d+$/
+
+publish-testpypi:
+  extends: .publish-cli
+  variables:
+    TWINE_REPOSITORY: testpypi
+  id_tokens:
+    TESTPYPI_ID_TOKEN:
+      aud: testpypi
+  environment: testpypi
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^cli-v\d+\.\d+\.\d+rc\d+$/
+
+# --- Publish (Homebrew tap monolynx/tap, MON-138) ---
+
+# Tag numerowany, nie ruchomy (latest/master), żeby job był powtarzalny w czasie.
+# Runner jest shell executorem: `image:` jest ignorowane (stąd jego brak), więc kontener
+# startuje z hosta przez `docker run`, jak w lint:cli i test:cli. Repo montowane read-only,
+# praca na kopii w kontenerze. Obraz działa jako użytkownik linuxbrew (Homebrew odmawia
+# pracy jako root), więc zaktualizowana formuła wraca na hosta przez osobny, zapisywalny
+# katalog /out (mktemp, chmod 777), a na hoście kopiuje ją runner - plik w workspace ma
+# wtedy właściciela runnera i nie blokuje `git clean`. Formuła trafia do /out jeszcze
+# przed pushem, żeby artefakt powstał także gdy push się nie uda. Token tapu idzie przez
+# `-e HOMEBREW_TAP_TOKEN` bez wartości (nie trafia do logu ani do `ps`).
+# Obraz nie ma pythona; formuła i tak ma depends_on python@3.13, a ta jest keg-only,
+# więc interpreter wołamy pełną ścieżką z brew --prefix, nie z PATH.
+# Krok update-python-resources niezweryfikowany end-to-end: pod Docker Desktop na macOS
+# pada na "Landlock is not supported by this Linux kernel" (sandbox Homebrew); czy runner
+# GitLab CI ma ten sam problem, pokaże pierwszy tag cli-v*.
+# `--ignore-main-package-cooldown`: tuż po publish-pypi paczka jest w cooldownie Homebrew,
+# a flaga działa tylko poza oficjalnymi tapami (tu local/scratch).
+bump-homebrew:
+  stage: publish
+  needs:
+    - job: publish-pypi
+  script:
+    - |
+      IFS= read -r -d '' BUMP_SCRIPT <<'BUMP' || true
+      set -e
+      WORK="$(mktemp -d)"
+      cp /src/cli/scripts/bump_formula.py /src/cli/packaging/homebrew/monolynx.rb "$WORK/"
+      brew install python@3.13
+      PYTHON3="$(brew --prefix python@3.13)/libexec/bin/python3"
+      # Retry wbudowany w skrypt: sdist bywa widoczny w PyPI JSON z opóźnieniem po publish-pypi.
+      "$PYTHON3" "$WORK/bump_formula.py" --tag "$CI_COMMIT_TAG" --formula "$WORK/monolynx.rb"
+      # update-python-resources odrzuca bezpośrednią ścieżkę pliku - formuła musi leżeć w tapie,
+      # stąd lokalny scratch-tap bez gita, tylko na czas joba.
+      brew tap-new --no-git local/scratch
+      mkdir -p "$(brew --repository local/scratch)/Formula"
+      cp "$WORK/monolynx.rb" "$(brew --repository local/scratch)/Formula/monolynx.rb"
+      brew update-python-resources --ignore-main-package-cooldown local/scratch/monolynx
+      cp "$(brew --repository local/scratch)/Formula/monolynx.rb" "$WORK/monolynx.rb"
+      cp "$WORK/monolynx.rb" /out/monolynx.rb
+      # Pierwszy release: Formula/monolynx.rb jeszcze nie istnieje w tapie (404) -> bez
+      # pushu, formułę z artefaktu wypycha ręcznie właściciel. Kod inny niż 200/404
+      # (błąd sieci itp.) -> wariant bezpieczny: też bez pushu.
+      HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' https://raw.githubusercontent.com/Monolynx/homebrew-tap/main/Formula/monolynx.rb)"
+      case "$HTTP_CODE" in
+        404)
+          echo "Pierwsze wydanie - Formula/monolynx.rb jeszcze nie istnieje w tapie, bez pushu."
+          ;;
+        200)
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN nie ustawiony - nie mogę wypchnąć zaktualizowanej formuły." >&2
+            exit 1
+          fi
+          # Token tylko przez credential.helper czytający zmienną środowiskową - nigdy
+          # w URL-u (trafiłby do komunikatów błędów gita); bez set -x w tym jobie.
+          git config --global user.email "ci@monolynx.com"
+          git config --global user.name "Monolynx CI"
+          git config --global credential.helper '!f() { echo "username=x-access-token"; echo "password=$HOMEBREW_TAP_TOKEN"; }; f'
+          TAP_DIR="$(mktemp -d)"
+          git clone --depth 1 https://github.com/Monolynx/homebrew-tap.git "$TAP_DIR"
+          cp "$WORK/monolynx.rb" "$TAP_DIR/Formula/monolynx.rb"
+          cd "$TAP_DIR"
+          git add Formula/monolynx.rb
+          git commit -m "monolynx ${CI_COMMIT_TAG#cli-v}"
+          git push origin main
+          ;;
+        *)
+          echo "Nie można ustalić stanu tapu (HTTP $HTTP_CODE) - wariant bezpieczny: bez pushu." >&2
+          ;;
+      esac
+      BUMP
+      OUT="$(mktemp -d)"
+      chmod 777 "$OUT"
+      RC=0
+      docker run --rm \
+        -v "$CI_PROJECT_DIR":/src:ro \
+        -v "$OUT":/out \
+        -e CI_COMMIT_TAG -e HOMEBREW_TAP_TOKEN \
+        homebrew/brew:4.6.20 bash -c "$BUMP_SCRIPT" || RC=$?
+      if [ -f "$OUT/monolynx.rb" ]; then
+        cp "$OUT/monolynx.rb" cli/packaging/homebrew/monolynx.rb
+        rm "$OUT/monolynx.rb"
+      fi
+      rmdir "$OUT"
+      exit "$RC"
+  artifacts:
+    when: always
+    paths:
+      - cli/packaging/homebrew/monolynx.rb
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^cli-v\d+\.\d+\.\d+$/

@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "command": "tmux new-session -d <skrypt: env CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --model sonnet --settings <dump-hook.json z \"teammateMode\": \"tmux\"> --allowedTools \"Bash(echo *)\" Agent SendMessage TeamCreate TeamDelete -- \"<prompt: 1) echo tmux-main-probe, 2) teammate Agent Teams name=probe: echo tmux-teammate-probe>\">",
+    "tool_version": "2.1.284",
+    "captured": "2026-09-29",
+    "note": "Payload przechwycony hookiem PreToolUse (matcher Bash) z --settings, ktory zapisywal stdin 1:1 do pliku; CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 w srodowisku. Lider zespolu w trybie teammateMode=tmux: brak agent_id i agent_type, jak zwykla sesja glowna.",
+    "anonymized": "sciezka domowa /Users/<login> -> /Users/USER; reszta payloadu bez zmian"
+  },
+  "session_id": "674b4ec4-4522-40cb-88ac-c479bfced32b",
+  "transcript_path": "/Users/USER/.claude/projects/-Users-USER-projects-monolynx-monolynx--claude-worktrees-MON-224/674b4ec4-4522-40cb-88ac-c479bfced32b.jsonl",
+  "cwd": "/Users/USER/projects/monolynx/monolynx/.claude/worktrees/MON-224",
+  "scratchpad_dir": "/private/tmp/claude-501/-Users-USER-projects-monolynx-monolynx--claude-worktrees-MON-224/674b4ec4-4522-40cb-88ac-c479bfced32b/scratchpad",
+  "prompt_id": "e757eff4-22f3-4353-9ddb-0c2a67b64c77",
+  "permission_mode": "acceptEdits",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo tmux-main-probe",
+    "description": "Print main probe string"
+  },
+  "tool_use_id": "toolu_01SC3xkgvPEfcjCfuVSBFYLW"
+}

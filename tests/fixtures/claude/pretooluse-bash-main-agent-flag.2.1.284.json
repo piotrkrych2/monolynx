@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "command": "claude -p --model sonnet --agent general-purpose --settings <dump-hook.json> --allowedTools \"Bash(echo *)\" -- \"<prompt: echo agent-flag-main-probe>\"",
+    "tool_version": "2.1.284",
+    "captured": "2026-09-29",
+    "note": "Payload przechwycony hookiem PreToolUse (matcher Bash) z --settings, ktory zapisywal stdin 1:1 do pliku; CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 w srodowisku. Sesja glowna uruchomiona z --agent general-purpose: brak agent_id, agent_type = general-purpose (ten sam ksztalt co teammate tmux), prompt_id obecny.",
+    "anonymized": "sciezka domowa /Users/<login> -> /Users/USER; reszta payloadu bez zmian"
+  },
+  "session_id": "56dcea74-7a51-404e-b5e6-82401edcedb0",
+  "transcript_path": "/Users/USER/.claude/projects/-Users-USER-projects-monolynx-monolynx--claude-worktrees-MON-224/56dcea74-7a51-404e-b5e6-82401edcedb0.jsonl",
+  "cwd": "/Users/USER/projects/monolynx/monolynx/.claude/worktrees/MON-224",
+  "prompt_id": "bead693a-50ac-48ff-a2b8-54b7d8569b87",
+  "permission_mode": "acceptEdits",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo agent-flag-main-probe",
+    "description": "Echo probe string"
+  },
+  "tool_use_id": "toolu_01VsxYFwkYa85AUvDdooDmro"
+}

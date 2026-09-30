@@ -14,12 +14,19 @@ wstepny "tylko branch main/master" dla zapisu (create/update/delete stron);
 bramka ma sprawdzac branch integracyjny z konfiguracji, nie literal. Dyspozytor
 sprintu (`sprint_run_tick.py`) ma zweryfikowac w preflighcie, ze lokalny punkt
 startu jest aktualny wobec `origin`.
+
+MON-219: rozbiezne `MONOLYNX_BASE_BRANCH` i `MONOLYNX_MR_TARGET` (obie ustawione, rozne) to blad
+preflightu, a dokumentacja (README, sprint-run, mr-queue) mowi to wprost; testy na dole pliku
+uruchamiaja realny preflight zamiast greppowac zrodlo.
 """
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from tests.unit import test_sprint_run_tick as tick_tests
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -217,3 +224,102 @@ def test_readme_documents_branch_mode_base_branch_and_mr_target_roles() -> None:
     assert MR_TARGET_TABLE_ROW_PATTERN.search(content), "plugin/README.md: brak wiersza tabeli MONOLYNX_MR_TARGET."
     assert "**punkt startu**" in content, "plugin/README.md: brak akapitu opisujacego MONOLYNX_BASE_BRANCH jako 'punkt startu' brancha roboczego."
     assert "**cel MR**" in content, "plugin/README.md: brak akapitu opisujacego MONOLYNX_MR_TARGET jako 'cel MR' - rozgraniczenie od punktu startu."
+
+
+MR_QUEUE_SKILL_PATH = REPO_ROOT / "plugin/skills/mr-queue/SKILL.md"
+
+BASE_BRANCH_VAR = "MONOLYNX_BASE_BRANCH"
+MR_TARGET_VAR = "MONOLYNX_MR_TARGET"
+
+
+@pytest.fixture
+def preflight_sandbox(tmp_path):
+    """Sandbox jak `tick_sandbox` z test_sprint_run_tick (fake `git` i `claude` w fakebin), zbudowany z jego stalych.
+
+    Wlasny fixture o innej nazwie, bo import fixture'a pod ta sama nazwa kolidowal z parametrami testow (F811).
+    """
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    git_dir = project_dir / ".git"
+    git_dir.mkdir()
+
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+
+    git_script = fakebin / "git"
+    git_script.write_text(tick_tests.GIT_SCRIPT_TEMPLATE.format(project_dir=project_dir, git_dir=git_dir))
+    git_script.chmod(0o755)
+
+    claude_script = fakebin / "claude"
+    claude_script.write_text(tick_tests.CLAUDE_SCRIPT)
+    claude_script.chmod(0o755)
+
+    return SimpleNamespace(tmp_path=tmp_path, project_dir=project_dir, git_dir=git_dir, fakebin=fakebin)
+
+
+@pytest.mark.unit
+def test_preflight_rejects_different_base_branch_and_mr_target(preflight_sandbox) -> None:
+    """MON-219 (zachowanie, nie grep literalu): uruchomiony preflight `sprint_run_tick.py` z rozbieznymi
+    zmiennymi konczy sie kodem 2, linia `ERROR:` wymienia obie zmienne i nie startuje niczego dalej."""
+    env_extra = tick_tests.full_flags_env({BASE_BRANCH_VAR: "develop", MR_TARGET_VAR: "release"})
+
+    result = tick_tests.run_preflight(preflight_sandbox, env_extra=env_extra)
+
+    assert result.returncode == 2, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    errs = tick_tests.error_lines(result)
+    assert len(errs) == 1
+    assert BASE_BRANCH_VAR in errs[0] and MR_TARGET_VAR in errs[0]
+    assert result.stdout.splitlines()[-1].startswith("PREFLIGHT: failed")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "variables",
+    [
+        {BASE_BRANCH_VAR: "develop", MR_TARGET_VAR: "develop"},
+        {BASE_BRANCH_VAR: "develop"},
+        {MR_TARGET_VAR: "develop"},
+    ],
+    ids=["equal", "only-base-branch", "only-mr-target"],
+)
+def test_preflight_accepts_single_target_configuration(preflight_sandbox, variables) -> None:
+    """Przeciwwaga: rownosc albo jedna zmienna nie moze byc blokowana (odwrocony warunek zablokowalby kazdy sprint)."""
+    result = tick_tests.run_preflight(preflight_sandbox, env_extra=tick_tests.full_flags_env(variables))
+
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert tick_tests.error_lines(result) == []
+    assert "BASE_BRANCH=develop" in result.stdout.splitlines()
+
+
+def _lines_naming_both_variables(path: Path) -> list[str]:
+    content = path.read_text(encoding="utf-8")
+    return [line for line in content.splitlines() if BASE_BRANCH_VAR in line and MR_TARGET_VAR in line]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("path", [README_PATH, SPRINT_RUN_SKILL_PATH, MR_QUEUE_SKILL_PATH], ids=_rel)
+def test_docs_say_different_values_of_both_variables_is_an_error(path: Path) -> None:
+    """Dokumentacja mowi wprost, ze rozbiezne `MONOLYNX_BASE_BRANCH` i `MONOLYNX_MR_TARGET` to blad:
+    jedna linia wymienia obie zmienne oraz slowo `ERROR` albo `różn` (rozne/roznica/rozbieznosc)."""
+    hits = [line for line in _lines_naming_both_variables(path) if re.search(r"ERROR|różn|rozbieżn", line)]
+    assert hits, (
+        f"{_rel(path)}: brak linii wymieniajacej {BASE_BRANCH_VAR} i {MR_TARGET_VAR} razem z 'ERROR' / 'różn' / 'rozbieżn' - "
+        "dokumentacja musi mowic, ze rozne wartosci obu zmiennych to blad."
+    )
+
+
+@pytest.mark.unit
+def test_mr_queue_skill_documents_config_check_and_ff_only_sync() -> None:
+    """mr-queue: KROK 1 wola `config-check`, a domkniecie po merge uzywa `target-sync` i wylacznie `--ff-only`."""
+    content = MR_QUEUE_SKILL_PATH.read_text(encoding="utf-8")
+    assert "config-check" in content, f"{_rel(MR_QUEUE_SKILL_PATH)}: brak podkomendy `config-check` w preflighcie."
+    assert "target-sync" in content, f"{_rel(MR_QUEUE_SKILL_PATH)}: brak podkomendy `target-sync` w domknieciu."
+    assert "--ff-only" in content, f"{_rel(MR_QUEUE_SKILL_PATH)}: brak `--ff-only` - fast-forward brancha docelowego."
+
+
+@pytest.mark.unit
+def test_sprint_run_skill_documents_sync_base_before_dispatch() -> None:
+    """sprint-run: przy `BASE_BRANCH_STALE=true` KROK 4 najpierw woła `sync-base`; linia `SYNC-BASE:` (kontrakt MON-142) jest opisana."""
+    content = SPRINT_RUN_SKILL_PATH.read_text(encoding="utf-8")
+    assert "sync-base --base-branch" in content, f"{_rel(SPRINT_RUN_SKILL_PATH)}: brak podkomendy `sync-base --base-branch`."
+    assert "SYNC-BASE: ok|skipped|failed" in content, f"{_rel(SPRINT_RUN_SKILL_PATH)}: brak opisu linii `SYNC-BASE: ok|skipped|failed`."

@@ -14,28 +14,74 @@ Podkomendy:
     queue-set    --queue-file F REF [REF ...]
         Zapisz kolejnosc merge. REF: `!70` (glab), `#15` (gh) albo URL MR/PR.
         Refy juz obecne w kolejce zachowuja swoj stan (licznik poprawek,
-        approve z czatu, SHA merge); refy spoza nowej listy wypadaja.
+        approve z czatu, SHA merge, stop_reason); refy spoza nowej listy wypadaja,
+        z wyjatkiem pozycji `verifying` i `stopped` ze `stop_reason` ==
+        `target_ci_failed`: zostaja na poczatku kolejki w dotychczasowej
+        kolejnosci, bo bez `verifying` CI ich commitow merge nigdy nie zostaloby
+        sprawdzone (ticket nie trafilby na done), a bez zatrzymanej pozycji
+        kolejka przestalaby stac na czerwonym branchu integracyjnym.
+
+    queue-append --queue-file F --provider glab|gh --list-file L
+        Dopisz na koniec kolejki otwarte MR/PR z listy, ktorych w kolejce jeszcze
+        nie ma (kolejnosc i pominiecia jak w queue-propose). Elementy juz obecne,
+        w dowolnym statusie, zostaja nietkniete. Wynik: kolejka z `next` oraz
+        `appended` (dopisane refy) i `skipped` (pominiete spoza kolejki, z powodem).
 
     queue-show   --queue-file F
-        Wypisz kolejke i pierwszy element do obslugi (`next`).
+        Wypisz kolejke i pierwszy element do obslugi (`next`). Kazdy wynik
+        queue-* niesie tez `verifying` (refy pozycji `verifying`, w kolejnosci
+        pliku) i `halted` (ref zatrzymujacy kolejke albo null, patrz nizej).
 
     queue-update --queue-file F --ref REF [--status S] [--user-approved-sha SHA]
-                 [--fix-round] [--merge-sha SHA]
-        Zmien stan jednego elementu.
+                 [--fix-round] [--merge-sha SHA] [--stop-reason R]
+        Zmien stan jednego elementu. Kazda zmiana statusu czysci `stop_reason`;
+        update bez --status go zachowuje. Statusy: pending, merging, verifying,
+        done, closed, stopped.
+
+    post-merge   --target-branch T --default-branch D
+        Status pozycji po merge: {"status": verifying|merging, "reason"}.
+        `verifying` (branch integracyjny: kolejka bierze nastepny MR od razu, CI
+        commita merge sprawdza wstecz) tylko gdy T i D po strip sa niepuste i
+        rozne; w kazdym innym przypadku `merging` (czekanie na zielone CI przed
+        kolejnym MR, jak na domyslnym branchu). Puste wartosci sa dozwolone,
+        flagi wymagane (brak flagi to kod 64). Wynik idzie do
+        `queue-update --status <status> --merge-sha <sha>`.
 
     classify     --provider glab --mr-file M --approvals-file A [--user-approved-sha SHA]
     classify     --provider gh --pr-file P [--user-approved-sha SHA]
-        Werdykt dla jednego MR/PR, w kolejnosci: CI -> konflikt -> approve -> merge.
+        Werdykt dla jednego MR/PR, w kolejnosci: konflikt -> CI -> approve -> merge.
+        Werdykt `conflict` niesie `pipeline_id` i `pipeline_status` aktywnego
+        pipeline'u HEAD (glab: id i status z head_pipeline, gdy status jest
+        trwajacy; gh: id zawsze None, status "running" gdy checki trwaja; brak
+        aktywnego pipeline'u to oba None) - skill anuluje go przed rozwiazaniem konfliktu.
 
     target-ci    --provider glab --pipelines-file P [--jobs-file J]
     target-ci    --provider gh --runs-file R
-        Stan CI na branchu docelowym dla commita merge.
+        Stan CI na branchu docelowym dla commita merge. Wynik o statusie `failed`
+        niesie `failed_jobs` (nazwy czerwonych jobow glab bez allow_failure albo
+        czerwonych runow gh, w kolejnosci wejscia; pusta lista, gdy brak listy
+        jobow); pozostale statusy nie maja tego klucza.
 
     ticket-key   [--source-branch B] [--title T]
         Klucz ticketu ([A-Z]+-[0-9]+, re.search, pierwsze dopasowanie) z brancha
         zrodlowego albo, gdy tam go nie ma, z tytulu MR/PR. Brak dopasowania w
         obu polach (albo brak obu argumentow) to poprawny wynik biznesowy -
         {"key": null}, kod wyjscia 0, nie blad wejscia.
+
+    target-sync  --target-branch T --current-branch C --ahead N --behind M --dirty true|false
+        Decyzja, jak po merge zaktualizowac LOKALNY branch docelowy T wylacznie
+        fast-forwardem. C to `git rev-parse --abbrev-ref HEAD` glownego checkoutu,
+        N/M to `git rev-list --left-right --count T...origin/T` po
+        `git fetch origin T` (lewa kolumna = ahead, prawa = behind), --dirty to
+        niepusty `git status --porcelain --untracked-files=no`. Wynik:
+        {"action": none|ff-merge|ff-fetch|skip, "reason", "commands": [...],
+        "manual": <komenda dla czlowieka albo null>}. Skrypt niczego nie uruchamia.
+        Zadna sciezka nie daje reset, rebase, stash, force ani refspeca z `+`.
+
+    config-check [--base-branch B] [--mr-target M]
+        Wartosci MONOLYNX_BASE_BRANCH i MONOLYNX_MR_TARGET musza wskazywac ten
+        sam branch: obie niepuste (po strip) i rozne to kod 2 z komunikatem.
+        Inaczej {"target": <B, potem M, potem null>}.
 
 Wejscia:
     --list-file       `glab mr list -F json -P 100` albo
@@ -52,6 +98,11 @@ Wejscia:
 Werdykty classify: merged, closed, wait, ci_failed, conflict, needs_approval,
 needs_human, ready. Stany target-ci: success, failed, wait, needs_human.
 
+Zatrzymanie kolejki: pozycja `stopped` ze `stop_reason` == `target_ci_failed`
+(czerwone CI brancha integracyjnego) zeruje `next` i wystawia `halted`; inny
+`stop_reason` albo brak nie zatrzymuje kolejki. Odblokowuje ja czlowiek zmiana
+statusu pozycji (np. `--status closed`).
+
 Literaly stanow pochodza z fixture w tests/fixtures/glab/ i tests/fixtures/gh/;
 wartosci dopisane ze schematu API sa w komentarzach oznaczone osobno. Literal
 nieznany mapuje sie na `wait` z ostrzezeniem w `reason` - czekanie cofa nastepny
@@ -60,7 +111,10 @@ tick, a pomylkowe `ready` konczy sie merge, ktorego nie da sie cofnac
 
 Kody wyjscia:
     0  - wynik wypisany na stdout jako JSON.
-    2  - blad wejscia: brak pliku, niepoprawny JSON, zly ksztalt, nieznany REF.
+    2  - blad wejscia: brak pliku, niepoprawny JSON, zly ksztalt, nieznany REF;
+         dla target-sync ujemne liczby, pusty branch, --dirty inne niz true/false;
+         dla config-check rozbiezne MONOLYNX_BASE_BRANCH i MONOLYNX_MR_TARGET;
+         dla queue-file `stop_reason` inny niz string albo null.
     64 - blad uzycia CLI.
 """
 
@@ -118,7 +172,10 @@ _GH_MERGE_READY = {"CLEAN", "HAS_HOOKS", "UNSTABLE"}
 _GH_RUN_OK = {"success", "skipped", "neutral"}
 _GH_RUN_FAILED = {"failure", "cancelled", "timed_out", "startup_failure", "action_required", "stale"}
 
-_QUEUE_STATUSES = {"pending", "merging", "done", "closed", "stopped"}
+_QUEUE_STATUSES = {"pending", "merging", "verifying", "done", "closed", "stopped"}
+
+# Jedyny stop_reason, ktory zatrzymuje kolejke (czerwone CI brancha integracyjnego).
+_HALTING_STOP_REASON = "target_ci_failed"
 
 _REF_RE = re.compile(r"^(?P<sigil>[!#])(?P<number>[1-9][0-9]*)$")
 _GITLAB_URL_RE = re.compile(r"^https?://[^/]+/(?P<repo>.+?)/-/merge_requests/(?P<number>[1-9][0-9]*)/?$")
@@ -183,6 +240,14 @@ def _glab_ci(pipeline: Any) -> tuple[str, str]:
     return "running", f"pipeline {pipeline.get('id')}: nieznany status '{status}', traktuje jak trwajacy"
 
 
+def _glab_active_pipeline(pipeline: Any) -> dict[str, Any]:
+    # Jawny test na _GLAB_CI_RUNNING, nie na kategorie z _glab_ci: ta mapuje nieznany status
+    # na running (odwracalne dla wait), a anulowanie pipeline'u jest nieodwracalne.
+    if isinstance(pipeline, dict) and pipeline.get("status") in _GLAB_CI_RUNNING:
+        return {"pipeline_id": pipeline.get("id"), "pipeline_status": pipeline["status"]}
+    return {"pipeline_id": None, "pipeline_status": None}
+
+
 def classify_glab(mr: dict[str, Any], approvals: dict[str, Any], user_approved_sha: str | None = None) -> dict[str, Any]:
     sha = mr.get("sha")
     fields = {
@@ -205,6 +270,15 @@ def classify_glab(mr: dict[str, Any], approvals: dict[str, Any], user_approved_s
     if mr.get("draft") or mr.get("work_in_progress"):
         return _verdict("needs_human", "MR jest draftem", **fields)
 
+    merge_status = mr.get("detailed_merge_status")
+    if mr.get("has_conflicts") or merge_status in _GLAB_MERGE_CONFLICT:
+        return _verdict(
+            "conflict",
+            f"konflikt z {mr.get('target_branch')} (detailed_merge_status={merge_status})",
+            **_glab_active_pipeline(mr.get("head_pipeline")),
+            **fields,
+        )
+
     ci, ci_reason = _glab_ci(mr.get("head_pipeline"))
     if ci == "none":
         return _verdict("needs_human", ci_reason, **fields)
@@ -215,9 +289,6 @@ def classify_glab(mr: dict[str, Any], approvals: dict[str, Any], user_approved_s
     if ci == "human":
         return _verdict("needs_human", ci_reason, **fields)
 
-    merge_status = mr.get("detailed_merge_status")
-    if mr.get("has_conflicts") or merge_status in _GLAB_MERGE_CONFLICT:
-        return _verdict("conflict", f"konflikt z {mr.get('target_branch')} (detailed_merge_status={merge_status})", **fields)
     if merge_status in _GLAB_MERGE_WAIT:
         return _verdict("wait", f"GitLab liczy mergeability ({merge_status})", **fields)
 
@@ -299,7 +370,19 @@ def classify_gh(pr: dict[str, Any], user_approved_sha: str | None = None) -> dic
     if pr.get("isDraft"):
         return _verdict("needs_human", "PR jest draftem", **fields)
 
+    mergeable = pr.get("mergeable")
+    merge_state = pr.get("mergeStateStatus")
     ci, ci_reason = _gh_ci(pr.get("statusCheckRollup"))
+    conflict_reason = f"konflikt z {pr.get('baseRefName')} (mergeable={mergeable}, mergeStateStatus={merge_state})"
+    if mergeable == "CONFLICTING" or merge_state == "DIRTY":
+        # statusCheckRollup nie niesie id runa - skill anuluje run-y po SHA (`gh run list --commit`).
+        return _verdict(
+            "conflict",
+            conflict_reason,
+            pipeline_id=None,
+            pipeline_status="running" if ci == "running" else None,
+            **fields,
+        )
     if ci == "none":
         return _verdict("needs_human", ci_reason, **fields)
     if ci == "failed":
@@ -307,10 +390,9 @@ def classify_gh(pr: dict[str, Any], user_approved_sha: str | None = None) -> dic
     if ci == "running":
         return _verdict("wait", ci_reason, **fields)
 
-    mergeable = pr.get("mergeable")
-    merge_state = pr.get("mergeStateStatus")
-    if mergeable == "CONFLICTING" or merge_state in ("DIRTY", "BEHIND"):
-        return _verdict("conflict", f"konflikt z {pr.get('baseRefName')} (mergeable={mergeable}, mergeStateStatus={merge_state})", **fields)
+    # BEHIND zostaje za CI: samo zalegly branch nie jest konfliktem, wiec nie anuluje trwajacych checkow.
+    if merge_state == "BEHIND":
+        return _verdict("conflict", conflict_reason, pipeline_id=None, pipeline_status=None, **fields)
     if mergeable != "MERGEABLE":
         return _verdict("wait", f"GitHub liczy mergeability (mergeable={mergeable})", **fields)
 
@@ -333,7 +415,11 @@ def classify_gh(pr: dict[str, Any], user_approved_sha: str | None = None) -> dic
 # --- target-ci ---
 
 
-def target_ci_glab(pipelines: list[Any], jobs: list[Any] | None) -> dict[str, str]:
+def _glab_failed_jobs(jobs: list[Any] | None) -> list[str]:
+    return [j.get("name", "?") for j in jobs or [] if j.get("status") == "failed" and not j.get("allow_failure")]
+
+
+def target_ci_glab(pipelines: list[Any], jobs: list[Any] | None) -> dict[str, Any]:
     if not pipelines:
         return {"status": "needs_human", "reason": "brak pipeline'u dla commita merge"}
     pipeline = max(pipelines, key=lambda p: p.get("id", 0))
@@ -342,7 +428,9 @@ def target_ci_glab(pipelines: list[Any], jobs: list[Any] | None) -> dict[str, st
     if status in _GLAB_CI_SUCCESS:
         return {"status": "success", "reason": f"{label} success"}
     if status in _GLAB_CI_FAILED:
-        return {"status": "failed", "reason": f"{label} failed"}
+        failed = _glab_failed_jobs(jobs)
+        reason = f"{label}: czerwone joby " + ", ".join(failed) if failed else f"{label} failed"
+        return {"status": "failed", "reason": reason, "failed_jobs": failed}
     if status in _GLAB_CI_RUNNING:
         return {"status": "wait", "reason": f"{label} {status}"}
     if status == "manual":
@@ -350,9 +438,9 @@ def target_ci_glab(pipelines: list[Any], jobs: list[Any] | None) -> dict[str, st
         # status "manual" jest zielony, gdy zaden job nie padl i nic juz nie biegnie.
         if jobs is None:
             return {"status": "wait", "reason": f"{label} manual - potrzebna lista jobow (--jobs-file)"}
-        failed = [j.get("name", "?") for j in jobs if j.get("status") == "failed" and not j.get("allow_failure")]
+        failed = _glab_failed_jobs(jobs)
         if failed:
-            return {"status": "failed", "reason": f"{label}: czerwone joby " + ", ".join(failed)}
+            return {"status": "failed", "reason": f"{label}: czerwone joby " + ", ".join(failed), "failed_jobs": failed}
         pending = [f"{j.get('name', '?')}={j.get('status')}" for j in jobs if j.get("status") not in _GLAB_JOB_OK | {"failed"}]
         if pending:
             return {"status": "wait", "reason": f"{label}: joby w toku " + ", ".join(pending)}
@@ -362,7 +450,7 @@ def target_ci_glab(pipelines: list[Any], jobs: list[Any] | None) -> dict[str, st
     return {"status": "wait", "reason": f"{label}: nieznany status '{status}', traktuje jak trwajacy"}
 
 
-def target_ci_gh(runs: list[Any]) -> dict[str, str]:
+def target_ci_gh(runs: list[Any]) -> dict[str, Any]:
     if not runs:
         return {"status": "needs_human", "reason": "brak runow dla commita merge"}
     failed: list[str] = []
@@ -376,7 +464,7 @@ def target_ci_gh(runs: list[Any]) -> dict[str, str]:
         elif run.get("conclusion") not in _GH_RUN_OK:
             waiting.append(f"{name}: nieznany conclusion '{run.get('conclusion')}'")
     if failed:
-        return {"status": "failed", "reason": "czerwone runy: " + ", ".join(failed)}
+        return {"status": "failed", "reason": "czerwone runy: " + ", ".join(failed), "failed_jobs": failed}
     if waiting:
         return {"status": "wait", "reason": "w toku: " + ", ".join(waiting)}
     return {"status": "success", "reason": "wszystkie runy zielone"}
@@ -398,6 +486,85 @@ def ticket_key(source_branch: str | None, title: str | None) -> dict[str, Any]:
             if match:
                 return {"key": match.group(0)}
     return {"key": None}
+
+
+# --- target-sync ---
+
+
+def target_sync(target: str, current: str, ahead: int, behind: int, dirty: str) -> dict[str, Any]:
+    """Decyzja o fast-forwardzie lokalnego brancha docelowego po merge MR.
+
+    Kolejnosc regul ma znaczenie: aktualny branch wygrywa nad brudnym drzewem,
+    lokalne commity wygrywaja nad reszta, bo ff by ich nie zachowal. Na innym
+    branchu `fetch origin T:T` (bez `+`) sam odrzuci non-ff i odmowi, gdy T jest
+    wyciagniety w innym worktree - skill traktuje to jak skip.
+    """
+    target = target.strip()
+    if not target:
+        raise _InputError("--target-branch: pusta nazwa brancha")
+    if ahead < 0 or behind < 0:
+        raise _InputError("--ahead i --behind musza byc >= 0")
+    if dirty not in ("true", "false"):
+        raise _InputError(f"--dirty: oczekiwano true albo false, dostalem '{dirty}'")
+    ff_merge = f"git merge --ff-only origin/{target}"
+    if ahead == 0 and behind == 0:
+        return {"action": "none", "reason": "lokalny branch jest aktualny", "commands": [], "manual": None}
+    if ahead > 0:
+        return {
+            "action": "skip",
+            "reason": f"lokalny {target} ma {ahead} commit(ow) spoza origin - fast-forward niemozliwy",
+            "commands": [],
+            "manual": f"git log origin/{target}..{target}",
+        }
+    if current == target and dirty == "true":
+        return {
+            "action": "skip",
+            "reason": f"{target} ma niezapisane zmiany w sledzonych plikach",
+            "commands": [],
+            "manual": ff_merge,
+        }
+    if current == target:
+        return {"action": "ff-merge", "reason": f"{target} jest {behind} commit(ow) za origin", "commands": [ff_merge], "manual": None}
+    return {
+        "action": "ff-fetch",
+        "reason": f"checkout jest na innym branchu, {target} jest {behind} commit(ow) za origin",
+        "commands": [f"git fetch origin {target}:{target}"],
+        "manual": None,
+    }
+
+
+# --- config-check ---
+
+
+def config_check(base_branch: str, mr_target: str) -> dict[str, Any]:
+    base = base_branch.strip()
+    target = mr_target.strip()
+    if base and target and base != target:
+        raise _InputError(
+            f"MONOLYNX_BASE_BRANCH='{base}' i MONOLYNX_MR_TARGET='{target}' sa rozne - "
+            "ustaw jedna z nich albo obie na ten sam branch"
+        )
+    return {"target": base or target or None}
+
+
+# --- post-merge ---
+
+
+def post_merge(target_branch: str, default_branch: str) -> dict[str, str]:
+    target = target_branch.strip()
+    default = default_branch.strip()
+    # Pusty albo nieustalony branch (np. `glab repo view` zawiodl) wpada w tor
+    # domyslny: czekanie na CI cofa nastepny tick, a pomylkowy merge kolejnego
+    # MR na czerwony branch integracyjny nie (external-tool-output.md pkt 3).
+    if target and default and target != default:
+        return {
+            "status": "verifying",
+            "reason": f"{target} to branch integracyjny (domyslny: {default}) - CI commita merge sprawdzane wstecz, kolejka idzie dalej",
+        }
+    return {
+        "status": "merging",
+        "reason": "branch docelowy jest domyslny albo nieustalony - kolejka czeka na zielone CI przed nastepnym MR",
+    }
 
 
 # --- kolejka ---
@@ -469,6 +636,9 @@ def _read_queue(path: Path) -> dict[str, Any]:
                 raise _InputError(f"queue-file items[{index}]: brak pola '{key}'")
         if item["status"] not in _QUEUE_STATUSES:
             raise _InputError(f"queue-file items[{index}]: nieznany status '{item['status']}'")
+        stop_reason = item.get("stop_reason")
+        if stop_reason is not None and not isinstance(stop_reason, str):
+            raise _InputError(f"queue-file items[{index}]: 'stop_reason' musi byc stringiem albo null")
     return queue
 
 
@@ -478,12 +648,27 @@ def _write_queue(path: Path, queue: dict[str, Any]) -> None:
 
 
 def _with_next(queue: dict[str, Any]) -> dict[str, Any]:
-    # "merging" idzie przed "pending": po merge kolejka czeka na zielone CI
-    # brancha docelowego, zanim wezmie nastepny MR.
-    merging = [item for item in queue["items"] if item["status"] == "merging"]
-    pending = [item for item in queue["items"] if item["status"] == "pending"]
-    active = merging + pending
-    return {**queue, "next": active[0]["ref"] if active else None}
+    # "merging" idzie przed "pending": na domyslnym branchu kolejka czeka na
+    # zielone CI po merge, zanim wezmie nastepny MR. "verifying" (branch
+    # integracyjny) nie wchodzi do `next` - kolejka bierze nastepny "pending" od
+    # razu, a CI commitow merge sprawdza wstecz. Czerwone CI takiego commita
+    # (stopped + target_ci_failed) zatrzymuje cala kolejke do decyzji czlowieka.
+    items = queue["items"]
+    halted = next(
+        (item["ref"] for item in items if item["status"] == "stopped" and item.get("stop_reason") == _HALTING_STOP_REASON),
+        None,
+    )
+    merging = [item for item in items if item["status"] == "merging"]
+    pending = [item for item in items if item["status"] == "pending"]
+    active = [] if halted else merging + pending
+    verifying = [item["ref"] for item in items if item["status"] == "verifying"]
+    return {**queue, "next": active[0]["ref"] if active else None, "verifying": verifying, "halted": halted}
+
+
+def _survives_queue_set(item: dict[str, Any]) -> bool:
+    if item["status"] == "verifying":
+        return True
+    return item["status"] == "stopped" and item.get("stop_reason") == _HALTING_STOP_REASON
 
 
 def queue_set(path: Path, raw_refs: list[str]) -> dict[str, Any]:
@@ -493,8 +678,12 @@ def queue_set(path: Path, raw_refs: list[str]) -> dict[str, Any]:
         if item["ref"] in seen:
             raise _InputError(f"REF '{item['ref']}' wystepuje w kolejce dwa razy")
         seen.add(item["ref"])
-    previous = {item["ref"]: item for item in _read_queue(path)["items"]}
-    items = []
+    old_items = _read_queue(path)["items"]
+    previous = {item["ref"]: item for item in old_items}
+    # Spoza nowej listy zostaja: verifying (jej CI jeszcze nie sprawdzono) oraz pozycja
+    # zatrzymujaca kolejke (stopped + target_ci_failed) - jej zgubienie zdjeloby blokade
+    # czerwonego brancha integracyjnego bez decyzji czlowieka (MON-221).
+    items = [item for item in old_items if item["ref"] not in seen and _survives_queue_set(item)]
     for item in parsed:
         old = previous.get(item["ref"], {})
         items.append(
@@ -505,6 +694,7 @@ def queue_set(path: Path, raw_refs: list[str]) -> dict[str, Any]:
                 "fix_rounds": old.get("fix_rounds", 0),
                 "user_approved_sha": old.get("user_approved_sha"),
                 "merge_sha": old.get("merge_sha"),
+                "stop_reason": old.get("stop_reason"),
             }
         )
     queue = {"items": items}
@@ -512,8 +702,47 @@ def queue_set(path: Path, raw_refs: list[str]) -> dict[str, Any]:
     return _with_next(queue)
 
 
+def queue_append(path: Path, provider: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Dopisz na koniec kolejki otwarte MR/PR, ktorych w niej jeszcze nie ma.
+
+    Kolejnosc i filtr draftow biora sie z `queue_propose`, wiec MR oparty o
+    branch MR-a juz stojacego w kolejce trafia za niego. Elementy obecne w
+    kolejce (w dowolnym statusie, takze `stopped` i `done`) zostaja nietkniete
+    i nie sa dopisywane drugi raz - zatrzymany MR wraca do kolejki tylko przez
+    `queue-set`, decyzja czlowieka.
+    """
+    proposal = queue_propose(provider, entries)
+    queue = _read_queue(path)
+    present = {item["ref"] for item in queue["items"]}
+    appended = []
+    for ref in proposal["order"]:
+        if ref in present:
+            continue
+        queue["items"].append(
+            {
+                **parse_ref(ref),
+                "status": "pending",
+                "fix_rounds": 0,
+                "user_approved_sha": None,
+                "merge_sha": None,
+                "stop_reason": None,
+            }
+        )
+        appended.append(ref)
+    if appended:
+        _write_queue(path, queue)
+    skipped = [entry for entry in proposal["skipped"] if entry["ref"] not in present]
+    return {**_with_next(queue), "appended": appended, "skipped": skipped}
+
+
 def queue_update(
-    path: Path, ref: str, status: str | None, user_approved_sha: str | None, fix_round: bool, merge_sha: str | None
+    path: Path,
+    ref: str,
+    status: str | None,
+    user_approved_sha: str | None,
+    fix_round: bool,
+    merge_sha: str | None,
+    stop_reason: str | None = None,
 ) -> dict[str, Any]:
     target = parse_ref(ref)["ref"]
     queue = _read_queue(path)
@@ -525,12 +754,17 @@ def queue_update(
         if status not in _QUEUE_STATUSES:
             raise _InputError(f"nieznany status '{status}': dozwolone {sorted(_QUEUE_STATUSES)}")
         item["status"] = status
+        # Powod zatrzymania dotyczy konkretnego stanu; zmiana statusu (np. odblokowanie
+        # przez czlowieka) go uniewaznia, zeby nie zostal martwy halt.
+        item["stop_reason"] = None
     if user_approved_sha is not None:
         item["user_approved_sha"] = user_approved_sha
     if fix_round:
         item["fix_rounds"] = item.get("fix_rounds", 0) + 1
     if merge_sha is not None:
         item["merge_sha"] = merge_sha
+    if stop_reason is not None:
+        item["stop_reason"] = stop_reason
     _write_queue(path, queue)
     return _with_next(queue)
 
@@ -598,6 +832,11 @@ def _build_parser() -> _ArgumentParser:
     p_set.add_argument("--queue-file", required=True)
     p_set.add_argument("refs", nargs="+")
 
+    p_append = sub.add_parser("queue-append")
+    p_append.add_argument("--queue-file", required=True)
+    p_append.add_argument("--provider", required=True, choices=["glab", "gh"])
+    p_append.add_argument("--list-file", required=True)
+
     p_show = sub.add_parser("queue-show")
     p_show.add_argument("--queue-file", required=True)
 
@@ -608,6 +847,7 @@ def _build_parser() -> _ArgumentParser:
     p_update.add_argument("--user-approved-sha")
     p_update.add_argument("--fix-round", action="store_true")
     p_update.add_argument("--merge-sha")
+    p_update.add_argument("--stop-reason")
 
     p_classify = sub.add_parser("classify")
     p_classify.add_argument("--provider", required=True, choices=["glab", "gh"])
@@ -625,6 +865,21 @@ def _build_parser() -> _ArgumentParser:
     p_ticket_key = sub.add_parser("ticket-key")
     p_ticket_key.add_argument("--source-branch")
     p_ticket_key.add_argument("--title")
+
+    p_sync = sub.add_parser("target-sync")
+    p_sync.add_argument("--target-branch", required=True)
+    p_sync.add_argument("--current-branch", required=True)
+    p_sync.add_argument("--ahead", required=True, type=int)
+    p_sync.add_argument("--behind", required=True, type=int)
+    p_sync.add_argument("--dirty", required=True)
+
+    p_post = sub.add_parser("post-merge")
+    p_post.add_argument("--target-branch", required=True)
+    p_post.add_argument("--default-branch", required=True)
+
+    p_config = sub.add_parser("config-check")
+    p_config.add_argument("--base-branch", default="")
+    p_config.add_argument("--mr-target", default="")
     return parser
 
 
@@ -633,10 +888,12 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         return queue_propose(args.provider, _load_list_of_objects(args.list_file, "list-file"))
     if args.command == "queue-set":
         return queue_set(Path(args.queue_file), args.refs)
+    if args.command == "queue-append":
+        return queue_append(Path(args.queue_file), args.provider, _load_list_of_objects(args.list_file, "list-file"))
     if args.command == "queue-show":
         return _with_next(_read_queue(Path(args.queue_file)))
     if args.command == "queue-update":
-        return queue_update(Path(args.queue_file), args.ref, args.status, args.user_approved_sha, args.fix_round, args.merge_sha)
+        return queue_update(Path(args.queue_file), args.ref, args.status, args.user_approved_sha, args.fix_round, args.merge_sha, args.stop_reason)
     if args.command == "classify":
         if args.provider == "glab":
             if not args.mr_file or not args.approvals_file:
@@ -654,6 +911,12 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         return classify_gh(pr, args.user_approved_sha)
     if args.command == "ticket-key":
         return ticket_key(args.source_branch, args.title)
+    if args.command == "target-sync":
+        return target_sync(args.target_branch, args.current_branch, args.ahead, args.behind, args.dirty)
+    if args.command == "post-merge":
+        return post_merge(args.target_branch, args.default_branch)
+    if args.command == "config-check":
+        return config_check(args.base_branch, args.mr_target)
     if args.provider == "glab":
         if not args.pipelines_file:
             raise _UsageError("target-ci --provider glab wymaga --pipelines-file")

@@ -118,7 +118,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
         "modules_title": "Everything you need",
-        "modules_sub": "Ten integrated modules that cover the full project lifecycle.",
+        "modules_sub": "Eleven integrated modules that cover the full project lifecycle.",
         "m_500ki": "Error tracking with smart fingerprinting. Catch exceptions from your apps with a lightweight SDK.",
         "m_scrum": "Backlog, Kanban board, sprints, and story points. Everything for agile project management.",
         "m_monitoring": "URL health checks with uptime tracking, response time history, and instant alerts.",
@@ -129,6 +129,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_reports": "Cross-project work reports with multi-select filters, date ranges, and PDF export for stakeholders.",
         "m_work_plan": "Personal cross-project scheduling on a Gantt chart and monthly calendar, independent of sprint assignment.",
         "m_pipelines": "Observability for AI agent work - pipeline, step and job hierarchy with logs, durations and upward status propagation.",
+        "m_cli": "Command-line client (monolynx, alias mnx) with the same operations as MCP and pipeline-ready JSON output.",
         "mcp_title": "Connect to Claude",
         "mcp_desc": (
             "Give your AI assistant direct access to Monolynx: add it to Claude.ai as a custom"
@@ -185,7 +186,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
         "modules_title": "Wszystko, czego potrzebujesz",
-        "modules_sub": "Dziesięć zintegrowanych modułów obejmujących cały cykl życia projektu.",
+        "modules_sub": "Jedenaście zintegrowanych modułów obejmujących cały cykl życia projektu.",
         "m_500ki": "Śledzenie błędów z inteligentnym fingerprintingiem. Przechwytuj wyjątki z aplikacji za pomocą lekkiego SDK.",
         "m_scrum": "Backlog, tablica Kanban, sprinty i story pointy. Wszystko do zwinnego zarządzania projektami.",
         "m_monitoring": "Monitorowanie URL z historią uptimeu, czasami odpowiedzi i natychmiastowymi alertami.",
@@ -198,6 +199,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_reports": "Raporty pracy cross-project z multi-select filtrami, zakresem dat i eksportem PDF dla stakeholderów.",
         "m_work_plan": "Osobiste planowanie cross-project na wykresie Gantta i kalendarzu, niezależne od przypisania do sprintu.",
         "m_pipelines": "Obserwowalność pracy agentów AI - hierarchia pipeline, step i job z logami, czasami i propagacją statusu w górę.",
+        "m_cli": "Klient wiersza poleceń (monolynx, alias mnx) z tymi samymi operacjami co MCP i wyjściem JSON gotowym do potoku.",
         "mcp_title": "Połącz z Claude",
         "mcp_desc": (
             "Daj swojemu asystentowi AI bezpośredni dostęp do Monolynx: dodaj go do Claude.ai"
@@ -360,6 +362,7 @@ def _landing_markdown(lang: str) -> str:
         ("settlements", "Settlements" if lang == "en" else "Rozliczenia", t["m_settlements"]),
         ("work_plan", "Work Plan / Gantt" if lang == "en" else "Plan pracy / Gantt", t["m_work_plan"]),
         ("pipelines", "Pipelines", t["m_pipelines"]),
+        ("cli", "CLI", t["m_cli"]),
     ]
     mcp_desc = t["mcp_desc"].replace("<mcp_link>", "").replace("</mcp_link>", "")
     is_pl = lang == "pl"
@@ -576,6 +579,8 @@ def _register_routers() -> None:
     from monolynx.api.heartbeat import router as heartbeat_router
     from monolynx.api.issues import router as issues_router
     from monolynx.api.oauth import router as oauth_router
+    from monolynx.api.v2 import register_api_v2
+    from monolynx.api.v2 import router as api_v2_router
     from monolynx.blog import router as blog_router
     from monolynx.dashboard import router as dashboard_router
 
@@ -587,6 +592,11 @@ def _register_routers() -> None:
     # marketingową stronę landing, blog to treść linkowana z zewnątrz (MON-201).
     app.include_router(blog_router)
     app.include_router(dashboard_router)
+    # api_v2_router PRZED mountem "/" (MCP) -- inaczej mount empty-prefix
+    # przechwycilby nieznalezione sciezki /api/v2/* zamiast 404 problem+json
+    # z catch-all routu (MON-140).
+    app.include_router(api_v2_router)
+    register_api_v2(app)
 
 
 _register_routers()

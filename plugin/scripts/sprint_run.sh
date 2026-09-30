@@ -11,6 +11,8 @@
 #
 #   --interval  odstep miedzy tickami (15m, 900, 1h); domyslnie 15m
 #   --slots     rownolegle sesje work; domyslnie $MONOLYNX_SPRINT_PARALLEL albo 2
+#   MONOLYNX_SPRINT_MAX_WAITING  limit zywych sesji waiting (domyslnie 2); po jego
+#               osiagnieciu tick nie startuje nowych sesji; waiting nie zajmuja slotow
 #   --max-ticks bezpiecznik: po tylu tickach petla konczy sie kodem 3
 #   --close     po wyczerpaniu sprintu odpal /monolynx:sprint-end i /monolynx:retro
 #               (domyslnie petla ZATRZYMUJE sie przed zamknieciem - MR-y przeglada czlowiek)
@@ -62,6 +64,7 @@ set -u
 
 INTERVAL="${MONOLYNX_SPRINT_RUN_INTERVAL:-15m}"
 SLOTS="${MONOLYNX_SPRINT_PARALLEL:-2}"
+MAX_WAITING="${MONOLYNX_SPRINT_MAX_WAITING:-2}"
 MAX_TICKS=96
 CLOSE=0
 ONCE=0
@@ -117,6 +120,7 @@ export MONOLYNX_AUTOCOMMIT="${MONOLYNX_AUTOCOMMIT:-true}"
 export MONOLYNX_AUTOPUSH="${MONOLYNX_AUTOPUSH:-true}"
 export MONOLYNX_AUTOMR="${MONOLYNX_AUTOMR:-true}"
 export MONOLYNX_SPRINT_PARALLEL="$SLOTS"
+export MONOLYNX_SPRINT_MAX_WAITING="$MAX_WAITING"
 # Stala kontraktu (nie ${VAR:-default}) - skille po niej odrozniaja tryb -p
 # dyspozytora od sesji interaktywnej, bo `[ -t 0 ]` w narzedziu Bash Claude
 # Code jest zawsze falszywe niezaleznie od terminala wywolujacego (MON-172).
@@ -206,7 +210,7 @@ run_agent() {
   fi
 }
 
-log "start: slug=$SLUG slots=$SLOTS interval=$INTERVAL close=$CLOSE once=$ONCE runtime=$RUNTIME tick_model=$TICK_MODEL work_model=$MONOLYNX_SPRINT_MODEL dir=$PROJECT_DIR allowed_tools=$ALLOWED_TOOLS_LABEL"
+log "start: slug=$SLUG slots=$SLOTS max_waiting=$MAX_WAITING interval=$INTERVAL close=$CLOSE once=$ONCE runtime=$RUNTIME tick_model=$TICK_MODEL work_model=$MONOLYNX_SPRINT_MODEL dir=$PROJECT_DIR allowed_tools=$ALLOWED_TOOLS_LABEL"
 
 tick=0
 errors=0
@@ -227,6 +231,8 @@ while :; do
     waiting="$(sed -E 's/.*waiting=([0-9]+).*/\1/' <<<"$status_line")"
     log "stan: $status_line"
     [ "$waiting" -gt 0 ] && log "UWAGA: $waiting sesji czeka na czlowieka - claude agents / claude attach <id>"
+
+    [ "$remaining" -gt 0 ] && [ "$running" -eq 0 ] && log "UWAGA: nic nie biegnie, zostalo $remaining ticketow czekajacych na czlowieka (needs-local, niezamkniete blokery, limit waiting) - petla tyka dalej"
 
     if [ "$remaining" -eq 0 ] && [ "$running" -eq 0 ]; then
       if [ "$waiting" -gt 0 ]; then
