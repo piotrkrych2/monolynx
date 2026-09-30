@@ -10,8 +10,8 @@ Kontrakt (Team Manager):
    normalizacja co `check_shared_blocks` w walidatorze).
 3. Regula sesji w tle (work: 10, work-simple: 21) wymienia blokade zewnetrzna
    wsrod przypadkow `SPRINT-RUN STOP`.
-4. `plugin/README.md`: `### Unreleased` jako pierwszy naglowek pod `## Changelog`
-   z punktem `- MON-223:`; walidator spojnosci przechodzi na repo.
+4. `plugin/README.md`: changelog zawiera punkt `- MON-223:` (w `### Unreleased`
+   albo, po wydaniu, pod numerem wersji); walidator spojnosci przechodzi na repo.
 
 Porownania tekstowe ida przez `_normalize` (bez diakrytykow, lowercase).
 """
@@ -187,25 +187,12 @@ def test_background_session_rule_lists_external_blocker(path: Path, rule_pattern
 # --- 4. changelog i wersja ---------------------------------------------------
 
 
-def _changelog_headings(readme: str) -> list[str]:
-    after = readme.split("## Changelog", 1)[1]
-    return [line for line in after.splitlines() if line.startswith("### ")]
-
-
+# The entry's section changes from Unreleased to a version number on release,
+# so only its presence in the changelog is stable.
 @pytest.mark.unit
-def test_readme_changelog_starts_with_unreleased() -> None:
-    headings = _changelog_headings(README.read_text(encoding="utf-8"))
-    assert headings, "Brak naglowkow ### pod ## Changelog."
-    assert headings[0].strip() == "### Unreleased", f"Pierwszy naglowek changelogu: {headings[0]!r}."
-
-
-@pytest.mark.unit
-def test_readme_unreleased_section_has_mon_223_entry() -> None:
-    readme = README.read_text(encoding="utf-8")
-    after = readme.split("## Changelog", 1)[1]
-    match = re.search(r"(?ms)^### Unreleased\n(.*?)(?=^### )", after)
-    assert match is not None, "Brak sekcji ### Unreleased."
-    assert re.search(r"(?m)^- MON-223: \S", match.group(1)), "Brak punktu '- MON-223: ...' pod ### Unreleased."
+def test_readme_changelog_has_mon_223_entry() -> None:
+    changelog = README.read_text(encoding="utf-8").split("## Changelog", 1)[1]
+    assert re.search(r"(?m)^- MON-223: \S", changelog), "Brak punktu '- MON-223: ...' w changelogu."
 
 
 @pytest.mark.unit
