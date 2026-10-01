@@ -170,7 +170,7 @@ Poniższa macierz opisuje wymagania instrukcji, **nie potwierdza pełnego wykona
 |---|---|---|---|
 | `brief` | Wspólny kontrakt | Wspólny kontrakt | Bez MCP; rozpoczęcie pracy po odpowiedzi użytkownika |
 | `help` | Mapa komend Claude | Mapa komend klienta | Bez zapisów; nie wymaga projektu |
-| `setup` | Konfiguracja Claude jako dane | Konfiguracja Codex jako dane | MCP dla checklisty projektu; naprawy po zgodzie |
+| `setup` | Konfiguracja Claude jako dane | Konfiguracja Codex jako dane | CLI albo MCP dla checklisty projektu; naprawy po zgodzie |
 | `next` | Router tylko do odczytu | Router tylko do odczytu | Git, MCP, opcjonalne CLI; brak danych oznaczony |
 | `resume` | Odczyt stanu | Odczyt stanu | MCP, opcjonalny git i pipeline |
 | `search` | MCP wiki | MCP wiki | Narzędzie wyszukiwania wiki |
@@ -199,7 +199,7 @@ Tabela modeli poniżej dotyczy backendu Claude. W pozostałych klientach wybór 
 | Komenda | Opis |
 |---------|------|
 | `/monolynx:next` | Router read-only bez argumentów: sprawdza git, bieżący ticket, aktywny sprint, sesje, MR i konfigurację. Zwraca 1-3 komendy z uzasadnieniem i linię `NEXT: <komenda>`. Ticketu z niezamkniętym blokerem nie poleca do pracy, tylko wskazuje komendę dla blokera. Nie uruchamia polecanych skilli, nie zmienia ticketów ani konfiguracji. |
-| `/monolynx:setup` | Checklista konfiguracji projektu, bez argumentów: slug, strona wiki `toolchain`, metoda LLM Wiki, graf zależności i testy mutacyjne w CI, flagi `MONOLYNX_*`. Każdą pozycję pokazuje jako OK albo BRAK i za zgodą uruchamia skill naprawczy (`/monolynx:project-toolchain`, `/monolynx:wiki-init`, `/monolynx:create-graph-ci-script`, `/monolynx:create-mutation-ci-script`); projekt bez CI może zamiast grafu w CI sam uruchomić `/monolynx:graph-sync`. Sam niczego nie zmienia; flagi autonomii tylko raportuje, nie ustawia ich. Pierwszy krok w nowym projekcie. |
+| `/monolynx:setup` | Checklista konfiguracji projektu, bez argumentów: slug, strona wiki `toolchain`, metoda LLM Wiki, graf zależności i testy mutacyjne w CI, flagi `MONOLYNX_*`, CLI `monolynx` (zainstalowane, zalogowane, aktualne, allowlista Bash). Każdą pozycję pokazuje jako OK albo BRAK i za zgodą uruchamia skill naprawczy (`/monolynx:project-toolchain`, `/monolynx:wiki-init`, `/monolynx:create-graph-ci-script`, `/monolynx:create-mutation-ci-script`); projekt bez CI może zamiast grafu w CI sam uruchomić `/monolynx:graph-sync`. Dla CLI wypisuje komendę instalacji, logowania albo aktualizacji do uruchomienia przez użytkownika i proponuje wpisy allowlisty, które dopisuje do pliku settings dopiero po osobnej, jawnej zgodzie - to jedyny zapis, który wykonuje sam. Flagi autonomii tylko raportuje, nie ustawia ich. Pierwszy krok w nowym projekcie. |
 | `/monolynx:brief` | Kontrakt epizodu bez ticketu (konfiguracja, investigation, docs): w jednej turze ustala "gotowe" jako obserwowalny stan, "nie ruszać" i prawa decyzyjne (sam / stop przed). ENTER = akceptacja i start pracy w tej samej turze. Działa bez MCP. |
 | `/monolynx:work` | Podejmij zadanie z aktualnego sprintu: walidacja brancha, wznowienie przerwanej pracy, tryb defektu (mechanizm + test regresyjny przed fixem), research, dobór zespołu agentów, kontrakt autonomii (STOP CONDITIONS w promptach), praca równoległa, rekoncyliacja raportów, obowiązkowy krytyk z regułami do pamięci agentów, pełny lint/test przed `in_review`. Raportuje przebieg pracy do modułu Pipelines (obserwowalność): pipeline `ticket_work` ze stepami research → coding → wrap-up, job per agent, log każdego agenta jako strona wiki. Raportowanie best-effort - nie blokuje pracy. Po zielonym lincie i testach, przed krytykiem, proponuje diffowy przebieg `/monolynx:mutation-check` dla większych ticketów (od 5 SP albo 4 zmienionych plików z kodem); survivorzy trafiają jako kryteria akceptacji do bieżącego ticketu. Propozycja, nie automat. Nie merguje do swojego brancha brancha zależności, która nie jest `done`: w sesji w tle kończy turę linią `SPRINT-RUN STOP: czeka na merge <KEY>`, interaktywnie pyta (wyjątek: jawne polecenie użytkownika). Gdy po review zostają same odjęcia `BLOKADA-ZEWNĘTRZNA`, nie zleca kolejnej iteracji: zostawia komentarz z opcjami decyzji i w sesji w tle kończy turę linią `SPRINT-RUN STOP: blokada zewnetrzna - <powód>`, interaktywnie od razu pyta. Merge request dostaje tytuł `<KEY>: <tytuł ticketu>`. |
 | `/monolynx:resume` | Wznowienie po `/clear` lub kompakcji: odtwarza stan ticketu z komentarzy, pipeline, kryteriów i gita, wypisuje "gdzie jesteśmy, co zostało, następny krok". Read-only. |
@@ -312,6 +312,7 @@ Plugin dostarcza hook PreToolUse na narzędziu Bash (`hooks/hooks.json` → `hoo
 | Sesja glowna i subagent | `rm -rf` z celem poza tymi katalogami | **deny** (MON-174) |
 | Sesja główna | operacje destrukcyjne (jw.) oraz `git reset --hard` / `rebase` / `clean -f` | **ask** - zawsze, niezależnie od flag |
 | Sesja główna | `git add` / `git commit` | przechodzi normalnie (zwykły system uprawnień) |
+| Sesja główna i subagent | prosta forma `python3 <katalog>/scripts/monolynx_op.py <op> ...`, `python3 <katalog>/scripts/monolynx_transport.py ...` albo `monolynx ...` / `mnx ...` | przechodzi bez decyzji hooka (zwykły system uprawnień), także przy `MONOLYNX_SPRINT_RUN=1` (MON-232, opis niżej) |
 
 Hook nigdy nie blokuje sesji głównej na twardo - decyzję podejmuje użytkownik. Deny u subagenta to oczekiwane zachowanie workflow, nie błąd. Hook wymaga `python3` w PATH.
 
@@ -339,6 +340,8 @@ Zakres egzekwowania zależy od klienta i nie da się go wywnioskować z nazwy pr
 
 **Wyjątek: sprzątanie własnych plików w `/tmp`.** `rm -f` na pliku `*.log`, `*.txt` lub `*.md` pod `/tmp` albo `/private/tmp` - razem z podkatalogami, więc obejmuje scratchpad sesji (`/private/tmp/claude-<uid>/<projekt>/<sesja>/scratchpad/`) - przechodzi bez promptu, także dla subagenta (glob dozwolony w nazwie pliku i w segmentach katalogu, np. `rm -f /tmp/*.md`, `rm -f /private/tmp/claude-501/*/scratchpad/*.log`) - ma pozwolić agentowi posprzątać własny scratchpad bez pytania użytkownika o każdą operację. Wyjątek jest celowo wąski i fail-closed: bez flagi `-r`/`-R`/`--recursive` (glob z rozszerzeniem mógłby trafić w katalog o takiej nazwie i skasować go rekurencyjnie), bez `..` w ścieżce, bez komend złożonych (`|`, `;`, `&`, `` ` ``, `$(`, nowa linia/CR - shell wykonałby je jako osobne instrukcje), bez argumentów z `$` lub `~` (ekspansja zmiennej/home shella - hook widzi tekst przed ekspansją, więc nie da się bezpiecznie zweryfikować faktycznej ścieżki) , bez ścieżek poza `/tmp`/`/private/tmp` i bez samego katalogu (ścieżka musi kończyć się plikiem o dozwolonym rozszerzeniu, więc `rm -f /tmp/sub/dir` nie przechodzi) - każdy niespełniony warunek wraca do zwykłej reguły destrukcyjnej z tabeli wyżej, która parsuje flagi `rm` (krótki klaster, forma długa i jej jednoznaczny prefiks) zamiast wyliczać ich pisownię, więc łapie też warianty typu `-R`, `--rec` czy `-d`.
 
+**Wyjątek: wrapper operacji, preflight transportu i CLI `monolynx` (MON-232).** Komenda w prostej formie `python3 <katalog>/scripts/monolynx_op.py <op> ...`, `python3 <katalog>/scripts/monolynx_transport.py ...` albo `monolynx ...` / `mnx ...` kończy hook bez decyzji, zanim zadziałają reguły z tabeli. Dzięki temu słowa w treści argumentu (komentarz z tekstem `git commit`, `pytest` albo `merge`) nie są brane za komendę i nie dają `deny` ani `ask`. Hook nie wydaje tu jawnego `allow`: odczyt i zapis wracają do zwykłego systemu uprawnień klienta, tak jak wywołania tooli MCP, więc bez wpisu w allowliście (patrz sekcja Transport) klient nadal pyta. Wyjątek jest fail-closed. Nie obejmuje komendy z `|`, `;`, `&`, backtickiem, nową linią/CR, `$`, `~`, przekierowaniem `<`/`>`, globem (`*`, `?`, `[`, `{`) ani nawiasem `(` `)` (subshell), także wewnątrz cudzysłowu; skryptu o innej nazwie (`monolynx_op.py.bak`, `notmonolynx_op.py`), poza katalogiem `scripts` albo ze ścieżką z `..`; wywołania CLI z `--yes`/`-y` oraz z `login`, `logout`, `set`, `unset`, `delete` albo `remove` w pierwszych trzech słowach komendy. Każdy taki wariant idzie starymi regułami. Stała `MONOLYNX_READ_OPS` w hooku jest kopią `READ_OPS` z `scripts/monolynx_op.py`; równości pilnuje `tests/unit/test_bash_guard.py`.
+
 Drugi hook, `UserPromptSubmit` (`hooks/brief_guard.py`, od 1.7.0), pilnuje otwarcia epizodu. Pierwszy prompt sesji, który jest gołym imperatywem bez kontraktu ("napraw build", "W pliku X dodaj endpoint", "ogarnij CI"), dostaje kontrakt z `/monolynx:brief`. Tryby przez `MONOLYNX_BRIEF_GUARD`:
 
 | Tryb | Zachowanie |
@@ -348,6 +351,83 @@ Drugi hook, `UserPromptSubmit` (`hooks/brief_guard.py`, od 1.7.0), pilnuje otwar
 | `off` | wyłączony |
 
 Jedno przypomnienie na sesję: drugi prompt przechodzi bez reakcji (marker `~/.cache/monolynx/brief-guard/<session_id>`, `/clear` otwiera nową sesję). Bez reakcji przechodzą też: slash-komendy, prompty z kluczem ticketu (`MON-12` niesie kryteria), dłuższe niż 200 znaków, pytania (zakończone `?`), prompty bez czasownika rozkazującego w pierwszych 60 znakach (lista ~80 czasowników PL/EN) i prompty ze słowami kontraktu. Źródło: raport MEGA (T01 139/322, T18 49/282: "most openings are a bare imperative verb with no stated end state").
+
+## Transport: CLI albo MCP
+
+Skille zapisują operacje na platformie jako `mcp__monolynx__<tool>(...)`. Od MON-232 ten zapis oznacza operację `<tool>`, a nie kanał: skill wykonuje ją przez CLI `monolynx`, gdy CLI jest zainstalowane i zalogowane, a w każdym innym przypadku przez tool MCP o tej nazwie. CLI nie jest wymagane. Bez niego wszystko działa jak dotąd, a skill raz na sesję dopisuje jedną linię podpowiedzi.
+
+### Reguła i stany
+
+Każdy skill ze znacznikiem `shared:transport` uruchamia raz na starcie preflight `python3 <katalog skilla>/scripts/monolynx_transport.py [--session-id ID]`. Skrypt kończy się zawsze kodem 0 (64 przy błędzie użycia) i wypisuje najwyżej jedną linię `TRANSPORT-HINT: ...`, a po niej zamrożoną linię stanu:
+
+```
+TRANSPORT: mode=cli|mcp cli=<wersja|none> auth=ok|missing latest=<wersja|unknown> update=yes|no install=brew|pipx|uv|unknown|none
+```
+
+| Stan | Linia `TRANSPORT:` | Co robi skill |
+|---|---|---|
+| CLI zainstalowane i zalogowane | `mode=cli ... auth=ok` | operacje z listy niżej przez wrapper, reszta przez MCP |
+| CLI zainstalowane, bez logowania | `mode=mcp cli=<wersja> auth=missing` | MCP; podpowiedź `monolynx auth login` |
+| brak CLI | `mode=mcp cli=none ... install=none` | MCP; podpowiedź instalacji |
+| CLI starsze niż najnowsze na PyPI | `update=yes` (tryb bez zmian) | pracuje dalej; podpowiedź z komendą aktualizacji |
+| `MONOLYNX_TRANSPORT=mcp` | `mode=mcp ... auth=missing latest=unknown update=no` | MCP, bez podpowiedzi i bez zapytań o logowanie ani o najnowszą wersję |
+| `mode=mcp` i brak tooli MCP w kliencie | - | STOP z instrukcją: zainstaluj i zaloguj CLI albo podłącz connector MCP |
+| preflight się nie uruchomił (brak `python3`, brak skryptu) | - | jak `mode=mcp` |
+
+Podpowiedź pojawia się najwyżej raz na sesję (marker `~/.cache/monolynx/transport-hint/<id sesji>`; bez id sesji w środowisku wspólny klucz wygasający po 6 godzinach) i nigdy przy `MONOLYNX_SPRINT_RUN=1`. Z trzech powodów wygrywa pierwszy: brak CLI, brak logowania, dostępna aktualizacja. Skill przepisuje ją jedną linią, nie pyta i niczego nie instaluje. Numer najnowszej wersji pochodzi z `monolynx version --check`, potem z cache (24 godziny), potem z PyPI; bez sieci to `latest=unknown` i `update=no`.
+
+### Wrapper operacji
+
+```
+python3 <katalog skilla>/scripts/monolynx_op.py <op> --project_slug <slug> [--<param> <wartość> ...]
+```
+
+`<op>` to nazwa toola MCP, flagi to dokładne nazwy jego parametrów. Wartość `-` czyta treść ze stdin, `@<ścieżka>` z pliku UTF-8 (długi komentarz, opis, treść strony wiki); listy idą jako tablica JSON w jednej wartości, wartości logiczne jako `true` albo `false`. Skill nie składa komend `monolynx ...` sam: mapowanie parametrów na flagi CLI żyje w tabeli `OPS` wrappera, sprawdzonej wobec przechwyconego `--help` (`tests/fixtures/monolynx/`).
+
+| Kod | Znaczenie | Co robi skill |
+|---|---|---|
+| 0 | stdout to JSON z API v2 | czyta pola z JSON |
+| 3 | ostatnia linia stdout `OP-FALLBACK: mcp tool=<op>`; nic nie zostało zapisane | wykonuje tę samą operację toolem MCP |
+| 2 | błąd operacji (API, sieć, limit czasu); zapis mógł dotrzeć do serwera | nie ponawia zapisu na ślepo, najpierw sprawdza stan odczytem |
+| 64 | błąd użycia wrappera, CLI nie zostało wywołane | poprawia wywołanie |
+
+Kod 3 wraca, gdy operacja nie ma komendy CLI, `MONOLYNX_TRANSPORT=mcp`, brakuje `monolynx` w PATH, parametr nie ma odpowiednika w CLI, CLI zgłosiło brak logowania albo błąd użycia (dryf flag).
+
+Wynik z CLI to JSON z API v2, a nie tekst toola MCP. Kopertę `items`, `page`, `per_page`, `total`, `total_pages` zwracają tylko `list_tickets` i `search_tickets`; `list_sprints`, `list_comments`, `list_labels`, `list_acceptance_criteria`, `list_wiki_pages` i `search_wiki` dają płaską tablicę JSON (CLI samo zbiera wszystkie strony), a `get_board` obiekt z polami `sprint` i `columns`. Ticket niesie `acceptance_criteria` (pole `id` to `criterion_id`), `comments`, `blocked_by` i `blocks`. `get_ticket` przez CLI nie zwraca `spec_page_id` (na stderr linia `OP-NOTE:`); skill doczytuje to pole toolem MCP `get_ticket`.
+
+### Operacje przez CLI i operacje zawsze przez MCP
+
+| Przez wrapper przy `mode=cli` (21) | Zawsze toolem MCP |
+|---|---|
+| tickety: `get_ticket`, `list_tickets`, `search_tickets`, `create_ticket`, `update_ticket` | Pipelines (`create_pipeline`, `create_pipeline_job`, `update_pipeline_job`, `append_job_log`, `finish_pipeline`, ...) |
+| komentarze: `add_comment`, `list_comments` | czas pracy: `log_time`, `get_work_report` |
+| kryteria: `list_acceptance_criteria`, `add_acceptance_criterion`, `update_acceptance_criterion` | graf kodu (`get_graph_stats`, `list_graph_nodes`, `replace_graph`, ...) |
+| tablica i sprint: `get_board`, `list_sprints`, `complete_sprint`, `get_burndown` | metoda LLM Wiki: `append_wiki_log`, `bootstrap_wiki_llm`, `lint_wiki`, `regenerate_wiki_index`, `get_wiki_backlinks` |
+| etykiety: `list_labels` | każdy inny tool spoza lewej kolumny |
+| wiki: `search_wiki`, `get_wiki_page`, `list_wiki_pages`, `create_wiki_page`, `update_wiki_page`, `get_wiki_config` | |
+
+Subagenci (`work`, `work-simple`) pracują przez MCP, chyba że Team Manager wklei im do promptu literalną ścieżkę wrappera.
+
+### Wymagana wersja, instalacja, aktualizacja
+
+Wrapper używa komend CLI 0.1.0 i nowszych. `monolynx version --check` istnieje od CLI 0.2.0; na starszym CLI preflight bierze numer najnowszej wersji z cache albo z PyPI.
+
+| Co | Komenda |
+|---|---|
+| instalacja | `pipx install monolynx-cli` albo `brew install monolynx/tap/monolynx` |
+| logowanie | `monolynx auth login` |
+| aktualizacja (wg pola `install=`) | `brew upgrade monolynx`, `pipx upgrade monolynx-cli`, `uv tool upgrade monolynx-cli`, przy `unknown`: `pip install -U monolynx-cli` |
+| stan konfiguracji | `/monolynx:setup`, pozycja „CLI `monolynx`” |
+
+Żeby wywołania wrappera i preflightu nie pytały o zgodę za każdym razem, w `permissions.allow` pliku settings potrzebne są wzorce `Bash(python3 *scripts/monolynx_op.py *)`, `Bash(python3 *scripts/monolynx_transport.py*)` i `Bash(monolynx *)`. `/monolynx:setup` sprawdza ich obecność, proponuje je i dopisuje dopiero po jawnej zgodzie. Wzorzec wrappera i `Bash(monolynx *)` obejmują także zapisy na platformie. Wzorce `Bash(python3 *scripts/monolynx_op.py *)` i `Bash(python3 *scripts/monolynx_transport.py*)` pasują do dowolnej ścieżki kończącej się na tę nazwę, więc po ich dodaniu sesja uruchomi bez pytania każdy plik o takiej nazwie, nie tylko skrypt pluginu, a hook takiej komendy nie zatrzyma. Składnia wzorców nie była sprawdzona wobec każdego klienta; zweryfikuj ją u siebie. Worktree i sesje w tle widzą tylko śledzony `.claude/settings.json`.
+
+### Odwracalność
+
+`MONOLYNX_TRANSPORT=mcp` w środowisku albo w polu `env` pliku settings przywraca pracę wyłącznie przez MCP, bez odinstalowywania CLI. Wylogowanie (`monolynx auth logout`) albo odinstalowanie CLI daje ten sam skutek przy następnym preflighcie. Zmiana nie dotyka serwera MCP, API v2 ani danych projektu.
+
+### Praca nad pluginem: jedno źródło bloku
+
+Treść między `<!-- shared:transport -->` a `<!-- /shared:transport -->` w każdym skillu jest generowana. Jedynym źródłem jest `plugin/references/transport.md`: edytujesz ten plik i uruchamiasz `python3 scripts/sync_skills.py` (`make sync-skills`), który wstawia blok do każdego pliku `.md` skilla ze znacznikami i kopiuje oba skrypty do `scripts/` skilla, którego `SKILL.md` ma znacznik. `python3 scripts/sync_skills.py --check` wykrywa rozjazd. Nowa operacja CLI trafia do `OPS` w `plugin/scripts/monolynx_op.py` razem z testem dryfu wobec fixture `--help`. Reguła: `.claude/rules/skill-transport.md`.
 
 ## Zmienne konfiguracyjne
 
@@ -377,6 +457,7 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_SPRINT_TICK_ALLOWED_TOOLS` | `Bash(claude:*),Bash(MONOLYNX_SPRINT_RUN=1 claude:*),Bash(python3:*),Read(~/.claude/plugins/**),mcp__monolynx,mcp__claude_ai_Monolynx,mcp__plugin_monolynx_monolynx` | Lista narzędzi (po przecinkach), którą `sprint_run.sh` przekazuje tickowi w `claude -p --allowedTools`. Ustaw w środowisku procesu odpalającego pętlę; zastępuje całą listę domyślną (patrz sekcja „Uprawnienia ticku i preflight”) |
 | `MONOLYNX_MUTATION_BUDGET` | `600` | Budżet czasu przebiegu `/monolynx:mutation-check` w sekundach. Maksimum 600 (limit narzędzia Bash); większa wartość jest skracana do 600 |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goły imperatyw dostaje skill `brief` z propozycją kontraktu; `block` - prompt odrzucony z odesłaniem do `/monolynx:brief`; `off` - wyłączony (patrz sekcja Hooki) |
+| `MONOLYNX_TRANSPORT` | - | `mcp` - skille pracują wyłącznie przez MCP: preflight zwraca `mode=mcp` bez pytania CLI o logowanie i bez podpowiedzi, a wrapper `monolynx_op.py` kończy każdą operację kodem 3 (`OP-FALLBACK`). Brak zmiennej i każda inna wartość: CLI `monolynx`, gdy jest zainstalowane i zalogowane, inaczej MCP (patrz sekcja „Transport: CLI albo MCP”) |
 | `MONOLYNX_HOOK_ASK_UNSUPPORTED` | `false` | **Wyłącznie wartość `true`** (jak pozostałe flagi tego hooka) - `bash_guard.py` zamienia wtedy każdą decyzję `ask` na `deny` z wyjaśnieniem, że operację musi wykonać człowiek poza hookiem; każda inna wartość (w tym `1`) zostawia domyślne zachowanie. Opt-in dla klientów, które parsują `ask`, ale mimo to wykonują komendę (fail-open) - bez tej flagi zgody sesji głównej w takim kliencie nie są egzekwowane. Nie zmienia zachowania klientów, które `ask` obsługują (patrz sekcja Hooki) |
 
 Trzy zmienne od branchy mylą się najczęściej, bo brzmią podobnie, a dotyczą trzech różnych momentów. `MONOLYNX_BRANCH_MODE` waliduje **nazwę** brancha roboczego (`ticket` / `sprint` / `off`) i nic nie mówi o tym, z czego ten branch powstał. `MONOLYNX_BASE_BRANCH` to **punkt startu** przed pracą: z czego `work` i `work-simple` zakładają branch roboczy i worktree ticketu. `MONOLYNX_MR_TARGET` to **cel MR** po pracy: dokąd idzie merge request. To dwa momenty, ale jeden branch: ticket startuje z tego brancha, do którego wraca jego MR, więc projekt mergujący tickety do `develop` ustawia jedną zmienną, nie dwie: `MONOLYNX_MR_TARGET`, bo pusta `MONOLYNX_BASE_BRANCH` bierze jej wartość z łańcucha fallbacku, a cel MR w `work` i `work-simple` nie sięga po `MONOLYNX_BASE_BRANCH` (sama `MONOLYNX_BASE_BRANCH` ustala punkt startu i branch docelowy `mr-queue`, ale MR z `MONOLYNX_AUTOMR` poszedłby wtedy do domyślnego brancha repozytorium). Ustawione obie z różnymi wartościami (`MONOLYNX_BASE_BRANCH` różne od `MONOLYNX_MR_TARGET`) dają `ERROR`: preflight `sprint-run` zatrzymuje tick, a `mr_queue_state.py config-check` w preflighcie `mr-queue` kończy tick kodem 2 (MON-219). Twardy gate na branchu bazowym działa niezależnie od `MONOLYNX_BRANCH_MODE`: rozpoczęcie pracy wprost na branchu, który jest punktem startu dla innych, zawsze wymaga zgody.
@@ -830,6 +911,11 @@ W obu trybach błędem jest `### Unreleased` na innej pozycji niż pierwsza, pus
 
 ### Unreleased
 
+- MON-232: **skille używają CLI `monolynx`, gdy jest zainstalowane i zalogowane, z fallbackiem na MCP**. Zapis `mcp__monolynx__<tool>(...)` w skillach oznacza od teraz operację, a nie kanał. Nowy preflight `scripts/monolynx_transport.py` wypisuje zamrożoną linię `TRANSPORT: mode=cli|mcp cli=... auth=... latest=... update=... install=...` i najwyżej raz na sesję podpowiedź `TRANSPORT-HINT:` (brak CLI, brak logowania albo dostępna aktualizacja, z komendą dla wykrytego instalatora; nigdy przy `MONOLYNX_SPRINT_RUN=1`). Nowy wrapper `scripts/monolynx_op.py <op> --project_slug <slug> [--<param> <wartość>]` wykonuje 21 operacji ticketowych, sprintowych i wiki przez CLI i zwraca JSON z API v2; kod 3 z linią `OP-FALLBACK: mcp tool=<op>` oznacza "użyj toola MCP", kod 2 błąd operacji, kod 64 błąd użycia. Pipelines, `log_time`, graf i narzędzia metody LLM Wiki zostają przy MCP. Brak CLI i brak tooli MCP naraz kończy skill instrukcją instalacji i logowania.
+- MON-232: **blok `shared:transport` w 18 skillach ma jedno źródło**. Treść między znacznikami `<!-- shared:transport -->` wstawia `scripts/sync_skills.py` z `plugin/references/transport.md`; skill ze znacznikiem w `SKILL.md` dostaje też oba skrypty w `scripts/`. Skille dopisują obok bloku nazwy pól JSON, na których polegają (`blocked_by`, `acceptance_criteria`, koperta `items`/`total_pages` w `list_tickets` i `search_tickets`), a `spec_page_id` doczytują toolem MCP `get_ticket`. `brief`, `help`, `resume`, `retro` i `create-graph-ci-script` znaczników nie mają.
+- MON-232: **`/monolynx:setup` dostaje siódmą pozycję "CLI `monolynx`"** (zainstalowane, zalogowane, aktualne, allowlista Bash), liczoną z linii `TRANSPORT:` i z `permissions.allow` plików settings. Za zgodą wypisuje komendę instalacji, logowania albo aktualizacji do uruchomienia przez użytkownika i proponuje wzorce allowlisty (`Bash(python3 *scripts/monolynx_op.py *)`, `Bash(python3 *scripts/monolynx_transport.py*)`, `Bash(monolynx *)`); do pliku settings dopisuje je dopiero po osobnej, jawnej zgodzie. W sesji w tle tylko raportuje. Wykaz flag w KROK 6 obejmuje `MONOLYNX_TRANSPORT`.
+- MON-232: **`hooks/bash_guard.py` nie bierze argumentów wrappera za komendę**. Prosta forma `python3 <katalog>/scripts/monolynx_op.py ...`, `python3 <katalog>/scripts/monolynx_transport.py ...` i `monolynx ...` / `mnx ...` kończy hook bez decyzji przed regułami git, MR, lint/test i destrukcyjnymi, dla sesji głównej i subagenta, także przy `MONOLYNX_SPRINT_RUN=1`; o pytaniu decyduje zwykły system uprawnień klienta. Wyjątek jest fail-closed: komenda złożona, `$`, `~`, przekierowanie, glob, nawiasy `(` `)`, inna nazwa skryptu, `--yes`/`-y` oraz `login`, `logout`, `set`, `unset`, `delete`, `remove` w pierwszych trzech słowach idą starymi regułami.
+- MON-232: **nowa zmienna `MONOLYNX_TRANSPORT`**. Wartość `mcp` wymusza pracę wyłącznie przez MCP (preflight zwraca `mode=mcp`, wrapper kod 3) i jest wyłącznikiem całej zmiany bez odinstalowywania CLI. Nowa sekcja README "Transport: CLI albo MCP" i reguła `.claude/rules/skill-transport.md`.
 - MON-233: **`/monolynx:mr-queue` domyka pozycję na branchu integracyjnym od razu po merge i sam anuluje pipeline tego brancha**. Zastępuje tor `verifying` z MON-221 dla nowych merge'y. Po udanym merge MR/PR z zielonym CI na branch integracyjny (branch docelowy różny od domyślnego brancha repozytorium, np. `sprint/*`) ten sam tick wykonuje Domknięcie: ticket -> `done`, fast-forward lokalnego brancha docelowego (`target-sync`), pozycja -> `done`. Komentarz na tickecie podaje pipeline MR/PR, nie pipeline brancha.
   - Anulowanie pipeline'u brancha integracyjnego wywołanego pushem merge jest częścią tego samego działania (`glab ci cancel pipeline <id>`, na GitHubie `gh run cancel <databaseId>`, osobno dla każdego id). Brak pipeline'u, błąd odczytu albo błąd anulowania to ostrzeżenie w raporcie ticka, nie zatrzymanie kolejki ani blokada Domknięcia.
   - To samo dotyczy MR/PR zmergowanego poza kolejką (werdykt `merged`, 4c) na branch integracyjny: anulowanie pipeline'u brancha i Domknięcie w tym samym ticku. CI MR niezielone albo nieustalone nie wstrzymuje wtedy domknięcia (merge wykonał człowiek), a komentarz i raport mówią to wprost.

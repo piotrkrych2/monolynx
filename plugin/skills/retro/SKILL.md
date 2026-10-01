@@ -37,6 +37,7 @@ ToolSearch(query="+monolynx wiki page config log", max_results=10)
 
 <!-- /runtime:claude-code -->
 Nazwy i prefiksy narzędzi odczytaj z faktycznego katalogu runtime. Używaj dostępnego discovery i aktualnych schematów także wtedy, gdy klient nie udostępnia wyszukiwarki z powyższego przykładu.
+Ten skill czyta platformę narzędziami MCP; regułę wyboru między CLI `monolynx` a MCP opisuje sekcja "Transport" w README pluginu.
 
 `$ARGUMENTS` (literalny "$ARGUMENTS" = brak):
 

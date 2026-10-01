@@ -35,6 +35,12 @@ Brak ktoregokolwiek -> pomin instrumentacje w calosci.
 Rzeczywisty prefix zalezy od instalacji (np. `mcp__claude_ai_Monolynx__*` przy
 connectorze globalnym) - uzywaj DOKLADNIE nazw z aktualnego katalogu narzędzi.
 
+**Transport**: Pipelines nie maja komendy w CLI `monolynx`, wiec kazda operacja
+z tego pliku idzie toolem MCP, takze gdy preflight transportu w KROK 1 dal
+`mode=cli`. Agent z bloku w sekcji 4 raportuje przez MCP; wrappera
+`monolynx_op.py` uzywa tylko do operacji ticketowych i tylko wtedy, gdy Team
+Manager wkleil mu literalna sciezke.
+
 ---
 
 ## 1. Utworzenie pipeline (po KROK 2 - walidacji brancha)

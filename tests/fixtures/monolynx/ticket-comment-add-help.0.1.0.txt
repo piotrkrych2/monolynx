@@ -1,0 +1,19 @@
+# command: monolynx ticket comment add --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx ticket comment add [OPTIONS] {ticket}                          
+                                                                                
+ Dodaj komentarz do ticketu.                                                    
+                                                                                
+╭─ Arguments ──────────────────────────────────────────────────────────────────╮
+│ *    ticket      <str>  UUID lub klucz ticketu (np. MON-42). [required]      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ *  --body        <str>  Treść komentarza (markdown); `-` czyta ze stdin.     │
+│                         [required]                                           │
+│    --help               Show this message and exit.                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

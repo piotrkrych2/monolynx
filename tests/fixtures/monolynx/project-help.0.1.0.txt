@@ -1,0 +1,24 @@
+# command: monolynx project --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx project [OPTIONS] COMMAND [ARGS]...                            
+                                                                                
+ Zarządzanie projektami Monolynx.                                               
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ list     Wyświetl projekty, do których masz dostęp (wszystkie strony).       │
+│ get      Wyświetl szczegóły projektu: rolę, liczbę członków i ticketów,      │
+│          aktywny sprint.                                                     │
+│ create   Utwórz nowy projekt.                                                │
+│ update   Zmień projekt: wysyłane są tylko podane flagi.                      │
+│ delete   Usuń projekt (wymaga potwierdzenia albo --yes).                     │
+│ summary  Wyświetl podsumowanie projektu: nierozwiązane błędy, monitory,      │
+│          uptime, aktywny sprint, backlog.                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

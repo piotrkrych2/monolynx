@@ -3,8 +3,9 @@
 `auth`, `config`, `project`, `member`, `ticket`, `sprint` i `wiki` mają realne komendy (moduły
 monolynx_cli.commands.*). Pozostałe grupy są nadal puste -- kolejne tickety dodadzą do
 nich podkomendy, ewentualnie wynosząc rozrośniętą grupę do własnego modułu. Poza grupami root
-ma samodzielną komendę `completion <shell>` (skrypt uzupełniania na stdout, patrz
-monolynx_cli.commands.completion); wbudowane --install-completion i --show-completion Typera
+ma samodzielne komendy `completion <shell>` (skrypt uzupełniania na stdout, patrz
+monolynx_cli.commands.completion) i `version [--check]` (wersja CLI i sprawdzenie PyPI, patrz
+monolynx_cli.commands.version); wbudowane --install-completion i --show-completion Typera
 zostają.
 `no_args_is_help=True` na każdej grupie sprawia, że wywołanie samej grupy bez
 podkomendy pokazuje pomoc zamiast błędu "Missing command".
@@ -39,6 +40,7 @@ from monolynx_cli.commands.member import app as member_app
 from monolynx_cli.commands.project import app as project_app
 from monolynx_cli.commands.sprint import app as sprint_app
 from monolynx_cli.commands.ticket import app as ticket_app
+from monolynx_cli.commands.version import version as version_command
 from monolynx_cli.commands.wiki import app as wiki_app
 from monolynx_cli.options import GlobalOptions, OutputFormat
 from monolynx_cli.version import __version__
@@ -131,6 +133,7 @@ heartbeat_app = typer.Typer(no_args_is_help=True)
 role_app = typer.Typer(no_args_is_help=True)
 
 app.command(name="completion")(completion)
+app.command(name="version")(version_command)
 app.add_typer(auth_app, name="auth", help="Logowanie i zarządzanie tokenem dostępu do Monolynx.")
 app.add_typer(config_app, name="config", help="Konfiguracja lokalna CLI (profile, adres API).")
 app.add_typer(project_app, name="project", help="Zarządzanie projektami Monolynx.")

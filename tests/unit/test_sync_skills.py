@@ -1,6 +1,7 @@
 """Distribution of nested skill resources (MON-182)."""
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -222,3 +223,284 @@ def test_bundled_resources_rejects_missing_whole_file_source(tmp_path, monkeypat
     with pytest.raises(FileNotFoundError) as error:
         sync_skills.main()
     assert Path(error.value.filename) == source / source_rel
+
+
+# ---------------------------------------------------------------------------
+# MON-232: blok shared:transport wstrzykiwany z plugin/references/transport.md
+# i automatyczne zasoby skryptow dla skilli ze znacznikiem
+# ---------------------------------------------------------------------------
+
+TRANSPORT_MARKER_RE = re.compile(r"<!-- shared:transport -->(.*?)<!-- /shared:transport -->", re.DOTALL)
+CANONICAL_TRANSPORT = "## Transport\n\nKanoniczna tresc bloku transportu.\n\n- punkt 1\n- punkt 2\n"
+TRANSPORT_SCRIPTS = ("monolynx_transport.py", "monolynx_op.py")
+
+
+def _marked(body: str) -> str:
+    return f"---\nname: sample\ndescription: Sample\n---\nIntro\n<!-- shared:transport -->\n{body}<!-- /shared:transport -->\nOutro\n"
+
+
+@pytest.fixture
+def transport_tree(tmp_path, monkeypatch):
+    skills = tmp_path / "plugin/skills"
+    skills.mkdir(parents=True)
+    references = skills.parent / "references"
+    references.mkdir()
+    (references / "runtime.md").write_text("# Runtime\n", encoding="utf-8")
+    (references / "transport.md").write_text(CANONICAL_TRANSPORT, encoding="utf-8")
+    scripts = skills.parent / "scripts"
+    scripts.mkdir()
+    for name in TRANSPORT_SCRIPTS:
+        (scripts / name).write_text(f"# {name}\nprint('{name}')\n", encoding="utf-8")
+    (scripts / "mr_queue_state.py").write_text("# mr_queue_state\n", encoding="utf-8")
+    marked = skills / "sample"
+    marked.mkdir()
+    (marked / "SKILL.md").write_text(_marked("STARA TRESC\n"), encoding="utf-8")
+    (marked / "references").mkdir()
+    nested = "Przed\n<!-- shared:transport -->\nSTARA W REFERENCJI\n<!-- /shared:transport -->\nPo\n"
+    (marked / "references/extra.md").write_text(nested, encoding="utf-8")
+    plain = skills / "plain"
+    plain.mkdir()
+    (plain / "SKILL.md").write_text("---\nname: plain\ndescription: Plain\n---\nBez znacznikow\n", encoding="utf-8")
+    monkeypatch.setattr(sync_skills, "SOURCE_DIR", skills)
+    monkeypatch.setattr(sync_skills, "TARGET_DIR", tmp_path / "target")
+    return skills
+
+
+def _run_sync(monkeypatch, *flags):
+    monkeypatch.setattr(sys, "argv", ["sync_skills.py", *flags])
+    return sync_skills.main()
+
+
+def _between_markers(text: str) -> str:
+    match = TRANSPORT_MARKER_RE.search(text)
+    assert match is not None, text
+    return match.group(1)
+
+
+def test_sync_injects_canonical_transport_block_into_source_and_static_copy(transport_tree, tmp_path, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+
+    for path in (transport_tree / "sample/SKILL.md", tmp_path / "target/monolynx-sample/SKILL.md"):
+        text = path.read_text(encoding="utf-8")
+        assert _between_markers(text).strip() == CANONICAL_TRANSPORT.strip()
+        assert "STARA TRESC" not in text
+        assert text.startswith("---\nname: ")
+        assert "Intro\n<!-- shared:transport -->" in text
+        assert text.endswith("<!-- /shared:transport -->\nOutro\n")
+
+
+def test_sync_injects_block_into_nested_markdown_with_markers(transport_tree, tmp_path, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+
+    for path in (transport_tree / "sample/references/extra.md", tmp_path / "target/monolynx-sample/references/extra.md"):
+        text = path.read_text(encoding="utf-8")
+        assert _between_markers(text).strip() == CANONICAL_TRANSPORT.strip()
+        assert text.startswith("Przed\n<!-- shared:transport -->")
+        assert text.endswith("<!-- /shared:transport -->\nPo\n")
+
+
+def test_sync_is_idempotent_for_transport_block(transport_tree, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+    first = (transport_tree / "sample/SKILL.md").read_text(encoding="utf-8")
+
+    assert _run_sync(monkeypatch) == 0
+    assert (transport_tree / "sample/SKILL.md").read_text(encoding="utf-8") == first
+    assert _run_sync(monkeypatch, "--check") == 0
+
+
+def test_check_fails_when_block_differs_from_canonical_and_does_not_write(transport_tree, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+    skill = transport_tree / "sample/SKILL.md"
+    drifted = skill.read_text(encoding="utf-8").replace("punkt 2", "punkt ZMIENIONY")
+    skill.write_text(drifted, encoding="utf-8")
+
+    assert _run_sync(monkeypatch, "--check") == 1
+    assert skill.read_text(encoding="utf-8") == drifted
+
+    assert _run_sync(monkeypatch) == 0
+    assert "punkt 2" in skill.read_text(encoding="utf-8")
+    assert "punkt ZMIENIONY" not in skill.read_text(encoding="utf-8")
+    assert _run_sync(monkeypatch, "--check") == 0
+
+
+def test_check_fails_when_canonical_transport_changes(transport_tree, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+    (transport_tree.parent / "references/transport.md").write_text("## Transport\n\nNOWA tresc kanoniczna.\n", encoding="utf-8")
+
+    assert _run_sync(monkeypatch, "--check") == 1
+
+    assert _run_sync(monkeypatch) == 0
+    assert _between_markers((transport_tree / "sample/SKILL.md").read_text(encoding="utf-8")).strip() == "## Transport\n\nNOWA tresc kanoniczna."
+    assert _run_sync(monkeypatch, "--check") == 0
+
+
+def test_skill_without_markers_is_left_untouched_and_gets_no_transport_scripts(transport_tree, tmp_path, monkeypatch):
+    original = (transport_tree / "plain/SKILL.md").read_text(encoding="utf-8")
+
+    assert _run_sync(monkeypatch) == 0
+
+    assert (transport_tree / "plain/SKILL.md").read_text(encoding="utf-8") == original
+    for name in TRANSPORT_SCRIPTS:
+        assert not (transport_tree / "plain/scripts" / name).exists()
+        assert not (tmp_path / "target/monolynx-plain/scripts" / name).exists()
+
+
+def test_skill_with_marker_gets_transport_scripts_byte_identical(transport_tree, tmp_path, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+
+    for name in TRANSPORT_SCRIPTS:
+        expected = (transport_tree.parent / "scripts" / name).read_bytes()
+        assert (transport_tree / "sample/scripts" / name).read_bytes() == expected
+        assert (tmp_path / "target/monolynx-sample/scripts" / name).read_bytes() == expected
+
+
+def test_check_detects_missing_transport_script_copy_and_sync_restores_it(transport_tree, tmp_path, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+    copy = tmp_path / "target/monolynx-sample/scripts/monolynx_op.py"
+    copy.unlink()
+
+    assert _run_sync(monkeypatch, "--check") == 1
+    assert not copy.exists()
+
+    assert _run_sync(monkeypatch) == 0
+    assert copy.exists()
+
+
+def test_bundled_resources_for_marked_skill_include_transport_scripts_and_runtime(transport_tree):
+    resources = sync_skills.bundled_resources("sample")
+
+    assert set(resources) == {"references/runtime.md", "scripts/monolynx_transport.py", "scripts/monolynx_op.py"}
+    assert resources["scripts/monolynx_op.py"] == (transport_tree.parent / "scripts/monolynx_op.py").read_text(encoding="utf-8")
+
+
+def test_bundled_resources_for_unmarked_skill_have_only_runtime(transport_tree):
+    assert set(sync_skills.bundled_resources("plain")) == {"references/runtime.md"}
+
+
+def test_marked_skill_with_existing_script_entry_gets_both_old_and_transport_scripts(transport_tree):
+    skill = transport_tree / "mr-queue"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(_marked("x\n").replace("name: sample", "name: mr-queue"), encoding="utf-8")
+
+    resources = sync_skills.bundled_resources("mr-queue")
+
+    assert set(resources) == {"references/runtime.md", "scripts/mr_queue_state.py", "scripts/monolynx_transport.py", "scripts/monolynx_op.py"}
+
+
+def test_marker_only_in_nested_markdown_does_not_add_transport_scripts(transport_tree):
+    skill = transport_tree / "nested-only"
+    (skill / "references").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: nested-only\ndescription: N\n---\nBez znacznika\n", encoding="utf-8")
+    (skill / "references/extra.md").write_text("<!-- shared:transport -->\nx\n<!-- /shared:transport -->\n", encoding="utf-8")
+
+    assert set(sync_skills.bundled_resources("nested-only")) == {"references/runtime.md"}
+
+
+UNBALANCED_TEXTS = {
+    "only-opening": f"Przed\n{sync_skills.TRANSPORT_OPEN}\nx\nPo\n",
+    "only-closing": f"Przed\nx\n{sync_skills.TRANSPORT_CLOSE}\nPo\n",
+    "two-opening-one-closing": f"{sync_skills.TRANSPORT_OPEN}\na\n{sync_skills.TRANSPORT_CLOSE}\n{sync_skills.TRANSPORT_OPEN}\nb\n",
+}
+
+
+@pytest.mark.parametrize("text", list(UNBALANCED_TEXTS.values()), ids=list(UNBALANCED_TEXTS))
+def test_inject_transport_rejects_unbalanced_markers(transport_tree, text):
+    with pytest.raises(ValueError, match="Unbalanced"):
+        sync_skills.inject_transport(text)
+
+
+def test_inject_transport_rejects_reversed_markers(transport_tree):
+    text = f"Przed\n{sync_skills.TRANSPORT_CLOSE}\nx\n{sync_skills.TRANSPORT_OPEN}\nPo\n"
+
+    with pytest.raises(ValueError, match="Misordered"):
+        sync_skills.inject_transport(text)
+
+
+@pytest.mark.parametrize("check_only", [False, True])
+def test_sync_with_unbalanced_markers_fails_and_writes_nothing_for_that_skill(transport_tree, tmp_path, monkeypatch, check_only):
+    skill = transport_tree / "sample/SKILL.md"
+    broken = f"---\nname: sample\ndescription: Sample\n---\n{sync_skills.TRANSPORT_OPEN}\nbez zamkniecia\n"
+    skill.write_text(broken, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Unbalanced"):
+        _run_sync(monkeypatch, *(["--check"] if check_only else []))
+
+    assert skill.read_text(encoding="utf-8") == broken
+    assert not (tmp_path / "target/monolynx-sample").exists()
+
+
+def test_inject_transport_replaces_every_pair_in_one_file_and_is_idempotent(transport_tree):
+    block = f"{sync_skills.TRANSPORT_OPEN}\nSTARE\n{sync_skills.TRANSPORT_CLOSE}"
+    text = f"Pierwszy\n{block}\nSrodek\n{block.replace('STARE', 'INNE STARE')}\nOstatni\n"
+
+    injected = sync_skills.inject_transport(text)
+
+    fresh = f"{sync_skills.TRANSPORT_OPEN}\n{CANONICAL_TRANSPORT.strip()}\n{sync_skills.TRANSPORT_CLOSE}"
+    assert injected == f"Pierwszy\n{fresh}\nSrodek\n{fresh}\nOstatni\n"
+    assert sync_skills.inject_transport(injected) == injected
+
+
+def test_inject_transport_without_markers_does_not_need_canonical_file(transport_tree):
+    (transport_tree.parent / "references/transport.md").unlink()
+
+    assert sync_skills.inject_transport("Zwykly tekst\n") == "Zwykly tekst\n"
+
+
+def test_sync_with_marker_but_missing_canonical_file_raises_file_not_found(transport_tree, monkeypatch):
+    canonical = transport_tree.parent / "references/transport.md"
+    canonical.unlink()
+
+    with pytest.raises(FileNotFoundError) as error:
+        _run_sync(monkeypatch)
+
+    assert Path(error.value.filename) == canonical
+
+
+def test_sync_without_any_marker_works_when_canonical_file_is_missing(transport_tree, tmp_path, monkeypatch):
+    (transport_tree.parent / "references/transport.md").unlink()
+    (transport_tree / "sample/references/extra.md").unlink()
+    (transport_tree / "sample/SKILL.md").write_text("---\nname: sample\ndescription: Sample\n---\nBez znacznikow\n", encoding="utf-8")
+
+    assert _run_sync(monkeypatch) == 0
+
+    assert (tmp_path / "target/monolynx-sample/SKILL.md").exists()
+    assert _run_sync(monkeypatch, "--check") == 0
+
+
+def test_reference_excerpt_taken_from_another_skill_gets_canonical_transport_block(transport_tree, monkeypatch):
+    other = transport_tree / "other"
+    other.mkdir()
+    stale = f"{sync_skills.TRANSPORT_OPEN}\nSTARA W WYCINKU\n{sync_skills.TRANSPORT_CLOSE}"
+    (other / "SKILL.md").write_text(f"---\nname: other\ndescription: O\n---\n## A\n{stale}\n## B\nKoniec\n", encoding="utf-8")
+    monkeypatch.setattr(sync_skills, "REFERENCE_RESOURCES", {"sample": ("other", "## A", "## B", "ref.md")})
+
+    resources = sync_skills.bundled_resources("sample")
+
+    excerpt = resources["references/ref.md"]
+    assert _between_markers(excerpt).strip() == CANONICAL_TRANSPORT.strip()
+    assert "STARA W WYCINKU" not in excerpt
+    assert excerpt.startswith("## A\n")
+    assert "## B" not in excerpt
+
+
+def test_whole_file_resource_gets_canonical_transport_block(transport_tree, monkeypatch):
+    other = transport_tree / "other"
+    other.mkdir()
+    stale = f"{sync_skills.TRANSPORT_OPEN}\nSTARA W PLIKU\n{sync_skills.TRANSPORT_CLOSE}"
+    (other / "lint.md").write_text(f"Poczatek\n{stale}\nKoniec\n", encoding="utf-8")
+    monkeypatch.setattr(sync_skills, "WHOLE_FILE_RESOURCES", {"sample": (("other/lint.md", "lint.md"),)})
+
+    resources = sync_skills.bundled_resources("sample")
+
+    assert _between_markers(resources["lint.md"]).strip() == CANONICAL_TRANSPORT.strip()
+    assert "STARA W PLIKU" not in resources["lint.md"]
+    assert resources["lint.md"].startswith("Poczatek\n")
+    assert resources["lint.md"].endswith("Koniec\n")
+
+
+def test_skill_md_with_only_closing_marker_gets_no_transport_scripts(transport_tree):
+    skill = transport_tree / "closing-only"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(f"---\nname: closing-only\ndescription: C\n---\nTekst\n{sync_skills.TRANSPORT_CLOSE}\n", encoding="utf-8")
+
+    assert set(sync_skills.bundled_resources("closing-only")) == {"references/runtime.md"}

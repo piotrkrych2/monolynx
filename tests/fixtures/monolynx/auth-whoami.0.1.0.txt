@@ -1,0 +1,13 @@
+# command: monolynx --timeout 5 -o json auth whoami
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: email zredagowany na user@example.com; token pozostawiony tylko w postaci zamaskowanej przez CLI (mask_token); linia '# exit: <kod>' na koncu
+{
+  "email": "user@example.com",
+  "profile": "default",
+  "auth_type": "oauth",
+  "token": "****POXh",
+  "expires_at": "2026-10-31T08:10:26+00:00"
+}
+# exit: 0

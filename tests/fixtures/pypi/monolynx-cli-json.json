@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "command": "curl -s https://pypi.org/pypi/monolynx-cli/json",
+    "tool_version": "PyPI JSON API (endpoint pakietu)",
+    "captured": "2026-10-01",
+    "note": "przyciete do info.name, info.version i kluczy releases (wartosci releases zastapione pustymi listami); pozostale pola nieuzywane przez skrypty"
+  },
+  "info": {
+    "name": "monolynx-cli",
+    "version": "0.1.0"
+  },
+  "releases": {
+    "0.1.0": []
+  }
+}

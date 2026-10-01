@@ -1,0 +1,24 @@
+# command: monolynx ticket list --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx ticket list [OPTIONS]                                          
+                                                                                
+ Wypisz tickety projektu z filtrami.                                            
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --status            <str>  Filtr statusu.                                    │
+│ --priority          <str>  Filtr priorytetu.                                 │
+│ --search            <str>  Fraza w tytule ticketu (szerzej szuka ticket      │
+│                            search).                                          │
+│ --sprint            <str>  ID sprintu.                                       │
+│ --due-before        <str>  Termin do dnia (RRRR-MM-DD).                      │
+│ --due-after         <str>  Termin od dnia (RRRR-MM-DD).                      │
+│ --overdue                  Tylko przeterminowane.                            │
+│ --label             <str>  ID etykiety.                                      │
+│ --page              <int>  Numer strony wyników.                             │
+│ --help                     Show this message and exit.                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

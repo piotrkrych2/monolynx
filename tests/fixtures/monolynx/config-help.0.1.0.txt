@@ -1,0 +1,20 @@
+# command: monolynx config --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx config [OPTIONS] COMMAND [ARGS]...                             
+                                                                                
+ Konfiguracja lokalna CLI (profile, adres API).                                 
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ get   Wypisz wartość pod kluczem kropkowym (sekrety zamaskowane).            │
+│ set   Ustaw wartość pod kluczem kropkowym.                                   │
+│ list  Wypisz całą konfigurację jako listę wierszy {klucz, wartość} (sekrety  │
+│       zamaskowane).                                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

@@ -1,0 +1,7 @@
+# command: monolynx --version
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+0.1.0
+# exit: 0

@@ -1,0 +1,20 @@
+# command: monolynx ticket ac --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx ticket ac [OPTIONS] COMMAND [ARGS]...                          
+                                                                                
+ Kryteria akceptacji ticketu.                                                   
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ list    Wypisz kryteria akceptacji ticketu.                                  │
+│ add     Dodaj kryterium akceptacji do ticketu.                               │
+│ update  Zmień opis lub stan spełnienia kryterium akceptacji.                 │
+│ delete  Usuń kryterium akceptacji.                                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

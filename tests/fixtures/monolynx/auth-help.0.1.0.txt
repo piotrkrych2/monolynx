@@ -1,0 +1,21 @@
+# command: monolynx auth --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx auth [OPTIONS] COMMAND [ARGS]...                               
+                                                                                
+ Logowanie i zarządzanie tokenem dostępu do Monolynx.                           
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ login   Zaloguj się przez OAuth w przeglądarce (albo tokenem API z --token)  │
+│         i zapisz sesję w profilu konfiguracji.                               │
+│ logout  Wyczyść zapisane sekrety                                             │
+│         (token/access_token/refresh_token/expires_at) profilu.               │
+│ whoami  Wyświetl dane zalogowanego użytkownika.                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0
