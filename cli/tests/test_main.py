@@ -83,8 +83,8 @@ EXPECTED_GROUPS = frozenset(
     }
 )
 
-# Grupy plus samodzielne komendy root (MON-141: `completion` nie jest grupa podkomend).
-EXPECTED_ROOT_COMMANDS = EXPECTED_GROUPS | {"completion"}
+# Grupy plus samodzielne komendy root (MON-141: `completion`, MON-232: `version`; nie sa grupami podkomend).
+EXPECTED_ROOT_COMMANDS = EXPECTED_GROUPS | {"completion", "version"}
 
 # Nazwy jawnie zakazane na poziomie root -- MON-129 nie wprowadza tych podkomend.
 FORBIDDEN_TOP_LEVEL_COMMANDS = frozenset({"board", "burndown", "label", "ac", "comment"})

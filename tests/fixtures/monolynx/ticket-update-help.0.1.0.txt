@@ -1,0 +1,34 @@
+# command: monolynx ticket update --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx ticket update [OPTIONS] {ticket}                               
+                                                                                
+ Zaktualizuj ticket; do API trafiają tylko podane pola.                         
+                                                                                
+╭─ Arguments ──────────────────────────────────────────────────────────────────╮
+│ *    ticket      <str>  UUID lub klucz ticketu (np. MON-42). [required]      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --title                    <str>   Nowy tytuł.                               │
+│ --description              <str>   Nowy opis (markdown); `-` czyta ze stdin. │
+│ --description-file         <path>  Plik z nowym opisem (UTF-8).              │
+│ --status                   <str>   Nowy status.                              │
+│ --priority                 <str>   Nowy priorytet.                           │
+│ --sp,--story-points        <int>   Story points.                             │
+│ --sprint                   <str>   ID sprintu; pusty tekst odpina od         │
+│                                    sprintu.                                  │
+│ --assignee                 <str>   E-mail przypisanej osoby; pusty tekst     │
+│                                    zdejmuje przypisanie.                     │
+│ --due                      <str>   Termin (RRRR-MM-DD); pusty tekst czyści   │
+│                                    termin.                                   │
+│ --label                    <str>   ID etykiety (zastępuje dotychczasowe);    │
+│                                    można powtarzać.                          │
+│ --blocked-by               <str>   UUID ticketu blokującego (nadpisuje);     │
+│                                    można powtarzać.                          │
+│ --no-blockers                      Usuń wszystkie blokery.                   │
+│ --help                             Show this message and exit.               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

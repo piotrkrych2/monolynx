@@ -1,0 +1,18 @@
+# command: monolynx wiki search --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx wiki search [OPTIONS] {query}                                  
+                                                                                
+ Wyszukaj strony wiki semantycznie (embeddingi).                                
+                                                                                
+╭─ Arguments ──────────────────────────────────────────────────────────────────╮
+│ *    query      <str>  Zapytanie wyszukiwania semantycznego. [required]      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --limit        <int range> [x>=1]  Maksymalna liczba wyników. [default: 10]  │
+│ --help                             Show this message and exit.               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

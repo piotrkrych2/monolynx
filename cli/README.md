@@ -265,6 +265,19 @@ git log -1 --format=%B | monolynx --project my-project ticket comment add MP-11 
 
 `--public` publishes the page at `/blog/{slug}`, visible to anyone without signing in. `wiki delete` has no `-y` short form. `--content -` with an empty standard input, an unreadable or non-UTF-8 `--file`, and a missing project are usage errors (exit code 2, no request sent).
 
+### `version`
+
+| Command | Arguments and options | Description |
+|---|---|---|
+| `version` | | Show the installed CLI version as `{"current": ...}`. Makes no network request. |
+| `version --check` | `--check` | Also ask PyPI for the newest version and print `current`, `latest`, `update_available` and `upgrade_command`. |
+
+`upgrade_command` depends on how the CLI is installed: `brew upgrade monolynx`, `pipx upgrade monolynx-cli`, `uv tool upgrade monolynx-cli`, or `pip install -U monolynx-cli` when the installer is not recognized. Without a network (timeout, no connection, PyPI error) the command still exits with code 0 and prints `latest` as `null` and `update_available` as `false`. It needs no sign-in and no configuration, and sends no token anywhere.
+
+```bash
+monolynx -o json version --check
+```
+
 ### Reserved groups
 
 `monitoring`, `issues`, `time`, `plan`, `rozliczenia`, `graph`, `pipeline`, `heartbeat` and `role` appear in `monolynx --help` but are reserved: they have no commands yet (not yet available).

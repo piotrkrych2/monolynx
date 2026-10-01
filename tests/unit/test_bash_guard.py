@@ -1492,3 +1492,397 @@ class TestCodexClientContract:
         payload.pop("_meta")
         exit_code, decision = run_hook(payload, env_extra=MAIN_SESSION)
         assert_allow(exit_code, decision)
+
+
+# ---------------------------------------------------------------------------
+# MON-232: wrapper operacji i CLI `monolynx` (reguly pkt 3 specyfikacji)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = HOOK_PATH.parents[2]
+SKILL_SCRIPTS = "/Users/dev/.claude/plugins/cache/monolynx/monolynx/1.23.0/skills/work/scripts"
+OP_SCRIPT = f"python3 {SKILL_SCRIPTS}/monolynx_op.py"
+TRANSPORT_SCRIPT = f"python3 {SKILL_SCRIPTS}/monolynx_transport.py"
+
+# Wywolania, ktore hook ma przepuscic bez decyzji. Argumenty niosa frazy, ktore stare reguly
+# (GIT_WRITE, TEST_LINT, MR_MERGE, DESTRUCTIVE) blokowalyby, wiec test pada, gdy nowa regula
+# nie stoi PRZED nimi. W tym hooku "allow" i "brak decyzji" to to samo wyjscie (pusty stdout, kod 0):
+# odroznic je mozna tylko przez to, ze stare reguly nie wchodza w grze.
+RISKY_WORDS = [
+    "git commit -m x",
+    "git push --force origin main",
+    "pytest -q tests",
+    "glab mr merge 5",
+    "rm -rf /",
+    "docker rm -f db",
+]
+
+OP_ARGUMENT_TEMPLATES = {
+    "write-content": 'add_comment --project_slug monolynx --ticket_id MON-1 --content "{w}"',
+    "read-query": 'search_wiki --project_slug monolynx --query "{w}"',
+}
+
+READ_ALLOW_COMMANDS = {
+    "op-get-ticket": f"{OP_SCRIPT} get_ticket --project_slug monolynx --ticket_id MON-1",
+    "op-search-wiki-risky": f'{OP_SCRIPT} search_wiki --project_slug monolynx --query "git push origin main pytest"',
+    "op-list-tickets-risky": f'{OP_SCRIPT} list_tickets --project_slug monolynx --search "git commit"',
+    "transport": f"{TRANSPORT_SCRIPT} --session-id abc-123",
+    "transport-risky-arg": f'{TRANSPORT_SCRIPT} --session-id "git push origin main"',
+    "cli-ticket-get": "monolynx -o json --project monolynx ticket get MON-1",
+    "cli-ticket-search-risky": 'monolynx -o json --project monolynx ticket search "git push origin main"',
+    "cli-wiki-search-risky": 'monolynx -o json --project monolynx wiki search "pytest mypy"',
+    "cli-version-flag": "monolynx --version",
+    "cli-help": "monolynx --help",
+    "cli-whoami": "monolynx --timeout 5 -o json auth whoami",
+    "cli-version-check": "monolynx -o json version --check",
+    "cli-config-get": "monolynx config get endpoint",
+    "cli-config-list": "monolynx config list",
+    "cli-wiki-config-get": "monolynx -o json --project monolynx wiki config get",
+    "cli-sprint-board": "monolynx -o json --project monolynx sprint board",
+    "cli-sprint-burndown": "monolynx -o json --project monolynx sprint burndown",
+    "cli-project-summary": "monolynx -o json project summary monolynx",
+    "mnx-ticket-list": "mnx -o json --project monolynx ticket list",
+}
+
+WRITE_NO_DECISION_COMMANDS = {
+    "op-add-comment-risky": (
+        f'{OP_SCRIPT} add_comment --project_slug monolynx --ticket_id MON-1 --content "zrobione: git commit i pytest zielone, merge gotowy"'
+    ),
+    "op-update-ticket": f"{OP_SCRIPT} update_ticket --project_slug monolynx --ticket_id MON-1 --status done",
+    "op-create-wiki-page": f"{OP_SCRIPT} create_wiki_page --project_slug monolynx --title T --content @/tmp/page.md",
+    "cli-comment-add-risky": 'monolynx -o json --project monolynx ticket comment add MON-1 --body "git push"',
+    "cli-ticket-update": "monolynx -o json --project monolynx ticket update MON-1 --status done",
+}
+
+PHRASE = "git push origin main"
+
+# Komendy, ktore hook ma ZOSTAWIC starym regulom (nie jest to wyjatek MON-232). Kazda niesie fraze blokowana przez
+# GIT_WRITE w tresci argumentu: bez niej komenda przechodzi takze po usunieciu chronionej galezi wyjatku,
+# bo "allow" i "brak decyzji" to w tym hooku to samo wyjscie.
+CLI_OLD_RULES_COMMANDS = {
+    "auth-login": f'monolynx auth login "{PHRASE}"',
+    "auth-logout": f'monolynx auth logout "{PHRASE}"',
+    "config-set": f'monolynx config set endpoint "{PHRASE}"',
+    "config-unset": f'monolynx config unset endpoint "{PHRASE}"',
+    "ticket-delete": f'monolynx -o json --project monolynx ticket delete MON-1 "{PHRASE}"',
+    "member-remove": f'monolynx project member remove monolynx x@example.com "{PHRASE}"',
+    "yes-long-on-read": f'monolynx -o json --project monolynx ticket get MON-1 --yes "{PHRASE}"',
+    "yes-short-on-read": f'monolynx -o json --project monolynx ticket get MON-1 -y "{PHRASE}"',
+    "yes-long-on-delete": f'monolynx -o json --project monolynx ticket delete MON-1 --yes "{PHRASE}"',
+    "mnx-alias-login": f'mnx auth login "{PHRASE}"',
+}
+
+# Flaga globalna z wartoscia pochlania nastepny token: slowo-wartosc nie jest slowem komendy.
+CLI_GLOBAL_FLAG_VALUE_COMMANDS = {
+    "project-value-delete": f'monolynx --project delete ticket get MON-1 "{PHRASE}"',
+    "profile-value-set": f'monolynx --profile set ticket get MON-1 "{PHRASE}"',
+    "output-value-remove": f'monolynx -o remove ticket get MON-1 "{PHRASE}"',
+    "timeout-value-login": f'monolynx --timeout login ticket get MON-1 "{PHRASE}"',
+    "output-equals-form": f'monolynx --output=json ticket get MON-1 "{PHRASE}"',
+    "flag-without-value-at-end": f'monolynx ticket get MON-1 "{PHRASE}" --project',
+    "bare": "monolynx",
+    "help": "monolynx --help",
+    "mnx-version": "mnx --version",
+}
+
+RISKY_CLI_WORDS = ["login", "logout", "set", "unset", "delete", "remove"]
+
+# Skrypt pluginu wywolany niepoprawnie: stare reguly zostaja (fraza blokowana w tresci argumentu).
+SCRIPT_OLD_RULES_COMMANDS = {
+    "python3-dash-c": f'python3 -c "{PHRASE}"',
+    "other-script-in-scripts-dir": f'python3 {SKILL_SCRIPTS}/other.py get_ticket --query "{PHRASE}"',
+    "dotdot-in-path": f'python3 /a/../scripts/monolynx_op.py get_ticket --query "{PHRASE}"',
+    "dotdot-leading": f'python3 ../scripts/monolynx_op.py get_ticket --query "{PHRASE}"',
+    "dotdot-in-transport-path": f'python3 /a/../scripts/monolynx_transport.py --session-id "{PHRASE}"',
+    "no-scripts-dir": f'python3 /a/monolynx_op.py get_ticket --query "{PHRASE}"',
+    "script-dir-singular": f'python3 /a/script/monolynx_op.py get_ticket --query "{PHRASE}"',
+    "script-dir-suffixed": f'python3 /a/scripts2/monolynx_op.py get_ticket --query "{PHRASE}"',
+    "transport-outside-scripts": f'python3 /a/monolynx_transport.py --session-id "{PHRASE}"',
+    "op-missing": f'python3 {SKILL_SCRIPTS}/monolynx_op.py --query "{PHRASE}"',
+    "op-uppercase": f'python3 {SKILL_SCRIPTS}/monolynx_op.py Get_Ticket --query "{PHRASE}"',
+    "op-hyphen": f'python3 {SKILL_SCRIPTS}/monolynx_op.py get-ticket --query "{PHRASE}"',
+    "op-leading-digit": f'python3 {SKILL_SCRIPTS}/monolynx_op.py 1abc --query "{PHRASE}"',
+    "unclosed-quote-op": f'python3 {SKILL_SCRIPTS}/monolynx_op.py add_comment --project_slug monolynx --content "{PHRASE}',
+    "unclosed-quote-cli": f'monolynx -o json ticket comment add MON-1 --body "{PHRASE}',
+}
+
+SCRIPT_PASS_COMMANDS = {
+    "bare-python3": "python3",
+    "python-interpreter-name": f'python {SKILL_SCRIPTS}/monolynx_op.py get_ticket --project_slug monolynx --query "{PHRASE}"',
+    "relative-scripts-dir": f'python3 scripts/monolynx_op.py get_ticket --project_slug monolynx --query "{PHRASE}"',
+    "transport-relative": f'python3 scripts/monolynx_transport.py --session-id "{PHRASE}"',
+}
+
+# {p} = poprawna komenda prosta; reszta wstrzykuje skladnie powloki albo fraze, ktora stare reguly blokuja.
+INJECTIONS = {
+    "semicolon": "{p} ; git push origin main",
+    "and-and": "{p} && git push origin main",
+    "background": "{p} & git push origin main",
+    "pipe": "{p} | git push origin main",
+    "command-substitution": '{p} "$(git push origin main)"',
+    "backtick": '{p} "`git push origin main`"',
+    "redirect-out": '{p} --query "git push origin main" > out.txt',
+    "redirect-in": '{p} --query "git push origin main" < in.txt',
+    "newline": "{p}\ngit push origin main",
+    "carriage-return": "{p}\rgit push origin main",
+    "tilde": '{p} --query "git push origin main" ~/x',
+    "dollar-variable": '{p} --query "git push origin main" $HOME',
+    "glob-star": '{p} --query "git push origin main" *.md',
+    "glob-question": '{p} --query "git push origin main" ?.md',
+    "glob-bracket": '{p} --query "git push origin main" a[1',
+    "brace": '{p} --query "git push origin main" a{{1',
+    "paren-open": '{p} --query "git push origin main" a(1',
+    "paren-close": '{p} --query "git push origin main" a)1',
+}
+
+INJECTION_BASES = {
+    "op-read": f"{OP_SCRIPT} get_ticket --project_slug monolynx --ticket_id MON-1",
+    "op-write": f"{OP_SCRIPT} add_comment --project_slug monolynx --ticket_id MON-1 --content x",
+    "transport": f"{TRANSPORT_SCRIPT} --session-id s1",
+    "cli-read": "monolynx -o json --project monolynx ticket get MON-1",
+    "cli-write": "monolynx -o json --project monolynx ticket comment add MON-1 --body x",
+}
+
+# Komendy, ktore wygladaja podobnie, ale NIE sa wywolaniem skryptu pluginu ani CLI.
+LOOKALIKES = {
+    "other-script-mentions-op": 'python3 /x/evil.py monolynx_op.py get_ticket --query "git push origin main"',
+    "echo": 'echo monolynx_op.py get_ticket "git push origin main"',
+    "bak-suffix": f'python3 {SKILL_SCRIPTS}/monolynx_op.py.bak get_ticket --query "git push origin main"',
+    "longer-script-name": f'python3 {SKILL_SCRIPTS}/notmonolynx_op.py get_ticket --query "git push origin main"',
+    "longer-transport-name": f'python3 {SKILL_SCRIPTS}/xmonolynx_transport.py "git push origin main"',
+    "notmonolynx": 'notmonolynx ticket get "git push origin main"',
+    "cat-script": f'cat {SKILL_SCRIPTS}/monolynx_op.py "git push origin main"',
+}
+
+
+def load_op_module():
+    import importlib.util
+
+    path = REPO_ROOT / "plugin" / "scripts" / "monolynx_op.py"
+    spec = importlib.util.spec_from_file_location("monolynx_op_for_guard_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def hook_read_ops_literal():
+    """Stala `MONOLYNX_READ_OPS` z hooka wyciagnieta przez ast (hook ma logike na poziomie modulu)."""
+    import ast
+
+    tree = ast.parse(HOOK_PATH.read_text(encoding="utf-8"))
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(target, ast.Name) and target.id == "MONOLYNX_READ_OPS" for target in targets):
+            value = node.value
+            if isinstance(value, ast.Call):
+                assert len(value.args) == 1, "MONOLYNX_READ_OPS: oczekiwano frozenset(<literal>)"
+                value = value.args[0]
+            return ast.literal_eval(value)
+    raise AssertionError("brak stalej MONOLYNX_READ_OPS w plugin/hooks/bash_guard.py")
+
+
+@pytest.mark.unit
+class TestMonolynxCommandsSubagent:
+    @pytest.mark.parametrize("cmd", list(READ_ALLOW_COMMANDS.values()), ids=list(READ_ALLOW_COMMANDS))
+    def test_read_commands_pass_for_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(WRITE_NO_DECISION_COMMANDS.values()), ids=list(WRITE_NO_DECISION_COMMANDS))
+    def test_simple_write_commands_get_no_decision_for_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("risky", RISKY_WORDS)
+    @pytest.mark.parametrize("template", list(OP_ARGUMENT_TEMPLATES.values()), ids=list(OP_ARGUMENT_TEMPLATES))
+    def test_risky_words_inside_op_arguments_do_not_trigger_old_rules(self, template, risky):
+        cmd = f"{OP_SCRIPT} {template.format(w=risky)}"
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("risky", RISKY_WORDS)
+    def test_risky_words_inside_cli_body_do_not_trigger_old_rules(self, risky):
+        cmd = f'monolynx -o json --project monolynx ticket comment add MON-1 --body "{risky}"'
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_sprint_run_env_does_not_turn_read_into_deny(self):
+        cmd = READ_ALLOW_COMMANDS["op-search-wiki-risky"]
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra={"MONOLYNX_SPRINT_RUN": "1"})
+        assert_allow(exit_code, decision)
+
+    def test_sprint_run_env_does_not_turn_write_into_deny(self):
+        cmd = WRITE_NO_DECISION_COMMANDS["op-add-comment-risky"]
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra={"MONOLYNX_SPRINT_RUN": "1"})
+        assert_allow(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestMonolynxCommandsMainSession:
+    @pytest.mark.parametrize("cmd", list(READ_ALLOW_COMMANDS.values()), ids=list(READ_ALLOW_COMMANDS))
+    def test_read_commands_pass_for_main_session(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(WRITE_NO_DECISION_COMMANDS.values()), ids=list(WRITE_NO_DECISION_COMMANDS))
+    def test_simple_write_commands_get_no_decision_for_main_session(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("risky", RISKY_WORDS)
+    @pytest.mark.parametrize("template", list(OP_ARGUMENT_TEMPLATES.values()), ids=list(OP_ARGUMENT_TEMPLATES))
+    def test_risky_words_inside_op_arguments_do_not_ask_main_session(self, template, risky):
+        cmd = f"{OP_SCRIPT} {template.format(w=risky)}"
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    def test_sprint_run_env_does_not_turn_main_session_write_into_deny(self):
+        cmd = WRITE_NO_DECISION_COMMANDS["op-add-comment-risky"]
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra={"MONOLYNX_SPRINT_RUN": "1"})
+        assert_allow(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestMonolynxFailClosed:
+    """Skladnia powloki zmieniajaca znaczenie komendy i podobnie wygladajace komendy nie dostaja nowego wyjatku:
+    stare reguly (tu GIT_WRITE na `git push`) dzialaja jak dotad."""
+
+    @pytest.mark.parametrize("injection", list(INJECTIONS.values()), ids=list(INJECTIONS))
+    @pytest.mark.parametrize("base", list(INJECTION_BASES.values()), ids=list(INJECTION_BASES))
+    def test_shell_syntax_is_denied_for_subagent(self, base, injection):
+        cmd = injection.format(p=base)
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("injection", list(INJECTIONS.values()), ids=list(INJECTIONS))
+    @pytest.mark.parametrize("base", list(INJECTION_BASES.values()), ids=list(INJECTION_BASES))
+    def test_shell_syntax_asks_main_session(self, base, injection):
+        cmd = injection.format(p=base)
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(LOOKALIKES.values()), ids=list(LOOKALIKES))
+    def test_lookalike_commands_are_denied_for_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(LOOKALIKES.values()), ids=list(LOOKALIKES))
+    def test_lookalike_commands_ask_main_session(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(CLI_OLD_RULES_COMMANDS.values()), ids=list(CLI_OLD_RULES_COMMANDS))
+    def test_cli_exceptions_without_exemption_are_denied_for_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(CLI_OLD_RULES_COMMANDS.values()), ids=list(CLI_OLD_RULES_COMMANDS))
+    def test_cli_exceptions_without_exemption_ask_main_session(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    @pytest.mark.parametrize("word", RISKY_CLI_WORDS)
+    def test_risky_word_among_first_three_cli_words_keeps_old_rules(self, word):
+        cmd = f'monolynx ticket comment {word} MON-1 "{PHRASE}"'
+        sub_exit, sub_decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        main_exit, main_decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_deny(sub_exit, sub_decision)
+        assert_ask(main_exit, main_decision)
+
+    @pytest.mark.parametrize("word", RISKY_CLI_WORDS)
+    def test_risky_word_as_first_cli_word_keeps_old_rules(self, word):
+        cmd = f'monolynx {word} "{PHRASE}"'
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(SCRIPT_OLD_RULES_COMMANDS.values()), ids=list(SCRIPT_OLD_RULES_COMMANDS))
+    def test_malformed_script_calls_are_denied_for_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(SCRIPT_OLD_RULES_COMMANDS.values()), ids=list(SCRIPT_OLD_RULES_COMMANDS))
+    def test_malformed_script_calls_ask_main_session(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    def test_chained_destructive_command_after_op_is_still_denied_for_subagent(self):
+        cmd = f"{OP_SCRIPT} get_ticket --project_slug monolynx --ticket_id MON-1 ; rm -rf /"
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestMonolynxHookMarkerAndReadOps:
+    def test_hook_active_marker_is_touched_for_op_call(self, tmp_path):
+        payload = bash_payload(READ_ALLOW_COMMANDS["op-get-ticket"], **SUBAGENT)
+        payload["session_id"] = "sess-op"
+
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+
+        assert_allow(exit_code, decision)
+        assert hook_active_marker_path(tmp_path, "sess-op").exists()
+
+    def test_hook_read_ops_equal_wrapper_read_ops(self):
+        wrapper = load_op_module()
+
+        assert set(hook_read_ops_literal()) == set(wrapper.READ_OPS)
+
+    def test_hook_read_ops_literal_is_a_non_empty_set_of_strings(self):
+        literal = hook_read_ops_literal()
+
+        assert len(literal) > 0
+        assert all(isinstance(op, str) for op in literal)
+
+    def test_every_wrapper_read_op_passes_for_subagent_even_with_risky_argument(self):
+        wrapper = load_op_module()
+        for op in sorted(wrapper.READ_OPS):
+            cmd = f'{OP_SCRIPT} {op} --project_slug monolynx --query "git push origin main"'
+            exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+            assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [READ_ALLOW_COMMANDS["transport"], READ_ALLOW_COMMANDS["cli-ticket-get"], WRITE_NO_DECISION_COMMANDS["op-update-ticket"]],
+        ids=["transport", "cli", "op-write"],
+    )
+    def test_hook_active_marker_is_touched_for_each_exempt_form(self, tmp_path, cmd):
+        payload = bash_payload(cmd, **SUBAGENT)
+        payload["session_id"] = "sess-exempt"
+
+        exit_code, decision = run_hook_with_home(payload, tmp_path, env_extra=MAIN_SESSION)
+
+        assert_allow(exit_code, decision)
+        assert hook_active_marker_path(tmp_path, "sess-exempt").exists()
+
+
+@pytest.mark.unit
+class TestMonolynxExemptionBoundaries:
+    """Granice wyjatku: te komendy niosa fraze blokowana starymi regulami, a hook ma je przepuscic."""
+
+    @pytest.mark.parametrize("cmd", list(CLI_GLOBAL_FLAG_VALUE_COMMANDS.values()), ids=list(CLI_GLOBAL_FLAG_VALUE_COMMANDS))
+    def test_global_flag_values_and_bare_cli_pass_for_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(CLI_GLOBAL_FLAG_VALUE_COMMANDS.values()), ids=list(CLI_GLOBAL_FLAG_VALUE_COMMANDS))
+    def test_global_flag_values_and_bare_cli_pass_for_main_session(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("word", RISKY_CLI_WORDS)
+    def test_risky_word_beyond_third_cli_word_passes(self, word):
+        cmd = f'monolynx ticket comment add {word} "{PHRASE}"'
+        sub_exit, sub_decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        main_exit, main_decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(sub_exit, sub_decision)
+        assert_allow(main_exit, main_decision)
+
+    @pytest.mark.parametrize("cmd", list(SCRIPT_PASS_COMMANDS.values()), ids=list(SCRIPT_PASS_COMMANDS))
+    def test_valid_script_forms_pass_for_subagent(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd, **SUBAGENT), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(SCRIPT_PASS_COMMANDS.values()), ids=list(SCRIPT_PASS_COMMANDS))
+    def test_valid_script_forms_pass_for_main_session(self, cmd):
+        exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
+        assert_allow(exit_code, decision)

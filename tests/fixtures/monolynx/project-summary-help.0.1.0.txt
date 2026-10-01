@@ -1,0 +1,18 @@
+# command: monolynx project summary --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx project summary [OPTIONS] {slug}                               
+                                                                                
+ Wyświetl podsumowanie projektu: nierozwiązane błędy, monitory, uptime, aktywny 
+ sprint, backlog.                                                               
+                                                                                
+╭─ Arguments ──────────────────────────────────────────────────────────────────╮
+│ *    slug      <str>  Slug projektu. [required]                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

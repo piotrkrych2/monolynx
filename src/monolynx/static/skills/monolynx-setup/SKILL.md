@@ -1,6 +1,6 @@
 ---
 name: monolynx-setup
-description: "Checklista konfiguracji projektu Monolynx: slug, strona wiki toolchain, LLM Wiki, graf i mutacje w CI, flagi MONOLYNX_*. Pokazuje stan OK/BRAK każdego punktu i za zgodą uruchamia po kolei skille naprawcze. Użyj przy pierwszym starcie pracy w projekcie albo gdy podejrzewasz, że czegoś brakuje w konfiguracji."
+description: "Checklista konfiguracji projektu Monolynx: slug, strona wiki toolchain, LLM Wiki, graf i mutacje w CI, flagi MONOLYNX_*, CLI monolynx (zainstalowane, zalogowane, aktualne, allowlista Bash). Pokazuje stan OK/BRAK każdego punktu i za zgodą uruchamia po kolei skille naprawcze, a dla CLI wypisuje komendę do uruchomienia i proponuje wpisy allowlisty. Użyj przy pierwszym starcie pracy w projekcie albo gdy podejrzewasz, że czegoś brakuje w konfiguracji."
 user-invocable: true
 argument-hint: ""
 ---
@@ -9,10 +9,10 @@ argument-hint: ""
 
 Przed pierwszą operacją obowiązkowo przeczytaj [Kontrakt runtime](references/runtime.md) i stosuj go w całym przebiegu. Narzędzia, argumenty, pytania i uruchamianie zależnych skilli dobieraj do faktycznie dostępnych możliwości klienta. Nazwy `/monolynx:*` oznaczają wariant Claude Code; w Codex użyj nazwy z katalogu zainstalowanych skilli albo odczytaj dostarczony `SKILL.md`, bez wymyślania komend.
 
-Jesteś **audytorem konfiguracji**. Sprawdzasz 6 punktów, pokazujesz tabelę stanu
-i, tylko za wyraźną zgodą, wołasz po kolei skille naprawcze. Sam nic nie
-zapisujesz - jedyne zapisy w tym przebiegu to te, które wykonają wywołane za
-zgodą skille.
+Jesteś **audytorem konfiguracji**. Sprawdzasz 7 punktów, pokazujesz tabelę stanu
+i, tylko za wyraźną zgodą, wołasz po kolei skille naprawcze. Jedyne zapisy
+w tym przebiegu to te, które wykonają wywołane za zgodą skille, oraz wpisy
+allowlisty Bash dla CLI `monolynx`, dodane po osobnej, jawnej zgodzie (KROK 9).
 
 Uruchamiany **w każdym momencie pracy** z projektem, nie tylko raz - to
 diagnostyka stanu, nie jednorazowy setup (tym jest każdy ze skilli, do których
@@ -28,7 +28,7 @@ echo "SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0}"
 
 `MONOLYNX_SPRINT_RUN=1` znaczy, że nikt nie przeczyta pytania - sesja w tle
 dyspozytora nie ma człowieka po drugiej stronie. W tym trybie wykonaj KROK 1-6
-(zbiór stanu) i KROK 7 (tabela), ale pomiń KROK 8-9 (pytanie i wywołania
+i KROK 6a (zbiór stanu) oraz KROK 7 (tabela), ale pomiń KROK 8-9 (pytanie i wywołania
 skilli) w całości. Zakończ na samej tabeli.
 
 ---
@@ -38,6 +38,57 @@ skilli) w całości. Zakończ na samej tabeli.
 Slug jest wejściem do punktów 2 i 3. Ustal go zgodnie z kontraktem runtime: jawny argument użytkownika > `MONOLYNX_PROJECT_SLUG` w środowisku > jawnie odczytana konfiguracja klienta lub `.env`. Czytaj tylko ten klucz jako dane, bez `source` i bez wypisywania sekretów.
 
 Znaleziono: **OK**, zapisz wartość i źródło; zgłoś rozbieżne źródła, stosując powyższe pierwszeństwo. Brak: **BRAK**, poproś o slug; punkty 2 i 3 oznacz „nie sprawdzono - brak sluga”, a niezależne punkty checklisty sprawdź dalej. Nie zgaduj projektu.
+
+---
+
+## Transport: CLI albo MCP
+
+<!-- shared:transport -->
+Operacje na platformie Monolynx wykonujesz jednym z dwoch transportow: CLI `monolynx` (zawsze przez wrapper) albo tools MCP. Zapis `mcp__monolynx__<tool>(...)` w tym skillu oznacza operacje `<tool>` z podanymi argumentami, niezaleznie od transportu. Regula jest ta sama w Claude Code i w Codex.
+
+**Preflight - raz, na starcie skilla** (nie przed kazda operacja):
+
+```bash
+python3 <katalog skilla>/scripts/monolynx_transport.py
+```
+
+`<katalog skilla>` to absolutna sciezka katalogu tego pliku, wpisana literalnie. Komendy obu skryptow pisz bez zmiennych powloki, bez `~`, bez pipe, bez przekierowan i bez nawiasow `(` `)`: hook pluginu i sesje w worktree odrzucaja takie formy. Ostatnia linia wyniku jest zamrozona:
+
+`TRANSPORT: mode=cli|mcp cli=<wersja|none> auth=ok|missing latest=<wersja|unknown> update=yes|no install=brew|pipx|uv|unknown|none`
+
+| Wynik preflightu | Postepowanie |
+|---|---|
+| `mode=cli` | Operacje wykonujesz wrapperem `monolynx_op.py` (nizej). |
+| `mode=mcp` | Tylko tools MCP, wrappera nie wolasz. |
+| Jest linia `TRANSPORT-HINT:` (brak CLI, CLI niezalogowane albo nowsza wersja) | Przepisz ja uzytkownikowi jedna linia i pracuj dalej wedlug `mode`. Nie pytaj, nie czekaj, niczego nie instaluj. |
+| `mode=mcp` i runtime nie udostepnia tooli MCP Monolynx | STOP, bez zgadywania. Podaj instrukcje: `pipx install monolynx-cli` i `monolynx auth login`, albo podpiecie connectora MCP Monolynx. |
+| Preflight sie nie uruchomil (brak `python3`, odmowa uprawnienia) | Pracuj jak przy `mode=mcp`. |
+
+**Operacja przy `mode=cli`** - pierwszy argument to nazwa toola, flagi to dokladne nazwy jego parametrow:
+
+```bash
+python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJECT-SLUG> --ticket_id <KEY>
+```
+
+Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
+
+Kody wyjscia wrappera:
+
+- `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
+- `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
+
+`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
+
+Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
+<!-- /shared:transport -->
+
+Linię `TRANSPORT:` z tego preflightu zachowaj: jest wejściem do punktu 7
+(KROK 6a). Odczyty z KROK 2 i KROK 3 wykonujesz transportem z tej linii; przy
+`mode=cli` odpowiedź jest w JSON (lista stron to płaska tablica obiektów
+z polami `id` i `title`, bez koperty; strona to obiekt z polami `slug`
+i `content`, konfiguracja to obiekt z polem `wiki_llm_enabled`).
 
 ---
 
@@ -80,8 +131,8 @@ mcp__monolynx__get_wiki_page(project_slug="<PROJECT-SLUG>", page_id="<id>")
     wymień brakujące nagłówki wprost. Skill naprawczy:
     `/monolynx:project-toolchain`.
 
-Błąd wywołania MCP (np. projekt bez członkostwa) - stan **BŁĄD: <treść
-błędu>**, bez skilla naprawczego i bez opcji w KROK 8 (proponowanie zapisu
+Błąd operacji (kod 2 wrappera albo błąd wywołania MCP, np. projekt bez
+członkostwa) - stan **BŁĄD: <treść błędu>**, bez skilla naprawczego i bez opcji w KROK 8 (proponowanie zapisu
 strony po błędzie odczytu grozi duplikatem). Reszta checklisty biegnie dalej.
 
 ---
@@ -100,7 +151,7 @@ sprawdzane pole `wiki_llm_enabled`.
 - **`wiki_llm_enabled: true`** - stan **OK**.
 - **`wiki_llm_enabled: false`** - stan **BRAK**. Skill naprawczy:
   `/monolynx:wiki-init`.
-- **Błąd wywołania MCP** - stan **BŁĄD: <treść błędu>**, bez skilla
+- **Błąd operacji (kod 2 wrappera albo błąd wywołania MCP)** - stan **BŁĄD: <treść błędu>**, bez skilla
   naprawczego i bez opcji w KROK 8. Reszta checklisty biegnie dalej.
 
 ---
@@ -191,7 +242,7 @@ włączenia. Sprawdź flagi w trzech źródłach: env procesu, `.claude/settings
 
 Dla env procesu nie da się wylistować kluczy bez `$(...)`/`env | grep`, więc
 sprawdzasz jawną listę znanych flag - jeden blok `echo` wypisujący wszystkie
-19 flag naraz (pusta wartość po `:-` znaczy nieustawiona w env):
+20 flag naraz (pusta wartość po `:-` znaczy nieustawiona w env):
 
 ```bash
 echo "MONOLYNX_PROJECT_SLUG=${MONOLYNX_PROJECT_SLUG:-}"
@@ -213,6 +264,7 @@ echo "MONOLYNX_MUTATION_BUDGET=${MONOLYNX_MUTATION_BUDGET:-}"
 echo "MONOLYNX_SPRINT_PARALLEL=${MONOLYNX_SPRINT_PARALLEL:-}"
 echo "MONOLYNX_BASE_BRANCH=${MONOLYNX_BASE_BRANCH:-}"
 echo "MONOLYNX_MR_TARGET=${MONOLYNX_MR_TARGET:-}"
+echo "MONOLYNX_TRANSPORT=${MONOLYNX_TRANSPORT:-}"
 ```
 
 ```bash
@@ -284,7 +336,7 @@ pętli w nocnym batchu, obce projekty) i czego nie sprawdzono: `plugin/README.md
 sekcja „Praca nad pluginem: dyspozytor na pluginie z brancha sprintu”.
 <!-- /runtime:claude-code -->
 
-W głównej tabeli 6 punktów wiersz "Flagi `MONOLYNX_*`" dostaje stan
+W głównej tabeli 7 punktów wiersz "Flagi `MONOLYNX_*`" dostaje stan
 informacyjny, nigdy BRAK - to nie jest usterka:
 
 - **Wykaz niepusty** - `INFO (N jawnie ustawionych)`, gdzie `N` to liczba
@@ -303,9 +355,57 @@ informacyjny, nigdy BRAK - to nie jest usterka:
 
 ---
 
+## KROK 6a: CLI `monolynx`
+
+Punkt 7 checklisty. Źródłem jest linia `TRANSPORT:` z preflightu (sekcja
+"Transport: CLI albo MCP" wyżej) - nie uruchamiasz `monolynx` sam i nie
+logujesz nikogo. Preflight się nie uruchomił (brak `python3`, brak skryptu) -
+stan **nie sprawdzono**, bez opcji w KROK 8.
+
+Cztery podpunkty, każdy z własnym stanem:
+
+| Podpunkt | Pole linii `TRANSPORT:` | OK | BRAK |
+|---|---|---|---|
+| zainstalowane | `cli=` | numer wersji | `cli=none` |
+| zalogowane | `auth=` | `auth=ok` | `auth=missing` |
+| aktualne | `update=`, `latest=` | `update=no` | `update=yes` (podaj `cli` -> `latest`) |
+| allowlista Bash | pliki settings (niżej) | wszystkie trzy wzorce obecne | brakuje któregokolwiek |
+
+- `cli=none` - podpunkty "zalogowane" i "aktualne" oznacz "nie sprawdzono".
+- `latest=unknown` (brak sieci) przy `update=no` - "aktualne" oznacz "nie
+  sprawdzono - brak sieci", nie OK.
+- `MONOLYNX_TRANSPORT=mcp` (wykaz flag z KROK 6) - preflight nie pyta wtedy
+  CLI o logowanie ani o najnowszą wersję, więc "zalogowane" i "aktualne" to
+  "nie sprawdzono - wymuszony MCP". W uwagach napisz, że skille pracują przez
+  MCP z wyboru człowieka; to nie jest usterka.
+
+**Allowlista Bash** (tylko Claude Code; w innym kliencie oznacz "nie dotyczy").
+Odczytaj jako dane pole `permissions.allow` z `.claude/settings.json`
+i `.claude/settings.local.json` (pliki masz już z KROK 6) i sprawdź obecność
+trzech wzorców, dosłownie:
+
+```
+Bash(python3 *scripts/monolynx_op.py *)
+Bash(python3 *scripts/monolynx_transport.py*)
+Bash(monolynx *)
+```
+
+Bez nich skille działają, ale każde wywołanie wrappera i preflightu pyta
+o zgodę: hook pluginu przepuszcza prostą formę tych komend bez własnej
+decyzji, a o pytaniu decyduje zwykły system uprawnień klienta. Wzorzec
+znaleziony tylko w `settings.local.json` albo w nieśledzonym `settings.json`
+oznacz uwagą "niewidoczna dla worktree" (to samo ograniczenie co przy flagach
+w KROK 6).
+
+Stan wiersza 7: **OK**, gdy wszystkie sprawdzone podpunkty są OK; inaczej
+**BRAK (<lista podpunktów>)**, np. `BRAK (niezalogowane, allowlista)`. Skilla
+naprawczego nie ma - naprawę opisuje KROK 9.
+
+---
+
 ## KROK 7: Tabela wynikowa
 
-Wypisz dokładnie sześć wierszy:
+Wypisz dokładnie siedem wierszy:
 
 | Punkt | Stan | Skill naprawczy |
 |---|---|---|
@@ -315,11 +415,16 @@ Wypisz dokładnie sześć wierszy:
 | 4. Graf zależności w CI | OK / BRAK | `/monolynx:create-graph-ci-script` |
 | 5. Testy mutacyjne w CI | OK / BRAK / BRAK (bez opcji w KROK 8) | `/monolynx:create-mutation-ci-script` |
 | 6. Flagi `MONOLYNX_*` | INFO (N jawnie ustawionych) / INFO (wszystkie domyślne), opcjonalnie z `plugin z checkoutu: <ścieżka>` | - |
+| 7. CLI `monolynx` | OK (`<wersja>`, zalogowane, aktualne, allowlista) / BRAK (<podpunkty>) / nie sprawdzono | - (komenda dla człowieka, KROK 9) |
 
 Zaraz pod tabelą, przed wykazem flag: uwagi z KROK 4 (alternatywa
 `/monolynx:graph-sync` przy stanie BRAK) i z KROK 5 (wskazanie narzędzia
 mutacyjnego przez `/monolynx:project-toolchain` przy stanie BRAK bez opcji w
 KROK 8) - jedna uwaga na punkt, tylko gdy dotyczy, w kolejności punktów.
+Przy punkcie 7 w stanie BRAK dopisz jedną linię na brakujący podpunkt
+z komendą z KROK 9 (instalacja, logowanie, aktualizacja) albo z listą
+brakujących wzorców allowlisty - także w trybie sesji w tle, gdzie na tym
+raporcie przebieg się kończy.
 
 Dalej wykaz flag z KROK 6 (`flaga | wartość | źródło | uwaga`), albo jedno
 zdanie "Brak jawnie ustawionych flag `MONOLYNX_*`", gdy wykaz jest pusty.
@@ -330,7 +435,7 @@ W trybie `MONOLYNX_SPRINT_RUN=1` (KROK 0) zakończ odpowiedź na tej tabeli.
 
 ## KROK 8: Zgoda na naprawę
 
-Wszystkie punkty 2-5 mają stan OK, "nie sprawdzono" albo **BRAK (bez opcji w
+Wszystkie punkty 2-5 i 7 mają stan OK, "nie sprawdzono" albo **BRAK (bez opcji w
 KROK 8)** - napisz jedno zdanie ("Konfiguracja kompletna, nic do naprawy."
 albo "Brak sluga blokuje sprawdzenie punktów 2-3 - uzupełnij go i uruchom
 `/monolynx:setup` ponownie.") i zakończ. Punkty 1 i 6 nigdy nie trafiają do
@@ -346,7 +451,12 @@ skill naprawczy, więc opcji jest najwyżej tyle, ile punktów BRAK, maksymalnie
 posiadania skilla naprawczego - proponowanie go byłoby bezużyteczną akcją.
 Każda opcja niesie nazwę skilla i jednozdaniowy opis, co naprawi.
 
-Brak zaznaczenia albo odmowa - nie wołaj żadnego skilla. Zakończ jednym
+Punkt 7 w stanie **BRAK** dostaje własną, osobną opcję: "CLI `monolynx` -
+wypisz komendy do uruchomienia i zaproponuj wpisy allowlisty". Nie liczy się do
+limitu 4 opcji skilli naprawczych. Wybór tej opcji nie jest jeszcze zgodą na
+zapis w plikach settings - o nią pytasz osobno w KROK 9.
+
+Brak zaznaczenia albo odmowa - nie wołaj żadnego skilla i niczego nie zapisuj. Zakończ jednym
 zdaniem, które punkty zostały nienaprawione, i że `/monolynx:setup` można
 uruchomić ponownie w dowolnym momencie.
 
@@ -368,20 +478,53 @@ strony `toolchain`, którą dopiero co mógł zapisać `project-toolchain`:
 Uruchamiaj przez natywny mechanizm klienta albo odczyt dostępnego `SKILL.md`. Wołaj je pojedynczo, jeden po drugim, nie równolegle - każdy z nich może sam
 pytać o potwierdzenie, i te pytania nie mogą się nakładać.
 
+**Punkt 7 (CLI)** - gdy wybrany, po skillach naprawczych:
+
+1. Wypisz komendy do uruchomienia przez człowieka w jego terminalu, po jednej
+   na brakujący podpunkt. Sam ich nie uruchamiasz: instalacja i aktualizacja
+   zmieniają system użytkownika, a logowanie otwiera przeglądarkę.
+   - niezainstalowane: `pipx install monolynx-cli` (albo
+     `brew install monolynx/tap/monolynx`)
+   - niezalogowane: `monolynx auth login`
+   - nieaktualne, wg pola `install=`: `brew` -> `brew upgrade monolynx`,
+     `pipx` -> `pipx upgrade monolynx-cli`, `uv` -> `uv tool upgrade monolynx-cli`,
+     `unknown` -> `pip install -U monolynx-cli`
+2. Allowlista: pokaż brakujące wzorce z KROK 6a i zaproponuj dopisanie ich do
+   `permissions.allow`. Powiedz wprost, co oznaczają: `Bash(monolynx *)`
+   i wzorzec wrappera obejmują także operacje zapisu na platformie (komentarz,
+   zmiana statusu ticketu, edycja strony wiki), które od tej chwili nie będą
+   pytać o zgodę. Drugie ostrzeżenie, też wprost w pytaniu: wzorzec
+   `Bash(python3 *scripts/monolynx_op.py *)` pasuje do dowolnej ścieżki
+   kończącej się na `scripts/monolynx_op.py` (tak samo wzorzec preflightu), więc
+   po jego dodaniu sesja uruchomi bez pytania każdy plik o tej nazwie, nie
+   tylko skrypt pluginu, a hook takiej komendy nie zatrzyma. Dodaj, że
+   składnia wzorców nie była sprawdzona wobec każdego klienta i użytkownik
+   weryfikuje ją u siebie. Zapytaj, do którego pliku: `.claude/settings.local.json`
+   (tylko ta maszyna, niewidoczny dla worktree i sesji w tle) czy śledzony
+   `.claude/settings.json` (cały zespół, widoczny dla worktree; zmiana do
+   skomitowania przez człowieka).
+3. Wpisy dodajesz wyłącznie po jawnej zgodzie na konkretny plik i konkretne
+   wzorce. Dopisujesz tylko brakujące elementy listy `permissions.allow`,
+   reszty pliku nie zmieniasz. Odmowa, brak odpowiedzi albo timeout - nic nie
+   zapisujesz i zostawiasz wzorce jako tekst do ręcznego wklejenia.
+
 Po ostatnim wywołanym skillu zaproponuj człowiekowi ponowne uruchomienie
-`/monolynx:setup`, żeby zobaczyć odświeżony stan wszystkich sześciu punktów.
+`/monolynx:setup`, żeby zobaczyć odświeżony stan wszystkich siedmiu punktów.
 
 ---
 
 ## WAŻNE ZASADY
 
-1. **Read-only, zawsze.** Jedyne zapisy w tym przebiegu pochodzą z wywołanych
-   za zgodą skilli - `setup` sam nie tworzy ani nie edytuje niczego.
+1. **Read-only poza jednym wyjątkiem.** Zapisy w tym przebiegu pochodzą
+   z wywołanych za zgodą skilli. Jedyny własny zapis `setup` to wpisy
+   allowlisty Bash dla CLI w pliku settings, po osobnej jawnej zgodzie
+   (KROK 9). Nigdy nie instaluje, nie aktualizuje CLI i nikogo nie loguje.
 2. **Bez zgody - bez wywołania.** Odmowa albo brak wyboru w KROK 8 kończy
    przebieg bez ani jednego wywołania zależnego skilla.
 3. **Flagi autonomii tylko raportowane.** Punkt 6 nigdy nie proponuje włączenia
    `MONOLYNX_AUTOPUSH`, `MONOLYNX_AUTOMERGE` i podobnych - to decyzja
    człowieka, nie stan do naprawienia.
 4. **Sesja w tle kończy się na tabeli.** `MONOLYNX_SPRINT_RUN=1` pomija KROK
-   8-9 w całości - nikt nie odpowie na pytanie.
+   8-9 w całości - nikt nie odpowie na pytanie. Punkt 7 jest wtedy samym
+   raportem: żadnej komendy instalacji i żadnego wpisu allowlisty.
 5. **Język raportu: polski.**

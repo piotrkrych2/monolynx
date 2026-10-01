@@ -1,0 +1,24 @@
+# command: monolynx sprint --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx sprint [OPTIONS] COMMAND [ARGS]...                             
+                                                                                
+ Zarządzanie sprintami.                                                         
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ list      Wypisz sprinty projektu (wszystkie strony).                        │
+│ get       Pokaż szczegóły sprintu.                                           │
+│ create    Utwórz nowy sprint.                                                │
+│ update    Zmień nazwę, cel lub daty sprintu.                                 │
+│ start     Uruchom sprint (tylko jeden sprint może być aktywny naraz).        │
+│ complete  Zakończ sprint; niezamknięte tickety wracają do backlogu.          │
+│ board     Pokaż tablicę Kanban aktywnego sprintu.                            │
+│ burndown  Pokaż burndown sprintu (domyślnie aktywnego).                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

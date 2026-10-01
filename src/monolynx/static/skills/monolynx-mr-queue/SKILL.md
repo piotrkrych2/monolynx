@@ -211,7 +211,50 @@ Wynik `failed` niesie `failed_jobs` (nazwy czerwonych jobów GitLaba albo runów
 
 Zielone CI commita merge na branchu docelowym domyka pozycję kolejki **i** (gdy da się rozpoznać powiązany ticket) przełącza ten ticket na `done`. Pozycja przychodzi tu z 3a (`merging`, domyślny branch repozytorium) albo z 3.0 (`verifying`, branch integracyjny) - w obu torach ticket dostaje `done` dopiero po zielonym CI swojego commita merge. To wciąż **jedno działanie tick** - zmiana statusu ticketu i fast-forward lokalnego brancha docelowego są częścią tego samego domknięcia pozycji kolejki, nie osobnymi krokami.
 
-**Załaduj narzędzia (raz, przy pierwszym dojściu do tej gałęzi w danej sesji)**:
+**Transport: CLI albo MCP (raz, przy pierwszym dojściu do tej gałęzi w danej sesji)**:
+
+<!-- shared:transport -->
+Operacje na platformie Monolynx wykonujesz jednym z dwoch transportow: CLI `monolynx` (zawsze przez wrapper) albo tools MCP. Zapis `mcp__monolynx__<tool>(...)` w tym skillu oznacza operacje `<tool>` z podanymi argumentami, niezaleznie od transportu. Regula jest ta sama w Claude Code i w Codex.
+
+**Preflight - raz, na starcie skilla** (nie przed kazda operacja):
+
+```bash
+python3 <katalog skilla>/scripts/monolynx_transport.py
+```
+
+`<katalog skilla>` to absolutna sciezka katalogu tego pliku, wpisana literalnie. Komendy obu skryptow pisz bez zmiennych powloki, bez `~`, bez pipe, bez przekierowan i bez nawiasow `(` `)`: hook pluginu i sesje w worktree odrzucaja takie formy. Ostatnia linia wyniku jest zamrozona:
+
+`TRANSPORT: mode=cli|mcp cli=<wersja|none> auth=ok|missing latest=<wersja|unknown> update=yes|no install=brew|pipx|uv|unknown|none`
+
+| Wynik preflightu | Postepowanie |
+|---|---|
+| `mode=cli` | Operacje wykonujesz wrapperem `monolynx_op.py` (nizej). |
+| `mode=mcp` | Tylko tools MCP, wrappera nie wolasz. |
+| Jest linia `TRANSPORT-HINT:` (brak CLI, CLI niezalogowane albo nowsza wersja) | Przepisz ja uzytkownikowi jedna linia i pracuj dalej wedlug `mode`. Nie pytaj, nie czekaj, niczego nie instaluj. |
+| `mode=mcp` i runtime nie udostepnia tooli MCP Monolynx | STOP, bez zgadywania. Podaj instrukcje: `pipx install monolynx-cli` i `monolynx auth login`, albo podpiecie connectora MCP Monolynx. |
+| Preflight sie nie uruchomil (brak `python3`, odmowa uprawnienia) | Pracuj jak przy `mode=mcp`. |
+
+**Operacja przy `mode=cli`** - pierwszy argument to nazwa toola, flagi to dokladne nazwy jego parametrow:
+
+```bash
+python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJECT-SLUG> --ticket_id <KEY>
+```
+
+Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
+
+Kody wyjscia wrappera:
+
+- `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
+- `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
+
+`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
+
+Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
+<!-- /shared:transport -->
+
+**Załaduj narzędzia MCP (raz, gdy preflight dał `mode=mcp` albo wrapper zwrócił kod 3)**:
 
 <!-- runtime:claude-code -->
 ```
@@ -247,6 +290,8 @@ w faktycznym wywolaniu podstaw realny slug projektu, nie zostawiaj placeholdera.
    mcp__monolynx__get_ticket(project_slug="<PROJECT-SLUG>", ticket_id="<key>")
    ```
 
+   Opis niżej podaje tekstową odpowiedź MCP. Przy `mode=cli` wynik to JSON: klucz ticketu jest w polu `key`, status w polu `status`.
+
    - **Guard prefiksu projektu.** Pierwsza linia wyniku ma kształt `<KOD>-<numer> | tytuł`. Porównaj `<KOD>-<numer>` z `<key>` wyliczonym przez `ticket-key` - muszą być identyczne. Rozjazd (np. klucz `JIRA-45` z brancha innego repo trafia tu jako `<key>`, a projekt Monolynx ma kod `MON`) traktuj **dokładnie jak `key: null`**: ticket zostaje nietknięty, kroki 4 i 5 wykonują się mimo to, w raporcie ticka jawnie zaznacz "klucz `<key>` nie należy do tego projektu (`get_ticket` zwrócił `<KOD>-<numer>`)". Sprawdzenie istnieje, bo `_resolve_ticket_uuid` (`src/monolynx/mcp_server.py`) dopasowuje ticket wyłącznie po numerze i ignoruje prefiks kodu projektu - bez tego guardu klucz z cudzego projektu cicho przestawiłby na `done` przypadkowy, tak samo ponumerowany ticket w tym projekcie.
    - Prefiks się zgadza i druga linia wyniku zaczyna się `Status: done` -> ticket już zamknięty (ręcznie albo w poprzednim ticku). **Nie zmieniaj statusu, nie dodawaj drugiego komentarza.** Odnotuj w raporcie: "ticket `<key>` już `done`, bez zmian" (idempotencja ticka).
    - Prefiks się zgadza i status inny niż `done` -> zmień na `done` i dopisz komentarz z merge SHA oraz identyfikatorem pipeline'u/runu brancha docelowego, który `target-ci` już ocenił wyżej jako `success` - GitLab: pole `id` najnowszego wpisu w `pipelines.json`; GitHub: `databaseId` runu (albo runów, gdy `runs.json` ma ich kilka) z `runs.json`:
@@ -256,7 +301,7 @@ w faktycznym wywolaniu podstaw realny slug projektu, nie zostawiaj placeholdera.
      mcp__monolynx__add_comment(project_slug="<PROJECT-SLUG>", ticket_id="<key>", content="Merge SHA: <merge_sha> - CI brancha docelowego zielone (pipeline <id>).")
      ```
 
-   Błąd wywołania MCP (sieć, autoryzacja, projekt bez tego ticketu) **nie blokuje domknięcia pozycji kolejki**: złap go, wykonaj mimo to kroki 4 i 5, i zaznacz w raporcie ticka "aktualizacja ticketu `<key>` nie powiodła się: `<błąd>`" - obserwacyjna warstwa (ticket) nigdy nie trzyma zakładnika kolejki merge.
+   Błąd operacji (kod 2 wrappera albo błąd wywołania MCP: sieć, autoryzacja, projekt bez tego ticketu) **nie blokuje domknięcia pozycji kolejki**: złap go, wykonaj mimo to kroki 4 i 5, i zaznacz w raporcie ticka "aktualizacja ticketu `<key>` nie powiodła się: `<błąd>`" - obserwacyjna warstwa (ticket) nigdy nie trzyma zakładnika kolejki merge.
 
 4. **Fast-forward lokalnego brancha docelowego** - niezależnie od wyniku punktów 2-3 (także przy `key: null` i po błędzie MCP). To jedyny ruch w checkoucie użytkownika i tylko fast-forward; skrypt `target-sync` decyduje, co wolno. Każdą komendę git uruchom **osobno**, w katalogu głównego checkoutu, `<target_branch>` z `mr.json` / `pr.json`:
 
