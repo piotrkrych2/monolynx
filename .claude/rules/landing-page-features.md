@@ -39,3 +39,14 @@ Ticket dodający tool/feature/moduł jest "done" dopiero gdy:
 ## Pitfall
 
 Landing to plik Pythona renderowany do statycznych stron - rozjazd między faktycznym zestawem narzędzi MCP a listą na `/features/<slug>` jest niewidoczny dopóki ktoś ręcznie nie porówna. Łatwo dodać tool w `mcp_server.py` i zapomnieć o `features.py`. Traktuj update landing jako część implementacji, nie osobne zadanie "na później".
+
+## Konflikt z zakresem ticketu
+
+Ticket wprowadzający widoczny feature nie może wpisać `features.py` na listę "Nie ruszać". Gdy tak się stanie, rozstrzyga ta reguła, nie ticket: Team Manager rozszerza zakres o `features.py` (PL + EN) i odnotowuje to w planie, jak w MON-203. "Ticket wygrywa" z reguły nie jest poprawną decyzją.
+
+## Regression
+
+- MON-201: ticket zakazywał `features.py`, TM uznał, że ticket wygrywa; publikacja stron na blogu nieopisana na landingu.
+- MON-202: lista `/blog/` dalej nieopisana (`grep blog features.py` = 0).
+- MON-203: TM rozszerzył zakres wbrew ticketowi i dopisał feature w obu językach - wzorcowe rozstrzygnięcie.
+- MON-182: ten sam konflikt odnotowany w pamięci technical-writera.
