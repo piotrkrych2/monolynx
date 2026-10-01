@@ -17,9 +17,10 @@ Podkomendy:
         approve z czatu, SHA merge, stop_reason); refy spoza nowej listy wypadaja,
         z wyjatkiem pozycji `verifying` i `stopped` ze `stop_reason` ==
         `target_ci_failed`: zostaja na poczatku kolejki w dotychczasowej
-        kolejnosci, bo bez `verifying` CI ich commitow merge nigdy nie zostaloby
-        sprawdzone (ticket nie trafilby na done), a bez zatrzymanej pozycji
-        kolejka przestalaby stac na czerwonym branchu integracyjnym.
+        kolejnosci. `verifying` to pozycja zastana po torze z 1.22.0 (od MON-233
+        nowych nie powstaje) i bez zachowania nie dostalaby Domkniecia (ticket nie
+        trafilby na done); bez zatrzymanej pozycji kolejka przestalaby stac na
+        czerwonym branchu (stan ustawiony przez stary tor `verifying`).
 
     queue-append --queue-file F --provider glab|gh --list-file L
         Dopisz na koniec kolejki otwarte MR/PR z listy, ktorych w kolejce jeszcze
@@ -29,8 +30,9 @@ Podkomendy:
 
     queue-show   --queue-file F
         Wypisz kolejke i pierwszy element do obslugi (`next`). Kazdy wynik
-        queue-* niesie tez `verifying` (refy pozycji `verifying`, w kolejnosci
-        pliku) i `halted` (ref zatrzymujacy kolejke albo null, patrz nizej).
+        queue-* niesie tez `verifying` (refy pozycji `verifying` zastanych w
+        pliku, w kolejnosci pliku; skill domyka je bez odczytu CI) i `halted`
+        (ref zatrzymujacy kolejke albo null, patrz nizej).
 
     queue-update --queue-file F --ref REF [--status S] [--user-approved-sha SHA]
                  [--fix-round] [--merge-sha SHA] [--stop-reason R]
@@ -39,13 +41,31 @@ Podkomendy:
         done, closed, stopped.
 
     post-merge   --target-branch T --default-branch D
-        Status pozycji po merge: {"status": verifying|merging, "reason"}.
-        `verifying` (branch integracyjny: kolejka bierze nastepny MR od razu, CI
-        commita merge sprawdza wstecz) tylko gdy T i D po strip sa niepuste i
-        rozne; w kazdym innym przypadku `merging` (czekanie na zielone CI przed
+        Tor pozycji po merge: {"status": done|merging, "close_now": bool,
+        "reason"}. `done` + `close_now=true` (branch integracyjny: zielone CI
+        samego MR wystarcza, tick domyka pozycje i ticket od razu) tylko gdy T i D
+        po strip sa niepuste i rozne; w kazdym innym przypadku `merging` +
+        `close_now=false` (czekanie na zielone CI brancha docelowego przed
         kolejnym MR, jak na domyslnym branchu). Puste wartosci sa dozwolone,
-        flagi wymagane (brak flagi to kod 64). Wynik idzie do
-        `queue-update --status <status> --merge-sha <sha>`.
+        flagi wymagane (brak flagi to kod 64). Nigdy `verifying`. Przy
+        `close_now=false` wynik idzie do `queue-update --status merging
+        --merge-sha <sha>`; przy `true` skill robi Domkniecie, a status `done`
+        ustawia dopiero na jego koncu.
+
+    target-cancel --provider glab --pipelines-file P
+    target-cancel --provider gh --runs-file R
+        Ktore pipeline'y/runy brancha integracyjnego wywolane pushem merge tick
+        anuluje: {"cancel": [id, ...], "skipped": [{"id", "status"}, ...],
+        "reason"}. glab: `cancel` dla `status` z trwajacych (id z `id`); gh: dla
+        `status` run-a queued/in_progress/waiting/pending/requested (id z
+        `databaseId`; w `skipped` pole `status` to `status` runu, nie
+        `conclusion`). Kazdy inny, takze nieznany status trafia do `skipped`,
+        bo anulowanie jest nieodwracalne. Kolejnosc wyjscia jak wejscia, pusta
+        lista to `cancel: []` z kodem 0. Kazdy element jest walidowany przed
+        przetwarzaniem: `status` to string albo null, a element o statusie
+        trwajacym ma `id` (glab) / `databaseId` (gh) typu int, nie bool; zly
+        element to kod 2 z indeksem (`pipelines-file[i]: ...`, `runs-file[i]: ...`).
+        Skrypt niczego nie anuluje.
 
     classify     --provider glab --mr-file M --approvals-file A [--user-approved-sha SHA]
     classify     --provider gh --pr-file P [--user-approved-sha SHA]
@@ -89,19 +109,21 @@ Wejscia:
     --mr-file        `glab mr view <iid> -F json`
     --approvals-file  `glab api projects/<repo>/merge_requests/<iid>/approvals`
     --pr-file         `gh pr view <n> --json number,state,isDraft,mergeable,mergeStateStatus,
-                       reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,url`
-    --pipelines-file  `glab api projects/<repo>/pipelines?sha=<sha>&ref=<branch>`
+                       reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,url,title`
+    --pipelines-file  `glab api projects/<repo>/pipelines?sha=<sha>&ref=<branch>` (target-ci i target-cancel)
     --jobs-file       `glab api projects/<repo>/pipelines/<id>/jobs?per_page=100`
     --runs-file       `gh run list --commit <sha> --json databaseId,status,conclusion,name,headBranch,
-                       headSha,event,workflowName`
+                       headSha,event,workflowName` (target-ci i target-cancel)
 
 Werdykty classify: merged, closed, wait, ci_failed, conflict, needs_approval,
 needs_human, ready. Stany target-ci: success, failed, wait, needs_human.
 
 Zatrzymanie kolejki: pozycja `stopped` ze `stop_reason` == `target_ci_failed`
-(czerwone CI brancha integracyjnego) zeruje `next` i wystawia `halted`; inny
-`stop_reason` albo brak nie zatrzymuje kolejki. Odblokowuje ja czlowiek zmiana
-statusu pozycji (np. `--status closed`).
+(powod ustawial tor `verifying` z 1.22.0 przy czerwonym CI brancha
+integracyjnego; od MON-233 skill go nie ustawia, ale pozycje zastane w pliku nadal
+sa respektowane) zeruje `next` i wystawia `halted`; inny `stop_reason` albo brak
+nie zatrzymuje kolejki. Odblokowuje ja czlowiek zmiana statusu pozycji (np.
+`--status closed`).
 
 Literaly stanow pochodza z fixture w tests/fixtures/glab/ i tests/fixtures/gh/;
 wartosci dopisane ze schematu API sa w komentarzach oznaczone osobno. Literal
@@ -113,6 +135,8 @@ Kody wyjscia:
     0  - wynik wypisany na stdout jako JSON.
     2  - blad wejscia: brak pliku, niepoprawny JSON, zly ksztalt, nieznany REF;
          dla target-sync ujemne liczby, pusty branch, --dirty inne niz true/false;
+         dla target-cancel element listy niebedacy obiektem, `status` inny niz string/null
+         albo trwajacy element bez `id` / `databaseId` typu int;
          dla config-check rozbiezne MONOLYNX_BASE_BRANCH i MONOLYNX_MR_TARGET;
          dla queue-file `stop_reason` inny niz string albo null.
     64 - blad uzycia CLI.
@@ -172,9 +196,17 @@ _GH_MERGE_READY = {"CLEAN", "HAS_HOOKS", "UNSTABLE"}
 _GH_RUN_OK = {"success", "skipped", "neutral"}
 _GH_RUN_FAILED = {"failure", "cancelled", "timed_out", "startup_failure", "action_required", "stale"}
 
+# gh run list: status runu trwajacego, kandydat do anulowania (target-cancel).
+# Zaobserwowane w fixture: tylko "completed" (run-list-*), wiec zbior trwajacych
+# pochodzi ze schematu API: queued, in_progress, waiting, pending, requested.
+# Nieznany status NIE jest tu dopisywany - anulowanie jest nieodwracalne.
+_GH_RUN_ACTIVE = {"queued", "in_progress", "waiting", "pending", "requested"}
+
+# "verifying" zostaje rozpoznawany, bo plik kolejki z toru 1.22.0 moze go zawierac
+# (revert MON-233 tez go przywraca); nowych pozycji `verifying` skrypt nie tworzy.
 _QUEUE_STATUSES = {"pending", "merging", "verifying", "done", "closed", "stopped"}
 
-# Jedyny stop_reason, ktory zatrzymuje kolejke (czerwone CI brancha integracyjnego).
+# Jedyny stop_reason, ktory zatrzymuje kolejke (ustawial go stary tor `verifying`; zastane pozycje nadal sa respektowane).
 _HALTING_STOP_REASON = "target_ci_failed"
 
 _REF_RE = re.compile(r"^(?P<sigil>[!#])(?P<number>[1-9][0-9]*)$")
@@ -470,6 +502,54 @@ def target_ci_gh(runs: list[Any]) -> dict[str, Any]:
     return {"status": "success", "reason": "wszystkie runy zielone"}
 
 
+# --- target-cancel ---
+
+
+def _cancel_reason(to_cancel: int, skipped: int, noun: str) -> str:
+    if not to_cancel and not skipped:
+        return f"brak {noun} dla commita merge - nic do anulowania"
+    return f"do anulowania: {to_cancel}, pominietych (nie trwaja albo nieznany status): {skipped}"
+
+
+def _validate_cancel_input(items: list[Any], label: str, id_key: str, active: set[str]) -> None:
+    # Kazdy element przed petla robocza: id z `cancel` trafia do `glab ci cancel pipeline` /
+    # `gh run cancel`, wiec null albo napis z wejscia nie moze sie tam znalezc (nieodwracalne).
+    for index, item in enumerate(items):
+        status = item.get("status")
+        if status is not None and not isinstance(status, str):
+            raise _InputError(f"{label}[{index}]: 'status' musi byc stringiem albo null")
+        if status in active:
+            ident = item.get(id_key)
+            if not isinstance(ident, int) or isinstance(ident, bool):
+                raise _InputError(f"{label}[{index}]: '{id_key}' musi byc liczba calkowita dla statusu trwajacego '{status}'")
+
+
+def target_cancel_glab(pipelines: list[Any]) -> dict[str, Any]:
+    _validate_cancel_input(pipelines, "pipelines-file", "id", _GLAB_CI_RUNNING)
+    cancel: list[Any] = []
+    skipped: list[dict[str, Any]] = []
+    for pipeline in pipelines:
+        # Jawny test na _GLAB_CI_RUNNING: nieznany status laduje w skipped, bo
+        # anulowanie jest nieodwracalne, a pominiecie cofa nastepny tick.
+        if pipeline.get("status") in _GLAB_CI_RUNNING:
+            cancel.append(pipeline.get("id"))
+        else:
+            skipped.append({"id": pipeline.get("id"), "status": pipeline.get("status")})
+    return {"cancel": cancel, "skipped": skipped, "reason": _cancel_reason(len(cancel), len(skipped), "pipeline'ow")}
+
+
+def target_cancel_gh(runs: list[Any]) -> dict[str, Any]:
+    _validate_cancel_input(runs, "runs-file", "databaseId", _GH_RUN_ACTIVE)
+    cancel: list[Any] = []
+    skipped: list[dict[str, Any]] = []
+    for run in runs:
+        if run.get("status") in _GH_RUN_ACTIVE:
+            cancel.append(run.get("databaseId"))
+        else:
+            skipped.append({"id": run.get("databaseId"), "status": run.get("status")})
+    return {"cancel": cancel, "skipped": skipped, "reason": _cancel_reason(len(cancel), len(skipped), "runow")}
+
+
 # --- ticket-key ---
 
 
@@ -550,19 +630,21 @@ def config_check(base_branch: str, mr_target: str) -> dict[str, Any]:
 # --- post-merge ---
 
 
-def post_merge(target_branch: str, default_branch: str) -> dict[str, str]:
+def post_merge(target_branch: str, default_branch: str) -> dict[str, Any]:
     target = target_branch.strip()
     default = default_branch.strip()
     # Pusty albo nieustalony branch (np. `glab repo view` zawiodl) wpada w tor
-    # domyslny: czekanie na CI cofa nastepny tick, a pomylkowy merge kolejnego
-    # MR na czerwony branch integracyjny nie (external-tool-output.md pkt 3).
+    # domyslny: czekanie na CI cofa nastepny tick, a pomylkowe domkniecie ticketu
+    # bez CI brancha nie (external-tool-output.md pkt 3).
     if target and default and target != default:
         return {
-            "status": "verifying",
-            "reason": f"{target} to branch integracyjny (domyslny: {default}) - CI commita merge sprawdzane wstecz, kolejka idzie dalej",
+            "status": "done",
+            "close_now": True,
+            "reason": f"{target} to branch integracyjny (domyslny: {default}) - zielone CI MR wystarcza, domkniecie od razu",
         }
     return {
         "status": "merging",
+        "close_now": False,
         "reason": "branch docelowy jest domyslny albo nieustalony - kolejka czeka na zielone CI przed nastepnym MR",
     }
 
@@ -649,10 +731,10 @@ def _write_queue(path: Path, queue: dict[str, Any]) -> None:
 
 def _with_next(queue: dict[str, Any]) -> dict[str, Any]:
     # "merging" idzie przed "pending": na domyslnym branchu kolejka czeka na
-    # zielone CI po merge, zanim wezmie nastepny MR. "verifying" (branch
-    # integracyjny) nie wchodzi do `next` - kolejka bierze nastepny "pending" od
-    # razu, a CI commitow merge sprawdza wstecz. Czerwone CI takiego commita
-    # (stopped + target_ci_failed) zatrzymuje cala kolejke do decyzji czlowieka.
+    # zielone CI po merge, zanim wezmie nastepny MR. "verifying" to tylko pozycja
+    # zastana po torze z 1.22.0 (post-merge go juz nie zwraca): nie wchodzi do
+    # `next`, trafia do pola `verifying`, a skill domyka ja bez odczytu CI.
+    # Zastana pozycja stopped + target_ci_failed zatrzymuje cala kolejke do decyzji czlowieka.
     items = queue["items"]
     halted = next(
         (item["ref"] for item in items if item["status"] == "stopped" and item.get("stop_reason") == _HALTING_STOP_REASON),
@@ -680,9 +762,9 @@ def queue_set(path: Path, raw_refs: list[str]) -> dict[str, Any]:
         seen.add(item["ref"])
     old_items = _read_queue(path)["items"]
     previous = {item["ref"]: item for item in old_items}
-    # Spoza nowej listy zostaja: verifying (jej CI jeszcze nie sprawdzono) oraz pozycja
-    # zatrzymujaca kolejke (stopped + target_ci_failed) - jej zgubienie zdjeloby blokade
-    # czerwonego brancha integracyjnego bez decyzji czlowieka (MON-221).
+    # Spoza nowej listy zostaja: verifying (zastana, jeszcze niedomknieta - bez tego ticket
+    # nie dostalby done) oraz pozycja zatrzymujaca kolejke (stopped + target_ci_failed) -
+    # jej zgubienie zdjeloby blokade czerwonego brancha bez decyzji czlowieka (MON-221).
     items = [item for item in old_items if item["ref"] not in seen and _survives_queue_set(item)]
     for item in parsed:
         old = previous.get(item["ref"], {})
@@ -873,6 +955,11 @@ def _build_parser() -> _ArgumentParser:
     p_sync.add_argument("--behind", required=True, type=int)
     p_sync.add_argument("--dirty", required=True)
 
+    p_cancel = sub.add_parser("target-cancel")
+    p_cancel.add_argument("--provider", required=True, choices=["glab", "gh"])
+    p_cancel.add_argument("--pipelines-file")
+    p_cancel.add_argument("--runs-file")
+
     p_post = sub.add_parser("post-merge")
     p_post.add_argument("--target-branch", required=True)
     p_post.add_argument("--default-branch", required=True)
@@ -917,6 +1004,14 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         return post_merge(args.target_branch, args.default_branch)
     if args.command == "config-check":
         return config_check(args.base_branch, args.mr_target)
+    if args.command == "target-cancel":
+        if args.provider == "glab":
+            if not args.pipelines_file:
+                raise _UsageError("target-cancel --provider glab wymaga --pipelines-file")
+            return target_cancel_glab(_load_list_of_objects(args.pipelines_file, "pipelines-file"))
+        if not args.runs_file:
+            raise _UsageError("target-cancel --provider gh wymaga --runs-file")
+        return target_cancel_gh(_load_list_of_objects(args.runs_file, "runs-file"))
     if args.provider == "glab":
         if not args.pipelines_file:
             raise _UsageError("target-ci --provider glab wymaga --pipelines-file")
