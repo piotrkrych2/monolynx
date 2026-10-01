@@ -909,7 +909,7 @@ W obu trybach błędem jest `### Unreleased` na innej pozycji niż pierwsza, pus
 
 ## Changelog
 
-### Unreleased
+### 1.23.0
 
 - MON-232: **skille używają CLI `monolynx`, gdy jest zainstalowane i zalogowane, z fallbackiem na MCP**. Zapis `mcp__monolynx__<tool>(...)` w skillach oznacza od teraz operację, a nie kanał. Nowy preflight `scripts/monolynx_transport.py` wypisuje zamrożoną linię `TRANSPORT: mode=cli|mcp cli=... auth=... latest=... update=... install=...` i najwyżej raz na sesję podpowiedź `TRANSPORT-HINT:` (brak CLI, brak logowania albo dostępna aktualizacja, z komendą dla wykrytego instalatora; nigdy przy `MONOLYNX_SPRINT_RUN=1`). Nowy wrapper `scripts/monolynx_op.py <op> --project_slug <slug> [--<param> <wartość>]` wykonuje 21 operacji ticketowych, sprintowych i wiki przez CLI i zwraca JSON z API v2; kod 3 z linią `OP-FALLBACK: mcp tool=<op>` oznacza "użyj toola MCP", kod 2 błąd operacji, kod 64 błąd użycia. Pipelines, `log_time`, graf i narzędzia metody LLM Wiki zostają przy MCP. Brak CLI i brak tooli MCP naraz kończy skill instrukcją instalacji i logowania.
 - MON-232: **blok `shared:transport` w 18 skillach ma jedno źródło**. Treść między znacznikami `<!-- shared:transport -->` wstawia `scripts/sync_skills.py` z `plugin/references/transport.md`; skill ze znacznikiem w `SKILL.md` dostaje też oba skrypty w `scripts/`. Skille dopisują obok bloku nazwy pól JSON, na których polegają (`blocked_by`, `acceptance_criteria`, koperta `items`/`total_pages` w `list_tickets` i `search_tickets`), a `spec_page_id` doczytują toolem MCP `get_ticket`. `brief`, `help`, `resume`, `retro` i `create-graph-ci-script` znaczników nie mają.
