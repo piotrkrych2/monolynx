@@ -316,18 +316,16 @@ publish-testpypi:
 # Tag numerowany, nie ruchomy (latest/master), żeby job był powtarzalny w czasie.
 # Runner jest shell executorem: `image:` jest ignorowane (stąd jego brak), więc kontener
 # startuje z hosta przez `docker run`, jak w lint:cli i test:cli. Repo montowane read-only,
-# praca na kopii w kontenerze. Obraz działa jako użytkownik linuxbrew (Homebrew odmawia
-# pracy jako root), więc zaktualizowana formuła wraca na hosta przez osobny, zapisywalny
-# katalog /out (mktemp, chmod 777), a na hoście kopiuje ją runner - plik w workspace ma
-# wtedy właściciela runnera i nie blokuje `git clean`. Formuła trafia do /out jeszcze
-# przed pushem, żeby artefakt powstał także gdy push się nie uda. Token tapu idzie przez
-# `-e HOMEBREW_TAP_TOKEN` bez wartości (nie trafia do logu ani do `ps`).
-# Obraz nie ma pythona; formuła i tak ma depends_on python@3.13, a ta jest keg-only,
-# więc interpreter wołamy pełną ścieżką z brew --prefix, nie z PATH.
-# Krok update-python-resources pada na runnerze (tag cli-v0.1.0): "Landlock ABI 2 or later
-# is required; found ABI 1" - sandbox Homebrew wymaga nowszego kernela. Naprawa: MON-231.
-# `--ignore-main-package-cooldown`: tuż po publish-pypi paczka jest w cooldownie Homebrew,
-# a flaga działa tylko poza oficjalnymi tapami (tu local/scratch).
+# praca na kopii w kontenerze. Zaktualizowana formuła wraca na hosta przez osobny,
+# zapisywalny katalog /out (mktemp, chmod 777: działa też przy remapowaniu użytkowników
+# Dockera), a na hoście kopiuje ją runner - plik w workspace ma wtedy właściciela runnera
+# i nie blokuje `git clean`. Formuła trafia do /out zaraz po podbiciu url/sha256, jeszcze
+# przed regeneracją bloków resource i pushem, żeby artefakt miał poprawny url/sha256
+# także gdy któryś z dalszych kroków padnie. Token tapu idzie przez `-e HOMEBREW_TAP_TOKEN`
+# bez wartości (nie trafia do logu ani do `ps`).
+# Job nie używa Homebrew: bloki resource generuje cli/scripts/bump_formula.py z raportu pip,
+# bo sandbox Homebrew w `update-python-resources` wymaga Landlock ABI 2, a kernel runnera
+# ma ABI 1. Obraz python:3.13 jest pełny (nie -slim), bo potrzebne są git i curl.
 bump-homebrew:
   stage: publish
   needs:
@@ -338,17 +336,26 @@ bump-homebrew:
       set -e
       WORK="$(mktemp -d)"
       cp /src/cli/scripts/bump_formula.py /src/cli/packaging/homebrew/monolynx.rb "$WORK/"
-      brew install python@3.13
-      PYTHON3="$(brew --prefix python@3.13)/libexec/bin/python3"
       # Retry wbudowany w skrypt: sdist bywa widoczny w PyPI JSON z opóźnieniem po publish-pypi.
-      "$PYTHON3" "$WORK/bump_formula.py" --tag "$CI_COMMIT_TAG" --formula "$WORK/monolynx.rb"
-      # update-python-resources odrzuca bezpośrednią ścieżkę pliku - formuła musi leżeć w tapie,
-      # stąd lokalny scratch-tap bez gita, tylko na czas joba.
-      brew tap-new --no-git local/scratch
-      mkdir -p "$(brew --repository local/scratch)/Formula"
-      cp "$WORK/monolynx.rb" "$(brew --repository local/scratch)/Formula/monolynx.rb"
-      brew update-python-resources --ignore-main-package-cooldown local/scratch/monolynx
-      cp "$(brew --repository local/scratch)/Formula/monolynx.rb" "$WORK/monolynx.rb"
+      python3 "$WORK/bump_formula.py" --tag "$CI_COMMIT_TAG" --formula "$WORK/monolynx.rb"
+      # Artefakt z poprawnym url/sha256 powstaje, nawet gdy regeneracja resource padnie.
+      cp "$WORK/monolynx.rb" /out/monolynx.rb
+      # Tuż po publish-pypi indeks PyPI może jeszcze nie widzieć wersji - ponawiamy.
+      VERSION="${CI_COMMIT_TAG#cli-v}"
+      PIP_OK=0
+      for ATTEMPT in 1 2 3 4 5; do
+        if pip install -q --disable-pip-version-check --dry-run --ignore-installed --report "$WORK/pip-report.json" "monolynx-cli==$VERSION"; then
+          PIP_OK=1
+          break
+        fi
+        echo "pip nie widzi monolynx-cli==$VERSION (próba $ATTEMPT/5)." >&2
+        [ "$ATTEMPT" -lt 5 ] && sleep 15
+      done
+      if [ "$PIP_OK" -ne 1 ]; then
+        echo "Nie udało się zbudować raportu pip dla monolynx-cli==$VERSION." >&2
+        exit 1
+      fi
+      python3 "$WORK/bump_formula.py" --tag "$CI_COMMIT_TAG" --formula "$WORK/monolynx.rb" --pip-report "$WORK/pip-report.json"
       cp "$WORK/monolynx.rb" /out/monolynx.rb
       # Pierwszy release: Formula/monolynx.rb jeszcze nie istnieje w tapie (404) -> bez
       # pushu, formułę z artefaktu wypycha ręcznie właściciel. Kod inny niż 200/404
@@ -373,8 +380,13 @@ bump-homebrew:
           cp "$WORK/monolynx.rb" "$TAP_DIR/Formula/monolynx.rb"
           cd "$TAP_DIR"
           git add Formula/monolynx.rb
-          git commit -m "monolynx ${CI_COMMIT_TAG#cli-v}"
-          git push origin main
+          # Ponowny przebieg na tym samym tagu po udanym pushu: formuła już jest w tapie.
+          if git diff --cached --quiet; then
+            echo "Tap ma już formułę dla ${CI_COMMIT_TAG#cli-v} - bez commita i pushu."
+          else
+            git commit -m "monolynx ${CI_COMMIT_TAG#cli-v}"
+            git push origin main
+          fi
           ;;
         *)
           echo "Nie można ustalić stanu tapu (HTTP $HTTP_CODE) - wariant bezpieczny: bez pushu." >&2
@@ -388,7 +400,7 @@ bump-homebrew:
         -v "$CI_PROJECT_DIR":/src:ro \
         -v "$OUT":/out \
         -e CI_COMMIT_TAG -e HOMEBREW_TAP_TOKEN \
-        homebrew/brew:4.6.20 bash -c "$BUMP_SCRIPT" || RC=$?
+        python:3.13 bash -c "$BUMP_SCRIPT" || RC=$?
       if [ -f "$OUT/monolynx.rb" ]; then
         cp "$OUT/monolynx.rb" cli/packaging/homebrew/monolynx.rb
         rm "$OUT/monolynx.rb"
