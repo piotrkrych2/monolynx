@@ -6,19 +6,18 @@ class Monolynx < Formula
 
   desc "Interfejs wiersza polecen dla platformy Monolynx"
   homepage "https://gitlab.com/piotrkrych/monolynx"
-  # monolynx-cli nie jest jeszcze opublikowany na PyPI (0.1.0, cli/src/monolynx_cli/version.py) -
-  # url/sha256 ponizej to lokalnie zbudowany sdist (uv build --sdist cli/), pod kanonicznym adresem
-  # zrodla PyPI dla tej wersji. Job CI `bump-homebrew` (.gitlab-ci.yml) na kazdym tagu cli-vX.Y.Z
-  # podmienia oba pola na realne dane z PyPI (cli/scripts/bump_formula.py); wynik jest artefaktem
-  # joba, kopie w monorepo aktualizuje czlowiek recznie przez MR.
-  url "https://files.pythonhosted.org/packages/source/m/monolynx-cli/monolynx_cli-0.1.0.tar.gz"
-  sha256 "6942d4240c55e525be757c0bf5341212c85e3b3e72a88ad7109569557695bbfc"
+  # url/sha256 wskazuja sdist monolynx-cli z PyPI. Job CI `bump-homebrew` (.gitlab-ci.yml) na
+  # kazdym tagu cli-vX.Y.Z podmienia oba pola na dane nowej wersji (cli/scripts/bump_formula.py);
+  # wynik jest artefaktem joba, kopie w monorepo aktualizuje czlowiek recznie przez MR.
+  url "https://files.pythonhosted.org/packages/c0/9e/59fa94b7342738441229b5422948de352951916d6a3a031a27b1916df309/monolynx_cli-0.1.0.tar.gz"
+  sha256 "27053bb368489db608e4846843570cff60cb3af3dfa2a7c952a301532f118455"
   license "MIT"
 
   # pydantic>=2.0 (cli/pyproject.toml) ciagnie pydantic-core, rozszerzenie w Rust bez
   # gotowego kola dla kazdej platformy/architektury budowanej przez Homebrew - build ze
   # zrodla wymaga toolchainu Rust.
   depends_on "rust" => :build
+  depends_on "libyaml"
   depends_on "python@3.13"
 
   # Bloki `resource` ponizej pokrywaja zaleznosci runtime z cli/pyproject.toml (wraz z
@@ -26,8 +25,6 @@ class Monolynx < Formula
   # Job CI `bump-homebrew` regeneruje je przez `brew update-python-resources` na kazdym tagu
   # cli-vX.Y.Z, a szablon w repo aktualizujemy recznie przy zmianie zaleznosci (test
   # tests/unit/test_bump_formula.py pilnuje, zeby zadna zaleznosc nie zostala bez resource).
-  # pyyaml bez `depends_on "libyaml"`: bez naglowkow libyaml buduje sie czysty Python, a CLI
-  # czyta tylko male pliki konfiguracyjne, wiec rozszerzenie w C nie jest potrzebne.
   resource "annotated-doc" do
     url "https://files.pythonhosted.org/packages/5a/8e/38aa427ed5402449e226975b649c5dc73ccadfefeb95e6aecb8f8ea4b6b6/annotated_doc-0.0.5.tar.gz"
     sha256 "c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb"
@@ -79,8 +76,8 @@ class Monolynx < Formula
   end
 
   resource "platformdirs" do
-    url "https://files.pythonhosted.org/packages/c3/8a/84ef03c1c83eacd7cc4540b05428a93b5cd4e42f62fb0b98ac2cb6ed3a6d/platformdirs-4.12.1.tar.gz"
-    sha256 "38da801a4af303033cbffccb39030db22bf0473e6414309b02acebeee7ca8bf1"
+    url "https://files.pythonhosted.org/packages/17/c8/721b3855fe457da514fe249247d404b9b39c5d16532278f70ebaa6acf18b/platformdirs-4.12.2.tar.gz"
+    sha256 "eab5f70271a490ef74618bb314fbb86e3c7e82fa3b9c922c2ea0e0a1a155d329"
   end
 
   resource "pydantic" do

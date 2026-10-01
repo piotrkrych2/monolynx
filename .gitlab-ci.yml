@@ -324,9 +324,8 @@ publish-testpypi:
 # `-e HOMEBREW_TAP_TOKEN` bez wartości (nie trafia do logu ani do `ps`).
 # Obraz nie ma pythona; formuła i tak ma depends_on python@3.13, a ta jest keg-only,
 # więc interpreter wołamy pełną ścieżką z brew --prefix, nie z PATH.
-# Krok update-python-resources niezweryfikowany end-to-end: pod Docker Desktop na macOS
-# pada na "Landlock is not supported by this Linux kernel" (sandbox Homebrew); czy runner
-# GitLab CI ma ten sam problem, pokaże pierwszy tag cli-v*.
+# Krok update-python-resources pada na runnerze (tag cli-v0.1.0): "Landlock ABI 2 or later
+# is required; found ABI 1" - sandbox Homebrew wymaga nowszego kernela. Naprawa: MON-231.
 # `--ignore-main-package-cooldown`: tuż po publish-pypi paczka jest w cooldownie Homebrew,
 # a flaga działa tylko poza oficjalnymi tapami (tu local/scratch).
 bump-homebrew:
