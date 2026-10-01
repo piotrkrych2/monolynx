@@ -22,7 +22,7 @@ Warunek wstępny: organizacja `Monolynx` na GitHubie i repozytorium `homebrew-ta
 ## Nazwy: `monolynx` vs `monolynx-cli`
 
 - **Formuła Homebrew: `monolynx`** - tak jak komenda wpisywana w terminalu. Użytkownik instaluje `monolynx` i uruchamia `monolynx`.
-- **Paczka PyPI: `monolynx-cli`** - nazwa `monolynx` na PyPI nie jest nasza, a sama paczka odróżnia się tym od backendu `src/monolynx/`. Formuła pobiera sdist `monolynx-cli` z PyPI (główne `url` i `sha256`).
+- **Paczka PyPI: `monolynx-cli`** - nazwa odróżnia paczkę od backendu, którego dystrybucja w głównym `pyproject.toml` nazywa się `monolynx` (instalacja obu w jednym środowisku nadpisywałaby się w `pip`). Nazwa `monolynx` na PyPI jest wolna, ale świadomie jej nie używamy. Formuła pobiera sdist `monolynx-cli` z PyPI (główne `url` i `sha256`).
 - **Komendy po instalacji:** `monolynx` i `mnx` (sekcja `[project.scripts]` w `cli/pyproject.toml`).
 
 Kopia formuły w tapie jest pochodną pliku `cli/packaging/homebrew/monolynx.rb`. Zmiany formuły (zależności, test, `depends_on`) robimy w monorepo przez MR, nigdy bezpośrednio w tapie.
@@ -80,7 +80,7 @@ Kroki joba (wszystkie w jednym `docker run`, poza kopią artefaktu na końcu):
 5. Artefakt `cli/packaging/homebrew/monolynx.rb` powstaje zawsze (`when: always`, ważny 30 dni), także gdy push się nie odbył albo job padł.
 6. Kopię formuły w monorepo aktualizuje człowiek: pobiera artefakt i commituje go przez MR. CI nie ma tokenu zapisu do monorepo.
 
-> **Niezweryfikowane:** krok 3 nie był uruchomiony end-to-end. Lokalnie (Docker Desktop na macOS) `brew update-python-resources` w obrazie `homebrew/brew` kończy się błędem `Landlock is not supported by this Linux kernel` (sandbox Homebrew). Czy runner GitLab CI ma ten sam problem, pokaże pierwszy tag `cli-v*`.
+> **Potwierdzone na `cli-v0.1.0`:** krok 3 pada na runnerze GitLab CI z błędem `Landlock ABI 2 or later is required; found ABI 1` (sandbox Homebrew wymaga nowszego Landlock niż kernel runnera; lokalnie pod Docker Desktop na macOS: `Landlock is not supported by this Linux kernel`). `set -e` przerywa skrypt przed zapisem do `/out`, więc artefakt to niezmieniony szablon z repo. Do czasu naprawy (MON-231) formułę dla nowej wersji przygotowuje się ręcznie na macOS: `bump_formula.py` na kopii w tapie `local/scratch`, potem `brew update-python-resources` (sekcja "Aktualizacja zależności Pythona").
 
 ## Release: pierwszy tag i kolejne
 
