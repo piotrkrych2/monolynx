@@ -1,6 +1,6 @@
 ---
 name: mr-queue
-description: "Kolejka merge MR (GitLab, glab) i PR (GitHub, gh): jeden idempotentny tick bierze pierwszy niezmergowany MR/PR z kolejki i robi dokładnie jedno działanie w kolejności konflikt -> CI -> approve -> merge, a po merge do domyślnego brancha repo czeka na zielone CI; po merge na branch integracyjny (np. sprint/*) bierze następny MR od razu, a CI commita merge sprawdza wstecz w kolejnych tickach. Bez argumentów sam układa kolejkę z otwartych MR/PR. Użyj gdy chcesz przeprowadzić MR-y do main po kolei, ręcznie albo w pętli /loop."
+description: "Kolejka merge MR (GitLab, glab) i PR (GitHub, gh): jeden idempotentny tick bierze pierwszy niezmergowany MR/PR z kolejki i robi dokładnie jedno działanie w kolejności konflikt -> CI -> approve -> merge, a po merge do domyślnego brancha repo czeka na zielone CI brancha docelowego; po merge na branch integracyjny (np. sprint/*) domyka pozycję i ticket od razu na podstawie zielonego CI samego MR, anuluje pipeline brancha integracyjnego wywołany merge i bierze następny MR. Bez argumentów sam układa kolejkę z otwartych MR/PR. Użyj gdy chcesz przeprowadzić MR-y do main po kolei, ręcznie albo w pętli /loop."
 user-invocable: true
 argument-hint: "[!iid | #pr | URL ...]"
 ---
@@ -20,9 +20,9 @@ Jesteś **strażnikiem kolejki merge**. Jedno uruchomienie tego skilla to jeden 
 
 Zasady, które definiują ten skill:
 
-1. **Monitorujesz, nie pracujesz na branchu.** Stan czytasz przez `glab` / `gh`. Na branch MR/PR wchodzisz tylko wtedy, gdy trzeba go poprawić (czerwone CI albo konflikt), i tylko w tymczasowym worktree, który usuwasz po pushu. Checkout użytkownika zostaje nietknięty, z jednym wyjątkiem: po zielonym CI brancha docelowego wolno wykonać wyłącznie fast-forward lokalnego brancha docelowego (krok 4 **Domknięcia na `success`**, wspólnego dla 3.0 i 3a); nigdy reset, rebase, stash ani force.
+1. **Monitorujesz, nie pracujesz na branchu.** Stan czytasz przez `glab` / `gh`. Na branch MR/PR wchodzisz tylko wtedy, gdy trzeba go poprawić (czerwone CI albo konflikt), i tylko w tymczasowym worktree, który usuwasz po pushu. Checkout użytkownika zostaje nietknięty, z jednym wyjątkiem: fast-forward lokalnego brancha docelowego wolno wykonać wyłącznie w Domknięciu: w wariancie (a) po zielonym CI brancha docelowego, w wariancie (b) od razu po merge na branch integracyjny i dla zastanych `verifying` (krok 4 **Domknięcia**, wspólnego dla 3a, 3.0, 4b i 4c); nigdy reset, rebase, stash ani force.
 2. **Stan liczy skrypt, nie Ty.** Werdykt daje `mr_queue_state.py` z JSON-a `glab` / `gh`. Nie wnioskujesz stanu z opisu MR, komentarzy ani z tekstowego wyjścia CLI.
-3. **Kolejność jest święta.** Pierwszy MR/PR blokuje resztę. Na domyślnym branchu repozytorium (np. `main`) następny wchodzi dopiero, gdy poprzedni jest zmergowany i CI brancha docelowego jest zielone. Na **branchu integracyjnym** (branch docelowy MR/PR różny od domyślnego brancha repozytorium, np. `sprint/*`) następny wchodzi zaraz po merge poprzedniego: całość i tak weryfikuje MR brancha integracyjnego do domyślnego, więc CI commita merge sprawdzasz wstecz w kolejnych tickach (KROK 3.0), a czerwone zatrzymuje całą kolejkę.
+3. **Kolejność jest święta.** Pierwszy MR/PR blokuje resztę. Na domyślnym branchu repozytorium (np. `main`) następny wchodzi dopiero, gdy poprzedni jest zmergowany i CI brancha docelowego jest zielone. Na **branchu integracyjnym** (branch docelowy MR/PR różny od domyślnego brancha repozytorium, np. `sprint/*`) następny wchodzi zaraz po merge poprzedniego: zielone CI samego MR przed merge już dowodzi, że zmiana przechodzi, a całość weryfikuje MR brancha integracyjnego do domyślnego. Pozycja i ticket są domykane od razu (4b), a pipeline brancha integracyjnego wywołany merge tick anuluje, bo blokowałby `resource_group` pipeline'u następnego MR.
 4. **Tick jest idempotentny.** Stan kolejki leży w pliku, a stan MR/PR w GitLabie / GitHubie. Dwa ticki pod rząd nie zdublują pusha, merge ani pytania.
 5. **Najpierw konflikt, potem CI.** Kolejność sprawdzeń to konflikt -> CI -> approve -> merge. CI na branchu, który ma konflikt z branchem docelowym, nie da mergowalnego wyniku, a runda CI trwa i blokuje runner innym MR-om. Dlatego konflikt wygrywa z każdym stanem CI (także z pipeline'em w toku): tick anuluje trwający pipeline MR/PR i od razu przechodzi do rozwiązania konfliktu (KROK 6). Wyjątek: GitHub `BEHIND` bez `CONFLICTING` (branch tylko w tyle, bez konfliktu) jest sprawdzany po CI.
 
@@ -111,9 +111,9 @@ python3 "$SCRIPT" queue-show --queue-file "$QUEUE"
 gh pr list --state open -L 100 --json number,createdAt,baseRefName,headRefName,isDraft,url > "$STATE_DIR/list.json"
 ```
 
-**Pole `halted` niepuste** -> kolejka stoi na czerwonym CI brancha integracyjnego (`next` jest wtedy `null`, ale to nie znaczy "wszystko obsłużone"). Nie układaj nowej kolejki ani nie dopisuj pozycji; przejdź od razu do KROK 3 (3.0 zaraportuje zatrzymanie).
+**Pole `halted` niepuste** -> kolejka stoi na pozycji `stopped` ze `stop_reason=target_ci_failed` (`next` jest wtedy `null`, ale to nie znaczy "wszystko obsłużone"). Nie układaj nowej kolejki ani nie dopisuj pozycji; przejdź od razu do KROK 3 (3.0 zaraportuje zatrzymanie).
 
-**Pole `next` puste i `halted` puste** (brak pliku albo wszystko obsłużone; pozycje `verifying` nie są w `next` i `queue-set` ich nie gubi) -> ułóż nową kolejkę:
+**Pole `next` puste i `halted` puste** (brak pliku albo wszystko obsłużone; zastane pozycje `verifying` nie są w `next`, a `queue-set` ich nie gubi) -> ułóż nową kolejkę:
 
 ```bash
 python3 "$SCRIPT" queue-propose --provider <glab|gh> --list-file "$STATE_DIR/list.json"
@@ -121,7 +121,7 @@ python3 "$SCRIPT" queue-propose --provider <glab|gh> --list-file "$STATE_DIR/lis
 
 `queue-propose` zwraca `order` (MR oparty o branch innego otwartego MR idzie zaraz po nim, reszta od najstarszego) i `skipped` (drafty i MR-y oparte o draft).
 
-- `order` puste -> nie ma nowych MR/PR do mergowania. Gdy w kolejce są pozycje `verifying` (pole `verifying` z `queue-show`), idź do KROK 3 (3.0 weryfikacja wsteczna): ich CI trzeba jeszcze ocenić, a ticket przełączyć na `done`. Dopiero bez pozycji `verifying` tick kończy się raportem i linią statusu z `remaining=0`.
+- `order` puste -> nie ma nowych MR/PR do mergowania. Gdy w kolejce są zastane pozycje `verifying` (pole `verifying` z `queue-show`), idź do KROK 3 (3.0): trzeba je jeszcze domknąć i przełączyć ich tickety na `done`. Dopiero bez pozycji `verifying` tick kończy się raportem i linią statusu z `remaining=0`.
 - `order` niepuste -> przyjmij je bez pytania, w obu trybach, i zapisz przez `queue-set` jak wyżej (refy z `order` w tej kolejności). W raporcie ticka wypisz przyjętą kolejkę (ref, tytuł z `list.json`, branch -> branch docelowy) i pominięte z powodem. Inną kolejność użytkownik ustawia argumentami skilla w dowolnym momencie.
 
 **Pole `next` niepuste** -> dopisz na koniec kolejki otwarte MR/PR, których w niej jeszcze nie ma:
@@ -138,47 +138,43 @@ Ułożenie i uzupełnienie kolejki to odczyt i zapis lokalnego pliku, nie dział
 
 ## KROK 3: Element `next`
 
-Najpierw, raz na tick, weryfikacja wsteczna brancha integracyjnego (3.0). Potem weź element kolejki o refie `next` z ostatniego wyniku skryptu (`queue-show` albo `queue-update`; pola `provider`, `number`, `repo`, `status`, `fix_rounds`, `user_approved_sha`, `merge_sha`). Gdy `repo` jest niepuste, dopisuj `-R <repo>` do każdej komendy `glab` / `gh` tego elementu - dotyczy to także pozycji `verifying` w 3.0.
+Najpierw, raz na tick, domknięcie zastanych pozycji `verifying` (3.0). Potem weź element kolejki o refie `next` z ostatniego wyniku skryptu (`queue-show` albo `queue-update`; pola `provider`, `number`, `repo`, `status`, `fix_rounds`, `user_approved_sha`, `merge_sha`). Gdy `repo` jest niepuste, dopisuj `-R <repo>` do każdej komendy `glab` / `gh` tego elementu - dotyczy to także zastanych pozycji `verifying` w 3.0.
 
-### 3.0. Weryfikacja wsteczna brancha integracyjnego
+### 3.0. Zastane pozycje `verifying`
 
-Pozycja w statusie `verifying` to MR/PR zmergowany na branch integracyjny (4b / 4c), którego CI commita merge nie zostało jeszcze ocenione. Kolejka nie czeka na nie (`verifying` nigdy nie jest `next`), więc sprawdzasz je tu, na początku każdego ticka:
+Status `verifying` pochodzi z toru 1.22.0 (merge na branch integracyjny, CI commita merge sprawdzane wstecz); nowych takich pozycji ten skill nie tworzy (4b), ale plik kolejki może je jeszcze zawierać. Domykasz je od razu, **bez `target-ci`, bez czekania na CI brancha integracyjnego i bez werdyktu `needs_human`**: zielone CI MR zostało ocenione przed merge, a całość weryfikuje MR brancha integracyjnego do domyślnego.
 
 ```bash
 python3 "$SCRIPT" queue-show --queue-file "$QUEUE"
 ```
 
-Wynik niesie `next`, `halted` (ref pozycji, która zatrzymała kolejkę czerwonym CI brancha integracyjnego, albo `null`) i `verifying` (lista refów w kolejności kolejki).
+Wynik niesie `next`, `halted` i `verifying` (lista refów w kolejności kolejki). Dla każdego refu z `verifying`, po kolei:
 
-**`halted` niepuste** -> kolejka stoi od poprzedniego ticka i `next` jest `null`. Nie bierz żadnego elementu i nie sprawdzaj pozycji `verifying`. Zakończ tick raportem: ref zatrzymanej pozycji i linia `Potrzebne: poprawka brancha <target_branch> (nowy ticket albo osobny MR, nie Twój tick); po zielonym CI brancha odblokuj kolejkę queue-update --ref <halted> --status closed`. Ticket tej pozycji zostaje nietknięty (nie przeszedł zielonego CI). Batch: `MR-QUEUE STOP: <halted> czerwone CI brancha docelowego`.
+1. Odczytaj `$STATE_DIR/mr.json` albo `$STATE_DIR/pr.json` (jak w 3b: `glab mr view <n> -F json` / `gh pr view <n> --json baseRefName,headRefName,headRefOid,title`) - dostarcza `target_branch`, `source_branch`, `title` i dowód CI MR do komentarza.
+2. Wykonaj **Domknięcie** (niżej) w wariancie (b), z `merge_sha` z pozycji. Gdy pipeline MR nie da się ustalić, komentarz mówi wprost: "pozycja zastana po torze 1.22.0 domknięta bez odczytu CI brancha".
 
-**`halted` puste** -> dla każdego refu z `verifying`, po kolei: wykonaj **Odczyt CI commita merge** (niżej; `merge_sha` z pozycji, `--jobs-file` zawsze, bo raport czerwonego CI potrzebuje nazw jobów) i działaj według `status` z `target-ci`:
+To księgowość, nie działanie na MR/PR (zasada 1 z "Ważnych zasad"): nie zużywa "jednego działania" ticka. Błąd odczytu `mr.json` / `pr.json` dla jednej pozycji nie blokuje reszty: pozycja zostaje `verifying`, w raporcie jest powód, następny tick spróbuje ponownie.
 
-| `status` | Działanie |
-|---|---|
-| `success` | **Domknięcie na `success`** (niżej): ticket -> `done`, fast-forward brancha docelowego, `queue-update --status done`. Potem następna pozycja `verifying` |
-| `wait` | pozycja zostaje `verifying`; następna pozycja `verifying` |
-| `failed` | `python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status stopped --stop-reason target_ci_failed`. Zakończ tick raportem z nazwami czerwonych jobów (`failed_jobs` z `target-ci`) i identyfikatorem pipeline'u/runu (GitLab: `id` najnowszego wpisu w `pipelines.json`; GitHub: `databaseId` czerwonych runów z `runs.json`). `Potrzebne: poprawka brancha <target_branch> (nowy ticket albo osobny MR, nie Twój tick); po zielonym CI brancha odblokuj kolejkę queue-update --ref <ref> --status closed`. Pozostałych pozycji `verifying` ani `next` w tym ticku nie ruszasz. Batch: `MR-QUEUE STOP: <ref> czerwone CI brancha docelowego` |
-| `needs_human` | pozycja zostaje `verifying` (następny tick sprawdzi CI ponownie); w raporcie `reason` i `Potrzebne:` jak w 3a (uruchomienie CI dla commita `<merge_sha>` na `<target_branch>` albo ponowienie pipeline'u `canceled` / `skipped`). Kolejka nie staje: następna pozycja `verifying` |
+**`halted` niepuste** (pozycja `stopped` ze `stop_reason=target_ci_failed`, zastana po starym torze; `next` jest wtedy `null`) -> po domknięciu pozycji `verifying` nie bierz żadnego elementu. Zakończ tick raportem: ref zatrzymanej pozycji i `Potrzebne: poprawka brancha <target_branch> (nowy ticket albo osobny MR, nie Twój tick); po zielonym CI brancha odblokuj kolejkę queue-update --ref <halted> --status closed`. Ticket tej pozycji zostaje nietknięty. Batch: `MR-QUEUE STOP: <halted> czerwone CI brancha docelowego`.
 
-Domknięcia kilku zielonych pozycji w jednym ticku to księgowość, nie działanie na MR/PR (zasada 1 z "Ważnych zasad"). Po ostatniej pozycji `verifying` weź `next` z ostatniego wyniku skryptu i przejdź do 3a albo 3b według jego statusu. Pusty `next` -> raport i linia statusu (KROK 7).
+**`halted` puste** -> weź `next` z ostatniego wyniku skryptu i przejdź do 3a albo 3b według jego statusu. Pusty `next` -> raport i linia statusu (KROK 7).
 
 ### 3a. Status `merging` - czekanie na CI brancha docelowego
 
-MR jest już zmergowany na domyślny branch repozytorium (`merge_sha` ustawione), a kolejka czeka na zielone CI commita merge. Wykonaj **Odczyt CI commita merge** (niżej) i działaj według `status` z `target-ci`:
+MR jest już zmergowany na domyślny branch repozytorium (`merge_sha` ustawione), a kolejka czeka na zielone CI commita merge. Ten tor jest bez zmian względem wcześniejszych wersji. Wykonaj **Odczyt CI commita merge** (niżej) i działaj według `status` z `target-ci`:
 
 | `status` | Działanie |
 |---|---|
-| `success` | **Domknięcie na `success`** (niżej): ticket -> `done`, fast-forward brancha docelowego, `queue-update --status done` |
+| `success` | **Domknięcie** (niżej), wariant (a): ticket -> `done`, fast-forward brancha docelowego, `queue-update --status done` |
 | `wait` | nic nie rób, zakończ tick |
 | `failed` | `queue-update --ref <ref> --status stopped`; zakończ tick raportem z nazwami czerwonych jobów i identyfikatorem pipeline'u/runu. `Potrzebne: poprawka brancha <target_branch> (nowy ticket albo osobny MR, nie Twój tick); po zielonym CI domknij pozycję queue-update --ref <ref> --status done`. Batch: `MR-QUEUE STOP: <ref> czerwone CI brancha docelowego` |
 | `needs_human` | bez zmiany statusu kolejki (pozycja zostaje w `merging`, następny tick sprawdzi CI ponownie); zakończ tick raportem z `reason`. `Potrzebne:` przy braku pipeline'u/runów - uruchomienie CI dla commita `<merge_sha>` na `<target_branch>`; przy pipeline `canceled` / `skipped` - ponowienie go. Batch: `MR-QUEUE STOP: <ref> <reason>` |
 
 Komenda `queue-update` w pełnej postaci: `python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status <status>`.
 
-#### Odczyt CI commita merge (wspólny dla 3.0 i 3a)
+#### Odczyt CI commita merge (tylko 3a)
 
-Odczytaj `target_branch` razem z branchem źródłowym i tytułem - ten sam JSON zasili później klucz ticketu w **Domknięciu na `success`**, więc czytaj go zawsze, niezależnie od tego, czy `target_branch` znasz skądinąd:
+Odczytaj `target_branch` razem z branchem źródłowym i tytułem - ten sam JSON zasili później klucz ticketu w **Domknięciu**, więc czytaj go zawsze, niezależnie od tego, czy `target_branch` znasz skądinąd:
 
 ```bash
 glab mr view <n> -F json > "$STATE_DIR/mr.json"   # zwraca m.in. target_branch, source_branch, title (pole gotowe w -F json)
@@ -207,9 +203,14 @@ python3 "$SCRIPT" target-ci --provider gh --runs-file "$STATE_DIR/runs.json"
 
 Wynik `failed` niesie `failed_jobs` (nazwy czerwonych jobów GitLaba albo runów GitHuba) - te nazwy idą do raportu ticka.
 
-#### Domknięcie na `success`: ticket -> `done` i `queue-update` (wspólne dla 3.0 i 3a)
+#### Domknięcie: ticket -> `done` i `queue-update` (wspólne dla 3a, 3.0, 4b i 4c)
 
-Zielone CI commita merge na branchu docelowym domyka pozycję kolejki **i** (gdy da się rozpoznać powiązany ticket) przełącza ten ticket na `done`. Pozycja przychodzi tu z 3a (`merging`, domyślny branch repozytorium) albo z 3.0 (`verifying`, branch integracyjny) - w obu torach ticket dostaje `done` dopiero po zielonym CI swojego commita merge. To wciąż **jedno działanie tick** - zmiana statusu ticketu i fast-forward lokalnego brancha docelowego są częścią tego samego domknięcia pozycji kolejki, nie osobnymi krokami.
+Domknięcie przełącza pozycję kolejki na `done` **i** (gdy da się rozpoznać powiązany ticket) powiązany ticket na `done`. Dowód zielonego CI zależy od wariantu:
+
+- **(a) Domyślny branch repozytorium** (z 3a, `success` z `target-ci`): ticket dostaje `done` dopiero po zielonym CI commita merge na branchu docelowym.
+- **(b) Branch integracyjny** (z 4b i 4c przy `close_now=true` z `post-merge`, oraz zastane `verifying` z 3.0): dowodem jest zielone CI samego MR/PR przed merge, bez czekania na CI brancha integracyjnego (jego pipeline anuluje 4b/4c).
+
+To wciąż **jedno działanie ticka** (w 3.0 i 4c: księgowość) - zmiana statusu ticketu i fast-forward lokalnego brancha docelowego są częścią tego samego domknięcia pozycji kolejki, nie osobnymi krokami.
 
 **Załaduj narzędzia (raz, przy pierwszym dojściu do tej gałęzi w danej sesji)**:
 
@@ -249,12 +250,27 @@ w faktycznym wywolaniu podstaw realny slug projektu, nie zostawiaj placeholdera.
 
    - **Guard prefiksu projektu.** Pierwsza linia wyniku ma kształt `<KOD>-<numer> | tytuł`. Porównaj `<KOD>-<numer>` z `<key>` wyliczonym przez `ticket-key` - muszą być identyczne. Rozjazd (np. klucz `JIRA-45` z brancha innego repo trafia tu jako `<key>`, a projekt Monolynx ma kod `MON`) traktuj **dokładnie jak `key: null`**: ticket zostaje nietknięty, kroki 4 i 5 wykonują się mimo to, w raporcie ticka jawnie zaznacz "klucz `<key>` nie należy do tego projektu (`get_ticket` zwrócił `<KOD>-<numer>`)". Sprawdzenie istnieje, bo `_resolve_ticket_uuid` (`src/monolynx/mcp_server.py`) dopasowuje ticket wyłącznie po numerze i ignoruje prefiks kodu projektu - bez tego guardu klucz z cudzego projektu cicho przestawiłby na `done` przypadkowy, tak samo ponumerowany ticket w tym projekcie.
    - Prefiks się zgadza i druga linia wyniku zaczyna się `Status: done` -> ticket już zamknięty (ręcznie albo w poprzednim ticku). **Nie zmieniaj statusu, nie dodawaj drugiego komentarza.** Odnotuj w raporcie: "ticket `<key>` już `done`, bez zmian" (idempotencja ticka).
-   - Prefiks się zgadza i status inny niż `done` -> zmień na `done` i dopisz komentarz z merge SHA oraz identyfikatorem pipeline'u/runu brancha docelowego, który `target-ci` już ocenił wyżej jako `success` - GitLab: pole `id` najnowszego wpisu w `pipelines.json`; GitHub: `databaseId` runu (albo runów, gdy `runs.json` ma ich kilka) z `runs.json`:
+   - Prefiks się zgadza i status inny niż `done` -> zmień na `done` i dopisz komentarz z merge SHA oraz identyfikatorem pipeline'u/runu, który stanowi dowód zielonego CI:
 
-     ```
-     mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<key>", status="done")
-     mcp__monolynx__add_comment(project_slug="<PROJECT_SLUG>", ticket_id="<key>", content="Merge SHA: <merge_sha> - CI brancha docelowego zielone (pipeline <id>).")
-     ```
+     - wariant (a): pipeline/run brancha docelowego, który `target-ci` już ocenił jako `success` - GitLab: pole `id` najnowszego wpisu w `pipelines.json`; GitHub: `databaseId` runu (albo runów, gdy `runs.json` ma ich kilka) z `runs.json`:
+
+       ```
+       mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<key>", status="done")
+       mcp__monolynx__add_comment(project_slug="<PROJECT_SLUG>", ticket_id="<key>", content="Merge SHA: <merge_sha> - CI brancha docelowego zielone (pipeline <id>).")
+       ```
+
+     - wariant (b): pipeline/run **MR/PR**, nie brancha integracyjnego. GitLab: `head_pipeline.id` i `head_pipeline.status` z `$STATE_DIR/mr.json`. GitHub: runy głowy PR (`<headRefOid>` z `$STATE_DIR/pr.json`):
+
+       ```bash
+       gh run list --commit <headRefOid> --json databaseId,status,conclusion,workflowName
+       ```
+
+       ```
+       mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<key>", status="done")
+       mcp__monolynx__add_comment(project_slug="<PROJECT_SLUG>", ticket_id="<key>", content="Merge SHA: <merge_sha> - zmergowane na branch integracyjny <target_branch>, CI MR zielone (pipeline <id>); CI brancha integracyjnego nie jest czekane, całość weryfikuje MR brancha do domyślnego.")
+       ```
+
+       Dowodu nie da się ustalić (brak `head_pipeline`, pusta lista runów, błąd odczytu) albo CI MR nie jest zielone (merge wykonał człowiek poza kolejką, 4c): komentarz i raport ticka mówią to wprost - "zmergowane poza kolejką, CI MR: `<status>` albo nieustalone" (zastane `verifying` z 3.0: "pozycja zastana po torze 1.22.0 domknięta bez odczytu CI brancha") - ale pozycja i ticket i tak są domykane (merge już się stał; kolejka nie czeka na CI brancha integracyjnego).
 
    Błąd wywołania MCP (sieć, autoryzacja, projekt bez tego ticketu) **nie blokuje domknięcia pozycji kolejki**: złap go, wykonaj mimo to kroki 4 i 5, i zaznacz w raporcie ticka "aktualizacja ticketu `<key>` nie powiodła się: `<błąd>`" - obserwacyjna warstwa (ticket) nigdy nie trzyma zakładnika kolejki merge.
 
@@ -285,9 +301,11 @@ w faktycznym wywolaniu podstaw realny slug projektu, nie zostawiaj placeholdera.
    python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status done
    ```
 
+   W wariancie (b) z 4b / 4c dopisz `--merge-sha <sha commita merge>`, bo pozycja nie przeszła wcześniej przez `queue-update --merge-sha`.
+
    Ticket zmieniasz **przed** `queue-update`, nie po: `queue-update --status done` zdejmuje pozycję z `next`, więc przerwanie ticka między nimi (crash, koniec kontekstu) po samym `queue-update` zostawiłoby pozycję kolejki trwale domkniętą, a ticket na zawsze w `in_review` - żaden kolejny tick już by na niego nie spojrzał.
 
-   Domknięcie z 3.0 -> następna pozycja `verifying` (tabela w 3.0). Domknięcie z 3a -> wróć do KROK 3 z nowym `next` z wyniku `queue-update` (odczyt jest tani, działanie zostaje jedno), bez ponownej weryfikacji wstecznej: 3.0 idzie raz na tick.
+   Domknięcie z 3.0 -> następna pozycja `verifying` (lista w 3.0). Domknięcie z 3a -> wróć do KROK 3 z nowym `next` z wyniku `queue-update` (odczyt jest tani, działanie zostaje jedno), bez ponownego 3.0: idzie raz na tick. Domknięcie z 4b -> koniec ticka (merge był działaniem). Domknięcie z 4c -> wróć do KROK 3 z nowym `next`.
 
 ### 3b. Status `pending` - werdykt
 
@@ -300,7 +318,7 @@ python3 "$SCRIPT" classify --provider glab --mr-file "$STATE_DIR/mr.json" --appr
 albo dla GitHuba:
 
 ```bash
-gh pr view <n> --json number,state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,url > "$STATE_DIR/pr.json"
+gh pr view <n> --json number,state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefName,headRefOid,baseRefName,url,title > "$STATE_DIR/pr.json"
 python3 "$SCRIPT" classify --provider gh --pr-file "$STATE_DIR/pr.json" --user-approved-sha "<jak wyżej>"
 ```
 
@@ -381,27 +399,52 @@ Potem **ustal tor po merge** i przełącz element:
    python3 "$SCRIPT" post-merge --target-branch "<target_branch>" --default-branch "<domyślny branch albo pusty>"
    ```
 
-   Wynik `{"status": "verifying"|"merging", "reason": ...}`. `verifying` wychodzi tylko wtedy, gdy oba branche są niepuste i różne (branch integracyjny); każdy inny przypadek, także nieustalony domyślny branch, daje `merging` - czekanie jest odwracalne następnym tickiem, a merge następnego MR na czerwony branch nie.
+   Wynik `{"status": "done"|"merging", "close_now": true|false, "reason": ...}`. `close_now=true` (`done`) wychodzi tylko wtedy, gdy oba branche są niepuste i różne (branch integracyjny); każdy inny przypadek, także nieustalony domyślny branch, daje `merging` z `close_now=false` - czekanie jest odwracalne następnym tickiem, a domknięcie ticketu bez CI brancha nie.
 
-3. Zapis:
+3. Dalej według `close_now`:
 
-   ```bash
-   python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status <status z post-merge> --merge-sha <sha commita merge>
-   ```
+   - `close_now=false` (`merging`): zapis i koniec ticka. Następny tick sprawdzi CI brancha docelowego (3a), kolejka czeka.
 
-Zakończ tick. `merging`: CI brancha docelowego sprawdzi następny tick (3a), kolejka czeka. `verifying`: następny tick weźmie od razu kolejny `pending`, a CI tego commita merge sprawdzi wstecz (3.0).
+     ```bash
+     python3 "$SCRIPT" queue-update --queue-file "$QUEUE" --ref <ref> --status merging --merge-sha <sha commita merge>
+     ```
+
+   - `close_now=true` (branch integracyjny): w **tym samym ticku**, jako część tego samego działania (merge), wykonaj kolejno: (1) **Anulowanie pipeline'u brancha integracyjnego** (niżej), (2) **Domknięcie** (wyżej), wariant (b), z `merge_sha` = SHA commita merge. Zakończ tick; następny weźmie kolejny `pending`.
+
+#### Anulowanie pipeline'u brancha integracyjnego (4b i 4c, `close_now=true`)
+
+Push merge na branch integracyjny uruchamia pipeline, którego job `clean-code` z `resource_group` blokuje pipeline następnego MR w kolejce (15-20 min). Zielone CI MR już dowodzi, że zmiana przechodzi, więc ten pipeline jest zbędny. To część działania merge, nie osobne działanie. GitLab:
+
+```bash
+glab api "projects/:fullpath/pipelines?sha=<merge_sha>&ref=<target_branch>" > "$STATE_DIR/cancel-pipelines.json"
+python3 "$SCRIPT" target-cancel --provider glab --pipelines-file "$STATE_DIR/cancel-pipelines.json"
+glab ci cancel pipeline <id>
+```
+
+GitHub:
+
+```bash
+gh run list --commit <merge_sha> --json databaseId,status,conclusion,workflowName > "$STATE_DIR/cancel-runs.json"
+python3 "$SCRIPT" target-cancel --provider gh --runs-file "$STATE_DIR/cancel-runs.json"
+gh run cancel <databaseId>
+```
+
+`glab ci cancel pipeline` / `gh run cancel` wywołaj osobno dla każdego id z pola `cancel` wyniku `target-cancel`. Pole `skipped` (pipeline/run już zakończony albo o nieznanym statusie) niczego nie dotyka: anulowanie jest nieodwracalne, więc skrypt kwalifikuje tylko status znany jako trwający. Gdy `repo` pozycji jest niepuste, dopisuj `-R <repo>` do komend `glab` / `gh`, jak wszędzie w tym skillu.
+
+Pusty `cancel` (pipeline jeszcze nie powstał po pushu albo już się skończył), błąd odczytu i błąd anulowania to **ostrzeżenie w raporcie ticka** (z `reason` ze skryptu albo komunikatem komendy), **nigdy zatrzymanie kolejki ani blokada Domknięcia**. Bez ponawiania w pętli.
 
 ### 4c. `merged` - merge poza kolejką
 
-MR/PR zmergowano ręcznie albo tick przerwano po merge, przed `queue-update`. Pozycja idzie tym samym torem co merge z 4b: `merging` (domyślny branch, potem 3a) albo `verifying` (branch integracyjny, potem 3.0) z `merge_sha`; ticket -> `done` dopiero po zielonym CI commita merge. Ustal `merge_sha`. GitLab: pole `merge_sha` z werdyktu `classify` (KROK 3b). GitHub: werdykt go nie niesie, odczytaj:
+MR/PR zmergowano ręcznie albo tick przerwano po merge, przed `queue-update`. Pozycja idzie tym samym torem co merge z 4b. Ustal `merge_sha`. GitLab: pole `merge_sha` z werdyktu `classify` (KROK 3b). GitHub: werdykt go nie niesie, odczytaj:
 
 ```bash
 gh pr view <n> --json mergeCommit -q .mergeCommit.oid
 ```
 
-Pusty wynik -> nie zgaduj SHA (`headRefOid` to nie commit na branchu docelowym): traktuj jak werdykt `needs_human` (4d) z powodem "PR zmergowany poza kolejką bez mergeCommit - brak SHA na branchu docelowym". Z SHA wykonaj kroki 1-3 **ustalenia toru po merge** z 4b (domyślny branch, `post-merge`, `queue-update --status <status z post-merge> --merge-sha <merge_sha>`).
+Pusty wynik -> nie zgaduj SHA (`headRefOid` to nie commit na branchu docelowym): traktuj jak werdykt `needs_human` (4d) z powodem "PR zmergowany poza kolejką bez mergeCommit - brak SHA na branchu docelowym". Z SHA wykonaj kroki 1-2 **ustalenia toru po merge** z 4b (domyślny branch, `post-merge`), potem:
 
-Wróć do KROK 3 w tym samym ticku, z `next` z wyniku `queue-update`. W odróżnieniu od 4b tick nie wykonał jeszcze żadnego działania (merge stał się poza kolejką, tu były same odczyty). `merging`: pozycja wchodzi w 3a, a 3a z ewentualnym domknięciem na `success` jest jedynym działaniem ticka. `verifying`: pozycja wychodzi z `next`, jej CI sprawdzi 3.0 następnego ticka, a ten tick bierze kolejny element.
+- `close_now=false` (`merging`): `queue-update --status merging --merge-sha <merge_sha>`; pozycja wchodzi w 3a (z KROK 3, w tym samym ticku, z `next` z wyniku `queue-update`), a 3a z ewentualnym domknięciem jest jedynym działaniem ticka.
+- `close_now=true` (branch integracyjny): **Anulowanie pipeline'u brancha integracyjnego** (jak w 4b), potem **Domknięcie**, wariant (b), z `merge_sha`. Dowód CI MR: GitLab `head_pipeline.status` z `$STATE_DIR/mr.json` (zapisanego w KROK 3b), GitHub `statusCheckRollup` z `$STATE_DIR/pr.json` albo `gh run list --commit <headRefOid>`. CI MR niezielone albo nieustalone nie wstrzymuje domknięcia: merge wykonał człowiek, a komentarz i raport ticka mówią "zmergowane poza kolejką, CI MR: `<status>`". W odróżnieniu od 4b tick nie wykonał jeszcze działania (merge stał się poza kolejką, tu były same odczyty i księgowość), więc po domknięciu wróć do KROK 3 z `next` z wyniku `queue-update`.
 
 ### 4d. `needs_human` - raport "Potrzebne"
 
@@ -414,7 +457,7 @@ Bez pytania i bez zmiany statusu kolejki: pozycja zostaje `pending`, a następny
 | `pipeline <id> canceled` / `skipped` / `manual` | ponowienie pipeline'u `<id>` albo uruchomienie jego ręcznych jobów |
 | `CHANGES_REQUESTED` | poprawki autora i nowe review, które zdejmie prośbę o zmiany |
 | `blokuje merge` | spełnienie reguły z `reason` (wartość `detailed_merge_status` / `mergeStateStatus`, np. nierozwiązane dyskusje, reguła ochrony brancha) |
-| `bez mergeCommit` (4c) | SHA commita merge na branchu docelowym: `queue-update --ref <ref> --status <merging albo verifying> --merge-sha <sha>` (`verifying`, gdy branch docelowy jest branchem integracyjnym, tak jak liczy `post-merge` w 4b) |
+| `bez mergeCommit` (4c) | SHA commita merge na branchu docelowym: tor liczy `post-merge` (4b): `close_now=false` -> `queue-update --ref <ref> --status merging --merge-sha <sha>`, `close_now=true` -> anulowanie pipeline'u i Domknięcie (4b) |
 | inny | przepisz `reason` i wskaż MR/PR (`url` z werdyktu) do ręcznego sprawdzenia |
 
 Batch: `MR-QUEUE STOP: <ref> <reason>`.
@@ -500,7 +543,7 @@ Po pushu zakończ tick: nowy commit oznacza nowe CI, więc następny tick zaczyn
 
 ## KROK 7: Raport i linia statusu
 
-Wypisz krótko: kolejkę przyjętą albo dopisaną w KROK 2 (gdy była), ref, tytuł, werdykt i `reason`, wykonane działanie (albo "bez działania"), a gdy tick stoi na człowieku - linię `Potrzebne:` z tym, czego dokładnie potrzebuje. Gdy Domknięcie na `success` zakończyło się ostrzeżeniem fast-forwardu, dopisz je w treści raportu z komendą ręczną (linia `MR-QUEUE:` bez zmian).
+Wypisz krótko: kolejkę przyjętą albo dopisaną w KROK 2 (gdy była), ref, tytuł, werdykt i `reason`, wykonane działanie (albo "bez działania"), a gdy tick stoi na człowieku - linię `Potrzebne:` z tym, czego dokładnie potrzebuje. Gdy Domknięcie zakończyło się ostrzeżeniem fast-forwardu, dopisz je w treści raportu z komendą ręczną; to samo dla ostrzeżeń anulowania pipeline'u brancha integracyjnego (linia `MR-QUEUE:` bez zmian).
 
 Potem, jako **ostatnią linię odpowiedzi**, zamrożony format:
 
@@ -508,9 +551,9 @@ Potem, jako **ostatnią linię odpowiedzi**, zamrożony format:
 MR-QUEUE: remaining=<n> current=<ref albo -> verdict=<werdykt albo -> done=<d>
 ```
 
-- `remaining` - elementy w statusie `pending` albo `merging` (w `merging` pozycja wchodzi po merge na domyślny branch z 4b albo z werdyktu `merged`, 4c). Pozycje `verifying` (zmergowane na branch integracyjny, CI w weryfikacji wstecznej) się tu nie liczą; wypisz je w treści raportu,
-- `current` / `verdict` - element obsłużony w tym ticku (tick zakończony w 3.0 czerwonym CI brancha integracyjnego albo `halted`: zatrzymana pozycja i `verdict=target_ci_failed`, wartość `stop_reason`),
-- `done` - wyłącznie elementy `done` (nie `verifying`).
+- `remaining` - elementy w statusie `pending` albo `merging` (w `merging` pozycja wchodzi po merge na domyślny branch z 4b albo z werdyktu `merged`, 4c). Zastane pozycje `verifying` się tu nie liczą (3.0 domyka je na początku ticka); po merge na branch integracyjny pozycja od razu jest `done`,
+- `current` / `verdict` - element obsłużony w tym ticku (tick zakończony w 3.0 na `halted`: zatrzymana pozycja i `verdict=target_ci_failed`, wartość `stop_reason`),
+- `done` - wyłącznie elementy `done` (nie zastane `verifying`).
 
 Ten format jest kontraktem dla pętli i innych narzędzi. Nie zmieniaj go i nie dopisuj pól.
 
@@ -518,12 +561,12 @@ Ten format jest kontraktem dla pętli i innych narzędzi. Nie zmieniaj go i nie 
 
 ## Ważne zasady
 
-1. **Jedno działanie na tick.** Push, merge albo pytanie - potem koniec tury. Anulowanie pipeline'u w KROK 6 jest częścią rozwiązania konfliktu, nie osobnym działaniem. Odczyty (`queue-show`, `classify`, `target-ci`) i ułożenie albo uzupełnienie kolejki (`queue-propose` + `queue-set`, `queue-append`) nie są działaniem; fast-forward brancha docelowego jest częścią Domknięcia na `success`, nie osobnym działaniem. Domknięcia pozycji `verifying` w weryfikacji wstecznej (3.0), także kilku w jednym ticku, to księgowość, nie działanie na MR/PR: po nich tick nadal może wykonać jedno działanie na `next`.
+1. **Jedno działanie na tick.** Push, merge albo pytanie - potem koniec tury. Anulowanie pipeline'u w KROK 6 jest częścią rozwiązania konfliktu, nie osobnym działaniem. Odczyty (`queue-show`, `classify`, `target-ci`, `target-cancel`) i ułożenie albo uzupełnienie kolejki (`queue-propose` + `queue-set`, `queue-append`) nie są działaniem; fast-forward brancha docelowego jest częścią Domknięcia, nie osobnym działaniem, a anulowanie pipeline'u brancha integracyjnego (4b) częścią merge. Domknięcia zastanych pozycji `verifying` (3.0), także kilku w jednym ticku, i domknięcie po merge poza kolejką (4c) to księgowość, nie działanie na MR/PR: po nich tick nadal może wykonać jedno działanie na `next`.
 2. **Pytasz tylko o decyzje człowieka**: approve (4a), merge bez `MONOLYNX_AUTOMERGE` (hook) i push do brancha innego autora. Kolejność kolejki przyjmujesz sama, a stan wymagający człowieka (czerwone CI brancha docelowego, `needs_human`, limit rund, sprzeczny konflikt) kończysz raportem `Potrzebne:`, nie pytaniem "co dalej?".
 3. **Nigdy nie zatwierdzasz MR/PR** i nigdy nie mergujesz bez werdyktu `ready` policzonego w tym samym ticku, z blokadą na ten SHA.
 4. **Nigdy `--force`, rebase ani `git reset`** na branchu MR. Konflikt rozwiązuje merge brancha docelowego, poprzedzony anulowaniem aktywnego pipeline'u MR/PR.
-5. **Checkout użytkownika zostaje nietknięty.** Poprawki tylko w `$STATE_DIR/wt-*`, usuwanym przez `git worktree remove` po pushu. Jedyny wyjątek: fast-forward lokalnego brancha docelowego po zielonym CI (`git merge --ff-only` albo `git fetch origin <branch>:<branch>` bez `+`, komendy wyłącznie z `target-sync`); nigdy reset, rebase, stash, force. Niewykonalny fast-forward zostawia checkout bez zmian i daje ostrzeżenie z komendą ręczną.
-6. **Po merge na domyślny branch repozytorium czekasz na zielone CI brancha docelowego**, zanim weźmiesz następny element (`merging`, 3a). **Po merge na branch integracyjny nie czekasz** (`verifying`): następny element wchodzi od razu, a CI commita merge sprawdza 3.0 w każdym kolejnym ticku. Czerwone CI dowolnego niezweryfikowanego commita merge zatrzymuje całą kolejkę (`stopped` z `stop_reason=target_ci_failed`) do odblokowania przez człowieka (`queue-update --ref <ref> --status closed`). Tor wybiera `post-merge` (4b), nie Ty; nieustalony domyślny branch to `merging`. W obu torach ticket przechodzi na `done` dopiero po zielonym CI swojego commita merge. Dotyczy to także merge'a wykonanego poza kolejką (werdykt `merged`, 4c).
+5. **Checkout użytkownika zostaje nietknięty.** Poprawki tylko w `$STATE_DIR/wt-*`, usuwanym przez `git worktree remove` po pushu. Jedyny wyjątek: fast-forward lokalnego brancha docelowego w Domknięciu - po zielonym CI brancha docelowego (wariant (a)) albo od razu po merge na branch integracyjny (wariant (b)) (`git merge --ff-only` albo `git fetch origin <branch>:<branch>` bez `+`, komendy wyłącznie z `target-sync`); nigdy reset, rebase, stash, force. Niewykonalny fast-forward zostawia checkout bez zmian i daje ostrzeżenie z komendą ręczną.
+6. **Po merge na domyślny branch repozytorium czekasz na zielone CI brancha docelowego**, zanim weźmiesz następny element (`merging`, 3a); ticket dostaje `done` dopiero po zielonym CI commita merge na tym branchu. **Po merge na branch integracyjny nie czekasz na jego CI**: pozycja i ticket są domykane od razu (4b, `close_now=true`) na podstawie zielonego CI samego MR/PR, a pipeline brancha integracyjnego wywołany merge anulujesz (ostrzeżenie zamiast zatrzymania, gdy się nie da). Tor wybiera `post-merge` (4b), nie Ty; nieustalony domyślny branch to `merging`. Dotyczy to także merge'a wykonanego poza kolejką (werdykt `merged`, 4c: tam CI MR niezielone albo nieustalone jest odnotowane, ale domknięcia nie wstrzymuje). Zastana pozycja `verifying` z toru 1.22.0 jest domykana w 3.0 bez odczytu CI brancha; zastana pozycja `stopped` ze `stop_reason=target_ci_failed` nadal zatrzymuje kolejkę (`halted`) do odblokowania przez człowieka (`queue-update --ref <ref> --status closed`).
 7. **Subagent zawsze z jawnym modelem**: `sonnet` do poprawki CI, `opus` do rozwiązania konfliktu.
 8. **Język raportu: polski.** Komunikaty commitów: konwencja repozytorium.
 9. **Nie ponawiasz pipeline'u anulowanego przez człowieka.** Anulowany pipeline na HEAD MR bez konfliktu to `needs_human`, nie `ci_failed`. Retry dotyczy wyłącznie joba zabitego przez runner (`exit status 137`, KROK 5).
