@@ -20,6 +20,19 @@ Zasady:
   check --fix`, `ruff format` bez `--check/--diff`, przekierowanie (`<`/`>`,
   takze doklejone jak `>/etc/hosts` albo `1>plik`) i wszystko poza tym waskim
   zestawem nadal spada do zwyklej galezi TEST_LINT ponizej.
+- Wrapper operacji, preflight transportu i CLI `monolynx` (MON-232): komenda
+  prosta `python3 <katalog>/scripts/monolynx_op.py <op> ...`, `python3
+  <katalog>/scripts/monolynx_transport.py ...` albo `monolynx|mnx ...` (bez
+  `|;&`, backticka, nowej linii/CR, `$`, `~`, redirectow, globow i nawiasow ( ), nazwa pliku
+  skryptu dokladnie jak wyzej) przechodzi bez decyzji hooka, przed regulami
+  ponizej - slowa w tresci argumentow (`git commit`, `pytest`, `merge`) nie sa
+  wtedy komenda. Odczyt (`MONOLYNX_READ_OPS`, preflight, komendy get/list/
+  search/...) i zapis koncza sie tak samo: ten hook nie ma jawnego "allow",
+  wiec zapis wraca do zwyklego systemu uprawnien klienta (jak zapisy MCP).
+  `--yes`/`-y` i komendy login/logout/set/unset/delete/remove w pierwszych
+  trzech slowach CLI nie dostaja wyjatku - stare reguly dzialaja jak dotad.
+  Komenda zlozona, inny skrypt, `.bak` albo `notmonolynx_op.py` tez wracaja do
+  starych regul.
 - Operacje destrukcyjne (rm -rf, force-push, curl|sh, zapis do ~/.ssh,
   DROP/TRUNCATE w SQL, mkfs/dd na urzadzenie): subagent -> deny,
   glowna sesja -> ask. Wyjatek `rm -rf` (MON-174): cel pod /tmp, pod
@@ -69,10 +82,11 @@ wiec dostaje zachowanie sesji glownej (ask / flagi AUTO*), nie subagenta.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 def hook_active_marker_path(session_id: str) -> Path:
@@ -264,6 +278,105 @@ def is_tmp_cleanup(cmd: str) -> bool:
 
 
 if is_tmp_cleanup(cmd):
+    sys.exit(0)
+
+# Kopia `READ_OPS` z plugin/scripts/monolynx_op.py: hook jest samodzielnym skryptem
+# bez importow z pluginu, a literal pozwala testowi wyciagnac stala przez ast
+# (tests/unit/test_bash_guard.py pilnuje rownosci z wrapperem).
+MONOLYNX_READ_OPS = frozenset(
+    {
+        "get_ticket",
+        "list_tickets",
+        "search_tickets",
+        "list_comments",
+        "get_board",
+        "list_sprints",
+        "get_burndown",
+        "list_acceptance_criteria",
+        "list_labels",
+        "search_wiki",
+        "get_wiki_page",
+        "list_wiki_pages",
+        "get_wiki_config",
+    }
+)
+_MONOLYNX_SCRIPTS = ("monolynx_op.py", "monolynx_transport.py")
+# Skladnia powloki zmieniajaca znaczenie komendy poza widocznymi tokenami, takze wewnatrz
+# cudzyslowu (fail-closed): `|;&`, backtick, nowa linia/CR, `$`, `~`, redirecty, glob,
+# nawiasy `(` `)` (subshell).
+_MONOLYNX_UNSAFE = re.compile(r"[|;&`\n\r$~<>*?\[{()]")
+_MONOLYNX_OP_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+# Flagi globalne CLI przed grupa (cli/src/monolynx_cli/main.py); te z wartoscia pochlaniaja nastepny token.
+_MONOLYNX_VALUE_FLAGS = ("--output", "-o", "--profile", "--project", "--timeout")
+# Slowa komendy, przy ktorych CLI loguje, zmienia konfiguracje albo kasuje: bez wyjatku, stare reguly zostaja.
+_MONOLYNX_RISKY_WORDS = ("login", "logout", "set", "unset", "delete", "remove")
+
+
+def _monolynx_script_call(tokens: list) -> "str | None":
+    """`python3 <sciezka>/monolynx_op.py <op> ...` albo `.../monolynx_transport.py ...`:
+    "read" | "write" | None. Sciezka bez `..`, z nazwa pliku DOKLADNIE jak w
+    `_MONOLYNX_SCRIPTS` (nie `.bak`, nie `notmonolynx_op.py`) i w katalogu `scripts`."""
+    if tokens[0] not in ("python3", "python") or len(tokens) < 2:
+        return None
+    script = PurePosixPath(tokens[1])
+    if script.name not in _MONOLYNX_SCRIPTS or ".." in script.parts or script.parent.name != "scripts":
+        return None
+    if script.name == "monolynx_transport.py":
+        return "read"
+    if len(tokens) < 3 or not _MONOLYNX_OP_NAME.match(tokens[2]):
+        return None
+    return "read" if tokens[2] in MONOLYNX_READ_OPS else "write"
+
+
+def _monolynx_cli_call(tokens: list) -> "str | None":
+    """`monolynx ...` / `mnx ...`: "read" | "write" | None (None = `--yes`/`-y` albo komenda
+    logowania, zmiany konfiguracji, kasowania w pierwszych trzech slowach)."""
+    if tokens[0] not in ("monolynx", "mnx"):
+        return None
+    words: list = []
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token in ("--yes", "-y"):
+            return None
+        if token.startswith("-"):
+            index += 2 if token in _MONOLYNX_VALUE_FLAGS else 1
+            continue
+        words.append(token)
+        index += 1
+    if any(word in _MONOLYNX_RISKY_WORDS for word in words[:3]):
+        return None
+    if not words or any(word in ("get", "list", "search", "summary", "board", "burndown", "whoami", "version") for word in words[:3]):
+        return "read"
+    return "write"
+
+
+def monolynx_call_kind(cmd: str) -> "str | None":
+    """MON-232: wywolanie wrappera operacji, preflightu transportu albo CLI `monolynx`
+    w formie prostej. "read" | "write" | None (None = nie rozpoznano, stare reguly).
+
+    Forma prosta (fail-closed jak is_tmp_cleanup/is_readonly_ruff): bez `|;&`,
+    backticka, nowej linii/CR, `$`, `~`, redirectow, globow i nawiasow ( ), takze wewnatrz
+    cudzyslowu, a pierwszy token to dokladnie `python3 <...>/scripts/<skrypt>` albo
+    `monolynx`/`mnx` - `echo monolynx_op.py ...` i obce skrypty nie pasuja. Slowa w
+    tresci argumentow (`git commit`, `pytest`) nie sa wtedy komenda, wiec nie
+    powinny wyzwalac GIT_WRITE/TEST_LINT/MR_MERGE/DESTRUCTIVE."""
+    stripped = cmd.strip()
+    if not stripped or _MONOLYNX_UNSAFE.search(stripped):
+        return None
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    return _monolynx_script_call(tokens) or _monolynx_cli_call(tokens)
+
+
+# Odczyt i zapis w formie prostej koncza sie tak samo: ten hook nie ma jawnego "allow"
+# (pusty stdout + exit 0 = przepusc, jak przy is_tmp_cleanup), wiec zapis dostaje zwykly
+# system uprawnien klienta, a odczyt nie jest dodatkowo blokowany.
+if monolynx_call_kind(cmd) is not None:
     sys.exit(0)
 
 _DOCKER_COMPOSE_PRE_SUBCOMMAND_FLAGS = ("-p", "--profile")

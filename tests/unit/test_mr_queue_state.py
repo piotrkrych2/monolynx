@@ -976,34 +976,57 @@ class TestSprintFixtures:
 
 @pytest.mark.unit
 class TestPostMerge:
-    """post-merge: target != domyslny branch -> verifying, inaczej (tez przy pustych wartosciach) merging."""
+    """post-merge (MON-233): branch integracyjny -> done + close_now, inaczej (tez przy pustych wartosciach) merging."""
 
     @pytest.mark.parametrize(
-        "target, default, expected",
+        "target, default",
         [
-            ("sprint/cli-monolynx", "main", "verifying"),
-            ("sprint/cli-monolynx", " main ", "verifying"),
-            (" sprint/cli-monolynx ", "main", "verifying"),
-            ("main", "main", "merging"),
-            (" main ", "main", "merging"),
-            ("main", " main ", "merging"),
-            ("sprint/cli-monolynx", "", "merging"),
-            ("sprint/cli-monolynx", "   ", "merging"),
-            ("", "main", "merging"),
-            ("   ", "main", "merging"),
-            ("", "", "merging"),
+            ("sprint/cli-monolynx", "main"),
+            ("sprint/cli-monolynx", " main "),
+            (" sprint/cli-monolynx ", "main"),
         ],
     )
-    def test_status_by_target_and_default(self, target, default, expected):
+    def test_integration_branch_closes_item_now(self, target, default):
         out = cli_json("post-merge", "--target-branch", target, "--default-branch", default)
-        assert out["status"] == expected
+        assert out["status"] != "verifying"
+        assert out["status"] == "done"
+        assert out["close_now"] is True
         assert isinstance(out["reason"], str) and out["reason"]
+
+    @pytest.mark.parametrize(
+        "target, default",
+        [
+            ("main", "main"),
+            (" main ", "main"),
+            ("main", " main "),
+            ("sprint/cli-monolynx", ""),
+            ("sprint/cli-monolynx", "   "),
+            ("", "main"),
+            ("   ", "main"),
+            ("", ""),
+        ],
+    )
+    def test_default_or_unknown_branch_keeps_merging_without_close_now(self, target, default):
+        out = cli_json("post-merge", "--target-branch", target, "--default-branch", default)
+        assert out["status"] == "merging"
+        assert out["close_now"] is False
+        assert isinstance(out["reason"], str) and out["reason"]
+
+    def test_function_returns_done_for_integration_branch(self):
+        out = state.post_merge("sprint/cli-monolynx", "main")
+        assert (out["status"], out["close_now"]) == ("done", True)
+
+    def test_function_returns_merging_for_default_branch(self):
+        out = state.post_merge("main", "main")
+        assert (out["status"], out["close_now"]) == ("merging", False)
 
     def test_default_branch_from_repo_view_fixture(self, sprint_default_branch):
         integration = cli_json("post-merge", "--target-branch", "sprint/cli-monolynx", "--default-branch", sprint_default_branch)
         default = cli_json("post-merge", "--target-branch", sprint_default_branch, "--default-branch", sprint_default_branch)
-        assert integration["status"] == "verifying"
+        assert integration["status"] == "done"
+        assert integration["close_now"] is True
         assert default["status"] == "merging"
+        assert default["close_now"] is False
 
     def test_missing_default_branch_flag_exits_64(self):
         assert run_cli("post-merge", "--target-branch", "sprint/cli-monolynx").returncode == 64
@@ -1011,16 +1034,56 @@ class TestPostMerge:
     def test_missing_target_branch_flag_exits_64(self):
         assert run_cli("post-merge", "--default-branch", "main").returncode == 64
 
-    def test_status_is_accepted_by_queue_update(self, tmp_path):
+    @pytest.mark.parametrize("target, expected", [("sprint/cli-monolynx", "done"), ("main", "merging")])
+    def test_status_is_accepted_by_queue_update(self, tmp_path, target, expected):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        status = cli_json("post-merge", "--target-branch", target, "--default-branch", "main")["status"]
+        result = cli_update(queue_file, "!70", "--status", status, "--merge-sha", "deadbeef")
+        assert item_of(result, "!70")["status"] == expected
+
+    def test_integration_branch_merge_does_not_block_next_item(self, tmp_path):
         queue_file = tmp_path / "mr-queue.json"
         state.queue_set(queue_file, ["!70", "!72"])
         status = cli_json("post-merge", "--target-branch", "sprint/cli-monolynx", "--default-branch", "main")["status"]
         result = cli_update(queue_file, "!70", "--status", status, "--merge-sha", "deadbeef")
-        assert item_of(result, "!70")["status"] == "verifying"
+        assert result["next"] == "!72"
+        assert result["verifying"] == []
+        assert result["halted"] is None
+
+    def test_default_branch_merge_blocks_next_item_until_ci(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        status = cli_json("post-merge", "--target-branch", "main", "--default-branch", "main")["status"]
+        result = cli_update(queue_file, "!70", "--status", status, "--merge-sha", "deadbeef")
+        assert result["next"] == "!70"
 
 
 @pytest.mark.unit
 class TestVerifyingStatus:
+    """Status `verifying` to tylko zastany stan w pliku kolejki (format czytelny dla obu wersji).
+
+    Od MON-233 `post-merge` go nie zwraca; testy opisuja, jak skrypt traktuje pozycje
+    zapisane wczesniej: nie blokuja kolejki, nie wchodza do `next` i daja sie domknac.
+    """
+
+    def test_stale_verifying_item_is_closed_by_done_without_reading_ci(self, tmp_path):
+        queue_file = tmp_path / "mr-queue.json"
+        state.queue_set(queue_file, ["!70", "!72"])
+        data = json.loads(queue_file.read_text())
+        data["items"][0]["status"] = "verifying"
+        data["items"][0]["merge_sha"] = "deadbeef"
+        queue_file.write_text(json.dumps(data))
+        assert cli_show(queue_file)["verifying"] == ["!70"]
+
+        result = cli_update(queue_file, "!70", "--status", "done")
+
+        assert result["verifying"] == []
+        assert item_of(result, "!70")["status"] == "done"
+        assert item_of(result, "!70")["merge_sha"] == "deadbeef"
+        assert result["next"] == "!72"
+        assert cli_show(queue_file)["verifying"] == []
+
     def test_verifying_is_accepted_and_stores_merge_sha(self, tmp_path):
         queue_file = tmp_path / "mr-queue.json"
         state.queue_set(queue_file, ["!70", "!72"])
@@ -1068,7 +1131,7 @@ class TestVerifyingStatus:
         assert shown["halted"] is None
         assert shown["next"] == "!72"
 
-    def test_verifying_done_after_green_ci_leaves_verifying_list(self, tmp_path):
+    def test_verifying_done_leaves_verifying_list(self, tmp_path):
         queue_file = tmp_path / "mr-queue.json"
         state.queue_set(queue_file, ["!70"])
         state.queue_update(queue_file, "!70", "verifying", None, False, "deadbeef")
@@ -1328,6 +1391,8 @@ class TestNewItemsStopReason:
 
 @pytest.mark.unit
 class TestQueueSetKeepsVerifying:
+    """Zastane pozycje `verifying` (sprzed MON-233) przezywaja queue-set, zeby tick mogl je domknac."""
+
     def test_verifying_outside_new_list_is_kept_at_front_in_old_order(self, tmp_path):
         queue_file = tmp_path / "mr-queue.json"
         state.queue_set(queue_file, ["!70", "!72", "!74"])
@@ -1476,3 +1541,307 @@ class TestTargetCiIntegrationBranch:
         result = state.target_ci_glab(pipelines, glab("pipeline-jobs-sprint-success"))
         assert result["status"] == "wait"
         assert "failed_jobs" not in result
+
+
+def glab_pipelines_with(*statuses):
+    """Lista pipeline'ow z fixture sprintu: kopia realnego wpisu, rozne `id` i `status` (jedyne zmienione pola)."""
+    template = glab("pipelines-by-sha-sprint-success")[0]
+    pipelines = []
+    for offset, status in enumerate(statuses):
+        entry = copy.deepcopy(template)
+        entry["id"] = template["id"] + offset
+        entry["status"] = status
+        pipelines.append(entry)
+    return pipelines
+
+
+def gh_runs_with(*statuses):
+    """Lista runow z fixture: kopia realnego wpisu, rozne `databaseId`; `status` to (status, conclusion)."""
+    template = gh("run-list-commit-success")[0]
+    runs = []
+    for offset, (status, conclusion) in enumerate(statuses):
+        entry = copy.deepcopy(template)
+        entry["databaseId"] = template["databaseId"] + offset
+        entry["status"] = status
+        entry["conclusion"] = conclusion
+        runs.append(entry)
+    return runs
+
+
+@pytest.mark.unit
+class TestTargetCancel:
+    """target-cancel (MON-233): ktore pipeline'y/runy brancha integracyjnego tick anuluje po merge.
+
+    Anulowanie jest nieodwracalne, wiec do `cancel` trafia tylko status znany jako trwajacy;
+    kazdy inny, w tym nieznany literal, ladzi w `skipped` (external-tool-output.md pkt 3).
+    """
+
+    @pytest.mark.parametrize("status", ["running", "created", "waiting_for_resource", "preparing", "pending", "scheduled"])
+    def test_glab_active_pipeline_is_canceled(self, status):
+        pipelines = glab_pipelines_with(status)
+        result = state.target_cancel_glab(pipelines)
+        assert result["cancel"] == [pipelines[0]["id"]]
+        assert result["skipped"] == []
+        assert "do anulowania: 1, pominietych" in result["reason"]
+        assert "nic do anulowania" not in result["reason"]
+
+    @pytest.mark.parametrize("status", ["success", "failed", "canceled", "skipped", "manual"])
+    def test_glab_finished_pipeline_is_skipped_with_its_status(self, status):
+        pipelines = glab_pipelines_with(status)
+        result = state.target_cancel_glab(pipelines)
+        assert result["cancel"] == []
+        assert result["skipped"] == [{"id": pipelines[0]["id"], "status": status}]
+
+    def test_glab_unknown_status_is_skipped_never_canceled(self):
+        pipelines = glab_pipelines_with("status-z-przyszlosci")
+        result = state.target_cancel_glab(pipelines)
+        assert result["cancel"] == []
+        assert result["skipped"] == [{"id": pipelines[0]["id"], "status": "status-z-przyszlosci"}]
+
+    def test_glab_real_green_sprint_fixture_cancels_nothing(self):
+        pipelines = glab("pipelines-by-sha-sprint-success")
+        result = state.target_cancel_glab(pipelines)
+        assert result["cancel"] == []
+        assert result["skipped"] == [{"id": 2894038602, "status": "success"}]
+
+    def test_glab_mixed_list_splits_in_input_order(self):
+        pipelines = glab_pipelines_with("success", "running", "failed", "pending", "weird")
+        ids = [p["id"] for p in pipelines]
+        result = state.target_cancel_glab(pipelines)
+        assert result["cancel"] == [ids[1], ids[3]]
+        assert result["skipped"] == [
+            {"id": ids[0], "status": "success"},
+            {"id": ids[2], "status": "failed"},
+            {"id": ids[4], "status": "weird"},
+        ]
+        assert "do anulowania: 2, pominietych" in result["reason"]
+        assert result["reason"].endswith(": 3")
+        assert "nic do anulowania" not in result["reason"]
+
+    def test_glab_empty_list_is_not_an_error(self):
+        result = state.target_cancel_glab([])
+        assert result["cancel"] == []
+        assert result["skipped"] == []
+        assert "brak pipeline'ow" in result["reason"]
+        assert "nic do anulowania" in result["reason"]
+        assert "do anulowania:" not in result["reason"]
+
+    @pytest.mark.parametrize("status", ["queued", "in_progress", "waiting", "pending", "requested"])
+    def test_gh_active_run_is_canceled(self, status):
+        runs = gh_runs_with((status, ""))
+        result = state.target_cancel_gh(runs)
+        assert result["cancel"] == [runs[0]["databaseId"]]
+        assert result["skipped"] == []
+        assert "do anulowania: 1, pominietych" in result["reason"]
+        assert "nic do anulowania" not in result["reason"]
+
+    @pytest.mark.parametrize("conclusion", ["success", "failure", "cancelled"])
+    def test_gh_completed_run_is_skipped_with_its_status(self, conclusion):
+        runs = gh_runs_with(("completed", conclusion))
+        result = state.target_cancel_gh(runs)
+        assert result["cancel"] == []
+        assert result["skipped"] == [{"id": runs[0]["databaseId"], "status": "completed"}]
+
+    def test_gh_unknown_status_is_skipped_never_canceled(self):
+        runs = gh_runs_with(("status-z-przyszlosci", ""))
+        result = state.target_cancel_gh(runs)
+        assert result["cancel"] == []
+        assert result["skipped"] == [{"id": runs[0]["databaseId"], "status": "status-z-przyszlosci"}]
+
+    def test_gh_real_success_fixture_cancels_nothing(self):
+        runs = gh("run-list-commit-success")
+        result = state.target_cancel_gh(runs)
+        assert result["cancel"] == []
+        assert [s["id"] for s in result["skipped"]] == [r["databaseId"] for r in runs]
+        assert {s["status"] for s in result["skipped"]} == {"completed"}
+
+    def test_gh_mixed_list_splits_in_input_order(self):
+        runs = gh_runs_with(("completed", "success"), ("in_progress", ""), ("queued", ""), ("completed", "failure"), ("weird", ""))
+        ids = [r["databaseId"] for r in runs]
+        result = state.target_cancel_gh(runs)
+        assert result["cancel"] == [ids[1], ids[2]]
+        assert result["skipped"] == [
+            {"id": ids[0], "status": "completed"},
+            {"id": ids[3], "status": "completed"},
+            {"id": ids[4], "status": "weird"},
+        ]
+        assert "do anulowania: 2, pominietych" in result["reason"]
+        assert result["reason"].endswith(": 3")
+        assert "nic do anulowania" not in result["reason"]
+
+    def test_gh_empty_list_is_not_an_error(self):
+        result = state.target_cancel_gh([])
+        assert result["cancel"] == []
+        assert result["skipped"] == []
+        assert "brak runow" in result["reason"]
+        assert "nic do anulowania" in result["reason"]
+        assert "do anulowania:" not in result["reason"]
+
+    def test_cli_glab_prints_cancel_and_skipped(self, tmp_path):
+        pipelines = glab_pipelines_with("running", "success")
+        path = write_json(tmp_path, "p.json", pipelines)
+        out = cli_json("target-cancel", "--provider", "glab", "--pipelines-file", path)
+        assert out["cancel"] == [pipelines[0]["id"]]
+        assert out["skipped"] == [{"id": pipelines[1]["id"], "status": "success"}]
+
+    def test_cli_gh_prints_cancel_and_skipped(self, tmp_path):
+        runs = gh_runs_with(("in_progress", ""), ("completed", "success"))
+        path = write_json(tmp_path, "r.json", runs)
+        out = cli_json("target-cancel", "--provider", "gh", "--runs-file", path)
+        assert out["cancel"] == [runs[0]["databaseId"]]
+        assert out["skipped"] == [{"id": runs[1]["databaseId"], "status": "completed"}]
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ("--provider", "glab", "--pipelines-file"),
+            ("--provider", "gh", "--runs-file"),
+        ],
+    )
+    def test_cli_empty_list_exits_0_with_nothing_to_cancel(self, tmp_path, args):
+        path = write_json(tmp_path, "empty.json", [])
+        out = cli_json("target-cancel", *args, path)
+        assert out["cancel"] == []
+        assert out["skipped"] == []
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ("--provider", "glab", "--pipelines-file"),
+            ("--provider", "gh", "--runs-file"),
+        ],
+    )
+    def test_cli_missing_file_exits_2(self, tmp_path, args):
+        result = run_cli("target-cancel", *args, str(tmp_path / "nie-ma.json"))
+        assert result.returncode == 2
+        assert "nie istnieje" in result.stderr
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ("--provider", "glab", "--pipelines-file"),
+            ("--provider", "gh", "--runs-file"),
+        ],
+    )
+    def test_cli_invalid_json_exits_2(self, tmp_path, args):
+        path = tmp_path / "bad.json"
+        path.write_text("{nie json")
+        result = run_cli("target-cancel", *args, str(path))
+        assert result.returncode == 2
+        assert "niepoprawny JSON" in result.stderr
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ("--provider", "glab", "--pipelines-file"),
+            ("--provider", "gh", "--runs-file"),
+        ],
+    )
+    def test_cli_non_object_element_exits_2(self, tmp_path, args):
+        path = write_json(tmp_path, "bad.json", [42])
+        result = run_cli("target-cancel", *args, path)
+        assert result.returncode == 2
+        assert result.stdout == ""
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ("--provider", "glab"),
+            ("--provider", "gh"),
+            ("--pipelines-file", "x.json"),
+            (),
+        ],
+    )
+    def test_cli_missing_required_arguments_exits_64(self, args):
+        assert run_cli("target-cancel", *args).returncode == 64
+
+
+# provider, flaga pliku, klucz id, etykieta w komunikacie, realny status trwajacy, gotowy poprawny element
+_CANCEL_PROVIDERS = [
+    pytest.param("glab", "--pipelines-file", "id", "pipelines-file", "running", id="glab"),
+    pytest.param("gh", "--runs-file", "databaseId", "runs-file", "in_progress", id="gh"),
+]
+
+
+@pytest.mark.unit
+class TestTargetCancelInputValidation:
+    """Id z `cancel` idzie do nieodwracalnego `glab ci cancel pipeline` / `gh run cancel`: zly element = kod 2, zero stdout."""
+
+    @staticmethod
+    def _element(provider, **fields):
+        template = glab_pipelines_with("running")[0] if provider == "glab" else gh_runs_with(("in_progress", ""))[0]
+        element = copy.deepcopy(template)
+        element.update(fields)
+        return element
+
+    @staticmethod
+    def _run(tmp_path, provider, flag, elements):
+        path = write_json(tmp_path, "in.json", elements)
+        return run_cli("target-cancel", "--provider", provider, flag, path)
+
+    @pytest.mark.parametrize("provider, flag, id_key, label, active", _CANCEL_PROVIDERS)
+    def test_active_element_without_id_exits_2_with_its_index(self, tmp_path, provider, flag, id_key, label, active):
+        good = self._element(provider)
+        bad = self._element(provider, status=active)
+        del bad[id_key]
+        result = self._run(tmp_path, provider, flag, [good, bad])
+        assert result.returncode == 2
+        assert result.stdout == ""
+        assert result.stderr.startswith("mr_queue_state: ")
+        assert f"{label}[1]: '{id_key}' musi byc liczba calkowita dla statusu trwajacego '{active}'" in result.stderr
+
+    @pytest.mark.parametrize("bad_id", ["abc; rm x", "123", None, 1.5, [1]])
+    @pytest.mark.parametrize("provider, flag, id_key, label, active", _CANCEL_PROVIDERS)
+    def test_active_element_with_non_integer_id_exits_2(self, tmp_path, provider, flag, id_key, label, active, bad_id):
+        good = self._element(provider)
+        bad = self._element(provider, status=active, **{id_key: bad_id})
+        result = self._run(tmp_path, provider, flag, [good, bad])
+        assert result.returncode == 2
+        assert result.stdout == ""
+        assert f"{label}[1]: '{id_key}' musi byc liczba calkowita" in result.stderr
+
+    @pytest.mark.parametrize("provider, flag, id_key, label, active", _CANCEL_PROVIDERS)
+    def test_active_element_with_bool_id_exits_2(self, tmp_path, provider, flag, id_key, label, active):
+        bad = self._element(provider, status=active, **{id_key: True})
+        result = self._run(tmp_path, provider, flag, [self._element(provider), bad])
+        assert result.returncode == 2
+        assert result.stdout == ""
+        assert f"{label}[1]: '{id_key}' musi byc liczba calkowita" in result.stderr
+
+    @pytest.mark.parametrize("bad_status", [{}, 5, ["running"], True])
+    @pytest.mark.parametrize("provider, flag, id_key, label, active", _CANCEL_PROVIDERS)
+    def test_non_string_status_exits_2_with_its_index(self, tmp_path, provider, flag, id_key, label, active, bad_status):
+        bad = self._element(provider, status=bad_status)
+        result = self._run(tmp_path, provider, flag, [self._element(provider), bad])
+        assert result.returncode == 2
+        assert result.stdout == ""
+        assert f"{label}[1]: 'status' musi byc stringiem albo null" in result.stderr
+
+    @pytest.mark.parametrize("provider, flag, id_key, label, active", _CANCEL_PROVIDERS)
+    def test_bad_element_prevents_any_output_even_when_earlier_ones_are_valid(self, tmp_path, provider, flag, id_key, label, active):
+        valid_active = self._element(provider)
+        bad = self._element(provider, status=active, **{id_key: "abc; rm x"})
+        result = self._run(tmp_path, provider, flag, [valid_active, bad])
+        assert result.returncode == 2
+        assert str(valid_active[id_key]) not in result.stdout
+
+    @pytest.mark.parametrize("provider, flag, id_key, label, active", _CANCEL_PROVIDERS)
+    def test_inactive_element_with_non_numeric_id_is_skipped_with_exit_0(self, tmp_path, provider, flag, id_key, label, active):
+        inactive = "success" if provider == "glab" else "completed"
+        element = self._element(provider, status=inactive, **{id_key: "x"})
+        out = cli_json("target-cancel", "--provider", provider, flag, write_json(tmp_path, "in.json", [element]))
+        assert out["cancel"] == []
+        assert out["skipped"] == [{"id": "x", "status": inactive}]
+
+    @pytest.mark.parametrize("provider, flag, id_key, label, active", _CANCEL_PROVIDERS)
+    def test_null_status_is_skipped_with_exit_0(self, tmp_path, provider, flag, id_key, label, active):
+        element = self._element(provider, status=None)
+        out = cli_json("target-cancel", "--provider", provider, flag, write_json(tmp_path, "in.json", [element]))
+        assert out["cancel"] == []
+        assert out["skipped"] == [{"id": element[id_key], "status": None}]
+
+    @pytest.mark.parametrize("provider, flag, id_key, label, active", _CANCEL_PROVIDERS)
+    def test_active_element_with_integer_id_still_passes_validation(self, tmp_path, provider, flag, id_key, label, active):
+        element = self._element(provider, status=active)
+        out = cli_json("target-cancel", "--provider", provider, flag, write_json(tmp_path, "in.json", [element]))
+        assert out["cancel"] == [element[id_key]]

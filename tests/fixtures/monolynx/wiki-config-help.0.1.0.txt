@@ -1,0 +1,18 @@
+# command: monolynx wiki config --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx wiki config [OPTIONS] COMMAND [ARGS]...                        
+                                                                                
+ Konfiguracja metody LLM Wiki projektu.                                         
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ get  Pokaż konfigurację metody LLM Wiki projektu (flaga i strony systemowe). │
+│ set  Włącz albo wyłącz metodę LLM Wiki dla projektu.                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

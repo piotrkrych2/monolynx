@@ -36,6 +36,7 @@ ToolSearch(query="+monolynx pipeline list get job log", max_results=10)
 <!-- /runtime:claude-code -->
 
 Nazwę każdego narzędzia i jego schemat odczytaj z katalogu runtime; przykłady MCP mapuj na faktycznie udostępnione funkcje.
+Ten skill czyta platformę narzędziami MCP; regułę wyboru między CLI `monolynx` a MCP opisuje sekcja "Transport" w README pluginu.
 
 Faktyczne argumenty wiadomości użytkownika lub wywołania:
 

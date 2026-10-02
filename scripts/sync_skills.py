@@ -2,6 +2,11 @@
 """Synchronize bundled plugin resources and standalone skills from shared sources.
 
 Run ``python3 scripts/sync_skills.py --check`` to detect distribution drift.
+
+Besides copying, the script injects the shared transport block: in every ``.md`` file of a skill
+the text between ``<!-- shared:transport -->`` and ``<!-- /shared:transport -->`` is replaced with
+``plugin/references/transport.md``. A skill whose SKILL.md carries the marker also gets
+``monolynx_transport.py`` and ``monolynx_op.py`` in ``scripts/`` (MON-232).
 """
 
 from __future__ import annotations
@@ -31,6 +36,31 @@ REFERENCE_RESOURCES = {
 WHOLE_FILE_RESOURCES = {
     "work-simple": (("work/review-rubric.md", "review-rubric.md"), ("work/lint-test.md", "lint-test.md"), ("work/commit-mr.md", "commit-mr.md")),
 }
+
+
+TRANSPORT_OPEN = "<!-- shared:transport -->"
+TRANSPORT_CLOSE = "<!-- /shared:transport -->"
+TRANSPORT_BLOCK = re.compile(re.escape(TRANSPORT_OPEN) + r".*?" + re.escape(TRANSPORT_CLOSE), re.DOTALL)
+# Skille ze znacznikiem shared:transport w SKILL.md dostaja oba skrypty automatycznie (MON-232).
+TRANSPORT_SCRIPTS = ("monolynx_transport.py", "monolynx_op.py")
+
+
+def inject_transport(text: str) -> str:
+    """Podmien tresc kazdej pary znacznikow shared:transport na kanoniczna z plugin/references/transport.md.
+
+    Plik kanoniczny jest czytany tylko wtedy, gdy tekst ma znacznik, a para musi byc kompletna: samotny
+    albo odwrocony znacznik to blad zrodla, nie cicha podmiana.
+    """
+    opens = text.count(TRANSPORT_OPEN)
+    if opens != text.count(TRANSPORT_CLOSE):
+        raise ValueError(f"Unbalanced {TRANSPORT_OPEN} markers")
+    if not opens:
+        return text
+    canonical = (SOURCE_DIR.parent / "references" / "transport.md").read_text(encoding="utf-8").strip()
+    injected, replaced = TRANSPORT_BLOCK.subn(lambda _match: f"{TRANSPORT_OPEN}\n{canonical}\n{TRANSPORT_CLOSE}", text)
+    if replaced != opens:
+        raise ValueError(f"Misordered {TRANSPORT_OPEN} markers")
+    return injected
 
 
 def render(raw: str, skill_name: str, is_skill_md: bool, *, prefix: str = TARGET_PREFIX) -> str:
@@ -70,7 +100,9 @@ def build(skill_dir: Path) -> dict[str, str]:
 
 def bundled_resources(name: str) -> dict[str, str]:
     resources = {}
-    for script in SCRIPT_RESOURCES.get(name, ()):
+    skill_md = SOURCE_DIR / name / "SKILL.md"
+    marked = skill_md.is_file() and TRANSPORT_OPEN in skill_md.read_text(encoding="utf-8")
+    for script in (*SCRIPT_RESOURCES.get(name, ()), *(TRANSPORT_SCRIPTS if marked else ())):
         resources[f"scripts/{script}"] = (SOURCE_DIR.parent / "scripts" / script).read_text(encoding="utf-8")
     if name in REFERENCE_RESOURCES:
         source, start, end, filename = REFERENCE_RESOURCES[name]
@@ -79,9 +111,10 @@ def bundled_resources(name: str) -> dict[str, str]:
         match = re.search(rf"^{re.escape(start)}.*?(?=^{re.escape(end)})", raw, flags=re.MULTILINE | re.DOTALL)
         if match is None:
             raise ValueError(f"Missing section markers {start!r}, {end!r} in {source_path}")
-        resources[f"references/{filename}"] = match.group().rstrip() + "\n"
+        # Wycinek cudzego SKILL.md moze zawierac blok transportu: ta sama podmiana co w zrodle, inaczej --check rozjezdza sie z zapisem.
+        resources[f"references/{filename}"] = inject_transport(match.group().rstrip() + "\n")
     for source_rel, target_name in WHOLE_FILE_RESOURCES.get(name, ()):
-        resources[target_name] = (SOURCE_DIR / source_rel).read_text(encoding="utf-8")
+        resources[target_name] = inject_transport((SOURCE_DIR / source_rel).read_text(encoding="utf-8"))
     resources["references/runtime.md"] = (SOURCE_DIR.parent / "references" / "runtime.md").read_text(encoding="utf-8")
     return resources
 
@@ -105,7 +138,7 @@ def main() -> int:
     for name in source_names:
         source = SOURCE_DIR / name
         existing_source = read_files(source)
-        source_files = dict(existing_source)
+        source_files = {path: inject_transport(content) if path.endswith(".md") else content for path, content in existing_source.items()}
         source_files["SKILL.md"] = render(source_files["SKILL.md"], name, True, prefix="")
         source_files.update(bundled_resources(name))
         files = {path: render(content, name, path == "SKILL.md") if path.endswith(".md") else content for path, content in source_files.items()}

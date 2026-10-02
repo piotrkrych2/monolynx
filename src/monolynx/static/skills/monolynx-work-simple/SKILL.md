@@ -65,7 +65,52 @@ Ustal `project_slug` zgodnie z kontraktem runtime: jawny argument użytkownika >
 
 ### 0.1. Zaladuj narzedzia
 
-Cztery wywolania rownolegle, z podniesionym `max_results` (domyslne 5 nie
+**Transport: CLI albo MCP** - ustal raz, przed pierwsza operacja na platformie:
+
+<!-- shared:transport -->
+Operacje na platformie Monolynx wykonujesz jednym z dwoch transportow: CLI `monolynx` (zawsze przez wrapper) albo tools MCP. Zapis `mcp__monolynx__<tool>(...)` w tym skillu oznacza operacje `<tool>` z podanymi argumentami, niezaleznie od transportu. Regula jest ta sama w Claude Code i w Codex.
+
+**Preflight - raz, na starcie skilla** (nie przed kazda operacja):
+
+```bash
+python3 <katalog skilla>/scripts/monolynx_transport.py
+```
+
+`<katalog skilla>` to absolutna sciezka katalogu tego pliku, wpisana literalnie. Komendy obu skryptow pisz bez zmiennych powloki, bez `~`, bez pipe, bez przekierowan i bez nawiasow `(` `)`: hook pluginu i sesje w worktree odrzucaja takie formy. Ostatnia linia wyniku jest zamrozona:
+
+`TRANSPORT: mode=cli|mcp cli=<wersja|none> auth=ok|missing latest=<wersja|unknown> update=yes|no install=brew|pipx|uv|unknown|none`
+
+| Wynik preflightu | Postepowanie |
+|---|---|
+| `mode=cli` | Operacje wykonujesz wrapperem `monolynx_op.py` (nizej). |
+| `mode=mcp` | Tylko tools MCP, wrappera nie wolasz. |
+| Jest linia `TRANSPORT-HINT:` (brak CLI, CLI niezalogowane albo nowsza wersja) | Przepisz ja uzytkownikowi jedna linia i pracuj dalej wedlug `mode`. Nie pytaj, nie czekaj, niczego nie instaluj. |
+| `mode=mcp` i runtime nie udostepnia tooli MCP Monolynx | STOP, bez zgadywania. Podaj instrukcje: `pipx install monolynx-cli` i `monolynx auth login`, albo podpiecie connectora MCP Monolynx. |
+| Preflight sie nie uruchomil (brak `python3`, odmowa uprawnienia) | Pracuj jak przy `mode=mcp`. |
+
+**Operacja przy `mode=cli`** - pierwszy argument to nazwa toola, flagi to dokladne nazwy jego parametrow:
+
+```bash
+python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJECT-SLUG> --ticket_id <KEY>
+```
+
+Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
+
+Kody wyjscia wrappera:
+
+- `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
+- `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
+
+`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
+
+Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
+<!-- /shared:transport -->
+
+W tym skillu przy `mode=cli` wrapperem ida operacje ticketowe i wiki (`get_ticket`, `get_board`, `search_tickets`, `update_ticket`, `add_comment`, kryteria akceptacji, strony wiki), a Pipelines, `log_time` i graf zawsze toolem MCP. Tablica z CLI to JSON z polami `sprint` i `columns` (klucz kolumny to status), a `criterion_id` to pole `id` elementu listy kryteriow.
+
+Narzedzia MCP (dla `mode=mcp` i dla operacji bez komendy CLI): cztery wywolania rownolegle, z podniesionym `max_results` (domyslne 5 nie
 pomiesci wszystkich tooli):
 
 Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
@@ -92,7 +137,10 @@ Runtime bez ToolSearch: sprawdź faktyczny katalog narzędzi i użyj jego discov
 **Placeholdery**: w szablonach podstawiaj realne wartosci za `<PROJECT-SLUG>`,
 `<ID>`, `[UUID]` itd. Dotyczy tez prefiksu: przed spawnem subagenta ZAMIEN
 w jego prompcie kazde `mcp__monolynx__` na faktyczny prefix - subagent nie musi
-sam odkrywac prefiksu.
+sam odkrywac prefiksu. Subagent pracuje przez MCP jak dotad. Wyjatek: przy
+`mode=cli` mozesz dopisac do jego promptu literalna sciezke
+`<katalog skilla>/scripts/monolynx_op.py` i zdanie, ze operacje z listy wyzej
+wykonuje ta komenda, a przy kodzie 3 toolem MCP.
 
 Potrzebne toole: `get_ticket`, `get_board`, `search_tickets`, `update_ticket`,
 `add_comment`, `log_time`, `list_acceptance_criteria`,
@@ -189,6 +237,11 @@ WHY: MON-150 i MON-152 zmergowaly do swoich branchy `origin/worktree-MON-149`
 i `origin/worktree-MON-150`, gdy te byly `in_review`. MR-y niosly cudze commity,
 kolejnosc merge byla wymuszona, a konflikty rozplatywano recznie.
 <!-- /shared:zaleznosci -->
+
+Ticket pobrany przez CLI (`mode=cli`) nie ma sekcji `## Blokery (relacja)`: te
+sama relacje niesie lista `blocked_by` w JSON (elementy `key`, `status`,
+`title`; `blocks` to odpowiednik linii `Blokuje:`). Pusta lista `blocked_by`
+albo same wpisy ze statusem `done` -> brak blokady.
 
 Przy `MONOLYNX_SPRINT_RUN=1` blokade obsluz wg reguly 21. Przy starcie od zera
 pipeline jeszcze nie istnieje (powstaje w 0.6), wiec domkniecie instrumentacji
@@ -577,6 +630,8 @@ ZANIM zawolasz jakikolwiek tool MCP: zaladuj schematy JEDNYM wywolaniem
 ToolSearch(query='+monolynx comment time pipeline job acceptance', max_results=10)
 i uzywaj DOKLADNIE zwroconych nazw. Runtime bez ToolSearch -> uzywaj tooli
 bezposrednio.
+Pracujesz przez MCP, chyba ze Team Manager wkleil do tego promptu literalna
+sciezke wrappera monolynx_op.py - wtedy kryteria odhaczasz ta komenda.
 
 ---
 

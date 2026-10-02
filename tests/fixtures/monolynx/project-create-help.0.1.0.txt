@@ -1,0 +1,20 @@
+# command: monolynx project create --help
+# tool_version: monolynx 0.1.0
+# captured: 2026-10-01
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                
+ Usage: monolynx project create [OPTIONS]                                       
+                                                                                
+ Utwórz nowy projekt.                                                           
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ *  --name               <str>  Nazwa projektu. [required]                    │
+│    --slug               <str>  Slug projektu (bez podania serwer generuje go │
+│                                z nazwy).                                     │
+│    --description        <str>  Opis projektu.                                │
+│    --code               <str>  Kod projektu, prefiks numerów ticketów (bez   │
+│                                podania serwer generuje go z nazwy).          │
+│    --help                      Show this message and exit.                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+# exit: 0

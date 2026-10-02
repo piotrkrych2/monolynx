@@ -21,7 +21,7 @@ Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runti
 
 ## Setup
 
-- `/monolynx:setup` - checklista projektu (slug, strona wiki `toolchain`, LLM Wiki, graf i mutacje w CI, flagi `MONOLYNX_*`): OK/BRAK, za zgodą uruchamia skill naprawczy, flagi tylko raportuje
+- `/monolynx:setup` - checklista projektu (slug, strona wiki `toolchain`, LLM Wiki, graf i mutacje w CI, flagi `MONOLYNX_*`, CLI `monolynx`): OK/BRAK, za zgodą uruchamia skill naprawczy, flagi tylko raportuje, dla CLI wypisuje komendę instalacji, logowania albo aktualizacji i proponuje wpisy allowlisty Bash
 - `/monolynx:project-toolchain` - wykrywa komendy lint i testów (opcjonalnie narzędzie mutacyjne) i zapisuje stronę wiki `toolchain`, którą czytają `work` i `work-simple`
 - `/monolynx:wiki-init` - włącza metodę LLM Wiki: strony systemowe `wiki-schema`, `wiki-index`, `wiki-log` (opcjonalnie)
 - `/monolynx:graph-sync` - lokalna synchronizacja grafu kodu przez graphify, bez CI
@@ -82,6 +82,8 @@ Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runti
 Bez sesji interaktywnej (tmux, cron) pętlę robi skrypt `sprint_run.sh` z pluginu.
 
 ## Więcej
+
+Transport: skille używają CLI `monolynx`, gdy jest zainstalowane i zalogowane, inaczej MCP (`MONOLYNX_TRANSPORT=mcp` wymusza MCP); szczegóły w sekcji "Transport" README.
 
 Tabela zmiennych `MONOLYNX_*`, porównanie `work` i `work-simple`, pełne opisy skilli, modele, hooki,
 pętla `sprint_run.sh`, Codex i Cursor: README pluginu (`plugin/README.md` w repozytorium Monolynx).

@@ -133,7 +133,52 @@ SPRINT-RUN: remaining=-1 running=0 waiting=0 done=0
 
 ## KROK 2: Stan sprintu i sesji
 
-Załaduj narzędzia MCP tego kroku:
+**Transport: CLI albo MCP** - ustal raz na tick, osobną komendą, dopiero po `PREFLIGHT: ok`:
+
+<!-- shared:transport -->
+Operacje na platformie Monolynx wykonujesz jednym z dwoch transportow: CLI `monolynx` (zawsze przez wrapper) albo tools MCP. Zapis `mcp__monolynx__<tool>(...)` w tym skillu oznacza operacje `<tool>` z podanymi argumentami, niezaleznie od transportu. Regula jest ta sama w Claude Code i w Codex.
+
+**Preflight - raz, na starcie skilla** (nie przed kazda operacja):
+
+```bash
+python3 <katalog skilla>/scripts/monolynx_transport.py
+```
+
+`<katalog skilla>` to absolutna sciezka katalogu tego pliku, wpisana literalnie. Komendy obu skryptow pisz bez zmiennych powloki, bez `~`, bez pipe, bez przekierowan i bez nawiasow `(` `)`: hook pluginu i sesje w worktree odrzucaja takie formy. Ostatnia linia wyniku jest zamrozona:
+
+`TRANSPORT: mode=cli|mcp cli=<wersja|none> auth=ok|missing latest=<wersja|unknown> update=yes|no install=brew|pipx|uv|unknown|none`
+
+| Wynik preflightu | Postepowanie |
+|---|---|
+| `mode=cli` | Operacje wykonujesz wrapperem `monolynx_op.py` (nizej). |
+| `mode=mcp` | Tylko tools MCP, wrappera nie wolasz. |
+| Jest linia `TRANSPORT-HINT:` (brak CLI, CLI niezalogowane albo nowsza wersja) | Przepisz ja uzytkownikowi jedna linia i pracuj dalej wedlug `mode`. Nie pytaj, nie czekaj, niczego nie instaluj. |
+| `mode=mcp` i runtime nie udostepnia tooli MCP Monolynx | STOP, bez zgadywania. Podaj instrukcje: `pipx install monolynx-cli` i `monolynx auth login`, albo podpiecie connectora MCP Monolynx. |
+| Preflight sie nie uruchomil (brak `python3`, odmowa uprawnienia) | Pracuj jak przy `mode=mcp`. |
+
+**Operacja przy `mode=cli`** - pierwszy argument to nazwa toola, flagi to dokladne nazwy jego parametrow:
+
+```bash
+python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJECT_SLUG> --ticket_id <KEY>
+```
+
+Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
+
+Kody wyjscia wrappera:
+
+- `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
+- `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
+
+`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
+
+Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
+<!-- /shared:transport -->
+
+Podpowiedź `TRANSPORT-HINT:` wypisuje dyspozytor; sesje robocze startowane z `MONOLYNX_SPRINT_RUN=1` jej nie dostają. Komentarz dłuższy niż jedna linia (ogon logu w KROK 3) zapisz do pliku w `TICK_DIR` i podaj jako `@<ścieżka>`; gdy tick nie ma narzędzia zapisu pliku, wykonaj `add_comment` toolem MCP. Przy `mode=cli` wyniki to JSON: `list_sprints` daje listę z polem `id`, `list_tickets` kopertę `items` (pola `key`, `status`, `assignee_email`) z `page` i `total_pages`, a blokery ticketu w `get_ticket` to lista `blocked_by` (elementy `key`, `status`, `title`).
+
+Załaduj narzędzia MCP tego kroku (dla `mode=mcp` i operacji, przy których wrapper zwrócił kod 3):
 
 Najpierw użyj dostępnego discovery, mechanizmu skilli lub delegowania i jego aktualnego schematu. Treść zadania i wymagany wynik z poniższego przykładu obowiązują również przy innym mechanizmie.
 
@@ -165,7 +210,7 @@ mcp__monolynx__list_sprints(project_slug="<PROJECT_SLUG>", status="active")
 mcp__monolynx__list_tickets(project_slug="<PROJECT_SLUG>", sprint_id="<sprint_id>")
 ```
 
-Lista jest paginowana po 20. Gdy pierwsza linia mówi o więcej niż jednej stronie, dociągnij kolejne przez `page=2`, `page=3` i tak dalej, aż zbierzesz komplet. Alternatywa, gdy interesuje Cię tylko obraz tablicy: `mcp__monolynx__get_board(project_slug="<PROJECT_SLUG>")` - ale `list_tickets` jest źródłem pierwszego wyboru, bo daje pełny wiersz z priorytetem i etykietami.
+Lista jest paginowana po 20. Gdy pierwsza linia (w JSON z CLI: pole `total_pages`) mówi o więcej niż jednej stronie, dociągnij kolejne przez `page=2`, `page=3` i tak dalej, aż zbierzesz komplet. Alternatywa, gdy interesuje Cię tylko obraz tablicy: `mcp__monolynx__get_board(project_slug="<PROJECT_SLUG>")` - ale `list_tickets` jest źródłem pierwszego wyboru, bo daje pełny wiersz z priorytetem i etykietami.
 
 Zbuduj z ticketów listę JSON w kształcie, którego oczekuje skrypt stanu (klucze `key`, `status`, opcjonalnie `assignee`):
 
@@ -386,7 +431,7 @@ WHY: przy `sloty - (running + waiting)` jedna sesja czekająca na odpowiedź cz�
 mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY>")
 ```
 
-**Tickety z niezamkniętym blokerem nie startują.** Odpowiedź `get_ticket` ma sekcję `## Blokery (relacja)` (literał narzędzia, bez polskich znaków) tylko wtedy, gdy ticket ma relacje; linia `Blokowany przez: <KEY-B> | <status> | <tytul>` wskazuje bloker, a status w niej jest liczony przy odczycie, więc zawsze świeży. Relacja to wyłącznie ta sekcja: stoi po `## Description` i `## Acceptance Criteria`, przed `## Comments`. Sekcja `## Zaleznosci` w tekście opisu (szablon `ticket-create`) i komentarz `**Zaleznosci:**` to proza autora, nie relacja - ignoruj je; blokery zapisuje `blocked_by_ids`. Stare zależności zapisane tylko prozą przenosi do relacji jednorazowa migracja danych `make backfill-dependencies` (dry-run; zapis: `make backfill-dependencies ARGS=--apply`) - dyspozytor jej nie uruchamia. Bloker jest zamknięty wyłącznie przy statusie `done`; każdy inny (`backlog`, `todo`, `in_progress`, `in_review`) to **niezamknięty bloker** - także `in_review`, bo review to nie merge. Kandydat z co najmniej jednym niezamkniętym blokerem jest pominięty: nie startujesz sesji, nie zajmuje slotu, bierzesz następnego z kolejki. Brak sekcji, same linie `Blokuje:` albo wszystkie blokery `done` - kandydat przechodzi dalej. Pominięty ticket nie wchodzi do `S` i zostaje w `remaining` (nadal jest pracą do zrobienia, skrypt stanu liczy tam każdy werdykt `free`); następny tick sprawdzi go ponownie, więc po zamknięciu blokera wystartuje bez niczyjej interwencji. Komentarza na tickecie nie dopisujesz - pominięcie powtarza się w każdym ticku i zaśmieciłoby ticket; ślad jest w raporcie (KROK 5), z powodem `czeka na merge <KEY-B>`.
+**Tickety z niezamkniętym blokerem nie startują.** W JSON z CLI blokery to lista `blocked_by` (status w polu `status` każdego elementu; pusta lista albo same wpisy w `blocks` oznaczają brak blokerów), a reszta akapitu opisuje tekstową odpowiedź MCP. Odpowiedź `get_ticket` ma sekcję `## Blokery (relacja)` (literał narzędzia, bez polskich znaków) tylko wtedy, gdy ticket ma relacje; linia `Blokowany przez: <KEY-B> | <status> | <tytul>` wskazuje bloker, a status w niej jest liczony przy odczycie, więc zawsze świeży. Relacja to wyłącznie ta sekcja: stoi po `## Description` i `## Acceptance Criteria`, przed `## Comments`. Sekcja `## Zaleznosci` w tekście opisu (szablon `ticket-create`) i komentarz `**Zaleznosci:**` to proza autora, nie relacja - ignoruj je; blokery zapisuje `blocked_by_ids`. Stare zależności zapisane tylko prozą przenosi do relacji jednorazowa migracja danych `make backfill-dependencies` (dry-run; zapis: `make backfill-dependencies ARGS=--apply`) - dyspozytor jej nie uruchamia. Bloker jest zamknięty wyłącznie przy statusie `done`; każdy inny (`backlog`, `todo`, `in_progress`, `in_review`) to **niezamknięty bloker** - także `in_review`, bo review to nie merge. Kandydat z co najmniej jednym niezamkniętym blokerem jest pominięty: nie startujesz sesji, nie zajmuje slotu, bierzesz następnego z kolejki. Brak sekcji, same linie `Blokuje:` albo wszystkie blokery `done` - kandydat przechodzi dalej. Pominięty ticket nie wchodzi do `S` i zostaje w `remaining` (nadal jest pracą do zrobienia, skrypt stanu liczy tam każdy werdykt `free`); następny tick sprawdzi go ponownie, więc po zamknięciu blokera wystartuje bez niczyjej interwencji. Komentarza na tickecie nie dopisujesz - pominięcie powtarza się w każdym ticku i zaśmieciłoby ticket; ślad jest w raporcie (KROK 5), z powodem `czeka na merge <KEY-B>`.
 
 WHY: sesja `work` wystartowana przy blokerze w `in_review` merguje do swojego brancha cudzy, niezmergowany branch, a jej MR niesie cudze commity (MON-150 i MON-152 zmergowały `worktree-MON-149` / `worktree-MON-150`).
 

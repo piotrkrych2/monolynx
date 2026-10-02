@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Podbij glowny url/sha256 formuly Homebrew monolynx.rb na podstawie tagu wydania (MON-138).
+"""Podbij formule Homebrew monolynx.rb na podstawie tagu wydania (MON-138, MON-231).
 
 Wywolywany przez job CI `bump-homebrew` (stage `publish`, ten sam warunek co
 `publish-pypi`: tag `cli-v<wersja>`) po opublikowaniu sdista na PyPI. Zrodlem
 prawdy o url/sha256 sdista jest sam PyPI (endpoint per-wersja), nie lokalny
 build - `publish-pypi` juz przeslal ten dokladny plik, wiec jego metadane sa
-tym, co uzytkownik faktycznie pobierze. Bloki `resource` (zaleznosci
-przechodnie) sa poza zakresem tego skryptu - reguluje je osobno
-`brew update-python-resources`, uruchamiane po tym skrypcie w tym samym
-jobie CI.
+tym, co uzytkownik faktycznie pobierze.
+
+Bez `--pip-report` skrypt podbija tylko glowny url/sha256. Z `--pip-report PATH`
+(raport `pip install --dry-run --ignore-installed --report`, wygenerowany dla
+tej samej wersji paczki) po podbiciu glownego url/sha256 przepisuje tez bloki
+`resource` (zaleznosci przechodnie): lista paczek i wersji pochodzi z raportu,
+url/sha256 sdista kazdej zaleznosci z PyPI JSON API. Homebrew nie jest
+potrzebny. Formula jest zapisywana dopiero po zebraniu wszystkich danych.
 
 Modul eksportuje:
     PYPI_JSON_URL = "https://pypi.org/pypi/{package}/{version}/json"
@@ -18,14 +22,18 @@ Modul eksportuje:
     fetch_metadata(package, version, *, attempts=5, delay=10.0,
                     urlopen=..., sleep=...) -> dict
     update_formula(text, url, sha256) -> str
+    normalize_name(name) -> str
+    resources_from_report(report, main_package) -> list[tuple[str, str]]
+    render_resources(resources) -> str
+    replace_resources(text, rendered) -> str
     main(argv=None) -> int
 
 Kody wyjscia main(): 0 OK; 2 BumpError (komunikat na stderr, plik formuly
 NIETKNIETY); 64 blad uzycia CLI (brak/nieznany argument). Po sukcesie jedna
-linia na stdout: wersja, url, sha256.
+linia na stdout: wersja, url, sha256; z `--pip-report` druga linia
+`resources <N>` (liczba zapisanych blokow resource).
 
-Zero zaleznosci spoza biblioteki standardowej - skrypt dziala w obrazie CI
-Homebrew, gdzie nic poza systemowym Pythonem nie jest zagwarantowane.
+Zero zaleznosci spoza biblioteki standardowej.
 """
 
 from __future__ import annotations
@@ -52,9 +60,14 @@ _TAG_RE = re.compile(r"^cli-v(\d+\.\d+\.\d+)$")
 _MAIN_URL_RE = re.compile(r'^  url "([^"]*)"\n', re.MULTILINE)
 _MAIN_SHA256_RE = re.compile(r'^  sha256 "([^"]*)"\n', re.MULTILINE)
 
+# Bloki `resource` maja to samo wciecie (2 spacje), a ich zamkniecie to `  end`
+# wciete tak samo - `end` wciety glebiej nalezy do wnetrza bloku.
+_RESOURCE_START_RE = re.compile(r'^  resource "', re.MULTILINE)
+_BLOCK_END_RE = re.compile(r"^  end\n", re.MULTILINE)
+
 
 class BumpError(Exception):
-    """Blad tresci wejscia: tag, metadane PyPI albo formula (kod wyjscia 2)."""
+    """Blad tresci wejscia: tag, metadane PyPI, raport pip albo formula (kod wyjscia 2)."""
 
 
 class _UsageError(Exception):
@@ -163,19 +176,104 @@ def update_formula(text: str, url: str, sha256: str) -> str:
     return updated
 
 
+def normalize_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _parse_report(report: Any, main_package: str) -> tuple[str, list[tuple[str, str]]]:
+    if not isinstance(report, dict):
+        raise BumpError("raport pip: oczekiwano obiektu JSON na najwyzszym poziomie")
+    install = report.get("install")
+    if not isinstance(install, list):
+        raise BumpError("raport pip: brak klucza 'install' (lista)")
+
+    main_name = normalize_name(main_package)
+    seen: dict[str, str] = {}
+    for index, element in enumerate(install):
+        # Kazdy element 'install' walidowany osobno (nie tylko korzen) -
+        # .claude/rules/input-boundary-elements.md.
+        if not isinstance(element, dict):
+            raise BumpError(f"raport pip: install[{index}] nie jest obiektem JSON")
+        metadata = element.get("metadata")
+        if not isinstance(metadata, dict):
+            raise BumpError(f"raport pip: install[{index}] bez obiektu 'metadata'")
+        name, version = metadata.get("name"), metadata.get("version")
+        if not isinstance(name, str) or not name or not isinstance(version, str) or not version:
+            raise BumpError(f"raport pip: install[{index}] z pustym albo niepoprawnym metadata.name/version")
+        normalized = normalize_name(name)
+        if normalized in seen:
+            raise BumpError(f"raport pip: duplikat paczki '{normalized}' (install[{index}])")
+        seen[normalized] = version
+
+    if main_name not in seen:
+        raise BumpError(f"raport pip: brak paczki glownej '{main_name}' w 'install'")
+    main_version = seen.pop(main_name)
+    if not seen:
+        raise BumpError("raport pip: po odjeciu paczki glownej nie zostala zadna zaleznosc")
+    return main_version, sorted(seen.items())
+
+
+def resources_from_report(report: dict, main_package: str) -> list[tuple[str, str]]:
+    return _parse_report(report, main_package)[1]
+
+
+def render_resources(resources: list[tuple[str, str, str]]) -> str:
+    blocks = [f'  resource "{name}" do\n    url "{url}"\n    sha256 "{sha256}"\n  end\n' for name, url, sha256 in resources]
+    return "\n".join(blocks)
+
+
+def replace_resources(text: str, rendered: str) -> str:
+    starts = list(_RESOURCE_START_RE.finditer(text))
+    if not starts:
+        raise BumpError("formula: brak blokow 'resource' (wciecie dokladnie 2 spacje)")
+    end_match = _BLOCK_END_RE.search(text, starts[-1].end())
+    if end_match is None:
+        raise BumpError("formula: ostatni blok 'resource' bez zamykajacego 'end'")
+    return text[: starts[0].start()] + rendered + text[end_match.end() :]
+
+
 def _read_formula(path: Path) -> str:
     if not path.is_file():
         raise BumpError(f"nie znaleziono pliku formuly '{path}'")
     return path.read_text(encoding="utf-8")
 
 
+def _read_report(path: Path) -> Any:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BumpError(f"nie mozna odczytac raportu pip '{path}': {exc}") from exc
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        raise BumpError(f"raport pip '{path}': niepoprawny JSON: {exc}") from exc
+
+
+def _collect_resources(report: Any, package: str, version: str) -> list[tuple[str, str, str]]:
+    main_version, dependencies = _parse_report(report, package)
+    if main_version != version:
+        raise BumpError(f"raport pip: wersja paczki glownej ({main_version!r}) != wersja z tagu ({version!r})")
+    triples = []
+    for name, dep_version in dependencies:
+        try:
+            url, sha256 = sdist_from_metadata(fetch_metadata(name, dep_version), dep_version)
+        except BumpError as exc:
+            raise BumpError(f"zaleznosc {name} {dep_version}: {exc}") from exc
+        triples.append((name, url, sha256))
+    return triples
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _ArgumentParser(
         prog="bump_formula.py",
-        description="Zaktualizuj glowny url/sha256 formuly Homebrew na podstawie tagu wydania monolynx-cli.",
+        description="Podbij glowny url/sha256 formuly Homebrew wg tagu wydania monolynx-cli; z --pip-report przepisz tez bloki resource.",
     )
     parser.add_argument("--tag", required=True, help="tag wydania, np. cli-v1.2.3")
     parser.add_argument("--formula", required=True, help="sciezka do pliku formuly .rb")
+    parser.add_argument(
+        "--pip-report",
+        help="raport `pip install --dry-run --ignore-installed --report` tej wersji; przepisuje bloki resource formuly",
+    )
     parser.add_argument("--package", default="monolynx-cli", help="nazwa paczki PyPI (domyslnie monolynx-cli)")
 
     try:
@@ -192,12 +290,19 @@ def main(argv: list[str] | None = None) -> int:
         metadata = fetch_metadata(args.package, version)
         url, sha256 = sdist_from_metadata(metadata, version)
         updated_text = update_formula(original_text, url, sha256)
+        resource_count = None
+        if args.pip_report is not None:
+            resources = _collect_resources(_read_report(Path(args.pip_report)), args.package, version)
+            updated_text = replace_resources(updated_text, render_resources(resources))
+            resource_count = len(resources)
     except BumpError as exc:
         print(f"bump_formula: {exc}", file=sys.stderr)
         return 2
 
     formula_path.write_text(updated_text, encoding="utf-8")
     print(f"{version} {url} {sha256}")
+    if resource_count is not None:
+        print(f"resources {resource_count}")
     return 0
 
 
