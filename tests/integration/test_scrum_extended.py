@@ -7,6 +7,7 @@ from datetime import date
 import pytest
 
 from monolynx.models.project import Project
+from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.user import User
@@ -1632,6 +1633,9 @@ class TestTicketCreateWithSprint:
 
         user_result = await db_session.execute(select(User).where(User.email == "tcs-assignee@test.com"))
         user = user_result.scalar_one()
+        # Assignee musi byc czlonkiem projektu (MON-238).
+        db_session.add(ProjectMember(project_id=project.id, user_id=user.id, role="member"))
+        await db_session.flush()
 
         resp = await client.post(
             f"/dashboard/{project.slug}/scrum/tickets/create",

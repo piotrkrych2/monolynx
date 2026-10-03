@@ -1,8 +1,11 @@
 """API v2 -- Tickets (MON-142): tickety, tablica Kanban, komentarze, kryteria
 akceptacji. Endpointy 1:1 na toole MCP odpowiadajace, wolajace services/tickets.py
 (MON-137) i (przez niego) services/ticket_dependencies.py::set_blockers dla
-blocked_by_ids. Uprawnienia -- tylko czlonkostwo przez `get_api_user_and_project`,
-bez dodatkowych check_permission (patrz sekcja 7 ticketu).
+blocked_by_ids. Uprawnienia: czlonkostwo przez `get_api_user_and_project`, a uprawnienie
+roli (scrum:read|write|delete) sprawdza kazda funkcja services/tickets.py, wiec brak
+uprawnienia wraca jako 403 przez `service_error`. Wyjatek: POST i PATCH ticketu wola
+`require_permission` scrum:write, a potem scrum:read przed zapisem, bo odpowiedz czyta
+ticket przez get_ticket po commit (rola z write bez read nie moze dostac 403 po zapisie).
 
 Trasy statyczne `/tickets/search` i `/tickets/bulk` sa rejestrowane PRZED
 `/tickets/{ticket_id}` -- inaczej FastAPI dopasowalby "search"/"bulk" jako
@@ -14,7 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
-from monolynx.api.v2.common import DEFAULT_PER_PAGE, MAX_PER_PAGE, paginate, service_error
+from monolynx.api.v2.common import DEFAULT_PER_PAGE, MAX_PER_PAGE, paginate, require_permission, service_error
 from monolynx.api.v2.deps import get_api_user_and_project
 from monolynx.database import get_db
 from monolynx.models.project import Project
@@ -40,6 +43,7 @@ from monolynx.schemas.api_v2.ticket import (
     TicketCreateRequest,
     TicketDetailResponse,
     TicketListItem,
+    TicketListItemCompact,
     TicketRelationItem,
     TicketSearchItem,
     TicketUpdateRequest,
@@ -62,6 +66,7 @@ def _ticket_list_item(ticket: Ticket, project_code: str) -> TicketListItem:
         assignee_email=ticket.assignee.email if ticket.assignee else None,
         due_date=ticket.due_date.isoformat() if ticket.due_date else None,
         label_ids=[str(lb.id) for lb in ticket.labels],
+        blocked_by=[_ticket_relation_item(t, project_code) for t in ticket.blocked_by],
         created_via_ai=ticket.created_via_ai,
         created_at=ticket.created_at.isoformat(),
         updated_at=ticket.updated_at.isoformat(),
@@ -110,7 +115,7 @@ def _ticket_detail(ticket: Ticket, project_code: str) -> TicketDetailResponse:
         comments=[_comment_response(c, c.author.email) for c in ticket.comments],
         attachments=[_attachment_response(a) for a in ticket.attachments],
         acceptance_criteria=[_criterion_response(c) for c in ticket.acceptance_criteria],
-        blocked_by=[_ticket_relation_item(t, project_code) for t in ticket.blocked_by],
+        spec_page_id=str(ticket.spec_page_id) if ticket.spec_page_id else None,
         blocks=[_ticket_relation_item(t, project_code) for t in ticket.blocking],
     )
 
@@ -120,7 +125,10 @@ def _ticket_detail(ticket: Ticket, project_code: str) -> TicketDetailResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/projects/{project_slug}/tickets", response_model=PaginatedResponse[TicketListItem])
+@router.get(
+    "/projects/{project_slug}/tickets",
+    response_model=PaginatedResponse[TicketListItem] | PaginatedResponse[TicketListItemCompact],
+)
 async def list_tickets_endpoint(
     project_slug: str,
     status: str | None = None,
@@ -131,10 +139,11 @@ async def list_tickets_endpoint(
     due_date_after: str | None = None,
     overdue: bool = False,
     label_id: str | None = None,
+    compact: bool = False,
     page: int = Query(1, ge=1),
     user_project: tuple[User, Project] = Depends(get_api_user_and_project),
     db: AsyncSession = Depends(get_db),
-) -> PaginatedResponse[TicketListItem]:
+) -> PaginatedResponse[TicketListItem] | PaginatedResponse[TicketListItemCompact]:
     user, project = user_project
     try:
         result = await tickets_service.list_tickets(
@@ -155,6 +164,11 @@ async def list_tickets_endpoint(
         raise service_error(exc) from exc
 
     items = [_ticket_list_item(t, project.code) for t in result.tickets]
+    if compact:
+        compact_items = [TicketListItemCompact(**item.model_dump(exclude={"description"})) for item in items]
+        return PaginatedResponse[TicketListItemCompact](
+            items=compact_items, page=result.page, per_page=20, total=result.total, total_pages=result.total_pages
+        )
     return PaginatedResponse[TicketListItem](items=items, page=result.page, per_page=20, total=result.total, total_pages=result.total_pages)
 
 
@@ -258,6 +272,9 @@ async def create_ticket_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> TicketDetailResponse:
     user, project = user_project
+    # write pierwszy (ten sam komunikat co MCP), read przed zapisem: odpowiedz czyta ticket przez get_ticket
+    await require_permission(db, user, project, "scrum", "write")
+    await require_permission(db, user, project, "scrum", "read")
     try:
         create_result = await tickets_service.create_ticket(
             db,
@@ -295,6 +312,9 @@ async def update_ticket_endpoint(
 ) -> TicketDetailResponse:
     user, project = user_project
     fields = body.model_dump(exclude_unset=True)
+    # write pierwszy (ten sam komunikat co MCP), read przed zapisem: odpowiedz czyta ticket przez get_ticket
+    await require_permission(db, user, project, "scrum", "write")
+    await require_permission(db, user, project, "scrum", "read")
     try:
         ticket = await tickets_service.update_ticket(db, user, project, ticket_id, **fields)
         # set_blockers zmienia ticket_dependencies bezposrednio przez SQL, nie przez
@@ -337,7 +357,10 @@ async def get_board_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> BoardResponse:
     user, project = user_project
-    result = await tickets_service.get_board(db, user, project)
+    try:
+        result = await tickets_service.get_board(db, user, project)
+    except ValueError as exc:
+        raise service_error(exc) from exc
     sprint_response = SprintResponse.from_domain(result.sprint) if result.sprint else None
     columns = {col: [BoardTicketItem.model_validate(item) for item in items] for col, items in result.columns.items()}
     return BoardResponse(sprint=sprint_response, columns=columns)

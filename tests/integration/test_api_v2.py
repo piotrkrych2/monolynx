@@ -15,6 +15,7 @@ nie problem+json.
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -169,11 +170,26 @@ class TestPrefixBoundaryOnMainApp:
 
 
 class TestErrorFormatOutsideV2Unchanged:
-    async def test_api_v1_404_stays_fastapi_json(self, client):
+    @staticmethod
+    async def _make_project(db_session) -> Project:
+        project = Project(
+            name="MON-236 v1 error format",
+            slug=f"mon236-v1-{secrets.token_hex(3)}",
+            code="V" + secrets.token_hex(4).upper(),
+            api_key=secrets.token_urlsafe(32),
+            is_active=True,
+        )
+        db_session.add(project)
+        await db_session.flush()
+        return project
+
+    async def test_api_v1_404_stays_fastapi_json(self, client, db_session):
+        project = await self._make_project(db_session)
         random_issue_id = uuid.uuid4()
         response = await client.patch(
             f"/api/v1/issues/{random_issue_id}/status",
             json={"status": "resolved"},
+            headers={"X-Monolynx-Key": project.api_key},
         )
 
         assert response.status_code == 404
@@ -183,10 +199,13 @@ class TestErrorFormatOutsideV2Unchanged:
         assert "title" not in body
         assert "type" not in body
 
-    async def test_api_v1_path_param_validation_error_stays_fastapi_json(self, client):
+    async def test_api_v1_path_param_validation_error_stays_fastapi_json(self, client, db_session):
+        # Auth to dependency, wiec poswiadczenia sa sprawdzane przed bledem walidacji sciezki.
+        project = await self._make_project(db_session)
         response = await client.patch(
             "/api/v1/issues/not-a-uuid/status",
             json={"status": "resolved"},
+            headers={"X-Monolynx-Key": project.api_key},
         )
 
         assert response.status_code == 422

@@ -26,6 +26,7 @@
                 pattern="[A-Z][A-Z0-9]{1,9}"
                 maxlength="10"
                 class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white uppercase focus:outline-none focus:border-indigo-500">
+            <p id="project-code-status" class="text-xs mt-1 hidden" aria-live="polite"></p>
             <p class="text-xs text-gray-500 mt-1">Wielkie litery i cyfry, 2-10 znakow (np. PIM, LEP). Uzywany w numeracji ticketow (PIM-1, PIM-99).</p>
         </div>
         <div>
@@ -34,6 +35,7 @@
                 id="project-slug"
                 pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
                 class="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+            <p id="project-slug-status" class="text-xs mt-1 hidden" aria-live="polite"></p>
             <p class="text-xs text-gray-500 mt-1">Tylko male litery, cyfry i myslniki (np. moj-projekt)</p>
         </div>
         <button type="submit"
@@ -48,20 +50,115 @@
 </div>
 
 <script>
-document.getElementById('project-name').addEventListener('input', function() {
-    const code = this.value
-        .replace(/[^a-zA-Z]/g, '')
-        .substring(0, 3)
-        .toUpperCase();
-    document.getElementById('project-code').value = code;
+(function() {
+    const DEBOUNCE_MS = 300;
+    const STATUS_CLASSES = {
+        ok: ['text-green-600', 'dark:text-green-400'],
+        warn: ['text-amber-600', 'dark:text-amber-400'],
+        error: ['text-red-600', 'dark:text-red-400'],
+    };
+    const fields = {
+        slug: {
+            input: document.getElementById('project-slug'),
+            status: document.getElementById('project-slug-status'),
+            normalize: function(v) { return v.trim().toLowerCase(); },
+            label: 'Slug',
+            invalid: 'Nieprawidłowy format sluga',
+            ok: '✓ Slug dostępny',
+        },
+        code: {
+            input: document.getElementById('project-code'),
+            status: document.getElementById('project-code-status'),
+            normalize: function(v) { return v.trim().toUpperCase(); },
+            label: 'Kod',
+            invalid: 'Nieprawidłowy format kodu',
+            ok: '✓ Kod dostępny',
+        },
+    };
 
-    const slug = this.value
-        .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '')
-        .trim()
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-');
-    document.getElementById('project-slug').value = slug;
-});
+    // Wartości wpisane przez użytkownika lub wyrenderowane przez serwer (po błędzie POST) są ustalone.
+    Object.values(fields).forEach(function(f) {
+        f.touched = f.input.value.trim() !== '';
+        f.requestId = 0;
+        f.timer = null;
+    });
+
+    function setStatus(f, kind, text) {
+        f.status.className = 'text-xs mt-1';
+        if (!kind) {
+            f.status.classList.add('hidden');
+            f.status.textContent = '';
+            return;
+        }
+        STATUS_CLASSES[kind].forEach(function(c) { f.status.classList.add(c); });
+        f.status.textContent = text;
+    }
+
+    function check(key) {
+        const f = fields[key];
+        const value = f.normalize(f.input.value);
+        const requestId = ++f.requestId;
+        if (!value) {
+            setStatus(f, null);
+            return;
+        }
+        fetch('/dashboard/create-project/check?' + key + '=' + encodeURIComponent(value), {
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin',
+        })
+            .then(function(resp) { return resp.ok ? resp.json() : null; })
+            .then(function(data) {
+                // Odpowiedź po kolejnej zmianie pola jest nieaktualna.
+                if (requestId !== f.requestId || !data || !data[key]) return;
+                const res = data[key];
+                if (!res.valid) {
+                    setStatus(f, 'error', f.invalid);
+                } else if (res.available) {
+                    setStatus(f, 'ok', f.ok);
+                } else if (res.suggestion) {
+                    // Programowe ustawienie value nie wywołuje zdarzenia input, więc nie ma pętli sprawdzeń ani touched.
+                    f.input.value = res.suggestion;
+                    setStatus(f, 'warn', f.label + ' „' + res.value + '” był zajęty, proponujemy „' + res.suggestion + '”.');
+                } else {
+                    setStatus(f, 'error', f.label + ' „' + res.value + '” jest zajęty.');
+                }
+            })
+            .catch(function() {});
+    }
+
+    function schedule(key) {
+        const f = fields[key];
+        f.requestId++;
+        clearTimeout(f.timer);
+        f.timer = setTimeout(function() { check(key); }, DEBOUNCE_MS);
+    }
+
+    Object.keys(fields).forEach(function(key) {
+        const f = fields[key];
+        f.input.addEventListener('input', function() {
+            f.touched = f.input.value.trim() !== '';
+            schedule(key);
+        });
+    });
+
+    document.getElementById('project-name').addEventListener('input', function() {
+        if (!fields.code.touched) {
+            fields.code.input.value = this.value
+                .replace(/[^a-zA-Z]/g, '')
+                .substring(0, 3)
+                .toUpperCase();
+            schedule('code');
+        }
+        if (!fields.slug.touched) {
+            fields.slug.input.value = this.value
+                .toLowerCase()
+                .replace(/[^a-z0-9\s-]/g, '')
+                .trim()
+                .replace(/\s+/g, '-')
+                .replace(/-+/g, '-');
+            schedule('slug');
+        }
+    });
+})();
 </script>
 {% endblock %}

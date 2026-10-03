@@ -1,0 +1,25 @@
+# command: monolynx ticket list --help
+# tool_version: monolynx 0.2.0 (drzewo zrodel, MON-247, niewydane)
+# captured: 2026-10-03
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                                                                                                                                        
+ Usage: monolynx ticket list [OPTIONS]                                                                                                                                                                  
+                                                                                                                                                                                                        
+ Wypisz tickety projektu z filtrami; każdy ticket niesie blokery (blocked_by), z --compact bez opisów.                                                                                                  
+                                                                                                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --status            <str>  Filtr statusu.                                                                                                                                                            │
+│ --priority          <str>  Filtr priorytetu.                                                                                                                                                         │
+│ --search            <str>  Fraza w tytule ticketu (szerzej szuka ticket search).                                                                                                                     │
+│ --sprint            <str>  ID sprintu.                                                                                                                                                               │
+│ --due-before        <str>  Termin do dnia (RRRR-MM-DD).                                                                                                                                              │
+│ --due-after         <str>  Termin od dnia (RRRR-MM-DD).                                                                                                                                              │
+│ --overdue                  Tylko przeterminowane.                                                                                                                                                    │
+│ --label             <str>  ID etykiety.                                                                                                                                                              │
+│ --page              <int>  Numer strony wyników.                                                                                                                                                     │
+│ --compact                  Lista bez opisów ticketów (pole description pominięte).                                                                                                                   │
+│ --help                     Show this message and exit.                                                                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+# exit: 0

@@ -111,4 +111,4 @@ class TestCreateProjectOwner:
             follow_redirects=False,
         )
         assert resp.status_code == 200
-        assert "juz istnieje" in resp.text
+        assert "Slug „dup-owner” jest zajęty, proponujemy „dup-owner-2”." in resp.text

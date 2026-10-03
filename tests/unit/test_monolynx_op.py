@@ -6,33 +6,47 @@ Kontrakt wrappera (stdlib, Python 3.10+):
   flagi to DOKLADNE nazwy parametrow toola MCP z podkresleniami (`--project_slug`, `--ticket_id`).
 - Modul eksponuje: `OPS` (dict: nazwa op -> opis mapowania, struktura wewnetrzna dowolna),
   `READ_OPS` (set/frozenset nazw op tylko-odczyt, podzbior kluczy `OPS`, wylacznie nazwy
-  zaczynajace sie od `get_`, `list_`, `search_`), `main(argv: list[str] | None = None) -> int`.
+  zaczynajace sie od `get_`, `list_`, `search_`, `query_`, `find_`), `main(argv: list[str] | None = None) -> int`.
 - CLI wolane DOKLADNIE jako `monolynx -o json --project <project_slug> <grupa> <komenda> ...`:
   pozycyjne argumenty zaraz po komendzie, potem flagi w kolejnosci wystepowania parametrow w
   wywolaniu wrappera. Wrapper przekazuje tylko podane parametry (zadnych wartosci domyslnych).
 - Mapowanie parametrow (zob. tabela SCENARIOS nizej): `content` w `add_comment` -> `--body -`;
   `description` (create/update_ticket) -> `--description -`; `content` (create/update_wiki_page)
   -> `--content -`; w tych przypadkach tresc idzie na stdin CLI (nie w argv). `sprint_id` -> `--sprint`
-  (w `complete_sprint` i `get_burndown` pozycyjnie), `assignee_email` -> `--assignee`, `due_date` ->
+  (w `complete_sprint`, `get_burndown`, `start_sprint`, `get_sprint` i `update_sprint` pozycyjnie;
+  w `start_sprint`, `get_sprint`, `update_sprint` wymagany), `name` -> `--name`, `goal` -> `--goal`
+  (zwykla opcja w argv, nie stdin: CLI nie przyjmuje `--goal -`; wartosc `-` albo `@plik` wrapper
+  rozwija do tresci przed zbudowaniem argv), `start_date` -> `--start`, `end_date` -> `--end`
+  (`create_sprint` wymaga `name` i `start_date`), `assignee_email` -> `--assignee`, `due_date` ->
   `--due`, `due_date_before|due_before` -> `--due-before`, `due_date_after|due_after` -> `--due-after`,
   `story_points` -> `--sp`, `label_id` -> `--label`, `spec_page_id` -> `--spec-page`, `parent_id` ->
   `--parent`, `acceptance_criteria` -> powtarzane `--ac`, `label_ids` -> powtarzane `--label`,
   `blocked_by_ids` -> powtarzane `--blocked-by` (pusta lista -> `--no-blockers`), `overdue=true` ->
-  `--overdue` (false -> brak flagi), `is_completed` -> `--done` / `--not-done`, `is_public` ->
-  `--public` / `--no-public`. Listy w jednej wartosci jako tablica JSON.
+  `--overdue` (false -> brak flagi), `compact=true` (`list_tickets`) -> `--compact` i `brief=true`
+  (`create_ticket`, `update_ticket`) -> `--brief` (false -> brak flagi; to parametry wrappera, nie toola
+  MCP), `is_completed` -> `--done` / `--not-done`, `is_public` -> `--public` / `--no-public`.
+  Graf (MON-248, tylko odczyty): `list_graph_nodes` -> `graph nodes` z `type|search|limit` -> `--type|--search|--limit`,
+  `get_graph_node` -> `graph node <node_id>` z `depth` -> `--depth`, `relation_types` -> powtarzane `--relation-type`,
+  `node_types` -> powtarzane `--node-type`, `query_graph` -> `graph query` z `node_type` -> `--node-type`,
+  `find_graph_path` -> `graph path` z `source_id|target_id` -> `--source-id|--target-id`, `get_graph_stats` -> `graph stats`;
+  narzedzia zapisu grafu (w tym `replace_graph`) nie maja komendy CLI i zawsze daja fallback.
+  Listy w jednej wartosci jako tablica JSON.
 - Wartosc parametru `-` = czytaj ze stdin wrappera, `@<sciezka>` = czytaj z pliku (UTF-8).
 - Kody: 0 (stdout = stdout CLI bez zmian); 3 + ostatnia linia stdout `OP-FALLBACK: mcp tool=<op>`
   (powod na stderr) gdy: op bez komendy CLI albo nieznana, `MONOLYNX_TRANSPORT=mcp`, brak `monolynx`
   w PATH, CLI zwrocilo 3 albo 2, parametr bez odpowiednika w CLI (wtedy CLI nie jest wolane);
   2 gdy CLI zwrocilo 1 albo 4 (stderr CLI przekazany, stdout pusty, bez OP-FALLBACK);
   64 przy bledzie uzycia (brak op, flaga bez wartosci, zly JSON listy, zla wartosc bool,
-  stray argument pozycyjny, brak pliku `@sciezka`) - CLI nie jest wolane.
+  stray argument pozycyjny, brak pliku `@sciezka`, brak wymaganego parametru, w tym `name` albo
+  `start_date` w `create_sprint`) - CLI nie jest wolane.
 - Dokladnie jedno wywolanie CLI na operacje (bez `auth whoami`).
-- `get_ticket`: na stderr linia `OP-NOTE: ... spec_page_id ...` (CLI nie zwraca tego pola); inne op bez notki.
+- Zadna op (w tym `get_ticket`, bo API v2 niesie `spec_page_id`) nie wypisuje na stderr linii `OP-NOTE`.
 
-Atrapa `monolynx` waliduje sie wobec fixture'ow przechwyconych z realnego `monolynx 0.1.0`
+Atrapa `monolynx` waliduje sie wobec fixture'ow przechwyconych z realnego `--help`
 (`tests/fixtures/monolynx/`): komenda musi istniec w drzewie `--help`, a kazda flaga w argv w
-`<grupa> <komenda> --help` (kryterium dryfu).
+`<grupa> <komenda> --help` (kryterium dryfu). Zrodlo fixture'a: `<nazwa>-help.source.txt`
+(`--help` CLI zbudowanego z drzewa zrodel, gdy plik istnieje - flagi jeszcze niewydane), inaczej
+`<nazwa>-help.0.1.0.txt` (realny `monolynx 0.1.0`).
 """
 
 from __future__ import annotations
@@ -118,11 +132,39 @@ _RAW_SCENARIOS: list[tuple[str, str, str, str]] = [
         " --label l1 --ac 'kryterium 1' --ac 'kryterium 2' --spec-page P1 --blocked-by u1",
         "LONG_TEXT",
     ),
+    ("list_tickets", "--compact true", "ticket list --compact", ""),
+    ("list_tickets", "--status todo --compact true --page 2", "ticket list --status todo --compact --page 2", ""),
+    ("create_ticket", "--title T --brief true", "ticket create --title T --brief", ""),
+    ("update_ticket", "--ticket_id MON-1 --brief true", "ticket update MON-1 --brief", ""),
+    ("update_ticket", "--ticket_id MON-1 --brief true --status done", "ticket update MON-1 --brief --status done", ""),
     ("get_board", "", "sprint board", ""),
     ("list_sprints", "--status active", "sprint list --status active", ""),
     ("complete_sprint", "--sprint_id S1", "sprint complete S1", ""),
     ("get_burndown", "--sprint_id S1", "sprint burndown S1", ""),
     ("get_burndown", "", "sprint burndown", ""),
+    (
+        "create_sprint",
+        "--name 'Sprint 1' --start_date 2026-10-05 --end_date 2026-10-19 --goal LONG_TEXT",
+        "sprint create --name 'Sprint 1' --start 2026-10-05 --end 2026-10-19 --goal LONG_TEXT",
+        "",
+    ),
+    ("create_sprint", "--name 'Sprint 2' --start_date 2026-10-05", "sprint create --name 'Sprint 2' --start 2026-10-05", ""),
+    (
+        "create_sprint",
+        "--goal 'cel' --end_date 2026-10-19 --start_date 2026-10-05 --name Odwrotnie",
+        "sprint create --goal cel --end 2026-10-19 --start 2026-10-05 --name Odwrotnie",
+        "",
+    ),
+    ("start_sprint", "--sprint_id S1", "sprint start S1", ""),
+    ("get_sprint", "--sprint_id S1", "sprint get S1", ""),
+    (
+        "update_sprint",
+        "--sprint_id S1 --name Nowy --goal LONG_TEXT --start_date 2026-10-06 --end_date 2026-10-20",
+        "sprint update S1 --name Nowy --goal LONG_TEXT --start 2026-10-06 --end 2026-10-20",
+        "",
+    ),
+    ("update_sprint", "--sprint_id S1 --goal 'nowy cel'", "sprint update S1 --goal 'nowy cel'", ""),
+    ("update_sprint", "--sprint_id S1 --end_date 2026-10-20", "sprint update S1 --end 2026-10-20", ""),
     ("list_acceptance_criteria", "--ticket_id MON-1", "ticket ac list MON-1", ""),
     (
         "add_acceptance_criterion",
@@ -160,10 +202,26 @@ _RAW_SCENARIOS: list[tuple[str, str, str, str]] = [
         "LONG_TEXT",
     ),
     ("get_wiki_config", "", "wiki config get", ""),
+    ("list_graph_nodes", "--type File --search foo --limit 5", "graph nodes --type File --search foo --limit 5", ""),
+    ("list_graph_nodes", "", "graph nodes", ""),
+    (
+        "get_graph_node",
+        "--node_id abc --depth 2 --relation_types RELATIONS_CALLS_IMPORTS --node_types NODE_TYPES_CLASS",
+        "graph node abc --depth 2 --relation-type CALLS --relation-type IMPORTS --node-type Class",
+        "",
+    ),
+    ("get_graph_node", "--node_id abc", "graph node abc", ""),
+    ("get_graph_node", "--node_id abc --relation_types EMPTY_LIST --node_types EMPTY_LIST", "graph node abc", ""),
+    ("query_graph", "--node_type Class --search foo --limit 10", "graph query --node-type Class --search foo --limit 10", ""),
+    ("query_graph", "", "graph query", ""),
+    ("find_graph_path", "--source_id a --target_id b", "graph path --source-id a --target-id b", ""),
+    ("get_graph_stats", "", "graph stats", ""),
 ]
 
 
 _TOKEN_VALUES = {
+    "RELATIONS_CALLS_IMPORTS": '["CALLS", "IMPORTS"]',
+    "NODE_TYPES_CLASS": '["Class"]',
     "LONG_TEXT": LONG,
     "QUOTED_TEXT": 'Kryterium z "cudzysłowem"',
     "LABELS_A1_B2": '["a1", "b2"]',
@@ -185,16 +243,19 @@ SCENARIOS: list[tuple[str, list[str], list[str], str]] = [
 SCENARIO_IDS = [f"{op}-{index}" for index, (op, *_rest) in enumerate(SCENARIOS)]
 SCENARIO_OPS = {op for op, *_rest in SCENARIOS}
 
-# Op bez komendy CLI (zawsze fallback): 15 z 35 uzywanych w skillach + reszta modulow bez v2.
+# Op bez komendy CLI (zawsze fallback): pipelines, LLM Wiki, czas pracy oraz zapis grafu (robi go tylko synchronizacja przez MCP).
 NO_CLI_OPS = shlex.split(
-    "update_pipeline_job create_pipeline_job append_job_log log_time query_graph finish_pipeline append_wiki_log"
-    " regenerate_wiki_index create_pipeline lint_wiki get_graph_stats get_graph_node list_graph_nodes clean_pipeline_logs"
+    "update_pipeline_job create_pipeline_job append_job_log log_time finish_pipeline append_wiki_log"
+    " regenerate_wiki_index create_pipeline lint_wiki clean_pipeline_logs"
     " bootstrap_wiki_llm get_pipeline list_pipelines get_pipeline_job_log get_work_report get_wiki_backlinks replace_graph"
+    " create_graph_node delete_graph_node create_graph_edge delete_graph_edge bulk_create_graph_nodes bulk_create_graph_edges"
     " totally_unknown_tool"
 )
 
+GRAPH_READ_OPS = frozenset({"list_graph_nodes", "get_graph_node", "query_graph", "find_graph_path", "get_graph_stats"})
+
 # Prefiks nazwy op -> czy odczyt (kontrakt READ_OPS).
-READ_PREFIXES = ("get_", "list_", "search_")
+READ_PREFIXES = ("get_", "list_", "search_", "query_", "find_")
 
 
 class Env:
@@ -252,8 +313,10 @@ def load_module():
 
 
 def fixture_text(name: str) -> str:
-    path = FIXTURES / f"{name}-help.0.1.0.txt"
-    assert path.exists(), f"brak fixture {path.name}"
+    path = FIXTURES / f"{name}-help.source.txt"
+    if not path.exists():
+        path = FIXTURES / f"{name}-help.0.1.0.txt"
+    assert path.exists(), f"brak fixture {name}-help.source.txt ani {name}-help.0.1.0.txt"
     return "\n".join(line for line in path.read_text(encoding="utf-8").splitlines() if not line.startswith("# "))
 
 
@@ -270,11 +333,11 @@ def has_subcommands(path: list[str]) -> bool:
 
 def assert_argv_matches_real_cli(tail: list[str]) -> None:
     """Komenda istnieje w drzewie `--help`, a kazda flaga z argv wystepuje w `--help` tej komendy."""
-    assert tail[0] in listed_commands([]), f"grupa {tail[0]} nie istnieje w CLI 0.1.0"
+    assert tail[0] in listed_commands([]), f"grupa {tail[0]} nie istnieje w drzewie --help fixture'ow (source albo 0.1.0)"
     path = [tail[0]]
     while has_subcommands(path):
         child = tail[len(path)]
-        assert child in listed_commands(path), f"komenda {' '.join([*path, child])} nie istnieje w CLI 0.1.0"
+        assert child in listed_commands(path), f"komenda {' '.join([*path, child])} nie istnieje w drzewie --help fixture'ow (source albo 0.1.0)"
         path.append(child)
     help_text = fixture_text("-".join(path))
     for token in tail[len(path) :]:
@@ -305,6 +368,28 @@ class TestModuleContract:
         assert module.READ_OPS, "READ_OPS puste"
         offenders = sorted(op for op in module.READ_OPS if not op.startswith(READ_PREFIXES))
         assert offenders == []
+
+    def test_graph_read_ops_are_mapped_and_marked_read_only(self):
+        module = load_module()
+
+        assert set(module.OPS) >= GRAPH_READ_OPS, sorted(GRAPH_READ_OPS - set(module.OPS))
+        assert set(module.READ_OPS) >= GRAPH_READ_OPS, sorted(GRAPH_READ_OPS - set(module.READ_OPS))
+
+    def test_graph_write_ops_are_not_mapped_nor_read_only(self):
+        module = load_module()
+        graph_writes = {op for op in NO_CLI_OPS if "graph" in op}
+
+        assert graph_writes == {
+            "replace_graph",
+            "create_graph_node",
+            "delete_graph_node",
+            "create_graph_edge",
+            "delete_graph_edge",
+            "bulk_create_graph_nodes",
+            "bulk_create_graph_edges",
+        }
+        assert graph_writes.isdisjoint(module.OPS)
+        assert graph_writes.isdisjoint(module.READ_OPS)
 
     def test_read_ops_is_subset_of_ops(self):
         module = load_module()
@@ -362,6 +447,58 @@ class TestOpToArgvMapping:
 
         assert sandbox.entries()[0]["argv"] == [*PREFIX, "ticket", "list", "--status", "todo"]
 
+    @pytest.mark.parametrize(
+        ("op", "params", "flag", "expected_tail"),
+        [
+            ("list_tickets", ["--status", "todo"], "--compact", ["ticket", "list", "--status", "todo"]),
+            ("create_ticket", ["--title", "T"], "--brief", ["ticket", "create", "--title", "T"]),
+            ("update_ticket", ["--ticket_id", "MON-1", "--status", "done"], "--brief", ["ticket", "update", "MON-1", "--status", "done"]),
+        ],
+        ids=["list_tickets-compact", "create_ticket-brief", "update_ticket-brief"],
+    )
+    def test_compact_and_brief_false_omit_flag(self, sandbox, op, params, flag, expected_tail):
+        sandbox.install_cli()
+
+        sandbox.run(op, *SLUG, flag, "false", *params)
+
+        assert sandbox.entries()[0]["argv"] == [*PREFIX, *expected_tail]
+
+    @pytest.mark.parametrize(
+        ("op", "params", "expected_tail"),
+        [
+            ("list_tickets", ["--status", "todo"], ["ticket", "list", "--status", "todo"]),
+            ("create_ticket", ["--title", "T"], ["ticket", "create", "--title", "T"]),
+            ("update_ticket", ["--ticket_id", "MON-1", "--status", "done"], ["ticket", "update", "MON-1", "--status", "done"]),
+        ],
+        ids=["list_tickets", "create_ticket", "update_ticket"],
+    )
+    def test_compact_and_brief_are_not_enabled_by_default(self, sandbox, op, params, expected_tail):
+        sandbox.install_cli()
+
+        sandbox.run(op, *SLUG, *params)
+
+        assert sandbox.entries()[0]["argv"] == [*PREFIX, *expected_tail]
+
+    @pytest.mark.parametrize(
+        ("op", "params"),
+        [
+            ("get_ticket", ["--ticket_id", "MON-1", "--brief", "true"]),
+            ("create_ticket", ["--title", "T", "--compact", "true"]),
+            ("update_ticket", ["--ticket_id", "MON-1", "--compact", "true"]),
+            ("list_tickets", ["--brief", "true"]),
+            ("search_tickets", ["--query", "x", "--compact", "true"]),
+        ],
+        ids=["get_ticket-brief", "create_ticket-compact", "update_ticket-compact", "list_tickets-brief", "search_tickets-compact"],
+    )
+    def test_compact_or_brief_on_op_that_does_not_know_it_gives_fallback_without_calling_cli(self, sandbox, op, params):
+        sandbox.install_cli()
+
+        result = sandbox.run(op, *SLUG, *params)
+
+        assert result.returncode == 3
+        assert result.stdout.splitlines()[-1] == f"OP-FALLBACK: mcp tool={op}"
+        assert sandbox.entries() == []
+
     def test_only_given_params_are_forwarded_without_defaults(self, sandbox):
         sandbox.install_cli()
 
@@ -376,14 +513,14 @@ class TestOpToArgvMapping:
 
         assert sandbox.entries()[0]["argv"][:4] == ["-o", "json", "--project", "inny-projekt"]
 
-    def test_get_ticket_notes_missing_spec_page_id_on_stderr(self, sandbox):
+    def test_get_ticket_emits_no_op_note(self, sandbox):
         sandbox.install_cli()
 
         result = sandbox.run("get_ticket", *SLUG, "--ticket_id", "MON-1")
 
-        note = [line for line in result.stderr.splitlines() if line.startswith("OP-NOTE")]
-        assert len(note) == 1
-        assert "spec_page_id" in note[0]
+        assert result.returncode == 0
+        assert result.stdout.strip()
+        assert "OP-NOTE" not in result.stderr
         assert "OP-NOTE" not in result.stdout
 
     def test_other_read_op_has_no_op_note(self, sandbox):
@@ -518,12 +655,19 @@ USAGE_ERROR_CASES = {
     "list-string": "update_ticket --project_slug monolynx --ticket_id MON-1 --label_ids '\"jeden\"'",
     "bool-invalid": "update_acceptance_criterion --project_slug monolynx --ticket_id MON-1 --criterion_id C1 --is_completed maybe",
     "bool-overdue-invalid": "list_tickets --project_slug monolynx --overdue maybe",
+    "bool-compact-invalid": "list_tickets --project_slug monolynx --compact yes",
+    "bool-brief-invalid-create": "create_ticket --project_slug monolynx --title T --brief yes",
+    "bool-brief-invalid-update": "update_ticket --project_slug monolynx --ticket_id MON-1 --brief yes",
     "missing-at-file": "update_ticket --project_slug monolynx --ticket_id MON-1 --description @/nie/istnieje/plik.md",
     "op-uppercase-hyphen": "Get-Ticket --project_slug monolynx --ticket_id MON-1",
     "op-with-space": "'get ticket' --project_slug monolynx --ticket_id MON-1",
     "op-leading-digit": "1get --project_slug monolynx",
     "flag-uppercase": "get_ticket --project_slug monolynx --Ticket_Id MON-1",
     "flag-hyphenated": "get_ticket --project_slug monolynx --ticket-id MON-1",
+    "graph-node-without-node-id": "get_graph_node --project_slug monolynx --depth 2",
+    "graph-path-without-source": "find_graph_path --project_slug monolynx --target_id b",
+    "graph-path-without-target": "find_graph_path --project_slug monolynx --source_id a",
+    "graph-path-without-both": "find_graph_path --project_slug monolynx",
     "flag-single-dash": "get_ticket --project_slug monolynx -ticket_id MON-1",
     "list-with-number": "update_ticket --project_slug monolynx --ticket_id MON-1 --label_ids '[1]'",
     "list-with-null": "update_ticket --project_slug monolynx --ticket_id MON-1 --label_ids '[\"a\", null]'",
@@ -539,6 +683,11 @@ USAGE_ERROR_CASES = {
     "missing-second-required-positional": "add_acceptance_criterion --project_slug monolynx --ticket_id MON-1",
     "missing-required-query": "search_wiki --project_slug monolynx",
     "at-file-not-utf8": "update_ticket --project_slug monolynx --ticket_id MON-1 --description @NOT_UTF8_FILE",
+    "start-sprint-missing-sprint-id": "start_sprint --project_slug monolynx",
+    "get-sprint-missing-sprint-id": "get_sprint --project_slug monolynx",
+    "update-sprint-missing-sprint-id": "update_sprint --project_slug monolynx --name Nowy",
+    "create-sprint-missing-name": "create_sprint --project_slug monolynx --start_date 2026-10-05 --end_date 2026-10-19",
+    "create-sprint-missing-start-date": "create_sprint --project_slug monolynx --name 'Sprint 1' --end_date 2026-10-19",
 }
 
 
@@ -612,6 +761,38 @@ class TestInputResolution:
         assert "OP-FALLBACK" not in captured.out
         assert sandbox.entries() == []
 
+    def test_goal_at_path_is_expanded_into_argv_and_cli_stdin_stays_empty(self, sandbox, tmp_path):
+        sandbox.install_cli()
+        goal = tmp_path / "cel.md"
+        goal.write_text("Cel sprintu: zażółć\nlinia 2 git push\n", encoding="utf-8")
+
+        result = sandbox.run("create_sprint", *SLUG, "--name", "S", "--start_date", "2026-10-05", "--goal", f"@{goal}")
+
+        assert result.returncode == 0, result.stderr
+        entry = sandbox.entries()[0]
+        assert entry["argv"] == [
+            *PREFIX,
+            "sprint",
+            "create",
+            "--name",
+            "S",
+            "--start",
+            "2026-10-05",
+            "--goal",
+            "Cel sprintu: zażółć\nlinia 2 git push\n",
+        ]
+        assert entry["stdin"] == ""
+
+    def test_goal_dash_reads_wrapper_stdin_into_argv_and_cli_stdin_stays_empty(self, sandbox):
+        sandbox.install_cli()
+
+        result = sandbox.run("update_sprint", *SLUG, "--sprint_id", "S1", "--goal", "-", stdin="cel ze stdin\nlinia 2\n")
+
+        assert result.returncode == 0, result.stderr
+        entry = sandbox.entries()[0]
+        assert entry["argv"] == [*PREFIX, "sprint", "update", "S1", "--goal", "cel ze stdin\nlinia 2\n"]
+        assert entry["stdin"] == ""
+
     def test_two_dash_params_receive_the_same_stdin_text(self, sandbox):
         sandbox.install_cli()
 
@@ -628,6 +809,9 @@ class TestInputResolution:
             ("--overdue", "TRUE", ["--overdue"]),
             ("--overdue", " true ", ["--overdue"]),
             ("--overdue", " False ", []),
+            ("--compact", "TRUE", ["--compact"]),
+            ("--compact", " true ", ["--compact"]),
+            ("--compact", " False ", []),
         ],
     )
     def test_present_bool_ignores_case_and_surrounding_spaces(self, sandbox, param, value, expected_tail):
@@ -636,6 +820,25 @@ class TestInputResolution:
         sandbox.run("list_tickets", *SLUG, param, value)
 
         assert sandbox.entries()[0]["argv"] == [*PREFIX, "ticket", "list", *expected_tail]
+
+    @pytest.mark.parametrize(
+        ("op", "params", "base_tail"),
+        [
+            ("create_ticket", ["--title", "T"], ["ticket", "create", "--title", "T"]),
+            ("update_ticket", ["--ticket_id", "MON-1"], ["ticket", "update", "MON-1"]),
+        ],
+        ids=["create_ticket", "update_ticket"],
+    )
+    @pytest.mark.parametrize(
+        ("value", "brief_tail"),
+        [("TRUE", ["--brief"]), (" true ", ["--brief"]), (" False ", [])],
+    )
+    def test_brief_bool_ignores_case_and_surrounding_spaces(self, sandbox, op, params, base_tail, value, brief_tail):
+        sandbox.install_cli()
+
+        sandbox.run(op, *SLUG, *params, "--brief", value)
+
+        assert sandbox.entries()[0]["argv"] == [*PREFIX, *base_tail, *brief_tail]
 
     @pytest.mark.parametrize(("value", "flag"), [(" false ", "--not-done"), ("FALSE", "--not-done"), (" True", "--done")])
     def test_pair_bool_ignores_case_and_surrounding_spaces(self, sandbox, value, flag):
@@ -657,6 +860,7 @@ class TestInputResolution:
         [
             ("search_wiki", ["--query", "-foo"]),
             ("get_ticket", ["--ticket_id", "-1"]),
+            ("get_graph_node", ["--node_id", "-1"]),
         ],
     )
     def test_positional_value_starting_with_dash_falls_back_without_calling_cli(self, sandbox, op, params):

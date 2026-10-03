@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/monolynx-cli)](https://pypi.org/project/monolynx-cli/)
 
-Command-line client for the Monolynx platform: manage projects, tickets, sprints and wiki pages from your terminal.
+Command-line client for the Monolynx platform: manage projects, tickets, sprints and wiki pages, and read the code dependency graph, from your terminal.
 
 ## Installation
 
@@ -125,7 +125,7 @@ monolynx auth login --endpoint https://monolynx.example.com --profile work
 - `--token` stores an API token without a browser (`auth_type = "token"`).
 - `--endpoint` and `--profile` work with both flows.
 
-The OAuth access token is valid for 30 days. Every command that calls the API keeps the session alive. `project`, `member`, `ticket`, `sprint` and `wiki` commands do it in two ways, `auth whoami` only reactively:
+The OAuth access token is valid for 30 days. Every command that calls the API keeps the session alive. `project`, `member`, `ticket`, `sprint`, `wiki` and `graph` commands do it in two ways, `auth whoami` only reactively:
 
 - Proactively (not in `auth whoami`): when the profile's `expires_at` is less than 24 hours away (or already past), the CLI refreshes the tokens once before the first request of the command and sends the request with the new access token. The server rotates the refresh token and both new tokens are saved in the profile, so regular use extends the session. If this refresh fails, the command goes on with the current token.
 - Reactively: when the server answers 401, the CLI refreshes the tokens once and repeats the request. A failed refresh ends with a message asking you to run `monolynx auth login` and exit code 3.
@@ -207,11 +207,11 @@ All `ticket` commands work on the project resolved from `--project`, `MONOLYNX_P
 
 | Command | Arguments and options | Description |
 |---|---|---|
-| `ticket list` | `--status`, `--priority`, `--search`, `--sprint`, `--due-before`, `--due-after`, `--overdue`, `--label`, `--page` | List project tickets with filters (one page). `--search` matches the title only; use `ticket search` to match the description too. |
+| `ticket list` | `--status`, `--priority`, `--search`, `--sprint`, `--due-before`, `--due-after`, `--overdue`, `--label`, `--page`, `--compact` | List project tickets with filters (one page); every ticket carries its blockers (`blocked_by`). `--compact` leaves out the ticket descriptions. `--search` matches the title only; use `ticket search` to match the description too. |
 | `ticket search` | `[query]`, `--status`, `--priority`, `--assignee`, `--sprint`, `--due-before`, `--due-after`, `--page` | Search tickets by phrase (title or description) and filters (one page). |
-| `ticket get` | `<ticket>` | Show ticket details. |
-| `ticket create` | `--title` (required), `--description`, `--description-file`, `--priority`, `--sp`/`--story-points`, `--sprint`, `--assignee`, `--due`, `--label`, `--ac`, `--spec-page`, `--blocked-by` | Create a ticket. `--label`, `--ac` and `--blocked-by` can be repeated; `--blocked-by` takes the UUID of the blocking ticket (not the key). |
-| `ticket update` | `<ticket>`, `--title`, `--description`, `--description-file`, `--status`, `--priority`, `--sp`/`--story-points`, `--sprint`, `--assignee`, `--due`, `--label`, `--blocked-by`, `--no-blockers` | Update a ticket; only the given fields are sent. `--label` and `--blocked-by` replace the current values; `--blocked-by` takes the UUID of the blocking ticket (not the key). |
+| `ticket get` | `<ticket>` | Show ticket details, including `spec_page_id` (`null` when the ticket has no spec page). |
+| `ticket create` | `--title` (required), `--description`, `--description-file`, `--priority`, `--sp`/`--story-points`, `--sprint`, `--assignee`, `--due`, `--label`, `--ac`, `--spec-page`, `--blocked-by`, `--brief` | Create a ticket. `--label`, `--ac` and `--blocked-by` can be repeated; `--blocked-by` takes the UUID of the blocking ticket (not the key). `--brief` prints only the identifying fields, status and relations. |
+| `ticket update` | `<ticket>`, `--title`, `--description`, `--description-file`, `--status`, `--priority`, `--sp`/`--story-points`, `--sprint`, `--assignee`, `--due`, `--label`, `--blocked-by`, `--no-blockers`, `--brief` | Update a ticket; only the given fields are sent. `--label` and `--blocked-by` replace the current values; `--blocked-by` takes the UUID of the blocking ticket (not the key). `--brief` prints only the identifying fields, status and relations. |
 | `ticket delete` | `<ticket>`, `-y`/`--yes` | Delete a ticket (asks for confirmation unless `--yes`). |
 | `ticket bulk-update` | `<tickets>...`, `--status`, `--priority`, `--assignee`, `--sprint`, `--due` | Update many tickets in one request. |
 | `ticket comment list` | `<ticket>` | List ticket comments (all pages, flat list). |
@@ -229,6 +229,11 @@ Notes:
 - Identifiers in the URL path (ticket, sprint, page, criterion, project slug) are URL-encoded. A bare `.` or `..` (or an empty value) is refused with exit code 2 before any request is sent.
 - `--description -` and `--body -` read the text from stdin.
 - In `ticket update` and `ticket bulk-update`, an empty string for `--sprint`, `--assignee` or `--due` clears the value.
+- `ticket list` shows blockers per ticket. With `-o json` and `-o yaml`, `blocked_by` is the full list of objects (`id`, `key`, `title`, `status`), empty when the ticket has no blockers. With `-o table` and `-o csv` it is one `blocked_by` column holding the blocker keys joined with `, ` (empty when there are none). `ticket search` results carry no `blocked_by`.
+- `ticket list` and `ticket get` check the server response before rendering. A list item without a `blocked_by` list, or ticket details without the `spec_page_id` key, end with the error `Nieprawidłowa odpowiedź serwera` and exit code 1. This happens against a server older than the CLI, which does not send these fields yet; the CLI refuses to render rather than show a ticket as having no blockers or no spec page.
+- `ticket list --compact` sends `compact=true`, and the server returns the list items without the `description` field; every other field stays, including `blocked_by`. Without the flag the parameter is not sent and the items carry `description` as before.
+- `ticket create --brief` and `ticket update --brief` print exactly seven fields, in this order: `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by`, `blocks`. The request and the server response are unchanged; the CLI filters the output. With `-o json` and `-o yaml`, `blocked_by` and `blocks` are full lists of objects (`id`, `key`, `title`, `status`); with `-o table` and `-o csv` each is one column holding the ticket keys joined with `, `, as in `ticket list`.
+- `--brief` checks the server response before rendering. A response that is not an object, has an empty or missing `id` or `key`, lacks the `title`, `status` or `sprint_id` key (`sprint_id` may be `null`), or whose `blocked_by` or `blocks` is not a list of objects with a non-empty `key` ends with the error `Nieprawidłowa odpowiedź serwera` and exit code 1. The write may already have reached the server, so check the ticket before repeating the command.
 
 ```bash
 monolynx --project my-project ticket create --title "Fix login redirect" --priority high --sp 2 --ac "Redirect keeps the next parameter"
@@ -265,6 +270,34 @@ git log -1 --format=%B | monolynx --project my-project ticket comment add MP-11 
 
 `--public` publishes the page at `/blog/{slug}`, visible to anyone without signing in. `wiki delete` has no `-y` short form. `--content -` with an empty standard input, an unreadable or non-UTF-8 `--file`, and a missing project are usage errors (exit code 2, no request sent).
 
+### `graph`
+
+Read-only commands for the code dependency graph of the Connections module. All of them work on the project resolved from `--project`, `MONOLYNX_PROJECT` or the profile, and need the `connections:read` permission.
+
+| Command | Arguments and options | Description |
+|---|---|---|
+| `graph nodes` | `--type`, `--search`, `--limit` (1 to 1000) | List graph nodes, optionally filtered by type and by a fragment of the name (case-insensitive). The server default for `--limit` is 100. |
+| `graph node` | `<node_id>`, `--depth` (min. 1, the server caps it at 5), `--relation-type`, `--node-type` | Show a node with its neighborhood: the node itself, the neighboring nodes, the edges and the depth of every node. `--relation-type` and `--node-type` can be repeated. |
+| `graph query` | `--node-type`, `--search`, `--limit` (1 to 1000) | Fetch the graph or a subgraph of the project (nodes and edges). `--search` matches a fragment of the name or file path and returns the matching nodes with their direct neighbors. The server default for `--limit` is 200. |
+| `graph path` | `--source-id` (required), `--target-id` (required) | Find the shortest path between two nodes. |
+| `graph stats` | | Show graph statistics: the number of nodes and edges, in total and per type. |
+
+Notes:
+
+- `<node_id>` is the `id` field from `graph nodes`. It may contain `/`; the CLI URL-encodes it.
+- Node types are `File`, `Class`, `Method`, `Function`, `Const` and `Module`. Relation types are `CONTAINS`, `CALLS`, `IMPORTS`, `INHERITS`, `USES` and `IMPLEMENTS`.
+- `--depth` is the neighborhood depth: at least 1, and the server caps larger values at 5 (the server default is 1). A `--depth` below 1 or a `--limit` outside 1 to 1000 (`graph nodes`, `graph query`) is a usage error: exit code 2, no request sent. Options you leave out are not sent, so the defaults stay on the server.
+- `graph nodes` prints a flat list. `graph query` and `graph path` print an object with `nodes` and `edges`; `graph node` adds `node` and `depth_map` (node id to depth). `graph stats` prints `total_nodes`, `total_edges`, `nodes_by_type` and `edges_by_type`. When there is no path, `graph path` succeeds with empty `nodes` and `edges`.
+- Every command checks the server response before rendering. A missing required field or a wrong type ends with the error `Nieprawidłowa odpowiedź serwera` and exit code 1, never with an empty result and exit code 0.
+- A project with the graph database turned off, or an unreachable graph database, ends with a 503 error (exit code 1 after the retries). An unknown node in `graph node` is a 404 (exit code 1).
+- There are no commands that write to the graph. The graph is filled by the graphify sync (`cicd/sync_graph.py`), see the Connections module in the dashboard.
+
+```bash
+monolynx --project my-project graph nodes --type Class --search Sprint
+monolynx --project my-project graph node "<node_id>" --depth 2 --relation-type CALLS --relation-type IMPORTS
+monolynx -o json --project my-project graph stats | jq '.nodes_by_type'
+```
+
 ### `version`
 
 | Command | Arguments and options | Description |
@@ -280,7 +313,7 @@ monolynx -o json version --check
 
 ### Reserved groups
 
-`monitoring`, `issues`, `time`, `plan`, `rozliczenia`, `graph`, `pipeline`, `heartbeat` and `role` appear in `monolynx --help` but are reserved: they have no commands yet (not yet available).
+`monitoring`, `issues`, `time`, `plan`, `rozliczenia`, `pipeline`, `heartbeat` and `role` appear in `monolynx --help` but are reserved: they have no commands yet (not yet available).
 
 ### Confirmations
 

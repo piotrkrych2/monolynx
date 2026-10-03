@@ -945,6 +945,10 @@ def _feature_connections(lang: str) -> dict[str, Any]:
                     "desc": "Zewnętrzny ekstraktor graphify (tree-sitter, 36 języków, offline) buduje graf automatycznie. Skille: create-graph-ci-script (CI) i graph-sync (lokalnie, za rękę).",
                 },
                 {"title": "Wyszukiwanie ścieżki", "desc": "Znajdź najkrótszą ścieżkę między dwoma elementami. Cypher query w Neo4j."},
+                {
+                    "title": "Odczyt przez API v2 i CLI",
+                    "desc": "Graf przeczytasz też przez REST API v2 (/api/v2/projects/{slug}/graph) i z terminala: monolynx graph nodes, node, query, path i stats. To wyłącznie odczyt - graf zapisuje tylko synchronizacja.",
+                },
                 {"title": "Graceful degradation", "desc": "Neo4j niedostępny? Dashboard działa — pokazuje komunikat o niedostępności."},
             ],
             "steps": [
@@ -983,6 +987,10 @@ def _feature_connections(lang: str) -> dict[str, Any]:
                     "value": "Każdy node i krawędź tagowane project_id. Constraint unikalności per typ. HNSW index na project_id.",
                 },
                 {"label": "Graceful degradation", "value": "ENABLE_GRAPH_DB=false wyłącza moduł. is_enabled() + try/except zwraca pusty graf."},
+                {
+                    "label": "API v2 (odczyt)",
+                    "value": "5 tras GET pod /api/v2/projects/{slug}/graph: nodes, nodes/{node_id}, query, path, stats. Wymagają uprawnienia connections:read; wyłączony graf albo niedostępny Neo4j to 503 problem+json.",
+                },
             ],
             "other_modules": _other_modules("connections", lang),
         }
@@ -1013,6 +1021,10 @@ def _feature_connections(lang: str) -> dict[str, Any]:
                 "desc": "External graphify extractor (tree-sitter, 36 languages, offline) builds the graph automatically. Skills: create-graph-ci-script (CI) and graph-sync (local, guided).",
             },
             {"title": "Path finding", "desc": "Find shortest path between two elements. Cypher query in Neo4j."},
+            {
+                "title": "Read access through API v2 and the CLI",
+                "desc": "The graph can also be read through the REST API v2 (/api/v2/projects/{slug}/graph) and from the terminal: monolynx graph nodes, node, query, path and stats. Read-only - the graph is written only by the sync.",
+            },
             {"title": "Graceful degradation", "desc": "Neo4j unavailable? Dashboard works — shows unavailability message."},
         ],
         "steps": [
@@ -1042,6 +1054,10 @@ def _feature_connections(lang: str) -> dict[str, Any]:
                 "value": "Every node and edge tagged with project_id. Uniqueness constraint per type. HNSW index on project_id.",
             },
             {"label": "Graceful degradation", "value": "ENABLE_GRAPH_DB=false disables the module. is_enabled() + try/except returns empty graph."},
+            {
+                "label": "API v2 (read-only)",
+                "value": "5 GET routes under /api/v2/projects/{slug}/graph: nodes, nodes/{node_id}, query, path, stats. They need the connections:read permission; a disabled graph or an unreachable Neo4j is a 503 problem+json.",
+            },
         ],
         "other_modules": _other_modules("connections", lang),
     }
@@ -1791,8 +1807,8 @@ def _feature_cli(lang: str) -> dict[str, Any]:
             "badge": "Command Line",
             "headline": "Cała platforma z terminala - bez klikania w UI",
             "description": (
-                "Klient wiersza poleceń monolynx (alias mnx) daje dostęp do projektów, ticketów, sprintów i wiki "
-                "prosto z terminala. Komendy wykonują te same operacje co narzędzia MCP, a wyjście w formacie JSON "
+                "Klient wiersza poleceń monolynx (alias mnx) daje dostęp do projektów, ticketów, sprintów, wiki "
+                "i odczytu grafu zależności kodu prosto z terminala. Komendy wykonują te same operacje co narzędzia MCP, a wyjście w formacie JSON "
                 "jest gotowe do potoku - wystarczy jq, żeby wpiąć Monolynx w skrypty, hooki Gita i zadania CI."
             ),
             "screenshot_hint": "Tabela ticketów w terminalu: monolynx ticket list",
@@ -1825,6 +1841,10 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                 {
                     "title": "Alias mnx i parytet z MCP",
                     "desc": "Pakiet instaluje dwie równoważne komendy: monolynx i mnx. Grupy project, member, ticket, sprint i wiki pokrywają te same operacje co narzędzia MCP, bo obie strony korzystają z jednej warstwy serwisów.",
+                },
+                {
+                    "title": "Graf zależności w terminalu",
+                    "desc": "Grupa graph czyta graf kodu z modułu Połączenia: monolynx graph nodes, node, query, path i stats, przez endpointy API v2 /graph. Tylko odczyt - zapis grafu robi wyłącznie synchronizacja przez MCP.",
                 },
             ],
             "steps": [
@@ -1873,6 +1893,11 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                 {"name": "monolynx wiki create", "desc": "Utwórz stronę wiki z treścią z opcji, pliku lub stdin."},
                 {"name": "monolynx wiki edit", "desc": "Edytuj treść strony w $EDITOR; zapis tylko po zmianie."},
                 {"name": "monolynx wiki search", "desc": "Semantyczne wyszukiwanie po stronach wiki."},
+                {"name": "monolynx graph nodes", "desc": "Lista node'ów grafu zależności z filtrem po typie i fragmencie nazwy."},
+                {"name": "monolynx graph node", "desc": "Node z sąsiedztwem: sąsiednie node'y, krawędzie i głębokość, z filtrem relacji i typów."},
+                {"name": "monolynx graph query", "desc": "Graf albo podgraf projektu (node'y i krawędzie), opcjonalnie po typie i frazie."},
+                {"name": "monolynx graph path", "desc": "Najkrótsza ścieżka między dwoma node'ami."},
+                {"name": "monolynx graph stats", "desc": "Statystyki grafu: liczba node'ów i krawędzi, także per typ."},
             ],
             "tech_details": [
                 {
@@ -1911,8 +1936,8 @@ def _feature_cli(lang: str) -> dict[str, Any]:
         "badge": "Command Line",
         "headline": "The whole platform from your terminal - no clicking through the UI",
         "description": (
-            "The monolynx command-line client (alias mnx) gives you projects, tickets, sprints and wiki "
-            "straight from the terminal. Its commands perform the same operations as the MCP tools, and the JSON "
+            "The monolynx command-line client (alias mnx) gives you projects, tickets, sprints, wiki "
+            "and read access to the code dependency graph straight from the terminal. Its commands perform the same operations as the MCP tools, and the JSON "
             "output is pipeline-ready - combine it with jq and Monolynx plugs into scripts, Git hooks and CI jobs."
         ),
         "screenshot_hint": "Ticket table in the terminal: monolynx ticket list",
@@ -1945,6 +1970,10 @@ def _feature_cli(lang: str) -> dict[str, Any]:
             {
                 "title": "The mnx alias and MCP parity",
                 "desc": "The package installs two equivalent commands: monolynx and mnx. The project, member, ticket, sprint and wiki groups cover the same operations as the MCP tools, because both sides use one shared service layer.",
+            },
+            {
+                "title": "Dependency graph in the terminal",
+                "desc": "The graph group reads the code graph of the Connections module: monolynx graph nodes, node, query, path and stats, through the API v2 /graph endpoints. Read-only - the graph is written only by the sync through MCP.",
             },
         ],
         "steps": [
@@ -1993,6 +2022,11 @@ def _feature_cli(lang: str) -> dict[str, Any]:
             {"name": "monolynx wiki create", "desc": "Create a wiki page with content from an option, a file or stdin."},
             {"name": "monolynx wiki edit", "desc": "Edit a page's content in $EDITOR; saves only when the content changed."},
             {"name": "monolynx wiki search", "desc": "Semantic search over wiki pages."},
+            {"name": "monolynx graph nodes", "desc": "List dependency graph nodes, filtered by type and a fragment of the name."},
+            {"name": "monolynx graph node", "desc": "A node with its neighborhood: neighbors, edges and depth, with relation and type filters."},
+            {"name": "monolynx graph query", "desc": "The project's graph or a subgraph (nodes and edges), optionally by type and phrase."},
+            {"name": "monolynx graph path", "desc": "Shortest path between two nodes."},
+            {"name": "monolynx graph stats", "desc": "Graph statistics: node and edge counts, also per type."},
         ],
         "tech_details": [
             {

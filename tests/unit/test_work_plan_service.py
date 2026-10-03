@@ -99,17 +99,16 @@ class TestWorkPlanService:
         assert result.position == 1
 
     async def test_schedule_blocks_non_member(self, db_session, setup_project_user_ticket, setup_outsider):
-        """schedule() blokuje usera spoza projektu."""
+        """schedule() dla usera spoza projektu zwraca ten sam komunikat co dla ticketu nieistniejacego (MON-239)."""
         _user, _project, ticket = setup_project_user_ticket
         outsider = setup_outsider
         result = await svc.schedule(db_session, outsider.id, ticket.id, date.today())
-        assert isinstance(result, str)
-        assert any(kw in result.lower() for kw in ("czlonk", "dostep", "member", "uzytkownik"))
+        assert result == "Ticket nie istnieje"
 
     async def test_schedule_nonexistent_ticket_returns_error(self, db_session):
         """schedule() dla nieistniejacego ticketu zwraca blad."""
         result = await svc.schedule(db_session, uuid4(), uuid4(), date.today())
-        assert isinstance(result, str)
+        assert result == "Ticket nie istnieje"
 
     async def test_schedule_unique_conflict_returns_error(self, db_session):
         """schedule() drugi raz z tym samym (user, ticket, date) zwraca str, nie rzuca wyjatku."""
@@ -308,7 +307,7 @@ class TestWorkPlanService:
         ticket = await _make_ticket(db_session, project, number=10)
 
         result = await svc.schedule(db_session, user.id, ticket.id, date.today())
-        assert isinstance(result, str), f"Oczekiwano bledu, dostal: {result!r}"
+        assert result == "Ticket nie istnieje", f"Oczekiwano bledu, dostal: {result!r}"
 
     async def test_update_notes_clear_to_none(self, db_session, setup_project_user_ticket):
         """update() z notes=None wyczyszcza pole do NULL (sentinel pattern)."""

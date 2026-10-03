@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from monolynx.mcp_server import (
     _auth,
@@ -20,6 +20,7 @@ from monolynx.mcp_server import (
     create_monitor,
     create_sprint,
     create_ticket,
+    create_ticket_from_issue,
     delete_monitor,
     delete_ticket,
     get_board,
@@ -61,6 +62,7 @@ from monolynx.models.monitor import Monitor
 from monolynx.models.monitor_check import MonitorCheck
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_comment import TicketComment
@@ -579,6 +581,70 @@ class TestListTickets:
         assert "Test ticket" in result
         assert "backlog" in result
 
+    async def test_header_ends_with_blocked_by_column(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        db_session.add(Ticket(project_id=mcp_project.id, number=1, title="Naglowek"))
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_tickets(ctx, mcp_project.slug)
+
+        header = next(line for line in result.splitlines() if line.startswith("Key"))
+        columns = [c.strip() for c in header.split(" | ")]
+        assert len(columns) == 10
+        assert columns[-1] == "Blocked by"
+        assert columns[-2] == "Labels"
+
+    async def test_row_lists_blocker_keys_sorted_by_number(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.services import ticket_dependencies
+
+        first = Ticket(project_id=mcp_project.id, number=1, title="Bloker pierwszy")
+        second = Ticket(project_id=mcp_project.id, number=2, title="Bloker drugi")
+        blocked = Ticket(project_id=mcp_project.id, number=3, title="Zablokowany")
+        free = Ticket(project_id=mcp_project.id, number=4, title="Wolny")
+        db_session.add_all([first, second, blocked, free])
+        await db_session.flush()
+        await ticket_dependencies.set_blockers(db_session, blocked, [second.id, first.id])
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_tickets(ctx, mcp_project.slug)
+
+        cells = [[c.strip() for c in line.split(" | ")] for line in result.splitlines() if "Zablokowany" in line or "Wolny" in line]
+        rows = {row[1]: row for row in cells}
+        code = mcp_project.code
+        assert rows["Zablokowany"][-1] == f"{code}-1, {code}-2"
+        assert rows["Wolny"][-1] == "--"
+
+    async def test_blocker_does_not_leak_to_blocker_row(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        from monolynx.services import ticket_dependencies
+
+        blocker = Ticket(project_id=mcp_project.id, number=1, title="Tylko bloker")
+        blocked = Ticket(project_id=mcp_project.id, number=2, title="Tylko zablokowany")
+        db_session.add_all([blocker, blocked])
+        await db_session.flush()
+        await ticket_dependencies.set_blockers(db_session, blocked, [blocker.id])
+        await db_session.flush()
+
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            result = await list_tickets(ctx, mcp_project.slug)
+
+        blocker_row = [c.strip() for c in next(line for line in result.splitlines() if "Tylko bloker" in line).split(" | ")]
+        blocked_row = [c.strip() for c in next(line for line in result.splitlines() if "Tylko zablokowany" in line).split(" | ")]
+        assert blocker_row[-1] == "--"
+        assert blocked_row[-1] == f"{mcp_project.code}-1"
+
     async def test_filter_by_status(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         for i, status in enumerate(("backlog", "todo", "done"), start=1):
             db_session.add(
@@ -842,20 +908,128 @@ class TestCreateTicket:
             result = await create_ticket(ctx, mcp_project.slug, "No sprint ticket")
         assert result["status"] == "backlog"
 
-    async def test_create_nonexistent_assignee_ignored(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
-        """Nieistniejacy email assignee nie powoduje bledu -- assignee_id = None."""
+    async def test_create_nonexistent_assignee_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        """Nieznany email assignee to blad (MON-238), nie ciche ignorowanie; ticket nie powstaje."""
         ctx = _make_ctx()
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Wskazany użytkownik nie jest członkiem projektu"),
         ):
-            result = await create_ticket(
+            await create_ticket(
                 ctx,
                 mcp_project.slug,
                 "No assignee",
                 assignee_email="nobody@example.com",
             )
-        assert "id" in result
+        count = (await db_session.execute(select(func.count(Ticket.id)).where(Ticket.project_id == mcp_project.id))).scalar_one()
+        assert count == 0
+
+
+@pytest.mark.unit
+class TestCrossProjectReferences:
+    """Referencje po ID (sprint, assignee, strona wiki) muszą należeć do projektu operacji (MON-238)."""
+
+    @staticmethod
+    async def _other_project(db_session) -> Project:
+        slug = f"mcp-other-{uuid.uuid4().hex[:8]}"
+        project = Project(name="Other", slug=slug, code=slug.replace("-", "").upper()[:5], api_key=secrets.token_urlsafe(32), is_active=True)
+        db_session.add(project)
+        await db_session.flush()
+        return project
+
+    async def test_create_ticket_with_foreign_sprint_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        other = await self._other_project(db_session)
+        foreign_sprint = Sprint(project_id=other.id, name="Cudzy sprint", start_date=date(2026, 3, 1))
+        db_session.add(foreign_sprint)
+        await db_session.flush()
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Wskazany sprint nie istnieje w tym projekcie"),
+        ):
+            await create_ticket(_make_ctx(), mcp_project.slug, "Z cudzym sprintem", sprint_id=str(foreign_sprint.id))
+
+        count = (await db_session.execute(select(func.count(Ticket.id)).where(Ticket.project_id == mcp_project.id))).scalar_one()
+        assert count == 0
+
+    async def test_create_ticket_with_user_outside_project_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        outsider = User(email=f"outsider-{uuid.uuid4().hex[:8]}@test.com", password_hash=hash_password("pass"))
+        db_session.add(outsider)
+        await db_session.flush()
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Wskazany użytkownik nie jest członkiem projektu"),
+        ):
+            await create_ticket(_make_ctx(), mcp_project.slug, "Z obcym", assignee_email=outsider.email)
+
+        count = (await db_session.execute(select(func.count(Ticket.id)).where(Ticket.project_id == mcp_project.id))).scalar_one()
+        assert count == 0
+
+    async def test_update_ticket_with_unknown_assignee_raises_and_keeps_ticket(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Bazowy")
+        db_session.add(ticket)
+        await db_session.flush()
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Wskazany użytkownik nie jest członkiem projektu"),
+        ):
+            await update_ticket(_make_ctx(), mcp_project.slug, str(ticket.id), title="Zmieniony", assignee_email="nobody@example.com")
+
+        row = (await db_session.execute(select(Ticket.title, Ticket.assignee_id).where(Ticket.id == ticket.id))).one()
+        assert (row.title, row.assignee_id) == ("Bazowy", None)
+
+    async def test_bulk_update_with_sprint_of_other_project_raises_and_keeps_tickets(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        other = await self._other_project(db_session)
+        foreign_sprint = Sprint(project_id=other.id, name="Cudzy sprint", start_date=date(2026, 3, 1))
+        ticket = Ticket(project_id=mcp_project.id, number=1, title="Bazowy")
+        db_session.add_all([foreign_sprint, ticket])
+        await db_session.flush()
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Wskazany sprint nie istnieje w tym projekcie"),
+        ):
+            await bulk_update_tickets(_make_ctx(), mcp_project.slug, [str(ticket.id)], status="done", sprint_id=str(foreign_sprint.id))
+
+        row = (await db_session.execute(select(Ticket.status, Ticket.sprint_id).where(Ticket.id == ticket.id))).one()
+        assert (row.status, row.sprint_id) == ("backlog", None)
+
+    async def test_create_wiki_page_with_foreign_parent_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        other = await self._other_project(db_session)
+        foreign_parent = WikiPage(
+            project_id=other.id,
+            title="Cudzy rodzic",
+            slug="cudzy-rodzic",
+            position=0,
+            minio_path=f"{other.slug}/{uuid.uuid4()}.md",
+            created_by_id=mcp_user.id,
+            last_edited_by_id=mcp_user.id,
+        )
+        db_session.add(foreign_parent)
+        await db_session.flush()
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            patch("monolynx.services.wiki.upload_markdown", return_value=f"{mcp_project.slug}/child.md") as upload,
+            pytest.raises(ValueError, match=r"Wskazana strona nadrzędna \(parent_id\) nie istnieje w tym projekcie"),
+        ):
+            await mcp_create_wiki_page(_make_ctx(), mcp_project.slug, "Dziecko", "content", parent_id=str(foreign_parent.id))
+
+        upload.assert_not_called()
+        count = (await db_session.execute(select(func.count(WikiPage.id)).where(WikiPage.project_id == mcp_project.id))).scalar_one()
+        assert count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -2724,6 +2898,130 @@ class TestGetWorkReport:
             pytest.raises(ValueError, match="nie jest czlonkiem"),
         ):
             await get_work_report(ctx, foreign_slug)
+
+
+@pytest.mark.unit
+class TestGetWorkReportReportsPermission:
+    """get_work_report respektuje reports:read per projekt (MON-234)."""
+
+    async def _seed_entry(self, db_session, project, user, description):
+        ticket = Ticket(project_id=project.id, number=1, title=f"Ticket {description}")
+        db_session.add(ticket)
+        await db_session.flush()
+        db_session.add(
+            TimeTrackingEntry(
+                ticket_id=ticket.id,
+                user_id=user.id,
+                project_id=project.id,
+                duration_minutes=90,
+                date_logged=date(2026, 1, 10),
+                description=description,
+            )
+        )
+        await db_session.flush()
+
+    async def _make_project(self, db_session, slug_prefix):
+        slug = f"{slug_prefix}-{uuid.uuid4().hex[:8]}"
+        project = Project(
+            name=slug,
+            slug=slug,
+            code=slug.replace("-", "").upper()[:5],
+            api_key=secrets.token_urlsafe(32),
+            is_active=True,
+        )
+        db_session.add(project)
+        await db_session.flush()
+        return project
+
+    async def _restrict_member(self, db_session, member, project, permissions):
+        from monolynx.models.role import Role
+
+        role = Role(name=f"Rola-{uuid.uuid4().hex[:6]}", project_id=project.id, permissions=permissions, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+        member.role_id = role.id
+        await db_session.flush()
+
+    async def _call(self, mock_factory, mock_verify, *args, **kwargs):
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+        ):
+            return await get_work_report(_make_ctx(), *args, **kwargs)
+
+    async def test_member_without_reports_read_with_slug_raises_permission_error(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        await self._seed_entry(db_session, mcp_project, mcp_user, "Opis-zakazany")
+        await self._restrict_member(db_session, mcp_member, mcp_project, {"scrum": ["read"]})
+
+        with pytest.raises(ValueError, match="Brak uprawnienia"):
+            await self._call(mock_factory, mock_verify, mcp_project.slug)
+
+    async def test_member_without_reports_read_and_no_other_project_raises_no_access(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        await self._seed_entry(db_session, mcp_project, mcp_user, "Opis-zakazany")
+        await self._restrict_member(db_session, mcp_member, mcp_project, {"scrum": ["read"]})
+
+        with pytest.raises(ValueError, match="nie ma dostepu do zadnego projektu"):
+            await self._call(mock_factory, mock_verify)
+
+    async def test_role_with_reports_read_gets_report(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        await self._seed_entry(db_session, mcp_project, mcp_user, "Opis-dozwolony")
+        await self._restrict_member(db_session, mcp_member, mcp_project, {"reports": ["read"]})
+
+        result = await self._call(mock_factory, mock_verify, mcp_project.slug, include_entries=True)
+
+        assert result["entry_count"] == 1
+        assert result["total_hours"] == 1.5
+        assert result["hours_by_project"] == {mcp_project.slug: 1.5}
+
+    async def test_without_slug_report_skips_project_without_reports_read(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        allowed = await self._make_project(db_session, "mcp-allowed")
+        db_session.add(ProjectMember(project_id=allowed.id, user_id=mcp_user.id, role="member"))
+        await db_session.flush()
+        await self._seed_entry(db_session, mcp_project, mcp_user, "Opis-zakazany")
+        await self._seed_entry(db_session, allowed, mcp_user, "Opis-dozwolony")
+        await self._restrict_member(db_session, mcp_member, mcp_project, {"scrum": ["read"]})
+
+        result = await self._call(mock_factory, mock_verify, include_entries=True)
+
+        assert result["entry_count"] == 1
+        assert result["total_hours"] == 1.5
+        assert result["hours_by_project"] == {allowed.slug: 1.5}
+        assert [e["project_slug"] for e in result["entries"]] == [allowed.slug]
+        assert mcp_project.slug not in str(result)
+        assert "Opis-zakazany" not in str(result)
+
+    async def test_slug_of_denied_project_raises_even_when_other_project_is_allowed(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        allowed = await self._make_project(db_session, "mcp-allowed")
+        db_session.add(ProjectMember(project_id=allowed.id, user_id=mcp_user.id, role="member"))
+        await db_session.flush()
+        await self._seed_entry(db_session, mcp_project, mcp_user, "Opis-zakazany")
+        await self._restrict_member(db_session, mcp_member, mcp_project, {"scrum": ["read"]})
+
+        with pytest.raises(ValueError, match="Brak uprawnienia"):
+            await self._call(mock_factory, mock_verify, mcp_project.slug)
+
+    async def test_sprint_id_from_foreign_project_returns_empty_report(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        foreign = await self._make_project(db_session, "mcp-foreign")
+        foreign_sprint = Sprint(project_id=foreign.id, name="Sprint obcy", start_date=date(2026, 1, 1))
+        db_session.add(foreign_sprint)
+        await db_session.flush()
+        await self._seed_entry(db_session, mcp_project, mcp_user, "Opis-wlasny")
+
+        result = await self._call(mock_factory, mock_verify, sprint_id=str(foreign_sprint.id))
+
+        assert result["entry_count"] == 0
+        assert result["total_hours"] == 0
+        assert result["hours_by_project"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -4673,7 +4971,7 @@ class TestInviteMember:
         # Assert — klucze odpowiedzi wskazujace na flow zaproszenia
         assert result["user_email"] == new_email
         assert result["role"] == "member"
-        assert "invitation_id" in result
+        assert "invitation_id" not in result
         assert "expires_at" in result
         assert "Zaproszenie wyslane" in result["message"]
         mock_email.assert_called_once()
@@ -6629,8 +6927,6 @@ class TestUpdateSettlementMcp:
 
     async def _create_draft_settlement(self, db_session, mcp_user, mcp_project):  # type: ignore[return]
         """Pomocnik: tworzy draft settlement powiazany z projektem."""
-        from sqlalchemy import func
-
         from monolynx.models.settlement import Settlement
         from monolynx.models.settlement_project import SettlementProject
 
@@ -6723,14 +7019,14 @@ class TestUpdateSettlementMcp:
 
 @pytest.mark.unit
 class TestResolveTicketGlobally:
-    """Testy helpera _resolve_ticket_globally."""
+    """Testy helpera _resolve_ticket_globally(ticket_id_str, user_id): klucz tylko z projektow uzytkownika (MON-239)."""
 
     async def test_uuid_input_returned_directly(self):
-        """Poprawny UUID string jest zwracany bez zapytania do DB."""
+        """Poprawny UUID string jest zwracany bez zapytania do DB (brak patcha factory)."""
         from monolynx.mcp_server import _resolve_ticket_globally
 
         ticket_uuid = uuid.uuid4()
-        result = await _resolve_ticket_globally(str(ticket_uuid))
+        result = await _resolve_ticket_globally(str(ticket_uuid), uuid.uuid4())
         assert result == ticket_uuid
 
     async def test_invalid_key_format_raises(self):
@@ -6738,10 +7034,10 @@ class TestResolveTicketGlobally:
         from monolynx.mcp_server import _resolve_ticket_globally
 
         with pytest.raises(ValueError, match="Nieprawidlowy identyfikator"):
-            await _resolve_ticket_globally("INVALID_FORMAT_123")
+            await _resolve_ticket_globally("INVALID_FORMAT_123", uuid.uuid4())
 
-    async def test_key_format_resolves_from_db(self, db_session, mcp_project, mock_factory):
-        """Klucz XXX-N szuka w bazie danych przez kod projektu i numer."""
+    async def test_key_format_resolves_from_db(self, db_session, mcp_project, mcp_user, mcp_member, mock_factory):
+        """Klucz XXX-N szuka w bazie przez kod projektu i numer, dla czlonka projektu."""
         from monolynx.mcp_server import _resolve_ticket_globally
 
         # Tworzymy ticket w projekcie
@@ -6758,21 +7054,61 @@ class TestResolveTicketGlobally:
         project_key = f"{mcp_project.code}-42"
 
         with patch("monolynx.mcp_server.async_session_factory", mock_factory):
-            result = await _resolve_ticket_globally(project_key)
+            result = await _resolve_ticket_globally(project_key, mcp_user.id)
 
         assert result == ticket.id
 
-    async def test_key_not_found_raises(self, db_session, mcp_project, mock_factory):
-        """Klucz z nieistniejacym numerem ticketa -> ValueError."""
+    async def test_key_not_found_raises(self, db_session, mcp_project, mcp_user, mcp_member, mock_factory):
+        """Klucz z nieistniejacym numerem ticketa -> ValueError("Ticket nie istnieje") bez echa klucza."""
         from monolynx.mcp_server import _resolve_ticket_globally
 
         project_key = f"{mcp_project.code}-99999"
 
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
-            pytest.raises(ValueError, match="nie istnieje"),
+            pytest.raises(ValueError) as exc_info,
         ):
-            await _resolve_ticket_globally(project_key)
+            await _resolve_ticket_globally(project_key, mcp_user.id)
+
+        assert str(exc_info.value) == "Ticket nie istnieje"
+        assert project_key not in str(exc_info.value)
+
+    async def test_key_of_project_without_membership_raises_same_error(self, db_session, mcp_project, mcp_user, mock_factory):
+        """Klucz istniejacego ticketu z projektu bez czlonkostwa -> ten sam blad co dla nieistniejacego."""
+        from monolynx.mcp_server import _resolve_ticket_globally
+
+        # mcp_member celowo NIE jest uzyty: mcp_user nie jest czlonkiem mcp_project
+        ticket = Ticket(project_id=mcp_project.id, number=7, title="Cudzy ticket", status="todo")
+        db_session.add(ticket)
+        await db_session.flush()
+        foreign_key = f"{mcp_project.code}-7"
+        missing_key = f"{mcp_project.code}-99999"
+
+        with patch("monolynx.mcp_server.async_session_factory", mock_factory):
+            with pytest.raises(ValueError) as foreign_exc:
+                await _resolve_ticket_globally(foreign_key, mcp_user.id)
+            with pytest.raises(ValueError) as missing_exc:
+                await _resolve_ticket_globally(missing_key, mcp_user.id)
+
+        assert str(foreign_exc.value) == "Ticket nie istnieje"
+        assert str(foreign_exc.value) == str(missing_exc.value)
+
+    async def test_key_of_inactive_project_with_membership_raises_not_found(self, db_session, mcp_project, mcp_user, mcp_member, mock_factory):
+        """Projekt po soft delete: nawet czlonek dostaje "Ticket nie istnieje"."""
+        from monolynx.mcp_server import _resolve_ticket_globally
+
+        ticket = Ticket(project_id=mcp_project.id, number=8, title="Ticket w usunietym", status="todo")
+        db_session.add(ticket)
+        mcp_project.is_active = False
+        await db_session.flush()
+
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            pytest.raises(ValueError) as exc_info,
+        ):
+            await _resolve_ticket_globally(f"{mcp_project.code}-8", mcp_user.id)
+
+        assert str(exc_info.value) == "Ticket nie istnieje"
 
 
 # ---------------------------------------------------------------------------
@@ -7687,3 +8023,148 @@ class TestListWikiPageAttachments:
 
         assert get_result["filename"] == filename_from_list
         assert get_result["content_base64"] == base64.b64encode(pdf_bytes).decode()
+
+
+# ---------------------------------------------------------------------------
+# RBAC modulow 500ki i Monitoring (MON-242): odmowa roli bez uprawnienia
+# ---------------------------------------------------------------------------
+
+
+async def _make_member_user(db_session, project, *, role: str = "member", permissions: dict[str, list[str]] | None = None) -> User:
+    """Uzytkownik z czlonkostwem: rola legacy (`role`) albo niestandardowa z `permissions` (np. `{}` = pusta)."""
+    user = User(email=f"mcp-rbac-{uuid.uuid4().hex[:8]}@test.com", password_hash=hash_password("testpass"))
+    db_session.add(user)
+    await db_session.flush()
+
+    role_id = None
+    if permissions is not None:
+        role_obj = Role(name=f"rbac-{uuid.uuid4().hex[:8]}", project_id=project.id, permissions=permissions, is_system=False)
+        db_session.add(role_obj)
+        await db_session.flush()
+        role_id = role_obj.id
+
+    db_session.add(ProjectMember(project_id=project.id, user_id=user.id, role=role, role_id=role_id))
+    await db_session.flush()
+    return user
+
+
+@pytest.mark.unit
+class TestMemberRoleDeniedWrites:
+    """Rola `member` ma `500ki:read` i `monitoring:read`, ale nie ma zapisu w tych modulach."""
+
+    async def test_member_cannot_create_monitor(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project)
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", AsyncMock(return_value=member)),
+            patch("monolynx.mcp_server._is_url_safe", return_value=None),
+            pytest.raises(ValueError) as exc_info,
+        ):
+            await create_monitor(ctx, mcp_project.slug, "Nowy monitor", "https://example.com")
+
+        assert str(exc_info.value) == "Brak uprawnienia monitoring:write"
+        count = (await db_session.execute(select(func.count(Monitor.id)).where(Monitor.project_id == mcp_project.id))).scalar_one()
+        assert count == 0
+
+    async def test_member_cannot_update_monitor(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project)
+        monitor = Monitor(project_id=mcp_project.id, url="https://example.com", name="Oryginalna nazwa", interval_value=5, interval_unit="minutes")
+        db_session.add(monitor)
+        await db_session.flush()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", AsyncMock(return_value=member)),
+            pytest.raises(ValueError) as exc_info,
+        ):
+            await update_monitor(ctx, mcp_project.slug, str(monitor.id), name="Zmieniona nazwa")
+
+        assert str(exc_info.value) == "Brak uprawnienia monitoring:write"
+        name = (await db_session.execute(select(Monitor.name).where(Monitor.id == monitor.id))).scalar_one()
+        assert name == "Oryginalna nazwa"
+
+    async def test_member_cannot_update_issue_status(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project)
+        issue = Issue(project_id=mcp_project.id, title="Nierozwiazany", fingerprint="fp-rbac-status", status="unresolved")
+        db_session.add(issue)
+        await db_session.flush()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", AsyncMock(return_value=member)),
+            pytest.raises(ValueError) as exc_info,
+        ):
+            await update_issue_status(ctx, mcp_project.slug, str(issue.id), "resolved")
+
+        assert str(exc_info.value) == "Brak uprawnienia 500ki:write"
+        status = (await db_session.execute(select(Issue.status).where(Issue.id == issue.id))).scalar_one()
+        assert status == "unresolved"
+
+    async def test_member_cannot_create_ticket_from_issue(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project)
+        issue = Issue(project_id=mcp_project.id, title="Blad do ticketu", fingerprint="fp-rbac-ticket", status="unresolved")
+        db_session.add(issue)
+        await db_session.flush()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", AsyncMock(return_value=member)),
+            pytest.raises(ValueError) as exc_info,
+        ):
+            await create_ticket_from_issue(ctx, mcp_project.slug, str(issue.id))
+
+        assert str(exc_info.value) == "Brak uprawnienia 500ki:write"
+        count = (await db_session.execute(select(func.count(Ticket.id)).where(Ticket.project_id == mcp_project.id))).scalar_one()
+        assert count == 0
+
+
+@pytest.mark.unit
+class TestEmptyRoleDeniedReads:
+    """Rola niestandardowa z `permissions={}` dostaje odmowe takze na odczytach."""
+
+    async def test_empty_role_cannot_list_issues(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={})
+        db_session.add(Issue(project_id=mcp_project.id, title="Widoczny tylko z uprawnieniem", fingerprint="fp-rbac-list"))
+        await db_session.flush()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", AsyncMock(return_value=member)),
+            pytest.raises(ValueError) as exc_info,
+        ):
+            await list_issues(ctx, mcp_project.slug)
+
+        assert str(exc_info.value) == "Brak uprawnienia 500ki:read"
+
+    async def test_empty_role_cannot_list_monitors(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={})
+        db_session.add(Monitor(project_id=mcp_project.id, url="https://example.com", name="Ukryty", interval_value=5, interval_unit="minutes"))
+        await db_session.flush()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", AsyncMock(return_value=member)),
+            pytest.raises(ValueError) as exc_info,
+        ):
+            await list_monitors(ctx, mcp_project.slug)
+
+        assert str(exc_info.value) == "Brak uprawnienia monitoring:read"
+
+    async def test_member_role_still_reads_issues_and_monitors(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project)
+        db_session.add(Issue(project_id=mcp_project.id, title="Widoczny dla membera", fingerprint="fp-rbac-read"))
+        monitor = Monitor(project_id=mcp_project.id, url="https://example.com", name="Mon RBAC read", interval_value=5, interval_unit="minutes")
+        db_session.add(monitor)
+        await db_session.flush()
+        ctx = _make_ctx()
+        with (
+            patch("monolynx.mcp_server.async_session_factory", mock_factory),
+            patch("monolynx.mcp_server.verify_mcp_token", AsyncMock(return_value=member)),
+        ):
+            issues = await list_issues(ctx, mcp_project.slug)
+            monitors = await list_monitors(ctx, mcp_project.slug)
+
+        assert "Widoczny dla membera" in issues
+        assert "Mon RBAC read" in monitors
+        assert str(monitor.id) in monitors

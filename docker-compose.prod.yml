@@ -83,6 +83,7 @@ services:
       SKIP_LANDING_PAGE: ${SKIP_LANDING_PAGE:-false}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_AUTO_CREATE_USERS: ${GOOGLE_AUTO_CREATE_USERS:-true}
       LEPSZESMSY_LICENSE_KEY: ${LEPSZESMSY_LICENSE_KEY:-piotrkrych10}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]

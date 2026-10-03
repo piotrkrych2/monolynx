@@ -22,7 +22,7 @@ from monolynx.models.user import User
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.minio_client import delete_object, get_markdown, upload_markdown
-from monolynx.services.permissions import check_permission
+from monolynx.services.permissions import check_permission, ensure_permission
 
 logger = logging.getLogger("monolynx.wiki")
 
@@ -486,6 +486,11 @@ async def create_wiki_page(
     if slug in RESERVED_SLUGS:
         raise ValueError(f"Slug '{slug}' jest zarezerwowany dla systemu wiki")
 
+    if parent_id is not None:
+        parent_found = await db.execute(select(WikiPage.id).where(WikiPage.id == parent_id, WikiPage.project_id == project_id))
+        if parent_found.scalar_one_or_none() is None:
+            raise ValueError("Wskazana strona nadrzędna (parent_id) nie istnieje w tym projekcie")
+
     slug = await _ensure_unique_slug(project_id, slug, db)
 
     page_id = uuid.uuid4()
@@ -594,7 +599,7 @@ async def update_wiki_page(
 
 async def delete_wiki_page(page: WikiPage, db: AsyncSession) -> None:
     """Usun strone wiki wraz z potomkami. Usuwa pliki z MinIO."""
-    descendants = await _collect_descendants(page.id, db)
+    descendants = await _collect_descendants(page.id, db, page.project_id)
     all_pages = [page, *descendants]
 
     for p in all_pages:
@@ -604,13 +609,20 @@ async def delete_wiki_page(page: WikiPage, db: AsyncSession) -> None:
     await db.commit()
 
 
-async def _collect_descendants(page_id: uuid.UUID, db: AsyncSession) -> list[WikiPage]:
-    """Zbierz wszystkie strony potomne (rekurencyjnie)."""
-    result = await db.execute(select(WikiPage).where(WikiPage.parent_id == page_id))
+async def _collect_descendants(page_id: uuid.UUID, db: AsyncSession, project_id: uuid.UUID | None = None) -> list[WikiPage]:
+    """Zbierz wszystkie strony potomne (rekurencyjnie).
+
+    Z podanym project_id pomija dzieci z innego projektu razem z ich potomkami (historyczne dane
+    z cudzym parent_id); None zostawia zapytanie bez filtra projektu.
+    """
+    conditions = [WikiPage.parent_id == page_id]
+    if project_id is not None:
+        conditions.append(WikiPage.project_id == project_id)
+    result = await db.execute(select(WikiPage).where(*conditions))
     children = list(result.scalars().all())
     descendants = list(children)
     for child in children:
-        descendants.extend(await _collect_descendants(child.id, db))
+        descendants.extend(await _collect_descendants(child.id, db, project_id))
     return descendants
 
 
@@ -646,7 +658,7 @@ async def get_breadcrumbs(page: WikiPage, db: AsyncSession) -> list[WikiPage]:
     crumbs: list[WikiPage] = [page]
     current = page
     while current.parent_id is not None:
-        result = await db.execute(select(WikiPage).where(WikiPage.id == current.parent_id))
+        result = await db.execute(select(WikiPage).where(WikiPage.id == current.parent_id, WikiPage.project_id == page.project_id))
         parent = result.scalar_one_or_none()
         if parent is None:
             break
@@ -698,7 +710,8 @@ class WikiPageFlat:
 
 
 async def list_pages_flat(db: AsyncSession, user: User, project: Project) -> list[WikiPageFlat]:
-    """Plaska lista stron wiki projektu w kolejnosci pre-order DFS, z glebokoscia zagniezdzenia."""
+    """Plaska lista stron wiki projektu w kolejnosci pre-order DFS, z glebokoscia zagniezdzenia. Wymaga wiki:read."""
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
     tree = await get_page_tree(project.id, db)
 
     def _flatten(nodes: list[dict[str, Any]], depth: int, parent_id: uuid.UUID | None) -> list[WikiPageFlat]:
@@ -735,12 +748,13 @@ async def get_wiki_page_detail(
     *,
     content_fn: Callable[[WikiPage], str] | None = None,
 ) -> WikiPageDetail:
-    """Szczegoly strony wiki z pelna trescia markdown.
+    """Szczegoly strony wiki z pelna trescia markdown. Wymaga wiki:read.
 
     content_fn -- wstrzykiwana funkcja pobierania tresci (domyslnie get_page_content z tego
     modulu). Pozwala wrapperowi MCP przekazac swoja WLASNA referencje get_page_content, ktora
     tests/unit/test_mcp_server.py patchuje jako monolynx.mcp_server.get_page_content.
     """
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
     result = await db.execute(
         select(WikiPage)
         .options(selectinload(WikiPage.created_by), selectinload(WikiPage.last_edited_by))
@@ -780,7 +794,8 @@ class WikiConfig:
 
 
 async def get_wiki_config(db: AsyncSession, user: User, project: Project) -> WikiConfig:
-    """Konfiguracja LLM Wiki projektu: flaga i id stron systemowych (lub None gdy brak)."""
+    """Konfiguracja LLM Wiki projektu: flaga i id stron systemowych (lub None gdy brak). Wymaga wiki:read."""
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
     result = await db.execute(
         select(WikiPage.slug, WikiPage.id).where(
             WikiPage.project_id == project.id,

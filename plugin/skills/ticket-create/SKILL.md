@@ -48,14 +48,14 @@ python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJE
 
 Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
 
+Tryb zwiezly: `--compact true` przy `list_tickets`, gdy lista sluzy do przegladu statusow i blokerow bez czytania opisow (elementy bez pola `description`), oraz `--brief true` przy `create_ticket` i `update_ticket`, gdy po zapisie nie czytasz opisu (wynik to tylko pola `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by`, `blocks`). `compact` i `brief` to parametry wrappera, a nie tooli MCP: przy `mode=mcp` i przy fallbacku (kod 3) wywolujesz tool MCP bez nich. Wrapper sam niczego nie skraca - bez tych flag wynik jest pelny.
+
 Kody wyjscia wrappera:
 
 - `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
-- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami, z pominieciem parametrow wrappera `compact` i `brief` (tool MCP ich nie ma); jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, zapis grafu, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
 - `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
 - `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
-
-`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
 
 Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
 <!-- /shared:transport -->
@@ -345,14 +345,16 @@ mcp__monolynx__create_ticket(
 
 Jesli `create_ticket` odrzuci blokery (inny projekt, self-reference, cykl) - pokaz uzytkownikowi komunikat bledu, popraw liste i wywolaj ponownie; nie tworz ticketu bez blokerow po cichu.
 
+**Tryb zwiezly (tylko `mode=cli`)**: do wywolania wrappera `monolynx_op.py create_ticket` dodaj flage `--brief true`. Skill po zapisie nie czyta opisu ani kryteriow, wiec wystarcza mu pola JSON: `key` (klucz ticketu), `id` (UUID) oraz `blocked_by` (lista obiektow `id`, `key`, `title`, `status`; pusta bez blokerow) do potwierdzenia blokerow. Wynik w trybie zwiezlym ma tylko pola `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by`, `blocks`. `brief` to parametr wrappera, a nie toola MCP `create_ticket` - dlatego nie ma go w zapisie powyzej. Przy `mode=mcp` i przy fallbacku `OP-FALLBACK` (kod 3) wywolaj tool bez `brief` i odczytaj klucz oraz UUID z jego odpowiedzi.
+
 ### Po utworzeniu:
 
-1. Wyswietl uzytkownikowi potwierdzenie z kluczem I identyfikatorem:
+1. Wyswietl uzytkownikowi potwierdzenie z kluczem I identyfikatorem (pola JSON `key` i `id`):
 
 > **Utworzono ticket [KEY] - [tytul]**
 > ID: `[UUID]`
 
-2. Jesli przekazano `blocked_by_ids` - wymien blokery w potwierdzeniu (`Blokowany przez: [KEY1], [KEY2]`). Osobny komentarz z zaleznosciami nie jest potrzebny - `get_ticket` pokazuje je w sekcji `## Blokery (relacja)`.
+2. Jesli przekazano `blocked_by_ids` - wymien blokery w potwierdzeniu (`Blokowany przez: [KEY1], [KEY2]`; klucze z pola JSON `blocked_by[].key`). Osobny komentarz z zaleznosciami nie jest potrzebny - `get_ticket` pokazuje je w sekcji `## Blokery (relacja)`.
 
 ---
 
@@ -362,9 +364,9 @@ Jesli uzytkownik opisal wiekszy zakres prac (np. "caly modul X"), zaproponuj:
 
 > **Zakres wydaje sie na wiecej niz jeden ticket. Chcesz, zebym zaproponowal serie ticketow pokrywajacych calosc?**
 
-Jesli tak - powtorz KROK 5-7 dla kazdego ticketu z serii, pilnujac:
+Jesli tak - powtorz KROK 5-7 dla kazdego ticketu z serii (kazdy `create_ticket` w trybie zwiezlym z KROK 7: przy `mode=cli` z `--brief true`, przy MCP i fallbacku bez `brief`), pilnujac:
 - Kazdy ticket jest samodzielny (moze byc zrealizowany niezaleznie)
-- Zaleznosci miedzy ticketami sa jawnie zapisane - tworz tickety w kolejnosci realizacji, a UUID wczesniejszego (pole `id` z odpowiedzi `create_ticket`) podawaj w `blocked_by_ids` kolejnego, jesli go blokuje
+- Zaleznosci miedzy ticketami sa jawnie zapisane - tworz tickety w kolejnosci realizacji, a UUID wczesniejszego (pole `id` z odpowiedzi `create_ticket`, obecne takze w trybie zwiezlym) podawaj w `blocked_by_ids` kolejnego, jesli go blokuje
 - Story points w serii sumuja sie logicznie
 - Kolejnosc realizacji wynika z zaleznosci
 

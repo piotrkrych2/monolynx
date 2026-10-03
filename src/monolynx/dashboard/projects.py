@@ -1,12 +1,11 @@
-"""Dashboard -- zarzadzanie projektami (lista, tworzenie, setup guide)."""
+"""Dashboard -- zarzadzanie projektami (lista, tworzenie ze sprawdzaniem dostepnosci sluga i kodu, setup guide)."""
 
 from __future__ import annotations
 
-import re
 import secrets
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,12 +14,12 @@ from monolynx.database import get_db
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.ticket import Ticket
-from monolynx.services.auth import get_current_user
 from monolynx.services.project_stats import get_bulk_project_stats
+from monolynx.services.projects import suggest_available_code, suggest_available_slug
 
-from .helpers import SLUG_PATTERN, _get_user_id, templates
+from .helpers import CODE_PATTERN, SLUG_PATTERN, get_session_user, templates
 
-CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
+__all__ = ["CODE_PATTERN", "router"]
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -37,9 +36,10 @@ async def project_list(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
+    user_id = user.id
 
     # Query params
     try:
@@ -53,8 +53,7 @@ async def project_list(
 
     per_page = 10
 
-    user = await get_current_user(request, db)
-    if user and user.is_superuser:
+    if user.is_superuser:
         base_query = select(Project).where(Project.is_active.is_(True))
     else:
         base_query = (
@@ -127,13 +126,42 @@ async def project_list(
 @router.get("/create-project", response_class=HTMLResponse, response_model=None)
 async def create_project_form(
     request: Request,
+    db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
-    user_id = _get_user_id(request)
-    if user_id is None:
+    if await get_session_user(request, db) is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
     ctx = {"error": None, "name": "", "slug": "", "code": ""}
     return templates.TemplateResponse(request, "dashboard/create_project.html", ctx)
+
+
+@router.get("/create-project/check", response_model=None)
+async def check_project_availability(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    if await get_session_user(request, db) is None:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    result: dict[str, dict[str, object]] = {}
+
+    slug = request.query_params.get("slug", "").strip().lower()
+    if slug:
+        if SLUG_PATTERN.match(slug) and len(slug) <= 255:
+            available, suggestion = await suggest_available_slug(db, slug)
+            result["slug"] = {"value": slug, "valid": True, "available": available, "suggestion": suggestion}
+        else:
+            result["slug"] = {"value": slug, "valid": False, "available": False, "suggestion": None}
+
+    code = request.query_params.get("code", "").strip().upper()
+    if code:
+        if CODE_PATTERN.match(code):
+            available, suggestion = await suggest_available_code(db, code)
+            result["code"] = {"value": code, "valid": True, "available": available, "suggestion": suggestion}
+        else:
+            result["code"] = {"value": code, "valid": False, "available": False, "suggestion": None}
+
+    return JSONResponse(result)
 
 
 @router.post("/create-project", response_class=HTMLResponse, response_model=None)
@@ -141,9 +169,10 @@ async def create_project(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
+    user_id = user.id
 
     form = await request.form()
     name = str(form.get("name", "")).strip()
@@ -179,6 +208,22 @@ async def create_project(
                 "slug": slug,
                 "code": code,
             },
+        )
+
+    slug_free, slug_suggestion = await suggest_available_slug(db, slug)
+    code_free, code_suggestion = await suggest_available_code(db, code)
+    if not slug_free or not code_free:
+        messages: list[str] = []
+        if not slug_free:
+            messages.append(f"Slug „{slug}” jest zajęty, proponujemy „{slug_suggestion}”." if slug_suggestion else f"Slug „{slug}” jest zajęty.")
+            slug = slug_suggestion or slug
+        if not code_free:
+            messages.append(f"Kod „{code}” jest zajęty, proponujemy „{code_suggestion}”." if code_suggestion else f"Kod „{code}” jest zajęty.")
+            code = code_suggestion or code
+        return templates.TemplateResponse(
+            request,
+            "dashboard/create_project.html",
+            {"error": " ".join(messages), "name": name, "slug": slug, "code": code},
         )
 
     project = Project(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable, Mapping
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -15,7 +16,10 @@ from monolynx.constants import (
     PERMISSION_MODULES,
 )
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.user import User
+
+OWNER_ROLE_NAME = "Owner"
 
 
 async def check_permission(
@@ -89,6 +93,23 @@ async def require_permission(
         )
 
 
+async def ensure_permission(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+    module: str,
+    action: str,
+) -> None:
+    """Jak check_permission ale rzuca ValueError jezeli brak dostepu.
+
+    Wariant dla serwisow i narzedzi MCP: komunikat zaczyna sie od
+    "Brak uprawnienia", wiec api/v2/common.py::service_error mapuje go na 403,
+    a tresc jest identyczna z require_permission z api/v2/common.py.
+    """
+    if not await check_permission(db, user_id, project_id, module, action):
+        raise ValueError(f"Brak uprawnienia {module}:{action}")
+
+
 async def get_user_permissions(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -128,3 +149,70 @@ async def get_user_permissions(
         return {m: list(actions) for m, actions in DEFAULT_ROLE_PERMISSIONS[legacy_role].items()}
 
     return {}
+
+
+def missing_permissions(
+    requested: Mapping[str, Iterable[str]],
+    held: Mapping[str, Iterable[str]],
+) -> list[str]:
+    """Zwraca posortowana liste "modul:akcja" z `requested`, ktorych brakuje w `held`."""
+    missing: set[str] = set()
+    for module, actions in requested.items():
+        held_actions = set(held.get(module, ()))
+        missing.update(f"{module}:{action}" for action in actions if action not in held_actions)
+    return sorted(missing)
+
+
+async def _is_owner_member(db: AsyncSession, member: ProjectMember) -> bool:
+    # Z role_id decyduje rola, nie legacy napis: assign_role zapisuje member.role = role.name.lower(),
+    # wiec niesystemowa rola "Owner" nie moze czynic ownerem.
+    if member.role_id is None:
+        return member.role == "owner"
+    role = await db.get(Role, member.role_id)
+    return role is not None and role.is_system and role.name == OWNER_ROLE_NAME
+
+
+async def ensure_can_manage_role(
+    db: AsyncSession,
+    actor_id: uuid.UUID,
+    project_id: uuid.UUID,
+    *,
+    granted: Mapping[str, Iterable[str]],
+    edited_role: Role | None = None,
+    assigned_role: Role | None = None,
+    target_member: ProjectMember | None = None,
+) -> None:
+    """Regula zarzadzania rolami: rzuca ValueError("Brak uprawnienia ...") przy probie eskalacji.
+
+    - `edited_role`: edytowana rola; permissions rol systemowych sa niemodyfikowalne dla wszystkich,
+    - `granted`: uprawnienia tworzone/edytowane/przypisywane/nadawane przy zaproszeniu,
+    - `assigned_role`: przypisywana rola (systemowa Owner tylko dla ownera i superusera),
+    - `target_member`: czlonek, ktorego rola sie zmienia (zmiana roli ownera tylko dla ownera i superusera).
+
+    Owner i superuser nie podlegaja regule podzbioru ani ochronie ownera.
+    """
+    if edited_role is not None and edited_role.is_system:
+        raise ValueError("Brak uprawnienia do zmiany uprawnien roli systemowej")
+
+    user = (await db.execute(select(User).where(User.id == actor_id, User.is_active.is_(True)))).scalar_one_or_none()
+    if user is None:
+        raise ValueError("Brak uprawnienia do zarzadzania rolami")
+    if user.is_superuser:
+        return
+
+    actor_member = (
+        await db.execute(select(ProjectMember).where(ProjectMember.project_id == project_id, ProjectMember.user_id == actor_id))
+    ).scalar_one_or_none()
+    if actor_member is None:
+        raise ValueError("Brak uprawnienia do zarzadzania rolami")
+    if await _is_owner_member(db, actor_member):
+        return
+
+    if assigned_role is not None and assigned_role.is_system and assigned_role.name == OWNER_ROLE_NAME:
+        raise ValueError("Brak uprawnienia do przypisania roli Owner (tylko owner projektu lub superuser)")
+    if target_member is not None and await _is_owner_member(db, target_member):
+        raise ValueError("Brak uprawnienia do zmiany roli ownera projektu (tylko owner projektu lub superuser)")
+
+    missing = missing_permissions(granted, await get_user_permissions(db, actor_id, project_id))
+    if missing:
+        raise ValueError(f"Brak uprawnienia do nadania uprawnien, ktorych nie posiadasz: {', '.join(missing)}")

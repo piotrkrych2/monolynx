@@ -1,5 +1,5 @@
 """Serwis logiki projektow, czlonkow, etykiet i zagregowanych statystyk projektu
--- sesje przekazuje wywolujacy (MCP tool / przyszle REST API v2)."""
+-- sesje przekazuje wywolujacy (MCP tool / REST API v2)."""
 
 from __future__ import annotations
 
@@ -14,9 +14,8 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monolynx.constants import INVITATION_DAYS, LABEL_COLOR_PALETTE
-from monolynx.dashboard.helpers import SLUG_PATTERN
-from monolynx.dashboard.projects import CODE_PATTERN
+from monolynx.constants import DEFAULT_ROLE_PERMISSIONS, INVITATION_DAYS, LABEL_COLOR_PALETTE
+from monolynx.dashboard.helpers import CODE_PATTERN, SLUG_PATTERN
 from monolynx.models.heartbeat import Heartbeat
 from monolynx.models.issue import Issue
 from monolynx.models.label import Label, TicketLabel
@@ -27,7 +26,7 @@ from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.user import User
-from monolynx.services.permissions import check_permission
+from monolynx.services.permissions import check_permission, ensure_can_manage_role, ensure_permission
 
 # --- Projekty ---
 
@@ -158,6 +157,37 @@ def _code_from_slug(slug: str) -> str:
     return code
 
 
+async def suggest_available_slug(db: AsyncSession, slug: str) -> tuple[bool, str | None]:
+    """Sprawdza dostepnosc sluga; zajety -> pierwszy wolny wariant `slug-2..99` (albo None).
+
+    Wejscie jest znormalizowane i poprawne formatowo. Bez filtra `is_active`: projekt po
+    soft delete nadal zajmuje slug (unikalnosc kolumny dotyczy wszystkich wierszy).
+    """
+    candidates = [slug] + [f"{slug}-{i}" for i in range(2, 100)]
+    candidates = [c for c in candidates if len(c) <= 255]
+    taken = set((await db.execute(select(Project.slug).where(Project.slug.in_(candidates)))).scalars().all())
+    if slug not in taken:
+        return True, slug
+    return False, next((c for c in candidates if c not in taken), None)
+
+
+async def suggest_available_code(db: AsyncSession, code: str) -> tuple[bool, str | None]:
+    """Sprawdza dostepnosc kodu; zajety -> pierwszy wolny wariant z sufiksem 2..99 (albo None).
+
+    Sufiks wchodzi w limit 10 znakow: kod jest skracany z prawej, zeby sufiks sie miescil.
+    Bez filtra `is_active` (kod unikalny takze dla projektow po soft delete).
+    """
+    candidates = [code]
+    for i in range(2, 100):
+        variant = code[: 10 - len(str(i))] + str(i)
+        if CODE_PATTERN.match(variant) and variant not in candidates:
+            candidates.append(variant)
+    taken = set((await db.execute(select(Project.code).where(Project.code.in_(candidates)))).scalars().all())
+    if code not in taken:
+        return True, code
+    return False, next((c for c in candidates if c not in taken), None)
+
+
 async def create_project(
     db: AsyncSession,
     user: User,
@@ -185,19 +215,15 @@ async def create_project(
     if not CODE_PATTERN.match(code):
         raise ValueError(f"Nieprawidlowy kod '{code}'. Kod musi miec 2-10 znakow: wielkie litery i cyfry, zaczynac sie od litery (np. PIM, PROJ2).")
 
-    existing = await db.execute(select(Project.id).where(Project.slug == slug))
-    if existing.scalar_one_or_none() is not None:
+    slug_free, _ = await suggest_available_slug(db, slug)
+    if not slug_free:
         raise ValueError(f"Projekt ze slugiem '{slug}' juz istnieje. Podaj inny slug.")
 
-    existing_code = await db.execute(select(Project.id).where(Project.code == code))
-    if existing_code.scalar_one_or_none() is not None:
-        # Sprobuj dodac suffix numeryczny do kodu (batch query)
-        candidates = [(code + str(i))[:10] for i in range(2, 100) if CODE_PATTERN.match((code + str(i))[:10])]
-        taken_result = await db.execute(select(Project.code).where(Project.code.in_(candidates)))
-        taken_codes = {row[0] for row in taken_result.all()}
-        code = next((c for c in candidates if c not in taken_codes), None)
-        if code is None:
+    code_free, code_suggestion = await suggest_available_code(db, code)
+    if not code_free:
+        if code_suggestion is None:
             raise ValueError(f"Kod '{code}' jest juz zajety i nie udalo sie znalezc wolnego wariantu. Podaj inny kod.")
+        code = code_suggestion
 
     project = Project(
         name=name,
@@ -306,7 +332,8 @@ async def invite_member(db: AsyncSession, user: User, project: Project, email: s
     bezposrednio jako czlonek (is_new_user=False, bez wysylki maila).
     Jesli uzytkownik nie istnieje — tworzone jest nowe konto (bez hasla) z tokenem
     zaproszenia waznym 7 dni (is_new_user=True); wyslanie maila nalezy do wrappera.
-    Wymaga users:write.
+    Wymaga users:write; uprawnienia nadawanej roli musza byc podzbiorem uprawnien
+    zapraszajacego (ensure_can_manage_role).
     """
     if role not in ("member", "admin"):
         raise ValueError("Rola musi byc 'member' lub 'admin' (owner nie moze byc przyznany przez zaproszenie)")
@@ -319,6 +346,7 @@ async def invite_member(db: AsyncSession, user: User, project: Project, email: s
 
     if not await check_permission(db, user.id, project.id, "users", "write"):
         raise ValueError("Brak uprawnienia do zapraszania czlonkow do projektu (users:write)")
+    await ensure_can_manage_role(db, user.id, project.id, granted=DEFAULT_ROLE_PERMISSIONS[role])
 
     # Sprawdz czy user juz istnieje w systemie (takze nieaktywny)
     any_user_result = await db.execute(select(User).where(User.email == email))
@@ -600,6 +628,7 @@ class LabelSummary:
 
 async def list_labels(db: AsyncSession, user: User, project: Project) -> list[LabelSummary]:
     """Lista etykiet projektu z liczba powiazanych ticketow."""
+    await ensure_permission(db, user.id, project.id, "scrum", "read")
     result = await db.execute(
         select(
             Label.id,
@@ -617,6 +646,7 @@ async def list_labels(db: AsyncSession, user: User, project: Project) -> list[La
 
 async def create_label(db: AsyncSession, user: User, project: Project, name: str, color: str | None = None) -> Label:
     """Tworzy nowa etykiete (label) w projekcie. Bez podanego koloru — losowy z palety."""
+    await ensure_permission(db, user.id, project.id, "scrum", "write")
     name = name.strip()
     if not name:
         raise ValueError("Nazwa etykiety nie moze byc pusta.")

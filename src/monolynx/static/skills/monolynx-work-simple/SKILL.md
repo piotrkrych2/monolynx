@@ -96,14 +96,14 @@ python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJE
 
 Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
 
+Tryb zwiezly: `--compact true` przy `list_tickets`, gdy lista sluzy do przegladu statusow i blokerow bez czytania opisow (elementy bez pola `description`), oraz `--brief true` przy `create_ticket` i `update_ticket`, gdy po zapisie nie czytasz opisu (wynik to tylko pola `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by`, `blocks`). `compact` i `brief` to parametry wrappera, a nie tooli MCP: przy `mode=mcp` i przy fallbacku (kod 3) wywolujesz tool MCP bez nich. Wrapper sam niczego nie skraca - bez tych flag wynik jest pelny.
+
 Kody wyjscia wrappera:
 
 - `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
-- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami, z pominieciem parametrow wrappera `compact` i `brief` (tool MCP ich nie ma); jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, zapis grafu, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
 - `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
 - `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
-
-`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
 
 Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
 <!-- /shared:transport -->
@@ -322,6 +322,59 @@ zabezpieczenie) LUB wynik jest pusty (detached HEAD) - zapytaj uzytkownika
 i poczekaj na odpowiedz. Nigdy nie zaczynaj pracy na branchu, ktory jest
 punktem startu dla innych, bez jawnej zgody. Kazdy inny branch jest OK - simple
 flow nie wymusza konwencji nazw.
+
+**Rozjazd worktree z branchem bazowym** - dotyczy brancha roboczego innego niz
+`<branch_bazowy>`. Uruchom trzy komendy OSOBNO, z literalna nazwa brancha -
+bez `$VAR`, `$(...)`, pipe i `&&` (stan drzewa masz juz z `git status
+--porcelain` wyzej):
+
+```bash
+git fetch origin <branch_bazowy>
+```
+
+```bash
+git rev-list --count HEAD..origin/<branch_bazowy>
+```
+
+```bash
+git rev-list --count origin/<branch_bazowy>..HEAD
+```
+
+Pierwsza liczba to commity, o ktore branch roboczy jest ZA baza, druga to
+wlasne commity brancha roboczego, pusty wynik `status` to czyste drzewo.
+
+- **Za baza = 0** -> nic nie rob.
+- **Za baza > 0, wlasnych commitow 0, drzewo czyste** -> przewin branch SAM,
+  bez pytania, takze przy `MONOLYNX_SPRINT_RUN=1`:
+
+  ```bash
+  git merge --ff-only origin/<branch_bazowy>
+  ```
+
+  To NIE jest powod do `SPRINT-RUN STOP`. Po przewinieciu zmierz `git rev-parse
+  HEAD` PONOWNIE - `BASELINE_SHA` to SHA po fast-forwardzie, inaczej krytyk
+  dostalby w diffie cudze commity z bazy. Liczbe przewinietych commitow
+  odnotuj w komentarzu planu (2.2), w polu `Baseline`.
+- **Wlasne commity > 0 albo brudne drzewo** -> NIE merguj. Bez `--ff-only`
+  powstalby merge commit, a `pull`, `rebase` i `reset` sa poza wyjatkiem hooka
+  i poza kontraktem. Pracuj dalej na branchu i odnotuj rozjazd (ile commitow
+  za baza, ile wlasnych) w komentarzu planu.
+- **Fast-forward odrzucony** (odmowa uprawnien albo blad gita) -> nie obchodz
+  go innym wariantem komendy: zadnego `pull`, `rebase`, `reset`, `git -C`,
+  refspeca ani komendy zlozonej. Interaktywnie zapytaj uzytkownika i poczekaj;
+  przy `MONOLYNX_SPRINT_RUN=1` obsluz to jak blokade z reguly 21, z powodem
+  `fast-forward do origin/<branch_bazowy> odrzucony`. Odrzucony `git fetch`
+  traktuj tak samo.
+
+WHY (MON-248): sesja w tle w worktree startuje z HEAD glownego checkoutu
+dyspozytora, a ten bywal dziesiatki commitow za `origin/<branch_bazowy>`;
+praca na takim punkcie startu konczyla sie `SPRINT-RUN STOP` albo konfliktem
+przy MR. Pytania o zgode nie ma, bo te dwie dokladne komendy (`git fetch origin
+<branch_bazowy>` i `git merge --ff-only origin/<branch_bazowy>`) przepuszcza
+hook `bash_guard.py` jawnym `allow`, a sesji startowanej przez dyspozytor
+`sprint-run` dodatkowo reguly `--allowedTools` z literalnym branchem (MON-249).
+Kazda inna forma (inny branch, dodatkowa flaga, komenda zlozona) nie jest
+objeta wyjatkiem.
 
 Zapamietaj `BASELINE_SHA` (rev-parse) i `PLIKI_SPRZED_STARTU` (status) - krytyk
 diffuje wzgledem SHA i wyklucza z oceny pliki brudne przed startem; jesli brudne
@@ -792,6 +845,12 @@ glowny checkout, podstawienia w komendzie worktree, wykonanie, tryb defektu
 i decyzja po wyniku. Plik nieosiagalny (niepelna instalacja)? Powiedz to userowi
 i zatrzymaj sie - bez lintu i testow nie zmieniaj statusu ticketu.
 
+Kazda komenda testow idzie przez `scripts/test_lock.py` z katalogu tego skilla
+wg `lint-test.md` (kolejka testow miedzy worktree), chyba ze strona `toolchain`
+ma w sekcji `## Test` pole `izolacja testów: tak`. Timeout blokady (kod 75)
+i kolizje srodowiska testow obsluguja sekcje pliku wspolnego - zadna z nich nie
+zuzywa limitu poprawek.
+
 Cztery rzeczy, ktorych plik wspolny nie rozstrzyga, bo naleza do tego flow:
 
 - **Srodowisko** - detekcji NIE powtarzasz: masz `srodowisko` (`main` albo
@@ -1075,7 +1134,9 @@ Obowiazuje sekcja "Pelny przebieg po OSTATNIEJ zmianie" pliku `lint-test.md`.
 W tym flow: zielony wynik z iteracji zawezonej do dotknietego obszaru NIE otwiera
 FAZY 4; czerwony -> jak kazda poprawka (limit obowiazuje); brak iteracji i pelny
 przebieg z FAZA 3 jest ostatnim zdarzeniem -> krok spelniony. Zapisz w logu joba
-`lint-test` i w 4.8, ktory przebieg byl ostatni i czy pelny.
+`lint-test` i w 4.8, ktory przebieg byl ostatni i czy pelny. Testy tego
+przebiegu tez ida przez `scripts/test_lock.py`, a timeout blokady (kod 75)
+i kolizje srodowiska obsluguje `lint-test.md`, jak w FAZA 3.
 
 ---
 
@@ -1274,6 +1335,7 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
     subagentom twardo blokuje `git add/commit/push/reset --hard/rebase` oraz lint/testy; glownej sesji daje "ask" na `git push` i lint/testy, gdy `MONOLYNX_AUTOPUSH`/`MONOLYNX_AUTOTEST` != true. Tak samo traktuje `glab mr create`: subagentowi deny, glownej sesji "ask", dopoki `MONOLYNX_AUTOMR` != true.
     <!-- /shared:hook-core -->
     Deny u subagenta to oczekiwane zachowanie, nie obchodz go.
+    Jedyne jawne `allow` hooka w gicie (MON-249): dokladnie `git fetch origin <B>` i `git merge --ff-only origin/<B>`, gdzie `<B>` to `MONOLYNX_BASE_BRANCH`, a gdy pusta - `MONOLYNX_MR_TARGET`; dla sesji glownej i subagenta, takze przy `MONOLYNX_SPRINT_RUN=1`. Inny branch, inna flaga, refspec, `git -C` albo komenda zlozona ida starymi regulami (0.45).
     <!-- shared:hook-guarantee -->
     **Hook nie jest gwarantowany**: dziala dopiero po zaladowaniu pluginu i nadaniu mu zaufania w kliencie, a twarde blokady subagentow wymagaja, zeby klient przekazywal identyfikacje subagenta w PreToolUse.
     <!-- /shared:hook-guarantee -->
@@ -1281,6 +1343,6 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 18. **Prawa decyzyjne ustalane RAZ, na starcie** (2.2) - kontrakt autonomii i STOP CONDITIONS zastepuja sterowanie przez przerywanie. Przerwanie usera w trakcie = kontrakt byl niekompletny; brakujaca pozycje odnotuj w 4.8. Przy `SPRINT_RUN=1` patrz regula 21.
 19. **Tryb defektu** (0.2) - research kodu obowiazkowy, test regresyjny przed fixem, krytyk ocenia nazwany mechanizm, nie znikniecie symptomu.
 20. **Ostatni przebieg lint+test jest pelny** (3.5.3) - iteracja moze testowac obszar, zamkniecie testuje calosc.
-21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, niezamkniety bloker ticketu (0.25, powod `czeka na merge <KEY>`, bez zmiany statusu), praca na `main`/`master`, brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, wyczerpany limit poprawek, same odjecia `BLOKADA-ZEWNĘTRZNA` po review krytyka (3.5.2, blok `blokada-zewnetrzna`, powod `blokada zewnetrzna - <krotki powod>`), `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
+21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, niezamkniety bloker ticketu (0.25, powod `czeka na merge <KEY>`, bez zmiany statusu), praca na `main`/`master`, odrzucony fast-forward do brancha bazowego (0.45, powod `fast-forward do origin/<branch_bazowy> odrzucony`), brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, timeout blokady testow (kod 75 z linia `TEST-LOCK: timeout`) oraz kolizja srodowiska testow po jednej powtorce (FAZA 3 i 3.5.3, sekcje `lint-test.md`, powod `kolizja testów`), wyczerpany limit poprawek, same odjecia `BLOKADA-ZEWNĘTRZNA` po review krytyka (3.5.2, blok `blokada-zewnetrzna`, powod `blokada zewnetrzna - <krotki powod>`), `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. **Sam rozjazd z branchem bazowym nie jest blokada** (0.45): branch za baza przewijasz sam przez `git merge --ff-only`, a przy wlasnych commitach albo brudnym drzewie pracujesz dalej i odnotowujesz rozjazd w komentarzu planu; blokada jest dopiero odrzucony fast-forward. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
 22. **Trwale reguly projektowe zyja w repozytorium**, nie w prywatnej pamieci klienta. Dwie lokalizacje, obie liczone od KORZENIA REPOZYTORIUM: `.claude/rules/*.md` (reguly projektu; krytyk czyta je na starcie review, naruszenie to -25) i `.claude/agent-memory/<typ-agenta>/MEMORY.md` (reguly z review per rola, zapisywane w 3.5.2). To zwykle pliki Markdown w repo: czyta je KAZDY klient wykonujacy te instrukcje, wersjonuje je git i widzi je kolejny przebieg niezaleznie od tego, w czym go uruchomiono. Nie zakladaj prywatnego formatu pamieci zadnego klienta i nie migruj tych plikow do niego. Nazwa katalogu `.claude/` jest HISTORYCZNA - katalog jest wspolny dla klientow, nie zastrzezony dla jednego. Kazdy zapis jest ADDYTYWNY: dopisujesz do sekcji, nigdy nie nadpisujesz pliku.
 23. **Fallback solo nie jest niezaleznym review** (2.1) - stosujesz go wylacznie przy faktycznym braku delegacji stwierdzonym po dostepnych narzedziach, nigdy po nazwie klienta, i zawsze z jawna adnotacja o ograniczeniu niezaleznosci w komentarzu planu, komentarzu podsumowujacym i w 4.8.

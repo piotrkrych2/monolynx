@@ -20,17 +20,17 @@ from monolynx.constants import (
     PIPELINE_TYPE_LABELS,
     PIPELINE_TYPES,
 )
-from monolynx.dashboard.helpers import _get_user_id, render_project_page
+from monolynx.dashboard.helpers import get_session_user, render_project_page
 from monolynx.database import get_db
 from monolynx.models.pipeline import Pipeline, PipelineJob, PipelineStep
 from monolynx.models.project import Project
-from monolynx.models.project_member import ProjectMember
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
 from monolynx.schemas.pipelines import build_list_item, build_pipeline_response
 from monolynx.services import pipelines as pipelines_service
+from monolynx.services.permissions import require_permission
 
 router = APIRouter(prefix="/dashboard", tags=["pipelines"])
 
@@ -195,23 +195,17 @@ async def _get_project_for_member(
     user_id: uuid.UUID,
     db: AsyncSession,
 ) -> Project:
-    """Zwraca aktywny projekt jezeli user jest jego czlonkiem.
+    """Zwraca aktywny projekt jezeli user ma w nim uprawnienie scrum:read.
 
-    Raises HTTPException 404 gdy projekt nie istnieje lub 403 gdy brak czlonkostwa.
+    Raises HTTPException 404 gdy projekt nie istnieje lub 403 gdy brak uprawnienia
+    (nie-czlonek i czlonek bez scrum:read; superuser omija sprawdzenie).
     """
     result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail="Projekt nie istnieje")
 
-    member_result = await db.execute(
-        select(ProjectMember).where(
-            ProjectMember.project_id == project.id,
-            ProjectMember.user_id == user_id,
-        )
-    )
-    if member_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=403, detail="Brak dostepu do projektu")
+    await require_permission(db, user_id, project.id, "scrum", "read")
 
     return project
 
@@ -281,9 +275,10 @@ async def api_list_pipelines(
     status = status or None
     pipeline_type = pipeline_type or None
 
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
+    user_id = user.id
 
     project = await _get_project_for_member(slug, user_id, db)
 
@@ -316,9 +311,10 @@ async def api_get_pipeline(
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Zwraca pelne drzewo pipeline'u (stepy + joby) jako JSON (polling HTMX)."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
+    user_id = user.id
 
     try:
         pipeline_uuid = uuid.UUID(pipeline_id)
@@ -359,9 +355,10 @@ async def _list_context(
     status = status or None
     pipeline_type = pipeline_type or None
 
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return None, None
+    user_id = user.id
 
     project = await _get_project_for_member(slug, user_id, db)
 
@@ -414,8 +411,8 @@ async def pipelines_list(
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
     """Lista pipeline'ow projektu (widok HTML z pollingiem HTMX)."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
     try:
@@ -441,8 +438,8 @@ async def pipelines_list_partial(
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse:
     """Partial HTML z wierszami listy - do pollingu HTMX (bez layoutu)."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
 
     try:
@@ -544,9 +541,10 @@ async def pipeline_detail_partial(
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse:
     """Partial HTML z drzewem stepow/jobow - polling HTMX 15s (bez layoutu)."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
+    user_id = user.id
 
     try:
         pipeline_uuid = uuid.UUID(pipeline_id)
@@ -568,9 +566,10 @@ async def pipeline_detail(
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
     """Widok szczegolów pipeline'u z drzewem stepow i jobow."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
+    user_id = user.id
 
     try:
         pipeline_uuid = uuid.UUID(pipeline_id)
@@ -605,9 +604,10 @@ async def job_detail(
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
     """Widok szczegolów joba: metadane + log markdown z wiki."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
+    user_id = user.id
 
     try:
         pipeline_uuid = uuid.UUID(pipeline_id)

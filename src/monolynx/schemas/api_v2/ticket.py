@@ -63,6 +63,16 @@ class BulkUpdateResponse(BaseModel):
     failed: list[BulkUpdateFailedItem]
 
 
+class TicketRelationItem(BaseModel):
+    """Wpis w blocked_by/blocks -- klucz, tytul, status blokera/blokowanego (bez
+    pelnych szczegolow, jak sekcja '## Blokery (relacja)' w tool MCP get_ticket)."""
+
+    id: str
+    key: str
+    title: str
+    status: str
+
+
 class TicketListItem(BaseModel):
     id: str
     key: str
@@ -75,19 +85,31 @@ class TicketListItem(BaseModel):
     assignee_email: str | None
     due_date: str | None
     label_ids: list[str]
+    blocked_by: list[TicketRelationItem]
     created_via_ai: bool
     created_at: str
     updated_at: str
 
 
-class TicketRelationItem(BaseModel):
-    """Wpis w blocked_by/blocks -- klucz, tytul, status blokera/blokowanego (bez
-    pelnych szczegolow, jak sekcja '## Blokery (relacja)' w tool MCP get_ticket)."""
+class TicketListItemCompact(BaseModel):
+    """Element listy ticketow w trybie `?compact=true` (MON-247): pola `TicketListItem` w tej samej
+    kolejnosci, bez `description`. Osobny model, a nie `response_model_exclude`, zeby OpenAPI
+    opisywal faktyczny kształt odpowiedzi; `TicketListItem` zostaje bazą `TicketDetailResponse`."""
 
     id: str
     key: str
     title: str
     status: str
+    priority: str
+    story_points: int | None
+    sprint_id: str | None
+    assignee_email: str | None
+    due_date: str | None
+    label_ids: list[str]
+    blocked_by: list[TicketRelationItem]
+    created_via_ai: bool
+    created_at: str
+    updated_at: str
 
 
 class TicketCommentResponse(BaseModel):
@@ -119,7 +141,7 @@ class TicketDetailResponse(TicketListItem):
     comments: list[TicketCommentResponse]
     attachments: list[TicketAttachmentResponse]
     acceptance_criteria: list[TicketAcceptanceCriterionResponse]
-    blocked_by: list[TicketRelationItem]
+    spec_page_id: str | None
     blocks: list[TicketRelationItem]
 
 

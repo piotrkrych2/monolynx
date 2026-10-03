@@ -38,6 +38,10 @@ zapisem na dysk, analogicznie do juz istniejacego
 sprint_run_state.read_log_tail; fixture logs-tui.2.1.270.txt to realny zrzut
 takiego renderu (patrz tests/fixtures/claude/logs-tui.2.1.270.txt).
 
+MON-252 (`TestState`, `TestStateBackendSelection`): backend claude przekazuje do `build_report`
+`tick_dir` jako katalog stanu (plik `stall.json` obok `logs/`, nie w nim) i prog zastoju z
+zmiennej MONOLYNX_SPRINT_STALL_TICKS; backend codex nie zapisuje stanu zastoju.
+
 MON-197 (`TestBaseBranchResolution`): fake `git` rozszerzony o `symbolic-ref
 refs/remotes/origin/HEAD`, `rev-parse --abbrev-ref HEAD`, `fetch origin
 <branch>` i `rev-parse origin/<branch>`, sterowalne zmiennymi
@@ -828,11 +832,12 @@ class TestState:
         assert "\x1b" not in content, "log ma zawierac zdjete sekwencje ANSI (patrz uwaga w docstringu modulu)"
         assert "\r" not in content, "\\r ma byc zinterpretowany jako powrot karetki (render_log) przed zapisem"
 
-    def _run_state_with_running_probe(self, tick_sandbox, logs_fixture):
+    def _run_state_with_running_probe(self, tick_sandbox, logs_fixture, extra_env=None):
         """Zywa sesja "fixture-probe" (id 9cf45f1d) z logiem = surowy fixture `claude logs`.
 
         Wpis agenta z fixture agents-json-all ma state=done, wiec build_report nie
-        klasyfikowalby jej po logu; tutaj ta sama sesja jest "running".
+        klasyfikowalby jej po logu; tutaj ta sama sesja jest "running". Katalog ticku
+        jest ten sam przy kazdym wywolaniu w tescie, wiec kolejne wywolania to kolejne ticki.
         """
         agents = [
             {
@@ -851,11 +856,59 @@ class TestState:
         env_extra = {
             "FAKE_CLAUDE_AGENTS_FILE": str(agents_file),
             f"FAKE_CLAUDE_LOGS_{self.PROBE_SESSION_ID}": str(logs_fixture),
+            **(extra_env or {}),
         }
         result = run_state(tick_sandbox, "fixture", tickets=tickets, tick_dir=tick_dir, env_extra=env_extra)
         assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
         log_file = tick_dir / "logs" / f"{self.PROBE_SESSION_ID}.log"
         return json.loads(result.stdout), log_file.read_text().splitlines()
+
+    def _plain_progress_log(self, tmp_path):
+        """Log bez zadnego sygnalu oczekiwania: tylko zastoj moze zmienic werdykt na waiting."""
+        plain = tmp_path / "progress.txt"
+        plain.write_text("czytam pliki\npisze testy\nuruchamiam lint\n")
+        return plain
+
+    def test_stall_file_lives_in_tick_dir_next_to_logs_and_survives_the_next_tick(self, tick_sandbox):
+        """stall.json musi lezec POZA TICK_DIR/logs (katalog logow jest czyszczony co tick), inaczej
+        licznik zastoju zerowalby sie przy kazdym ticku."""
+        plain = self._plain_progress_log(tick_sandbox.tmp_path)
+        tick_dir = tick_sandbox.tmp_path / "tick"
+
+        self._run_state_with_running_probe(tick_sandbox, plain)
+        first = json.loads((tick_dir / "stall.json").read_text())
+        self._run_state_with_running_probe(tick_sandbox, plain)
+        second = json.loads((tick_dir / "stall.json").read_text())
+
+        assert set(first) == {self.PROBE_SESSION_ID}
+        assert first[self.PROBE_SESSION_ID]["ticks"] == 0
+        assert second[self.PROBE_SESSION_ID] == {"hash": first[self.PROBE_SESSION_ID]["hash"], "ticks": 1}
+        assert not (tick_dir / "logs" / "stall.json").exists()
+
+    @pytest.mark.parametrize(
+        ("raw", "threshold"),
+        [
+            pytest.param("1", 1, id="1"),
+            pytest.param("3", 3, id="3"),
+            pytest.param(None, 2, id="brak-zmiennej"),
+            pytest.param("abc", 2, id="napis"),
+        ],
+    )
+    def test_stall_ticks_env_decides_when_a_silent_session_becomes_waiting(self, tick_sandbox, raw, threshold):
+        """MONOLYNX_SPRINT_STALL_TICKS dochodzi do build_report: sesja bez postepu jest running przez
+        `threshold` ticki, w nastepnym waiting z liczba ticków w reason."""
+        plain = self._plain_progress_log(tick_sandbox.tmp_path)
+        extra_env = {} if raw is None else {"MONOLYNX_SPRINT_STALL_TICKS": raw}
+
+        for _ in range(threshold):
+            earlier, _log_lines = self._run_state_with_running_probe(tick_sandbox, plain, extra_env)
+            assert earlier["tickets"][0]["verdict"] == "running"
+        payload, _log_lines = self._run_state_with_running_probe(tick_sandbox, plain, extra_env)
+
+        row = payload["tickets"][0]
+        assert row["verdict"] == "waiting"
+        assert row["reason"] == f"brak postępu od {threshold} ticków"
+        assert payload["summary"]["waiting"] == 1
 
     def test_spinner_redraw_fixture_is_written_without_spinner_frames_or_duplicates(self, tick_sandbox):
         """MON-227: plik w TICK_DIR/logs i tak trafia do komentarza ticketu przy
@@ -1206,6 +1259,16 @@ class TestStateBackendSelection:
         assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
         payload = json.loads(result.stdout)
         assert payload["tickets"][0]["key"] == "MON-1"
+
+    def test_backend_codex_does_not_write_the_stall_file(self, tick_sandbox_with_codex):
+        """Detektor zastoju czyta logi `claude logs`; backend codex nie ma ich odpowiednika."""
+        tick_dir = tick_sandbox_with_codex.tmp_path / "tick"
+        tickets = [{"key": "MON-1", "status": "todo", "assignee": None}]
+
+        result = run_state_backend(tick_sandbox_with_codex, "monolynx", "codex", tickets=tickets, tick_dir=tick_dir)
+
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert not (tick_dir / "stall.json").exists()
 
     def test_backend_claude_explicit_flag_matches_default(self, tick_sandbox):
         tickets = [{"key": "probe", "status": "todo", "assignee": None}]

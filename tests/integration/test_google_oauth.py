@@ -17,10 +17,12 @@ def _make_google_userinfo(
     google_id: str | None = None,
     given_name: str = "Jan",
     family_name: str = "Kowalski",
+    email_verified: bool = True,
 ) -> dict:
     return {
         "sub": google_id or uuid.uuid4().hex,
         "email": email,
+        "email_verified": email_verified,
         "given_name": given_name,
         "family_name": family_name,
     }

@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_AUTO_CREATE_USERS: bool = True
 
     # OAuth 2.1
     OAUTH_ACCESS_TOKEN_TTL: int = 2592000  # 30 dni

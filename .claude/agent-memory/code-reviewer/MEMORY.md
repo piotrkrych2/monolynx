@@ -11,6 +11,7 @@
 - [graphify_sync.md](graphify_sync.md) — graf graphify->Monolynx (MON-115/116/118): kontrakt `replace_graph`, taksonomia, wzorzec transportu MCP.
 - [selfref_selectin_join_depth.md](selfref_selectin_join_depth.md) — self-referential `lazy="selectin"` bez `join_depth` = martwe, test z jawnym selectinload to maskuje (MON-198).
 - [venv_realpath_and_no_decision_tests.md](venv_realpath_and_no_decision_tests.md) - realpath interpretera w venv gubi pipx/uv; test "hook bez decyzji" wymaga frazy ryzykownej (MON-232).
+- [rbac_check_order_mutants.md](rbac_check_order_mutants.md) - testy RBAC: mutanty kolejnosci checkow (rola bez obu uprawnien, check za walidacja) przezywaja tabele odmow (MON-241).
 
 ## Trzy rzeczy, ktore ratowaly review najczesciej
 1. **Odpal gate'y sam.** Sygnal "wszystko zielone" od TM bywa sprzed ostatniego zapisu developera (MON-197: `sync_skills.py --check` czerwony w chwili review). `ls -lT` zrodla i kopii rozstrzyga w sekunde.

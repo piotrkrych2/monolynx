@@ -520,6 +520,14 @@ class TestGetNeighborsValidation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def allow_permissions():
+    """User i projekt są mockami bez członkostwa w bazie, więc check RBAC narzędzia (MON-242) jest pominięty."""
+    with patch("monolynx.mcp_server._require", AsyncMock(return_value=None)):
+        yield
+
+
+@pytest.mark.usefixtures("allow_permissions")
 @pytest.mark.integration
 class TestGetGraphNodeWithFilters:
     async def test_relation_types_passed_to_get_neighbors(self) -> None:
@@ -638,3 +646,63 @@ class TestGetGraphNodeWithFilters:
 
             with pytest.raises(ValueError, match="Node nie istnieje"):
                 await get_graph_node(_make_ctx(), "test-project", node_id="missing")
+
+
+# ---------------------------------------------------------------------------
+# Wspolne czyste funkcje w services.graph (MON-248): MCP i API v2 wola te same
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSharedGraphHelpers:
+    def test_mcp_format_graph_dsl_is_the_service_function(self) -> None:
+        from monolynx.services import graph as graph_service
+
+        assert graph_service.format_graph_dsl is _format_graph_dsl
+
+    def test_service_format_graph_dsl_renders_nodes_edges_and_edge_metadata(self) -> None:
+        from monolynx.services import graph as graph_service
+
+        source = _sample_node(node_id="a", name="Alfa", node_type="Class", file_path="app/alfa.py", line_number=7)
+        target = _sample_node(node_id="b", name="Beta", node_type="Function")
+        edge = _sample_edge("a", "b", "CALLS", metadata={"confidence": "INFERRED", "source_relation": "calls"})
+
+        result = graph_service.format_graph_dsl({"nodes": [source, target], "edges": [edge]})
+
+        assert result.splitlines()[0] == "2 nodes, 1 edges"
+        assert "[Class] Alfa (path=app/alfa.py,line=7)" in result
+        assert "[Function] Beta" in result
+        assert "Alfa --CALLS--> Beta (confidence=INFERRED,source_relation=calls)" in result
+
+    def test_service_format_graph_dsl_groups_by_depth_when_depth_map_present(self) -> None:
+        from monolynx.services import graph as graph_service
+
+        data = {
+            "nodes": [_sample_node(node_id="r", name="Root"), _sample_node(node_id="c", name="Child")],
+            "edges": [_sample_edge("r", "c", "CONTAINS")],
+            "depth_map": {"r": 0, "c": 1},
+        }
+
+        result = graph_service.format_graph_dsl(data)
+
+        assert "--- Depth 0 ---" in result
+        assert "--- Depth 1 ---" in result
+        assert "=== CONTAINS ===" in result
+        assert "Root --CONTAINS--> Child" in result
+
+    def test_ensure_search_not_blank_accepts_none(self) -> None:
+        from monolynx.services import graph as graph_service
+
+        assert graph_service.ensure_search_not_blank(None) is None
+
+    def test_ensure_search_not_blank_accepts_non_blank_text(self) -> None:
+        from monolynx.services import graph as graph_service
+
+        assert graph_service.ensure_search_not_blank("  foo ") is None
+
+    @pytest.mark.parametrize("search", ["", " ", "   \t\n"], ids=["empty", "space", "whitespace-only"])
+    def test_ensure_search_not_blank_rejects_blank_with_exact_message(self, search: str) -> None:
+        from monolynx.services import graph as graph_service
+
+        with pytest.raises(ValueError, match=r"^search nie moze byc pusty$"):
+            graph_service.ensure_search_not_blank(search)

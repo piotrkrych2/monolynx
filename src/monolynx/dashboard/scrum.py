@@ -61,6 +61,7 @@ from monolynx.services.settlements import (
 from monolynx.services.sprint import complete_sprint, start_sprint
 from monolynx.services.ticket_dependencies import set_blockers
 from monolynx.services.ticket_numbering import get_next_ticket_number
+from monolynx.services.tickets import ensure_member_of_project, ensure_sprint_in_project
 from monolynx.services.time_tracking import (
     add_time_entry,
     delete_time_entry,
@@ -432,7 +433,7 @@ async def board(
                 selectinload(Ticket.labels),
                 selectinload(Ticket.blocked_by),
             )
-            .where(Ticket.sprint_id == active_sprint.id)
+            .where(Ticket.sprint_id == active_sprint.id, Ticket.project_id == project.id)
             .order_by(Ticket.order)
         )
         board_rows = ticket_result.all()
@@ -637,6 +638,34 @@ async def ticket_create(
             is_edit=False,
             ticket=transient,
             error="Nieprawidlowy UUID blokera",
+            display_blocker_ids=display_blocker_ids,
+        )
+
+    try:
+        if sprint_id is not None:
+            await ensure_sprint_in_project(db, project.id, sprint_id)
+        if assignee_id is not None:
+            await ensure_member_of_project(db, project.id, assignee_id)
+    except ValueError as e:
+        transient = _transient_ticket_for_display(
+            project.id,
+            title=title,
+            description=description,
+            priority=priority,
+            story_points=story_points,
+            sprint_id=sprint_id,
+            assignee_id=assignee_id,
+            due_date=due_date,
+            labels=[lb for lb in project_labels if lb.id in valid_label_ids],
+        )
+        return await _render_ticket_form_error(
+            request,
+            project,
+            db,
+            user_id=user_id,
+            is_edit=False,
+            ticket=transient,
+            error=str(e),
             display_blocker_ids=display_blocker_ids,
         )
 
@@ -1364,6 +1393,25 @@ async def ticket_edit(
             current_settlement_ids=current_settlement_ids,
         )
 
+    # Tylko zmiana wartosci: ticket ze starym (cudzym) sprintem/assignee ma sie dac edytowac.
+    try:
+        if sprint_id is not None and sprint_id != ticket.sprint_id:
+            await ensure_sprint_in_project(db, project.id, sprint_id)
+        if assignee_id is not None and assignee_id != ticket.assignee_id:
+            await ensure_member_of_project(db, project.id, assignee_id)
+    except ValueError as e:
+        return await _render_ticket_form_error(
+            request,
+            project,
+            db,
+            user_id=user_id,
+            is_edit=True,
+            ticket=_display_ticket_for_edit_error(),
+            error=str(e),
+            display_blocker_ids=display_blocker_ids,
+            current_settlement_ids=current_settlement_ids,
+        )
+
     # Blokery ida surowo do set_blockers PRZED jakakolwiek mutacja pol ticketu -- bez
     # wstepnego filtra "jak etykiety" (MON-207 P9: cichy drop bledny ID byl uznany przez
     # code review MR !98 za problem, nie feature). Przy ValueError (self-ref/obcy projekt/
@@ -1557,7 +1605,7 @@ async def _compute_sprint_stats(sprints: Sequence[Sprint], db: AsyncSession) -> 
             select(
                 func.count(Ticket.id),
                 func.coalesce(func.sum(Ticket.story_points), 0),
-            ).where(Ticket.sprint_id == sprint.id)
+            ).where(Ticket.sprint_id == sprint.id, Ticket.project_id == sprint.project_id)
         )
         row = stats_result.one()
         sprint_stats[str(sprint.id)] = {

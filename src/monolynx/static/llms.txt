@@ -18,7 +18,7 @@ The UI and documentation are bilingual (Polish-first, with English available via
 - [Settlements](https://monolynx.com/features/settlements?lang=en): Cross-project billing with a status workflow (draft, sent, paid), ticket freezing, and attachment management.
 - [Work Plan / Gantt](https://monolynx.com/features/work_plan?lang=en): Personal per-user scheduling of tickets from any project on a Gantt chart and monthly calendar, independent of sprint assignment.
 - [Pipelines](https://monolynx.com/features/pipelines?lang=en): Observability for AI agent work modeled on CI/CD, with a pipeline, step, and job hierarchy, job logs stored as wiki pages, and status that propagates upward.
-- [CLI](https://monolynx.com/features/cli?lang=en): Command-line client (`monolynx`, alias `mnx`) for projects, tickets, sprints, and wiki, running the same operations as the MCP tools over the REST API v2, with table, JSON, YAML, or CSV output ready for pipelines.
+- [CLI](https://monolynx.com/features/cli?lang=en): Command-line client (`monolynx`, alias `mnx`) for projects, tickets, sprints, wiki, and read access to the code dependency graph, running the same operations as the MCP tools over the REST API v2, with table, JSON, YAML, or CSV output ready for pipelines.
 
 ## AI and MCP
 

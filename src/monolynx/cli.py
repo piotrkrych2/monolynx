@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import re
 import sys
 
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +14,21 @@ from monolynx.models.user import User
 from monolynx.services.auth import hash_password
 
 MIN_PASSWORD_LENGTH = 8
+
+TEST_DB_PREFIX = "open_sentry_test_"
+# Limit identyfikatora Postgresa (NAMEDATALEN - 1)
+_PG_IDENTIFIER_MAX = 63
+_TEST_DB_NAME_RE = re.compile(rf"{TEST_DB_PREFIX}[A-Za-z0-9_-]+")
+
+
+def validate_test_db_name(name: str) -> str:
+    """Zwraca nazwe bazy testowej albo rzuca ValueError.
+
+    Wymuszony prefiks sprawia, ze TEST_DATABASE_NAME nie wskaze bazy dev, a nazwa trafia
+    do SQL jako identyfikator w cudzyslowach, wiec znaki spoza whitelisty sa odrzucane."""
+    if len(name) > _PG_IDENTIFIER_MAX or not _TEST_DB_NAME_RE.fullmatch(name):
+        raise ValueError(f"Invalid test database name {name!r}: expected {TEST_DB_PREFIX}[A-Za-z0-9_-]+, max {_PG_IDENTIFIER_MAX} chars")
+    return name
 
 
 async def createsuperuser() -> None:
@@ -150,12 +166,56 @@ async def clear_all_graphs_cmd() -> None:
         await graph.close_driver()
 
 
+async def prune_test_dbs_cmd() -> None:
+    """Usuwa porzucone bazy open_sentry_test_* po przerwanych przebiegach pytest (MON-250).
+
+    Baza z aktywnym polaczeniem nalezy do trwajacego przebiegu, wiec jest pomijana;
+    DROP bez FORCE, zeby nigdy nie ubic cudzego przebiegu."""
+    from sqlalchemy import text
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from monolynx.config import settings
+
+    engine = create_async_engine(make_url(settings.DATABASE_URL).set(database="postgres"), isolation_level="AUTOCOMMIT")
+    dropped = 0
+    try:
+        async with engine.connect() as conn:
+            # "\_" bo "_" jest wildcardem LIKE; stara baza open_sentry_test (bez sufiksu) nie pasuje
+            rows = (
+                await conn.execute(
+                    text("SELECT datname, numbackends FROM pg_stat_database WHERE datname LIKE 'open\\_sentry\\_test\\_%' ORDER BY datname")
+                )
+            ).all()
+            for name, numbackends in rows:
+                if numbackends > 0:
+                    print(f"{name}: pominieto (aktywne polaczenia: {numbackends})")
+                    continue
+                try:
+                    validate_test_db_name(name)
+                except ValueError:
+                    print(f"{name}: pominieto (nazwa niezgodna ze wzorcem)")
+                    continue
+                try:
+                    await conn.execute(text(f'DROP DATABASE "{name}"'))
+                except DBAPIError as exc:
+                    print(f"{name}: BLAD usuwania: {exc.orig}")
+                    continue
+                print(f"{name}: usunieto")
+                dropped += 1
+    finally:
+        await engine.dispose()
+    print(f"Gotowe! Usunieto baz testowych: {dropped}")
+
+
 COMMANDS = {
     "createsuperuser": createsuperuser,
     "backfill-backlinks": backfill_backlinks_cmd,
     "backfill-embeddings": backfill_embeddings_cmd,
     "backfill-dependencies": backfill_ticket_dependencies_cmd,
     "clear-all-graphs": clear_all_graphs_cmd,
+    "prune-test-dbs": prune_test_dbs_cmd,
 }
 
 

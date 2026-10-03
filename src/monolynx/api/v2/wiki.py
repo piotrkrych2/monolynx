@@ -2,9 +2,12 @@
 `services/embeddings.py::search_wiki_pages`.
 
 Routery cienkie jak toole MCP (`mcp_server.py`, sekcja "--- Wiki ---") -- zadnej
-logiki biznesowej tutaj. Tylko `set_wiki_config` sprawdza uprawnienie jawnie
-(parytet z MCP, MON-131); reszta poprzestaje na czlonkostwie z
-`get_api_user_and_project`."""
+logiki biznesowej tutaj. Uprawnienia roli (MON-241): odczyty (lista, szczegoly, config)
+sprawdza serwis (`wiki:read`), a router jawnie `require_permission` dla funkcji serwisu
+bez uzytkownika: create/update strony `wiki:write` (pokrywa tez `is_public`), delete
+`wiki:delete`, search `wiki:read`, `set_wiki_config` `settings:write`. Check idzie przed
+lookupem strony, wiec rola bez uprawnienia dostaje 403, nie 404.
+`get_api_user_and_project` sprawdza tylko czlonkostwo."""
 
 from __future__ import annotations
 
@@ -45,7 +48,10 @@ async def list_wiki_pages(
     per_page: int = Query(DEFAULT_PER_PAGE, ge=1, le=MAX_PER_PAGE),
 ) -> PaginatedResponse[WikiPageListItemResponse]:
     user, project = user_and_project
-    pages = await wiki_service.list_pages_flat(db, user, project)
+    try:
+        pages = await wiki_service.list_pages_flat(db, user, project)
+    except ValueError as exc:
+        raise service_error(exc) from exc
     return paginate([WikiPageListItemResponse.from_domain(p) for p in pages], page, per_page)
 
 
@@ -70,6 +76,7 @@ async def create_wiki_page(
     db: AsyncSession = Depends(get_db),
 ) -> WikiPageResponse:
     user, project = user_and_project
+    await require_permission(db, user, project, "wiki", "write")
     # Parity with the MCP tool, which rejects a blank title before calling the service (MON-131).
     if not body.title.strip():
         raise service_error(ValueError("Tytul jest wymagany"))
@@ -107,6 +114,7 @@ async def update_wiki_page(
     db: AsyncSession = Depends(get_db),
 ) -> WikiPageResponse:
     user, project = user_and_project
+    await require_permission(db, user, project, "wiki", "write")
     page = await _get_page_or_404(db, project, page_id)
     try:
         page = await wiki_service.update_wiki_page(
@@ -131,7 +139,8 @@ async def delete_wiki_page(
     user_and_project: tuple[User, Project] = Depends(get_api_user_and_project),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    _user, project = user_and_project
+    user, project = user_and_project
+    await require_permission(db, user, project, "wiki", "delete")
     page = await _get_page_or_404(db, project, page_id)
     await wiki_service.delete_wiki_page(page, db)
     return Response(status_code=204)
@@ -144,7 +153,8 @@ async def search_wiki(
     user_and_project: tuple[User, Project] = Depends(get_api_user_and_project),
     db: AsyncSession = Depends(get_db),
 ) -> list[WikiSearchResultResponse]:
-    _user, project = user_and_project
+    user, project = user_and_project
+    await require_permission(db, user, project, "wiki", "read")
 
     from monolynx.services.embeddings import search_wiki_pages
 
@@ -157,7 +167,10 @@ async def get_wiki_config(
     user_and_project: tuple[User, Project] = Depends(get_api_user_and_project), db: AsyncSession = Depends(get_db)
 ) -> WikiConfigResponse:
     user, project = user_and_project
-    config = await wiki_service.get_wiki_config(db, user, project)
+    try:
+        config = await wiki_service.get_wiki_config(db, user, project)
+    except ValueError as exc:
+        raise service_error(exc) from exc
     return WikiConfigResponse.model_validate(config)
 
 

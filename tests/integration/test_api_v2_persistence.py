@@ -347,7 +347,9 @@ async def _invite_member(env: _Env) -> None:
     invitee = await _one(env, select(User).where(User.email == invitee_email))
     assert invitee is not None
     assert invitee.password_hash is None
-    assert str(invitee.invitation_token) == response.json()["invitation_token"]
+    assert invitee.invitation_token is not None
+    assert "invitation_token" not in response.json()
+    assert str(invitee.invitation_token) not in response.text
     member = await _one(env, select(ProjectMember).where(ProjectMember.project_id == project.id, ProjectMember.user_id == invitee.id))
     assert member is not None
     assert member.role == "admin"

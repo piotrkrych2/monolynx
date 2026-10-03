@@ -3,9 +3,12 @@ create_sprint/update_sprint/start_sprint/complete_sprint/get_burndown.
 
 Router cienki jak toole: wola services/tickets.py (sprinty), services/sprint.py
 (start/complete, zwraca `str | None` -- niepusty string to blad) i
-services/burndown.py (dane burndown). Uprawnienia -- tylko czlonkostwo przez
-`get_api_user_and_project`, bez dodatkowych check_permission (toole MCP tych
-sprintow tez ich nie sprawdzaja, patrz sekcja 7 ticketu)."""
+services/burndown.py (dane burndown). Uprawnienia: czlonkostwo przez
+`get_api_user_and_project`, a uprawnienie roli (scrum:read|write|delete) sprawdzaja
+funkcje services/tickets.py (list/get/create/update sprint). start/complete (scrum:write,
+plus scrum:read przed zapisem, bo odpowiedz czyta sprint po commit) i burndown (scrum:read)
+nie maja usera w serwisie, wiec router wola `require_permission` jawnie, przed parsowaniem
+sprint_id i lookupem."""
 
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monolynx.api.v2.common import DEFAULT_PER_PAGE, MAX_PER_PAGE, paginate, service_error
+from monolynx.api.v2.common import DEFAULT_PER_PAGE, MAX_PER_PAGE, paginate, require_permission, service_error
 from monolynx.api.v2.deps import get_api_user_and_project
 from monolynx.database import get_db
 from monolynx.models.project import Project
@@ -44,7 +47,10 @@ async def list_sprints_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedResponse[SprintListItem]:
     user, project = user_project
-    summaries = await tickets_service.list_sprints(db, user, project, status)
+    try:
+        summaries = await tickets_service.list_sprints(db, user, project, status)
+    except ValueError as exc:
+        raise service_error(exc) from exc
     items = [
         SprintListItem(
             **SprintResponse.from_domain(item.sprint).model_dump(),
@@ -111,6 +117,9 @@ async def start_sprint_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> SprintResponse:
     user, project = user_project
+    # read sprawdzany przed zapisem: get_sprint po commit wymaga scrum:read
+    await require_permission(db, user, project, "scrum", "write")
+    await require_permission(db, user, project, "scrum", "read")
     try:
         sprint_uuid = uuid.UUID(sprint_id)
     except ValueError as exc:
@@ -120,7 +129,10 @@ async def start_sprint_endpoint(
     if error:
         raise service_error(ValueError(error))
 
-    sprint = await tickets_service.get_sprint(db, user, project, sprint_id)
+    try:
+        sprint = await tickets_service.get_sprint(db, user, project, sprint_id)
+    except ValueError as exc:
+        raise service_error(exc) from exc
     return SprintResponse.from_domain(sprint)
 
 
@@ -132,6 +144,9 @@ async def complete_sprint_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> SprintResponse:
     user, project = user_project
+    # read sprawdzany przed zapisem: get_sprint po commit wymaga scrum:read
+    await require_permission(db, user, project, "scrum", "write")
+    await require_permission(db, user, project, "scrum", "read")
     try:
         sprint_uuid = uuid.UUID(sprint_id)
     except ValueError as exc:
@@ -141,7 +156,10 @@ async def complete_sprint_endpoint(
     if error:
         raise service_error(ValueError(error))
 
-    sprint = await tickets_service.get_sprint(db, user, project, sprint_id)
+    try:
+        sprint = await tickets_service.get_sprint(db, user, project, sprint_id)
+    except ValueError as exc:
+        raise service_error(exc) from exc
     return SprintResponse.from_domain(sprint)
 
 
@@ -152,7 +170,8 @@ async def get_burndown_endpoint(
     user_project: tuple[User, Project] = Depends(get_api_user_and_project),
     db: AsyncSession = Depends(get_db),
 ) -> BurndownResponse:
-    _user, project = user_project
+    user, project = user_project
+    await require_permission(db, user, project, "scrum", "read")
     sprint_uuid: uuid.UUID | None = None
     if sprint_id is not None:
         try:

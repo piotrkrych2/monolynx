@@ -15,41 +15,15 @@ from sqlalchemy.orm import selectinload
 
 from monolynx.database import get_db
 from monolynx.models.project import Project
-from monolynx.models.project_member import ProjectMember
 from monolynx.models.settlement import Settlement
 from monolynx.models.settlement_project import SettlementProject
-from monolynx.services.permissions import check_permission
+from monolynx.services.settlements import fully_permitted_settlements_clause, get_permitted_project_ids
 
-from .helpers import _get_user_id, templates
+from .helpers import get_session_user, templates
 
 router = APIRouter(prefix="/dashboard", tags=["settlements_global"])
 
 _PER_PAGE = 20
-
-
-async def _get_user_settlement_project_ids(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    is_superuser: bool,
-) -> list[uuid.UUID]:
-    """Projekty, w ktorych user ma rozliczenia:read (lub wszystkie dla superusera)."""
-    if is_superuser:
-        result = await db.execute(select(Project.id).where(Project.is_active.is_(True)))
-        return list(result.scalars().all())
-
-    member_result = await db.execute(
-        select(Project.id)
-        .join(ProjectMember, ProjectMember.project_id == Project.id)
-        .where(
-            ProjectMember.user_id == user_id,
-            Project.is_active.is_(True),
-        )
-    )
-    allowed: list[uuid.UUID] = []
-    for project_id in member_result.scalars().all():
-        if await check_permission(db, user_id, project_id, "rozliczenia", "read"):
-            allowed.append(project_id)
-    return allowed
 
 
 @router.get("/rozliczenia", response_class=HTMLResponse)
@@ -58,16 +32,16 @@ async def settlements_global_list(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Globalny widok rozliczen -- cross-project lista dla zalogowanego uzytkownika."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    is_superuser = bool(request.session.get("is_superuser", False))
-    allowed_project_ids = await _get_user_settlement_project_ids(db, user_id, is_superuser)
+    user_id = user.id
+    allowed_set = await get_permitted_project_ids(db, user_id, "read")
+    allowed_project_ids = list(allowed_set)
 
     # Parsowanie filtrow z query params
     params = request.query_params
-    allowed_set = set(allowed_project_ids)
 
     # Filtr projektow (multi-select, walidacja do allowed_set)
     filter_project_ids: list[uuid.UUID] = []
@@ -107,6 +81,8 @@ async def settlements_global_list(
             "dashboard/settlements_global/list.html",
             {
                 "settlements": [],
+                "visible_projects": {},
+                "visible_ticket_counts": {},
                 "allowed_projects": allowed_projects_list,
                 "filters": {
                     "project_ids": filter_project_ids,
@@ -127,6 +103,8 @@ async def settlements_global_list(
     conditions: list[Any] = [
         SettlementProject.project_id.in_(effective_project_ids),
         Settlement.is_active.is_(True),
+        # Rozliczenie z projektem bez rozliczenia:read nie jest listowane (MON-240)
+        fully_permitted_settlements_clause(allowed_set),
     ]
     if status_filter and status_filter in valid_statuses:
         conditions.append(Settlement.status == status_filter)
@@ -165,11 +143,17 @@ async def settlements_global_list(
     projects_result = await db.execute(select(Project).where(Project.id.in_(allowed_project_ids)).order_by(Project.name))
     allowed_projects_list = list(projects_result.scalars().all())
 
+    # Defensywnie: nazwy projektow i liczba ticketow tylko z projektow dozwolonych
+    visible_projects = {s.id: [p for p in s.projects if p.id in allowed_set] for s in settlements}
+    visible_ticket_counts = {s.id: sum(1 for t in s.tickets if t.project_id in allowed_set) for s in settlements}
+
     return templates.TemplateResponse(
         request,
         "dashboard/settlements_global/list.html",
         {
             "settlements": settlements,
+            "visible_projects": visible_projects,
+            "visible_ticket_counts": visible_ticket_counts,
             "allowed_projects": allowed_projects_list,
             "filters": {
                 "project_ids": filter_project_ids,

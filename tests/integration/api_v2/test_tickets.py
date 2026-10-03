@@ -18,13 +18,14 @@ from datetime import date
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.ticket_dependency import TicketDependency
+from monolynx.models.wiki_page import WikiPage
 
 from .conftest import make_actor, make_owner_project, make_project
 
@@ -43,6 +44,29 @@ async def _make_ticket(db_session, project, number: int, **kwargs) -> Ticket:
     db_session.add(ticket)
     await db_session.flush()
     return ticket
+
+
+async def _set_blockers(client, actor, project, ticket, blockers) -> None:
+    response = await client.patch(
+        f"/api/v2/projects/{project.slug}/tickets/{ticket.id}",
+        headers=actor.headers,
+        json={"blocked_by_ids": [str(b.id) for b in blockers]},
+    )
+    assert response.status_code == 200
+
+
+async def _make_spec_page(db_session, project, user, *, slug: str = "spec") -> WikiPage:
+    page = WikiPage(
+        project_id=project.id,
+        title="Specyfikacja ticketu",
+        slug=slug,
+        minio_path=f"wiki/{project.slug}/{slug}.md",
+        created_by_id=user.id,
+        last_edited_by_id=user.id,
+    )
+    db_session.add(page)
+    await db_session.flush()
+    return page
 
 
 async def _make_sprint(db_session, project, **kwargs) -> Sprint:
@@ -104,6 +128,80 @@ class TestListTickets:
         assert page2.json()["page"] == 2
         assert len(page2.json()["items"]) == 5
 
+    async def test_item_without_blockers_has_empty_blocked_by(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "list-no-blockers")
+        ticket = await _make_ticket(db_session, project, 1)
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets", headers=actor.headers)
+
+        item = next(t for t in response.json()["items"] if t["id"] == str(ticket.id))
+        assert item["blocked_by"] == []
+
+    async def test_item_with_blocker_returns_id_key_title_status(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "list-blocker-shape")
+        blocker = await _make_ticket(db_session, project, 1, title="Bloker listy", status="in_progress")
+        blocked = await _make_ticket(db_session, project, 2, title="Zablokowany listy")
+        await _set_blockers(client, actor, project, blocked, [blocker])
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets", headers=actor.headers)
+
+        item = next(t for t in response.json()["items"] if t["id"] == str(blocked.id))
+        assert item["blocked_by"] == [
+            {"id": str(blocker.id), "key": f"{project.code}-1", "title": "Bloker listy", "status": "in_progress"},
+        ]
+
+    async def test_each_item_gets_its_own_blockers(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "list-blockers-distinct")
+        blocker_a = await _make_ticket(db_session, project, 1, title="Bloker A")
+        blocker_b = await _make_ticket(db_session, project, 2, title="Bloker B")
+        blocker_c = await _make_ticket(db_session, project, 3, title="Bloker C")
+        blocked_x = await _make_ticket(db_session, project, 4, title="Zablokowany X")
+        blocked_y = await _make_ticket(db_session, project, 5, title="Zablokowany Y")
+        free = await _make_ticket(db_session, project, 6, title="Wolny")
+        await _set_blockers(client, actor, project, blocked_x, [blocker_a])
+        await _set_blockers(client, actor, project, blocked_y, [blocker_b, blocker_c])
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets", headers=actor.headers)
+
+        by_id = {t["id"]: t for t in response.json()["items"]}
+        assert [b["id"] for b in by_id[str(blocked_x.id)]["blocked_by"]] == [str(blocker_a.id)]
+        assert {b["id"] for b in by_id[str(blocked_y.id)]["blocked_by"]} == {str(blocker_b.id), str(blocker_c.id)}
+        assert by_id[str(free.id)]["blocked_by"] == []
+        assert by_id[str(blocker_a.id)]["blocked_by"] == []
+
+    @pytest.mark.parametrize("query", ["", "?compact=true"], ids=["default", "compact"])
+    async def test_blocker_loading_does_not_scale_queries_with_tickets(self, client, db_session, engine, query):
+        actor, project = await make_owner_project(db_session, "list-blockers-nplus1")
+        base = await _make_ticket(db_session, project, 1, title="Wspolny bloker")
+        for number in range(2, 5):
+            ticket = await _make_ticket(db_session, project, number)
+            await _set_blockers(client, actor, project, ticket, [base])
+
+        statements: list[str] = []
+
+        def _count(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+            statements.append(statement)
+
+        event.listen(engine.sync_engine, "before_cursor_execute", _count)
+        try:
+            first = await client.get(f"/api/v2/projects/{project.slug}/tickets{query}", headers=actor.headers)
+            queries_with_few_rows = len(statements)
+
+            for number in range(5, 10):
+                ticket = await _make_ticket(db_session, project, number)
+                await _set_blockers(client, actor, project, ticket, [base])
+            statements.clear()
+            second = await client.get(f"/api/v2/projects/{project.slug}/tickets{query}", headers=actor.headers)
+            queries_with_more_rows = len(statements)
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", _count)
+
+        assert len(first.json()["items"]) == 4
+        assert len(second.json()["items"]) == 9
+        assert sum(1 for t in first.json()["items"] if t["blocked_by"]) == 3
+        assert sum(1 for t in second.json()["items"] if t["blocked_by"]) == 8
+        assert queries_with_more_rows == queries_with_few_rows
+
     async def test_non_member_returns_403(self, client, db_session):
         _actor, project = await make_owner_project(db_session, "list-tickets-403")
         outsider = await make_actor(db_session, "list-tickets-403-out")
@@ -111,6 +209,137 @@ class TestListTickets:
         response = await client.get(f"/api/v2/projects/{project.slug}/tickets", headers=outsider.headers)
 
         assert response.status_code == 403
+
+
+class TestListTicketsCompact:
+    async def test_compact_true_item_has_no_description_key(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "compact-no-desc")
+        ticket = await _make_ticket(db_session, project, 1, title="Z opisem", description="Dlugi opis ticketu")
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets?compact=true", headers=actor.headers)
+
+        assert response.status_code == 200
+        item = next(t for t in response.json()["items"] if t["id"] == str(ticket.id))
+        assert "description" not in item
+
+    async def test_compact_true_keeps_every_other_key_of_default_item(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "compact-keys")
+        await _make_ticket(db_session, project, 1, title="Z opisem", description="Opis", priority="high", story_points=3)
+
+        default = await client.get(f"/api/v2/projects/{project.slug}/tickets", headers=actor.headers)
+        compact = await client.get(f"/api/v2/projects/{project.slug}/tickets?compact=true", headers=actor.headers)
+
+        default_item = default.json()["items"][0]
+        compact_item = compact.json()["items"][0]
+        assert set(compact_item) == set(default_item) - {"description"}
+        assert compact_item == {key: value for key, value in default_item.items() if key != "description"}
+
+    async def test_compact_true_keeps_blocked_by_with_blocker_key(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "compact-blockers")
+        blocker = await _make_ticket(db_session, project, 1, title="Bloker compact", status="in_progress", description="Opis blokera")
+        blocked = await _make_ticket(db_session, project, 2, title="Zablokowany compact", description="Opis zablokowanego")
+        await _set_blockers(client, actor, project, blocked, [blocker])
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets?compact=true", headers=actor.headers)
+
+        item = next(t for t in response.json()["items"] if t["id"] == str(blocked.id))
+        assert item["blocked_by"] == [
+            {"id": str(blocker.id), "key": f"{project.code}-1", "title": "Bloker compact", "status": "in_progress"},
+        ]
+
+    async def test_compact_true_keeps_pagination_envelope(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "compact-envelope")
+        for i in range(1, 26):
+            await _make_ticket(db_session, project, i, description=f"Opis {i}")
+
+        default = await client.get(f"/api/v2/projects/{project.slug}/tickets?page=2", headers=actor.headers)
+        compact = await client.get(f"/api/v2/projects/{project.slug}/tickets?page=2&compact=true", headers=actor.headers)
+
+        default_body = default.json()
+        compact_body = compact.json()
+        assert {k: v for k, v in compact_body.items() if k != "items"} == {k: v for k, v in default_body.items() if k != "items"}
+        assert compact_body["page"] == 2
+        assert compact_body["per_page"] == 20
+        assert compact_body["total"] == 25
+        assert len(compact_body["items"]) == 5
+
+    @pytest.mark.parametrize("query", ["", "?compact=false"], ids=["no-param", "compact-false"])
+    async def test_default_and_compact_false_keep_description_value(self, client, db_session, query):
+        actor, project = await make_owner_project(db_session, "compact-default-desc")
+        ticket = await _make_ticket(db_session, project, 1, description="Opis w odpowiedzi domyslnej")
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets{query}", headers=actor.headers)
+
+        item = next(t for t in response.json()["items"] if t["id"] == str(ticket.id))
+        assert item["description"] == "Opis w odpowiedzi domyslnej"
+
+    @pytest.mark.parametrize("query", ["", "?compact=false"], ids=["no-param", "compact-false"])
+    async def test_default_and_compact_false_item_without_description_has_null_key(self, client, db_session, query):
+        actor, project = await make_owner_project(db_session, "compact-default-null")
+        ticket = await _make_ticket(db_session, project, 1, description=None)
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets{query}", headers=actor.headers)
+
+        item = next(t for t in response.json()["items"] if t["id"] == str(ticket.id))
+        assert "description" in item
+        assert item["description"] is None
+
+    async def test_compact_true_item_without_description_has_no_description_key(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "compact-null-desc")
+        ticket = await _make_ticket(db_session, project, 1, description=None)
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets?compact=true", headers=actor.headers)
+
+        item = next(t for t in response.json()["items"] if t["id"] == str(ticket.id))
+        assert "description" not in item
+
+    async def test_create_response_keeps_description(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "compact-create-desc")
+
+        response = await client.post(
+            f"/api/v2/projects/{project.slug}/tickets",
+            headers=actor.headers,
+            json={"title": "Z opisem", "description": "Opis po utworzeniu"},
+        )
+
+        assert response.status_code == 201
+        assert response.json()["description"] == "Opis po utworzeniu"
+
+    async def test_update_response_keeps_description(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "compact-update-desc")
+        ticket = await _make_ticket(db_session, project, 1, description="Opis przed zmiana")
+
+        response = await client.patch(
+            f"/api/v2/projects/{project.slug}/tickets/{ticket.id}",
+            headers=actor.headers,
+            json={"title": "Nowy tytul"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["description"] == "Opis przed zmiana"
+
+    def test_compact_model_fields_equal_list_item_fields_without_description(self):
+        from monolynx.schemas.api_v2.ticket import TicketListItem, TicketListItemCompact
+
+        assert list(TicketListItemCompact.model_fields) == [name for name in TicketListItem.model_fields if name != "description"]
+
+    async def test_openapi_describes_compact_query_param_and_compact_schema(self, client):
+        response = await client.get("/api/v2/openapi.json")
+
+        assert response.status_code == 200
+        spec = response.json()
+        paths = [p for p in spec["paths"] if p.endswith("/projects/{project_slug}/tickets")]
+        assert len(paths) == 1, list(spec["paths"])
+        compact_params = [p for p in spec["paths"][paths[0]]["get"]["parameters"] if p["name"] == "compact"]
+        assert len(compact_params) == 1
+        compact_param = compact_params[0]
+        assert compact_param["in"] == "query"
+        assert compact_param["required"] is False
+        assert compact_param["schema"]["type"] == "boolean"
+        assert compact_param["schema"]["default"] is False
+        properties = spec["components"]["schemas"]["TicketListItemCompact"]["properties"]
+        assert "blocked_by" in properties
+        assert "description" not in properties
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +497,54 @@ class TestGetTicket:
 
         blocker_response = await client.get(f"/api/v2/projects/{project.slug}/tickets/{blocker.id}", headers=actor.headers)
         assert [b["id"] for b in blocker_response.json()["blocks"]] == [str(ticket.id)]
+
+    async def test_detail_returns_spec_page_id_when_set(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "get-spec-set")
+        spec = await _make_spec_page(db_session, project, actor.user)
+        ticket = await _make_ticket(db_session, project, 1, spec_page_id=spec.id)
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets/{ticket.id}", headers=actor.headers)
+
+        assert response.status_code == 200
+        assert response.json()["spec_page_id"] == str(spec.id)
+
+    async def test_detail_returns_null_spec_page_id_when_unset(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "get-spec-null")
+        ticket = await _make_ticket(db_session, project, 1)
+
+        response = await client.get(f"/api/v2/projects/{project.slug}/tickets/{ticket.id}", headers=actor.headers)
+
+        body = response.json()
+        assert "spec_page_id" in body
+        assert body["spec_page_id"] is None
+
+    async def test_update_response_returns_spec_page_id(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "patch-spec")
+        spec = await _make_spec_page(db_session, project, actor.user)
+        ticket = await _make_ticket(db_session, project, 1, spec_page_id=spec.id)
+
+        response = await client.patch(
+            f"/api/v2/projects/{project.slug}/tickets/{ticket.id}",
+            headers=actor.headers,
+            json={"title": "Nowy tytul"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["spec_page_id"] == str(spec.id)
+
+    async def test_create_response_returns_null_spec_page_id(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "create-spec-null")
+
+        response = await client.post(
+            f"/api/v2/projects/{project.slug}/tickets",
+            headers=actor.headers,
+            json={"title": "Bez spec"},
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert "spec_page_id" in body
+        assert body["spec_page_id"] is None
 
 
 # ---------------------------------------------------------------------------

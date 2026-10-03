@@ -135,6 +135,9 @@ class TestTicketCreateAllFields:
         )
         db_session.add(assignee)
         await db_session.flush()
+        # Assignee musi byc czlonkiem projektu (MON-238).
+        db_session.add(ProjectMember(project_id=project.id, user_id=assignee.id, role="member"))
+        await db_session.flush()
 
         await login_session(client, db_session, email="tca-allf@test.com")
         resp = await client.post(
@@ -487,6 +490,9 @@ class TestTicketEditAllFields:
             password_hash=hash_password("testpass123"),
         )
         db_session.add(assignee)
+        await db_session.flush()
+        # Assignee musi byc czlonkiem projektu (MON-238).
+        db_session.add(ProjectMember(project_id=project.id, user_id=assignee.id, role="member"))
         await db_session.flush()
 
         ticket = Ticket(

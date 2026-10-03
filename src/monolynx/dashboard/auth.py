@@ -41,6 +41,13 @@ def _google_enabled() -> bool:
     return bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET)
 
 
+def _google_deny(request: Request, message: str) -> RedirectResponse:
+    # login.html is a standalone page without flash rendering, so the message goes under a dedicated
+    # session key that login_page pops into the template's `error` field.
+    request.session["login_error"] = message
+    return RedirectResponse(url="/auth/login", status_code=302)
+
+
 @router.get("/auth/login", response_class=HTMLResponse, response_model=None)
 async def login_page(request: Request) -> HTMLResponse | RedirectResponse:
     if request.session.get("user_id"):
@@ -48,7 +55,7 @@ async def login_page(request: Request) -> HTMLResponse | RedirectResponse:
     return templates.TemplateResponse(
         request,
         "auth/login.html",
-        {"error": None, "google_enabled": _google_enabled()},
+        {"error": request.session.pop("login_error", None), "google_enabled": _google_enabled()},
     )
 
 
@@ -212,6 +219,11 @@ async def google_callback(
         result = await db.execute(select(User).where(User.email == email, User.is_active.is_(True)))
         user = result.scalar_one_or_none()
 
+        # Strictly True: a missing key counts as unverified, otherwise an unverified Google address
+        # could take over an existing account or create a new one.
+        if userinfo.get("email_verified") is not True:
+            return _google_deny(request, "Adres e-mail konta Google nie jest zweryfikowany.")
+
         if user is not None:
             user.google_id = google_id
             if not user.first_name and userinfo.get("given_name"):
@@ -219,6 +231,8 @@ async def google_callback(
             if not user.last_name and userinfo.get("family_name"):
                 user.last_name = userinfo["family_name"]
             await db.commit()
+        elif not settings.GOOGLE_AUTO_CREATE_USERS:
+            return _google_deny(request, "Konto nie istnieje. Poproś administratora o zaproszenie.")
         else:
             # Create new account — first user ever becomes superuser
             user_count = await db.scalar(select(func.count()).select_from(User))

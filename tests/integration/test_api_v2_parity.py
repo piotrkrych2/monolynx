@@ -8,12 +8,17 @@ w testach, nie u użytkownika. Plik zawiera pięć grup testów:
 1. kompletność mapy `tool_endpoint_map.py` względem narzędzi zarejestrowanych w MCP oraz
    względem tras v2 (`find_coverage_problems`, `find_missing_routes` są sprawdzane także na
    syntetycznych zbiorach, co dowodzi, że test pada przy nowym narzędziu bez wpisu),
-2. parytet 40 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
+2. parytet 45 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
 3. jawne pinowanie znanych różnic kontraktu (`known_differences` w mapie),
 4. odrzucenie pustego tytułu strony wiki przez oba kanały (rozjazd wykryty w MON-131,
    naprawiony guardem w `api/v2/wiki.py`),
 5. uprawnienia i członkostwo: rola bez `settings:write`/`users:write`/`settings:delete`/
-   `users:delete` oraz użytkownik spoza projektu dostają `ValueError` w MCP i 403 w v2.
+   `users:delete` oraz użytkownik spoza projektu dostają `ValueError` w MCP i 403 w v2. Uprawnienia
+   `scrum:*` i `wiki:*` (member, rola tylko-do-odczytu, owner i admin) pokrywa osobno
+   `test_rbac_scrum_wiki_channels.py`; scenariusze parytetu biegną jako owner, który ma wszystkie,
+6. graf Połączeń (MON-248): 5 odczytów mapowanych na `/graph/*`; Neo4j nie działa w testach,
+   więc funkcje `monolynx.services.graph` są podmieniane jednym zestawem mocków (`_graph_backend`)
+   dla obu kanałów, a klasa `TestGraphChannelErrors` porównuje wyłączony graf i brak `connections:read`.
 
 Ten sam token (`UserApiToken` z `generate_api_token()`) obsługuje oba kanały: jako `Bearer`
 w nagłówku v2 i w zamockowanym `Context` MCP. `mcp_server.async_session_factory` jest
@@ -24,7 +29,9 @@ MON-71); trwałość na osobnych połączeniach sprawdza `test_api_v2_persistenc
 Zapisy porównuje się na dwóch osobnych obiektach (jeden zapis przez MCP, drugi przez v2) i
 czyta po zapisie zapytaniem o kolumny, nie przez obiekty z identity map. Sześć narzędzi MCP
 zwraca tekst (`list_tickets`, `get_ticket`, `get_board`, `list_acceptance_criteria`,
-`get_sprint`, `list_wiki_pages`); ich wartości wyciągają parsery `_parse_*`.
+`get_sprint`, `list_wiki_pages`); ich wartości wyciągają parsery `_parse_*`. Trzy narzędzia grafu
+zwracają Arrow DSL (`get_graph_node`, `query_graph`, `find_graph_path`); parytet z v2 polega na tym,
+że `format_graph_dsl(<JSON z v2>)` jest identyczny z tekstem MCP.
 
 MinIO, embeddingi i wysyłka maili są zamockowane (`side_effects`); MinIO jest słownikiem
 w pamięci, więc treść zapisana przez jeden kanał jest czytelna przez drugi.
@@ -36,10 +43,11 @@ import re
 import secrets
 import string
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -54,6 +62,7 @@ from monolynx.models.issue import Issue
 from monolynx.models.label import Label, TicketLabel
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_acceptance_criterion import TicketAcceptanceCriterion
@@ -62,6 +71,7 @@ from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.ticket_dependency import TicketDependency
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
+from monolynx.services import graph as graph_service
 from monolynx.services import ticket_dependencies
 from monolynx.services.ticket_numbering import get_next_ticket_number
 from tests.integration.api_v2.conftest import ApiV2Actor, add_member, make_actor, make_owner_project, make_project
@@ -102,7 +112,19 @@ _WRITE_TOOLS = frozenset(
     }
 )
 
-_PLACEHOLDER_NAMES = frozenset({"project_slug", "ticket_id", "criterion_id", "sprint_id", "page_id", "member_id"})
+_PLACEHOLDER_NAMES = frozenset({"project_slug", "ticket_id", "criterion_id", "sprint_id", "page_id", "member_id", "node_id"})
+
+_GRAPH_READ_TOOLS = ("list_graph_nodes", "get_graph_node", "query_graph", "find_graph_path", "get_graph_stats")
+_GRAPH_WRITE_TOOLS = (
+    "create_graph_node",
+    "delete_graph_node",
+    "create_graph_edge",
+    "delete_graph_edge",
+    "bulk_create_graph_nodes",
+    "bulk_create_graph_edges",
+    "replace_graph",
+)
+_GRAPH_DISABLED = "Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)"
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +168,8 @@ class TestMapCompleteness:
         problems = find_coverage_problems([t.name for t in tools], TOOL_TO_ENDPOINT, INTENTIONALLY_UNMAPPED)
 
         assert problems == []
-        assert len(TOOL_TO_ENDPOINT) == 40
-        assert len(INTENTIONALLY_UNMAPPED) == 79
+        assert len(TOOL_TO_ENDPOINT) == 45
+        assert len(INTENTIONALLY_UNMAPPED) == 74
         assert all(reason.strip() for reason in INTENTIONALLY_UNMAPPED.values())
 
     def test_new_tool_without_entry_is_reported(self):
@@ -195,6 +217,13 @@ class TestMapCompleteness:
 
     def test_is_write_flags_match_contract(self):
         assert {name for name, spec in TOOL_TO_ENDPOINT.items() if spec.is_write} == _WRITE_TOOLS
+
+    def test_graph_reads_are_mapped_and_graph_writes_stay_unmapped_with_sync_reason(self):
+        assert set(_GRAPH_READ_TOOLS) <= TOOL_TO_ENDPOINT.keys()
+        assert all(not TOOL_TO_ENDPOINT[name].is_write for name in _GRAPH_READ_TOOLS)
+        assert set(_GRAPH_WRITE_TOOLS) <= INTENTIONALLY_UNMAPPED.keys()
+        assert set(_GRAPH_WRITE_TOOLS).isdisjoint(TOOL_TO_ENDPOINT)
+        assert all("sync_graph" in INTENTIONALLY_UNMAPPED[name] for name in _GRAPH_WRITE_TOOLS)
 
     def test_paths_use_contract_placeholders_only(self):
         for name, spec in TOOL_TO_ENDPOINT.items():
@@ -534,7 +563,10 @@ async def _wiki_state(env: ParityEnv, page_id: uuid.UUID | str) -> dict[str, Any
 
 
 def _parse_ticket_table(text: str) -> tuple[int, int, int, list[tuple[str, ...]]]:
-    """`list_tickets`: (total, page, total_pages, wiersze jako krotki 9 komórek: Key, Title, Status, Pri, Assignee, Sprint, SP, Due, Labels)."""
+    """`list_tickets`: (total, page, total_pages, wiersze jako krotki 10 komórek).
+
+    Komórki: Key, Title, Status, Pri, Assignee, Sprint, SP, Due, Labels, Blocked by.
+    """
     lines = text.split("\n")
     header = re.fullmatch(r"(\d+) tickets \(page (\d+)/(\d+)\)", lines[0])
     assert header, lines[0]
@@ -824,12 +856,15 @@ async def scenario_invite_member(env: ParityEnv) -> None:
     body = response.json()
     assert (mcp_out["user_email"], mcp_out["role"]) == (email_a, "member")
     assert (body["email"], body["role"], body["is_new_user"]) == (email_b, "member", True)
-    for email, token, expires_at in (
-        (email_a, mcp_out["invitation_id"], mcp_out["expires_at"]),
-        (email_b, body["invitation_token"], body["expires_at"]),
-    ):
+    assert "invitation_id" not in mcp_out
+    assert "invitation_token" not in body
+    tokens: dict[str, uuid.UUID] = {}
+    for email, expires_at in ((email_a, mcp_out["expires_at"]), (email_b, body["expires_at"])):
         row = (await env.db.execute(select(User.invitation_token, User.invitation_expires_at).where(User.email == email))).one()
-        assert str(row.invitation_token) == token
+        assert row.invitation_token is not None
+        assert str(row.invitation_token) not in str(mcp_out)
+        assert str(row.invitation_token) not in response.text
+        tokens[email] = row.invitation_token
         assert row.invitation_expires_at == _dt(expires_at)
         assert timedelta(days=6) < _dt(expires_at) - datetime.now(UTC) < timedelta(days=8)
         member_role = (
@@ -840,8 +875,8 @@ async def scenario_invite_member(env: ParityEnv) -> None:
             )
         ).scalar_one()
         assert member_role == "member"
-    env.fx.mcp_mail.assert_called_once_with(email_a, "", uuid.UUID(mcp_out["invitation_id"]))
-    env.fx.v2_mail.assert_called_once_with(email_b, "", uuid.UUID(body["invitation_token"]))
+    env.fx.mcp_mail.assert_called_once_with(email_a, "", tokens[email_a])
+    env.fx.v2_mail.assert_called_once_with(email_b, "", tokens[email_b])
 
     # Istniejące konto: dodane od razu z podaną rolą, bez zaproszenia i bez maila.
     existing_a = await _new_user(env, "inv-a")
@@ -854,7 +889,7 @@ async def scenario_invite_member(env: ParityEnv) -> None:
     assert "invitation_id" not in mcp_existing
     assert "expires_at" not in mcp_existing
     assert (body["email"], body["role"], body["is_new_user"]) == (existing_b.email, "admin", False)
-    assert body["invitation_token"] is None
+    assert "invitation_token" not in body
     assert body["expires_at"] is None
     for user in (existing_a, existing_b):
         role = (
@@ -1047,6 +1082,7 @@ async def _assert_list_tickets_parity(env: ParityEnv, seed: TicketSet, expected:
             str(item["story_points"]) if item["story_points"] is not None else "--",
             item["due_date"] or "--",
             ", ".join(label_names[label_id] for label_id in item["label_ids"]),
+            ", ".join(b["key"] for b in sorted(item["blocked_by"], key=lambda b: int(b["key"].rsplit("-", 1)[1]))) or "--",
         )
         for item in body["items"]
     ]
@@ -1056,6 +1092,8 @@ async def _assert_list_tickets_parity(env: ParityEnv, seed: TicketSet, expected:
 
 async def scenario_list_tickets(env: ParityEnv) -> None:
     seed = await _seed_ticket_set(env)
+    await ticket_dependencies.set_blockers(env.db, seed.first, [seed.third.id, seed.second.id])
+    await env.db.flush()
 
     await _assert_list_tickets_parity(env, seed, [seed.second, seed.third, seed.first])
     await _assert_list_tickets_parity(env, seed, [seed.first], status="todo")
@@ -1068,6 +1106,8 @@ async def scenario_list_tickets(env: ParityEnv) -> None:
     assert rows[1][1] == "Trzeci ticket z bardzo dlugim tytulem pr"
     assert rows[2][8] == "backend"
     assert rows[2][4] == seed.other.email
+    assert rows[2][9] == f"{_key(env.project, seed.second)}, {_key(env.project, seed.third)}"
+    assert rows[0][9] == "--"
 
 
 async def _assert_search_parity(env: ParityEnv, expected: list[Ticket], **filters: Any) -> None:
@@ -1208,6 +1248,7 @@ async def scenario_get_ticket(env: ParityEnv) -> None:
 async def scenario_create_ticket(env: ParityEnv) -> None:
     sprint = await _sprint(env, "Sprint tworzenia")
     other = await _new_user(env, "create-ticket")
+    await add_member(env.db, env.project, other, role="member")
     label = await _label(env, "tworzenie")
     blocker = await _ticket(env, "Bloker tworzenia")
     spec = await _wiki_page(env, "Specyfikacja", "specyfikacja-parytet")
@@ -1333,6 +1374,7 @@ async def scenario_delete_ticket(env: ParityEnv) -> None:
 async def scenario_bulk_update_tickets(env: ParityEnv) -> None:
     sprint = await _sprint(env, "Sprint masowy")
     other = await _new_user(env, "bulk")
+    await add_member(env.db, env.project, other, role="member")
     mcp_tickets = [await _ticket(env, f"Masowy MCP {i}", priority="low") for i in range(2)]
     v2_tickets = [await _ticket(env, f"Masowy v2 {i}", priority="low") for i in range(2)]
     unknown = f"{env.project.code}-999"
@@ -2030,6 +2072,236 @@ async def scenario_set_wiki_config(env: ParityEnv) -> None:
     assert await enabled(project_b) is False
 
 
+# ---------------------------------------------------------------------------
+# Graf Połączeń (MON-248): Neo4j nie działa w testach, oba kanały wołą te same funkcje
+# `monolynx.services.graph`, więc jeden zestaw mocków obsługuje MCP i v2.
+# ---------------------------------------------------------------------------
+
+_GRAPH_SERVICE_FUNCTIONS = ("list_nodes", "get_node", "get_neighbors", "get_graph", "search_graph", "find_path", "get_stats")
+
+
+@contextmanager
+def _graph_backend(*, enabled: bool = True, **returns: Any) -> Iterator[SimpleNamespace]:
+    """Podmienia funkcje serwisu grafu na mocki z podpisem oryginału (autospec): asercje na wywołaniu
+    nie rozróżniają argumentu pozycyjnego od nazwanego, a `reset()` pozwala sprawdzić każdy kanał osobno.
+    Zwracane wartości leżą w `returns` (zmiana w trakcie scenariusza nie wymaga dotykania atrapy)."""
+    state: dict[str, Any] = dict(returns)
+    with ExitStack() as stack:
+        mocks = {
+            name: stack.enter_context(patch.object(graph_service, name, autospec=True, side_effect=lambda *a, _n=name, **k: state.get(_n)))
+            for name in _GRAPH_SERVICE_FUNCTIONS
+        }
+        is_enabled = stack.enter_context(patch.object(graph_service, "is_enabled", autospec=True, return_value=enabled))
+
+        def reset() -> None:
+            for mock in (*mocks.values(), is_enabled):
+                mock.reset_mock()
+
+        yield SimpleNamespace(is_enabled=is_enabled, reset=reset, returns=state, **mocks)
+
+
+def _graph_node(env: ParityEnv, node_id: str, name: str, node_type: str = "File", **fields: Any) -> dict[str, Any]:
+    return {
+        "id": node_id,
+        "project_id": str(env.project.id),
+        "name": name,
+        "type": node_type,
+        "file_path": fields.get("file_path"),
+        "line_number": fields.get("line_number"),
+        "metadata": fields.get("metadata", {}),
+    }
+
+
+def _graph_edge(source_id: str, target_id: str, edge_type: str = "CALLS", metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"source_id": source_id, "target_id": target_id, "type": edge_type, "metadata": metadata or {}}
+
+
+def _dsl_of(body: Mapping[str, Any]) -> str:
+    return graph_service.format_graph_dsl({key: body[key] for key in ("nodes", "edges", "depth_map") if key in body})
+
+
+async def scenario_list_graph_nodes(env: ParityEnv) -> None:
+    nodes = [
+        _graph_node(env, "n1", "alfa.py", "File", file_path="app/alfa.py", line_number=1),
+        _graph_node(env, "n2", "Alfa", "Class", file_path="app/alfa.py", line_number=7, metadata={"docstring": "opis"}),
+    ]
+    other = await _extra_project(env, "graph-list")
+
+    with _graph_backend(list_nodes=nodes) as g:
+        mcp_out = await env.mcp("list_graph_nodes", env.slug, type="File", search="alf", limit=5)
+        g.list_nodes.assert_awaited_once_with(env.project.id, type_filter="File", search="alf", limit=5)
+        g.reset()
+        response = await env.v2("list_graph_nodes", params={"type": "File", "search": "alf", "limit": 5})
+        g.list_nodes.assert_awaited_once_with(env.project.id, type_filter="File", search="alf", limit=5)
+        g.reset()
+
+        default_mcp = await env.mcp("list_graph_nodes", env.slug)
+        g.list_nodes.assert_awaited_once_with(env.project.id, type_filter=None, search=None, limit=100)
+        g.reset()
+        default_response = await env.v2("list_graph_nodes")
+        g.list_nodes.assert_awaited_once_with(env.project.id, type_filter=None, search=None, limit=100)
+        g.reset()
+
+        other_response = await env.v2("list_graph_nodes", slug=other.slug)
+        g.list_nodes.assert_awaited_once_with(other.id, type_filter=None, search=None, limit=100)
+
+    assert response.status_code == 200
+    assert mcp_out == response.json() == nodes
+    assert default_response.status_code == 200
+    assert default_mcp == default_response.json() == nodes
+    assert other_response.status_code == 200
+
+
+async def scenario_get_graph_node(env: ParityEnv) -> None:
+    root = _graph_node(env, "n1", "Alfa", "Class", file_path="app/alfa.py", line_number=7)
+    child = _graph_node(env, "n2", "Alfa.run", "Method", file_path="app/alfa.py", line_number=12)
+    edge = _graph_edge("n1", "n2", "CONTAINS", {"confidence": "EXTRACTED", "source_relation": "contains"})
+    neighbors = {"nodes": [root, child], "edges": [edge], "depth_map": {"n1": 0, "n2": 1}}
+
+    with _graph_backend(get_node=root, get_neighbors=neighbors) as g:
+        text = await env.mcp("get_graph_node", env.slug, "n1", depth=2, relation_types=["CONTAINS", "CALLS"], node_types=["Class", "Method"])
+        g.get_node.assert_awaited_once_with(env.project.id, "n1")
+        g.get_neighbors.assert_awaited_once_with(env.project.id, "n1", depth=2, relation_types=["CONTAINS", "CALLS"], node_types=["Class", "Method"])
+        g.reset()
+        response = await env.v2(
+            "get_graph_node",
+            node_id="n1",
+            params={"depth": 2, "relation_types": ["CONTAINS", "CALLS"], "node_types": ["Class", "Method"]},
+        )
+        g.get_node.assert_awaited_once_with(env.project.id, "n1")
+        g.get_neighbors.assert_awaited_once_with(env.project.id, "n1", depth=2, relation_types=["CONTAINS", "CALLS"], node_types=["Class", "Method"])
+        g.reset()
+
+        default_text = await env.mcp("get_graph_node", env.slug, "n1")
+        g.get_neighbors.assert_awaited_once_with(env.project.id, "n1", depth=1, relation_types=None, node_types=None)
+        g.reset()
+        default_response = await env.v2("get_graph_node", node_id="n1")
+        g.get_neighbors.assert_awaited_once_with(env.project.id, "n1", depth=1, relation_types=None, node_types=None)
+        g.reset()
+
+        g.returns["get_node"] = None
+        message = await env.mcp_error("get_graph_node", env.slug, "brak")
+        g.get_neighbors.assert_not_awaited()
+        missing = await env.v2("get_graph_node", node_id="brak")
+        g.get_neighbors.assert_not_awaited()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["node"] == root
+    assert body["depth_map"] == neighbors["depth_map"]
+    assert [n["id"] for n in body["nodes"]] == ["n1", "n2"]
+    assert (body["edges"][0]["source_id"], body["edges"][0]["target_id"], body["edges"][0]["type"]) == ("n1", "n2", "CONTAINS")
+    assert (body["edges"][0]["confidence"], body["edges"][0]["source_relation"]) == ("EXTRACTED", "contains")
+    assert text == _dsl_of(body)
+    assert default_response.status_code == 200
+    assert default_text == _dsl_of(default_response.json()) == text
+    assert message == "Node nie istnieje"
+    _assert_problem(missing, 404, message)
+
+
+async def scenario_query_graph(env: ParityEnv) -> None:
+    alfa = _graph_node(env, "n1", "Alfa", "Class", file_path="app/alfa.py", line_number=7)
+    beta = _graph_node(env, "n2", "Beta", "Function")
+    found = {"nodes": [alfa, beta], "edges": [_graph_edge("n1", "n2", "CALLS", {"confidence": "INFERRED"})]}
+    whole = {"nodes": [beta, alfa], "edges": []}
+
+    with _graph_backend(search_graph=found, get_graph=whole) as g:
+        mcp_found = await env.mcp("query_graph", env.slug, node_type="Class", search="alf", limit=7)
+        g.search_graph.assert_awaited_once_with(env.project.id, search="alf", type_filter="Class", limit=7)
+        g.get_graph.assert_not_awaited()
+        g.reset()
+        found_response = await env.v2("query_graph", params={"node_type": "Class", "search": "alf", "limit": 7})
+        g.search_graph.assert_awaited_once_with(env.project.id, search="alf", type_filter="Class", limit=7)
+        g.get_graph.assert_not_awaited()
+        g.reset()
+
+        mcp_whole = await env.mcp("query_graph", env.slug, node_type="Function", limit=9)
+        g.get_graph.assert_awaited_once_with(env.project.id, type_filter="Function", limit=9)
+        g.search_graph.assert_not_awaited()
+        g.reset()
+        whole_response = await env.v2("query_graph", params={"node_type": "Function", "limit": 9})
+        g.get_graph.assert_awaited_once_with(env.project.id, type_filter="Function", limit=9)
+        g.search_graph.assert_not_awaited()
+        g.reset()
+
+        default_mcp = await env.mcp("query_graph", env.slug)
+        g.get_graph.assert_awaited_once_with(env.project.id, type_filter=None, limit=200)
+        g.reset()
+        default_response = await env.v2("query_graph")
+        g.get_graph.assert_awaited_once_with(env.project.id, type_filter=None, limit=200)
+        g.reset()
+
+        message = await env.mcp_error("query_graph", env.slug, search="   ")
+        blank = await env.v2("query_graph", params={"search": "   "})
+        g.search_graph.assert_not_awaited()
+        g.get_graph.assert_not_awaited()
+
+    assert found_response.status_code == 200
+    assert mcp_found == _dsl_of(found_response.json())
+    assert [n["id"] for n in found_response.json()["nodes"]] == ["n1", "n2"]
+    assert whole_response.status_code == 200
+    assert mcp_whole == _dsl_of(whole_response.json())
+    assert [n["id"] for n in whole_response.json()["nodes"]] == ["n2", "n1"]
+    assert default_response.status_code == 200
+    assert default_mcp == _dsl_of(default_response.json()) == mcp_whole
+    assert message == "search nie moze byc pusty"
+    _assert_problem(blank, 422, message)
+
+
+async def scenario_find_graph_path(env: ParityEnv) -> None:
+    start = _graph_node(env, "a", "Start", "Function")
+    end = _graph_node(env, "b", "Koniec", "Function")
+    path = {"nodes": [start, end], "edges": [_graph_edge("a", "b", "CALLS")]}
+
+    with _graph_backend(find_path=path) as g:
+        mcp_text = await env.mcp("find_graph_path", env.slug, "a", "b")
+        g.find_path.assert_awaited_once_with(env.project.id, "a", "b")
+        g.reset()
+        response = await env.v2("find_graph_path", params={"source_id": "a", "target_id": "b"})
+        g.find_path.assert_awaited_once_with(env.project.id, "a", "b")
+        g.reset()
+
+        g.returns["find_path"] = {"nodes": [], "edges": []}
+        empty_mcp = await env.mcp("find_graph_path", env.slug, "a", "z")
+        empty_response = await env.v2("find_graph_path", params={"source_id": "a", "target_id": "z"})
+        g.reset()
+
+        missing_target = await env.v2("find_graph_path", params={"source_id": "a"})
+        g.find_path.assert_not_awaited()
+
+    assert response.status_code == 200
+    assert response.json()["edges"][0]["type"] == "CALLS"
+    assert [n["id"] for n in response.json()["nodes"]] == ["a", "b"]
+    assert mcp_text == _dsl_of(response.json())
+    assert empty_response.status_code == 200
+    assert empty_response.json() == {"nodes": [], "edges": []}
+    assert empty_mcp == _dsl_of(empty_response.json())
+    assert missing_target.status_code == 422
+
+
+async def scenario_get_graph_stats(env: ParityEnv) -> None:
+    stats = {
+        "total_nodes": 3,
+        "total_edges": 2,
+        "nodes_by_type": {"File": 1, "Class": 1, "Function": 1, "Method": 0, "Const": 0, "Module": 0},
+        "edges_by_type": {"CONTAINS": 1, "CALLS": 1},
+    }
+    other = await _extra_project(env, "graph-stats")
+
+    with _graph_backend(get_stats=stats) as g:
+        mcp_out = await env.mcp("get_graph_stats", env.slug)
+        g.get_stats.assert_awaited_once_with(env.project.id)
+        g.reset()
+        response = await env.v2("get_graph_stats")
+        g.get_stats.assert_awaited_once_with(env.project.id)
+        g.reset()
+        await env.v2("get_graph_stats", slug=other.slug)
+        g.get_stats.assert_awaited_once_with(other.id)
+
+    assert response.status_code == 200
+    assert mcp_out == response.json() == stats
+
+
 Scenario = Callable[[ParityEnv], Awaitable[None]]
 
 SCENARIOS: dict[str, Scenario] = {
@@ -2073,6 +2345,11 @@ SCENARIOS: dict[str, Scenario] = {
     "search_wiki": scenario_search_wiki,
     "get_wiki_config": scenario_get_wiki_config,
     "set_wiki_config": scenario_set_wiki_config,
+    "list_graph_nodes": scenario_list_graph_nodes,
+    "get_graph_node": scenario_get_graph_node,
+    "query_graph": scenario_query_graph,
+    "find_graph_path": scenario_find_graph_path,
+    "get_graph_stats": scenario_get_graph_stats,
 }
 
 
@@ -2101,10 +2378,17 @@ class TestKnownDifferences:
             "remove_member",
             "get_project_summary",
             "get_ticket",
+            "update_ticket",
+            "start_sprint",
+            "complete_sprint",
             "list_acceptance_criteria",
             "get_sprint",
             "create_wiki_page",
             "update_wiki_page",
+            "list_graph_nodes",
+            "get_graph_node",
+            "query_graph",
+            "find_graph_path",
         ]
         for name in skipped:
             assert TOOL_TO_ENDPOINT[name].known_differences.strip(), name
@@ -2121,16 +2405,20 @@ class TestKnownDifferences:
         assert response.status_code == 204
         assert (await _project_state(env, project_b.id))["is_active"] is False
 
-    async def test_get_ticket_spec_and_settlements_are_missing_in_v2(self, env):
+    async def test_get_ticket_spec_page_id_matches_mcp_and_settlements_are_missing_in_v2(self, env):
         spec = await _wiki_page(env, "Specyfikacja ticketa", "specyfikacja-ticketa")
         ticket = await _ticket(env, "Ticket ze specyfikacja", spec_page_id=spec.id)
+        unset = await _ticket(env, "Ticket bez specyfikacji")
 
         text = await env.mcp("get_ticket", env.slug, str(ticket.id))
         response = await env.v2("get_ticket", ticket_id=ticket.id)
+        unset_response = await env.v2("get_ticket", ticket_id=unset.id)
 
         assert f"Spec: Specyfikacja ticketa | Spec ID: {spec.id}" in text
         assert response.status_code == 200
-        assert not {"spec_page", "spec_page_id", "settlements"} & set(response.json())
+        assert response.json()["spec_page_id"] == str(spec.id)
+        assert not {"spec_page", "settlements"} & set(response.json())
+        assert unset_response.json()["spec_page_id"] is None
 
     async def test_get_ticket_comment_by_ai_is_shown_as_ai_only_in_mcp(self, env):
         ticket = await _ticket(env, "Komentarz od AI")
@@ -2142,6 +2430,58 @@ class TestKnownDifferences:
 
         assert view["comments"] == [("ai", "Uwaga agenta")]
         assert [(c["author"], c["content"]) for c in body["comments"]] == [(env.actor.user.email, "Uwaga agenta")]
+
+
+# ---------------------------------------------------------------------------
+# Graf: wyłączony Neo4j i brak connections:read w obu kanałach (MON-248)
+# ---------------------------------------------------------------------------
+
+# narzędzie -> (argumenty pozycyjne MCP, query v2, parametry ścieżki v2)
+_GRAPH_CALLS: dict[str, tuple[tuple[Any, ...], dict[str, Any] | None, dict[str, Any]]] = {
+    "list_graph_nodes": ((), None, {}),
+    "get_graph_node": (("n1",), None, {"node_id": "n1"}),
+    "query_graph": ((), None, {}),
+    "find_graph_path": (("a", "b"), {"source_id": "a", "target_id": "b"}, {}),
+    "get_graph_stats": ((), None, {}),
+}
+
+
+class TestGraphChannelErrors:
+    def test_every_graph_read_tool_has_a_call_definition(self):
+        assert set(_GRAPH_CALLS) == set(_GRAPH_READ_TOOLS)
+
+    @pytest.mark.parametrize("tool", _GRAPH_READ_TOOLS)
+    async def test_disabled_graph_is_value_error_in_mcp_and_503_problem_in_v2(self, tool, env):
+        mcp_args, params, path_params = _GRAPH_CALLS[tool]
+
+        with _graph_backend(enabled=False) as g:
+            message = await env.mcp_error(tool, env.slug, *mcp_args)
+            response = await env.v2(tool, params=params, **path_params)
+
+        assert message == _GRAPH_DISABLED
+        _assert_problem(response, 503, message)
+        for name in _GRAPH_SERVICE_FUNCTIONS:
+            getattr(g, name).assert_not_awaited()
+
+    @pytest.mark.parametrize("tool", _GRAPH_READ_TOOLS)
+    async def test_role_without_connections_read_is_denied_in_both_channels_before_graph_is_touched(self, tool, env):
+        mcp_args, params, path_params = _GRAPH_CALLS[tool]
+        limited = await make_actor(env.db, f"graph-noperm-{tool}")
+        role = Role(name=f"graph-noperm-{tool}", project_id=env.project.id, permissions={"scrum": ["read"], "wiki": ["read"]}, is_system=False)
+        env.db.add(role)
+        await env.db.flush()
+        env.db.add(ProjectMember(project_id=env.project.id, user_id=limited.user.id, role="member", role_id=role.id))
+        await env.db.flush()
+
+        with _graph_backend(enabled=False) as g:
+            message = await call_mcp_error(_token_of(limited), tool, env.slug, *mcp_args)
+            response = await call_v2(env.client, tool, limited.headers, env.slug, params=params, **path_params)
+
+        assert message == "Brak uprawnienia connections:read"
+        _assert_problem(response, 403, message)
+        g.is_enabled.assert_not_called()
+        for name in _GRAPH_SERVICE_FUNCTIONS:
+            getattr(g, name).assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

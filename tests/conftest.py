@@ -1,15 +1,19 @@
 """Glowne fixtures testowe -- db session, client, factories."""
 
+import os
 import secrets
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     create_async_engine,
 )
 
+from monolynx.cli import TEST_DB_PREFIX, validate_test_db_name
 from monolynx.config import settings
 from monolynx.database import get_db
 from monolynx.main import app
@@ -18,7 +22,11 @@ from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.services.auth import hash_password
 
-TEST_DATABASE_URL = settings.DATABASE_URL.replace("/open_sentry", "/open_sentry_test")
+# Nazwa unikalna per przebieg: rownolegle worktree na jednym kontenerze db nie dziela bazy,
+# wiec drop na koncu jednego przebiegu nie kasuje tabel drugiemu (MON-250).
+TEST_DATABASE_NAME = validate_test_db_name(os.environ.get("TEST_DATABASE_NAME") or TEST_DB_PREFIX + secrets.token_hex(4))
+TEST_DATABASE_URL = make_url(settings.DATABASE_URL).set(database=TEST_DATABASE_NAME)
+ADMIN_DATABASE_URL = make_url(settings.DATABASE_URL).set(database="postgres")
 
 
 @pytest.fixture(scope="session")
@@ -28,26 +36,27 @@ def anyio_backend():
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def engine():
-    # Upewniamy sie ze baza testowa istnieje
-    from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine as _create
-
-    admin_url = settings.DATABASE_URL.replace("/open_sentry", "/postgres")
-    admin_engine = _create(admin_url, isolation_level="AUTOCOMMIT")
-    async with admin_engine.connect() as conn:
-        result = await conn.execute(text("SELECT 1 FROM pg_database WHERE datname = 'open_sentry_test'"))
-        if not result.scalar():
-            await conn.execute(text("CREATE DATABASE open_sentry_test"))
-    await admin_engine.dispose()
-
+    admin_engine = create_async_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT")
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
+    created = False
+    try:
+        async with admin_engine.connect() as conn:
+            # Bez FORCE: pozostalosc po przerwanym przebiegu o recznej nazwie znika,
+            # a trwajacy przebieg o tej samej nazwie daje blad zamiast cichego zabicia.
+            await conn.execute(text(f'DROP DATABASE IF EXISTS "{TEST_DATABASE_NAME}"'))
+            await conn.execute(text(f'CREATE DATABASE "{TEST_DATABASE_NAME}"'))
+            created = True
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.run_sync(Base.metadata.create_all)
+        yield engine
+    finally:
+        await engine.dispose()
+        # Usuwamy tylko baze utworzona tu: gdy DROP/CREATE padl, nazwa moze nalezec do trwajacego przebiegu.
+        if created:
+            async with admin_engine.connect() as conn:
+                await conn.execute(text(f'DROP DATABASE IF EXISTS "{TEST_DATABASE_NAME}" WITH (FORCE)'))
+        await admin_engine.dispose()
 
 
 @pytest.fixture

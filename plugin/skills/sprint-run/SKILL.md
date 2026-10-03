@@ -164,14 +164,14 @@ python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJE
 
 Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
 
+Tryb zwiezly: `--compact true` przy `list_tickets`, gdy lista sluzy do przegladu statusow i blokerow bez czytania opisow (elementy bez pola `description`), oraz `--brief true` przy `create_ticket` i `update_ticket`, gdy po zapisie nie czytasz opisu (wynik to tylko pola `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by`, `blocks`). `compact` i `brief` to parametry wrappera, a nie tooli MCP: przy `mode=mcp` i przy fallbacku (kod 3) wywolujesz tool MCP bez nich. Wrapper sam niczego nie skraca - bez tych flag wynik jest pelny.
+
 Kody wyjscia wrappera:
 
 - `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
-- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami, z pominieciem parametrow wrappera `compact` i `brief` (tool MCP ich nie ma); jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, zapis grafu, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
 - `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
 - `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
-
-`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
 
 Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
 <!-- /shared:transport -->
@@ -237,9 +237,11 @@ python3 "<katalog skilla>/scripts/sprint_run_tick.py" state --slug "<PROJECT_SLU
 
 `<sloty>` to liczba slotów ustalona w KROK 1 (argument `[sloty]` albo `PARALLEL`), `<MAX_WAITING>` to wartość z wyjścia preflightu. Obie wpisujesz jako literalne liczby, np. `--slots 2 --max-waiting 2`.
 
+**Detektor zastoju (backend `claude`).** Ta sama podkomenda pamięta między tickami, czy ogon logu sesji się zmienia. Dla każdej żywej sesji z niepustym ogonem liczy skrót (sha256) linii ogona po odrzuceniu linii, które zmieniają się bez postępu pracy (linia statusu z `ctx:`, `limit sesji:`, `limit tyg:` i jej urwane fragmenty, `N% until auto-compact`, linia trybu `⏵⏵ ...`, ramki `────`, pusty prompt `❯`), i trzyma go w pliku `stall.json` w `TICK_DIR` - obok katalogu `logs/`, nie w nim, bo `logs/` jest czyszczony co tick. Plik ma kształt `{"<session_id>": {"hash": "<hex>", "ticks": <n>}}`: `ticks` to liczba kolejnych ticków z niezmienionym ogonem (pierwsza obserwacja i każda zmiana ogona dają `0`). Zapisywany jest po każdym przebiegu `state` i zawiera wyłącznie sesje z tego przebiegu. Gdy `ticks` dojdzie do progu, sesja z werdyktem `running` dostaje `waiting` z powodem `brak postępu od <n> ticków`. Próg to `MONOLYNX_SPRINT_STALL_TICKS` (dodatnia liczba całkowita, domyślnie `2`; każda inna wartość oznacza `2`) - podkomenda czyta ją sama ze środowiska procesu ticku, nie podajesz jej flagą i nie odczytujesz osobną komendą. Pliku `stall.json` nie czytasz, nie edytujesz i nie kasujesz: brak pliku, uszkodzony JSON albo błąd zapisu nie przerywają raportu i nigdy nie dają `waiting` (przy wątpliwości sesja zostaje `running`). Sesja bez logu (pusty ogon) nie ma wpisu i nie podlega detektorowi. Backend `codex` detektora zastoju nie ma.
+
 Domyślną wartością `--backend` jest `claude`, więc w Claude Code flagi nie dopisujesz. Wariant `codex` bierze stan **wyłącznie** z rejestru dyspozytora (`sessions.json` w `TICK_DIR`), odświeżanego przed klasyfikacją, i nie woła binarki `claude` ani razu - `codex exec` nie ma odpowiednika `claude agents --json --all`. Ogon logu pochodzi wtedy z JSONL sesji (`codex-logs/<PROJECT_SLUG>-<KEY>-<runtime_id>.jsonl`), a nie z `claude logs`.
 
-Podstaw `<katalog skilla>`, JSON ticketów i obie liczby literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, render ekranu, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Zwykłe zdjęcie kodów ANSI nie wystarcza: render TUI przerysowuje ekran różnicowo i przeskakuje kursorem nad komórkami, które się nie zmieniły, więc strip gubi litery i spacje (marker `SPRINT-RUN STOP:` przychodził jako `SPRINT-RUNSTOP:`, w ogonach z nocy 28/29.09 było `com it`), a każde przerysowanie od początku dopisuje kopię tych samych bloków. Emulator traktuje skok kursora o N komórek jako N spacji, a `\r` jako powrót karetki, nie koniec linii. Ogon 60 linii mieści cały ostatni blok odpowiedzi asystenta (od ostatniej linii `⏺`), w którym klasyfikator szuka markera i pytania (MON-191). Plik czyta też człowiek (ogon trafia do komentarza przy `needs_human`), więc ma być czytelny. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
+Podstaw `<katalog skilla>`, JSON ticketów i obie liczby literalnie, w jednej linii - bez `${MONOLYNX_SKILL_DIR}`, bez `&&`, `|`, `>`. Nic z tego, co robi ta podkomenda (pobranie sesji, pobranie logów, render ekranu, zapis plików), nie powtarzasz ręcznie ani osobnymi komendami `claude agents`/`claude logs`/`sed`/`tr`. Zwykłe zdjęcie kodów ANSI nie wystarcza: render TUI przerysowuje ekran różnicowo i przeskakuje kursorem nad komórkami, które się nie zmieniły, więc strip gubi litery i spacje (marker `SPRINT-RUN STOP:` przychodził jako `SPRINT-RUNSTOP:`, w ogonach z nocy 28/29.09 było `com it`), a każde przerysowanie od początku dopisuje kopię tych samych bloków. Emulator traktuje skok kursora o N komórek jako N spacji, a `\r` jako powrót karetki, nie koniec linii. Ogon 60 linii mieści cały ostatni blok odpowiedzi asystenta (od ostatniej linii `⏺`), w którym klasyfikator szuka markera, pytania, numerowanych opcji z frazą decyzji i frazy oczekiwania (MON-191, MON-252; pełna lista sygnałów w sekcji "Werdykt `waiting`" w KROK 3). Plik czyta też człowiek (ogon trafia do komentarza przy `needs_human`), więc ma być czytelny. Same werdykty (`done`, `needs_human`, `waiting`, `free`, `running`) liczy `scripts/sprint_run_state.py` (`build_report`, `match_session`) - `sprint_run_tick.py` go importuje jako moduł, więc oba skrypty jadą razem w paczce skilla.
 
 `claude logs` na nieznany identyfikator kończy się kodem 1 i komunikatem "No job matching" - podkomenda `state` i tak zapisuje to, co dostała (bez przerywania), a taki przypadek klasyfikuje się jako `running`, nie `waiting`: brak logu nie jest dowodem, że sesja czeka na człowieka.
 
@@ -272,7 +274,7 @@ Werdykty i to, co z nimi robisz:
 |---|---|---|
 | `free` | brak sesji, ticket w `todo` | kandydat do startu, o ile nie ma niezamkniętego blokera ani etykiety `needs-local` (KROK 4) |
 | `running` | sesja żyje i pracuje | nic nie rób, zajmuje slot |
-| `waiting` | sesja żyje, ale czeka na człowieka (`SPRINT-RUN STOP:` w ostatnich 5 liniach albo ostatnia linia z pytajnikiem) | nic nie rusz, zaraportuj (KROK 3); nie zajmuje slotu, ale liczy się do limitu `MAX_WAITING` |
+| `waiting` | sesja żyje, ale nie posuwa pracy: stoi na prompcie o zgodę, ma w ostatnim bloku odpowiedzi marker `SPRINT-RUN STOP:`, pytajnik na końcu, numerowaną listę opcji z frazą decyzji albo frazę oczekiwania (`Czekam`, `waiting for`) na końcu wypowiedzi, albo jej ogon logu nie zmienił się przez `MONOLYNX_SPRINT_STALL_TICKS` ticków (`brak postępu od <n> ticków`). Wejście użytkownika w logu (linia `❯ <tekst>`) po takim sygnale zdejmuje `waiting`. Szczegóły w sekcji "Werdykt `waiting`" (KROK 3) | nic nie rusz, zaraportuj (KROK 3); nie zajmuje slotu, ale liczy się do limitu `MAX_WAITING` |
 | `done` | ticket w `in_review` albo `done` | komentarz i sprzątnięcie sesji (KROK 3) |
 | `needs_human` | sesja padła bez domknięcia ticketu albo ticket wisi w `in_progress` bez sesji | ogon logu do komentarza, jedno auto-wznowienie (KROK 3) |
 
@@ -382,7 +384,22 @@ Przejdź po ticketach z werdyktem innym niż `free` i `running`.
 
 ### Werdykt `waiting`
 
-Nie rusz sesji. Nie wznawiaj jej, nie kasuj i nie odpowiadaj za człowieka na pytanie z logu. Wypisz w raporcie ticket, powód z pola `reason` i gotową komendę dla backendu `claude`:
+Werdykt liczy skrypt stanu, nie Ty: nie czytasz logu sesji, żeby samemu ocenić, czy czeka. Sygnały, które dają `waiting` żywej sesji (zastój jest sprawdzany na końcu, tylko gdy żaden inny nie zadziałał):
+
+| Sygnał | Co dokładnie | Pole `reason` |
+|---|---|---|
+| Prompt o zgodę | `waitingFor: "permission prompt"` we wpisie sesji z `claude agents --json --all` | opis słowny, bez stałego brzmienia |
+| Marker STOP | linia `SPRINT-RUN STOP: <powód>` w ostatnim bloku odpowiedzi (bez kotwicy `⏺`: w ostatnich 5 liniach ogona) | opis słowny, bez stałego brzmienia |
+| Pytajnik | pytanie w ostatnim bloku odpowiedzi (bez kotwicy `⏺`: ostatnia linia ogona kończy się pytajnikiem) | opis słowny, bez stałego brzmienia |
+| Numerowane opcje z frazą decyzji | co najmniej dwie linie opcji w formie `<cyfra>. tekst` albo `<cyfra>) tekst` na początku linii ORAZ fraza decyzji (`Decyzja dla Ciebie`, `wybierz`, `opcja 1`, bez rozróżniania wielkości liter). Działa także bez pytajnika. Sama lista bez frazy albo sama fraza bez listy nie wystarcza; linia podpowiedzi TUI z kilkoma pozycjami po dwukropku w jednej linii (`1: Learn more   2: Knew this already   0: Dismiss`) nie jest listą opcji | zawiera słowa `numerowane opcje` |
+| Fraza oczekiwania | ostatnia wypowiedź asystenta KOŃCZY SIĘ zdaniem zaczynającym się od `Czekam` albo zawierającym `waiting for` (np. `⏺ Czekam.`, `Czekam na wynik.`). `Czekam` w środku wypowiedzi, po którym stoi inne ostatnie zdanie, nie liczy się; `Zaczekamy` też nie (granica słowa) | zaczyna się od `brak postępu` |
+| Zastój | ogon logu niezmieniony przez co najmniej `MONOLYNX_SPRINT_STALL_TICKS` kolejnych ticków (domyślnie 2), licznik w `stall.json` w `TICK_DIR`; tylko backend `claude` i tylko gdy żaden sygnał wyżej nie zadziałał | dokładnie `brak postępu od <n> ticków` |
+
+**Wejście użytkownika zdejmuje `waiting`.** Linia `❯ <tekst>` w logu (znak `❯` i niepusty tekst po nim; sam `❯`, czyli pusty prompt TUI, się nie liczy) oznacza, że człowiek już odpowiedział. Sygnały z ostatniego bloku (marker STOP, pytajnik, opcje, fraza oczekiwania) liczą się wtedy tylko z linii PO ostatnim wejściu użytkownika: pytanie, na które padła odpowiedź, nie trzyma sesji w `waiting`, i dotyczy to także markera `SPRINT-RUN STOP:`. Sesja wraca do `running`, zajmuje slot i przestaje liczyć się do `MAX_WAITING`.
+
+**`waiting` z zastoju i z frazy oczekiwania nie zawsze znaczy "czeka na człowieka".** Sesja, która długo czeka na pipeline CI albo na pełny przebieg testów, wygląda dla skryptu tak samo jak sesja, która utknęła. Dlatego powód z pola `reason` przepisujesz do raportu dosłownie, a człowiek sam ocenia po `claude attach`, czy trzeba interweniować. Taki werdykt jest odwracalny: gdy ogon logu się zmieni (sesja ruszyła sama albo człowiek jej odpowiedział), następny tick policzy nowy skrót, wyzeruje licznik i zwróci `running`. Nic przy tym nie robisz - nie "odblokowujesz" sesji i nie poprawiasz `stall.json`. Granica tej odwracalności: działa tak długo, jak przychodzi następny tick. Gdy w sprincie zostały wyłącznie sesje `waiting` (`remaining=0 running=0`), `sprint_run.sh` kończy pętlę kodem 4 i kolejnego ticku nie ma, więc w raporcie takiego ticku napisz wprost, które sesje mają `waiting` z powodu `brak postępu`, żeby człowiek sprawdził je przed uznaniem sprintu za zatrzymany.
+
+Nie rusz sesji. Nie wznawiaj jej, nie kasuj i nie odpowiadaj za człowieka na pytanie z logu - niezależnie od tego, który sygnał dał `waiting`. Wypisz w raporcie ticket, powód z pola `reason` i gotową komendę dla backendu `claude`:
 
 ```bash
 claude attach "<session_id>"
@@ -425,7 +442,7 @@ WHY: przy `sloty - (running + waiting)` jedna sesja czekająca na odpowiedź cz�
 
 **Kolejność kandydatów** (tylko werdykt `free`): priorytet malejąco `high` > `medium` > `low`, a w ramach tego samego priorytetu rosnąco po kluczu ticketu. Deterministyczna kolejność sprawia, że dwa ticki pod rząd wybierają to samo i nie ma wyścigu o ten sam ticket.
 
-**Pełny ticket kandydata.** Skrypt stanu nie zna zależności między ticketami, a `list_tickets` i `get_board` ich nie zwracają. Dla **każdego** kandydata `free`, w kolejności wyżej, zanim zajmie slot, dociągnij pełny ticket - jedno wywołanie na kandydata, wspólne dla filtra blokerów, reguły `needs-local` i reguły migracyjnej niżej:
+**Pełny ticket kandydata.** Skrypt stanu nie zna zależności między ticketami, a `get_board` ich nie zwraca. `list_tickets` podaje blokery (przy `mode=cli` pole `blocked_by` elementu listy, w tabeli MCP kolumna `Blocked by` z samymi kluczami, bez statusu blokera), ale filtr niżej czyta je z pełnego ticketu. Dla **każdego** kandydata `free`, w kolejności wyżej, zanim zajmie slot, dociągnij pełny ticket - jedno wywołanie na kandydata, wspólne dla filtra blokerów, reguły `needs-local` i reguły migracyjnej niżej:
 
 ```
 mcp__monolynx__get_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<KEY>")
@@ -449,13 +466,23 @@ Sprint, w którym zostały wyłącznie tickety `needs-local`, tickety z niezamkn
 
 **Tickety migracyjne idą solo.** Ticket z etykietą `migration` albo z opisem mówiącym o migracji bazy danych startuj wyłącznie wtedy, gdy `running = 0`, i nie startuj w tym samym ticku niczego więcej. Dwie równoległe sesje generujące migracje Alembica robią rozjechany łańcuch rewizji, którego nikt potem nie chce prostować. Etykiety i opis bierzesz z tego samego `get_ticket` co wyżej.
 
-**Start sesji** dla każdego wybranego ticketu, z wartościami **literalnymi** z wyjścia preflightu (`SPRINT_MODEL`, `PERMISSION_MODE` - KROK 1), nie jako `${...}`:
+**Start sesji** dla każdego wybranego ticketu, z wartościami **literalnymi** z wyjścia preflightu (`SPRINT_MODEL`, `PERMISSION_MODE`, `BASE_BRANCH` - KROK 1), nie jako `${...}`:
+
+```bash
+MONOLYNX_SPRINT_RUN=1 claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>-<SPRINT_MODEL>" --model "<SPRINT_MODEL>" --allowedTools "Bash(git fetch origin <BASE_BRANCH>),Bash(git merge --ff-only origin/<BASE_BRANCH>)" --permission-mode "<PERMISSION_MODE>" "/monolynx:work <KEY>"
+```
+
+Flagę `--allowedTools` dodajesz tylko wtedy, gdy `BASE_BRANCH` z preflightu jest niepusty, pasuje do `^[A-Za-z0-9][A-Za-z0-9._/-]*$` i nie zawiera `..`. Gdy którykolwiek warunek nie jest spełniony, startujesz bez niej, komendą jak dotąd:
 
 ```bash
 MONOLYNX_SPRINT_RUN=1 claude --bg --worktree "<KEY>" --name "<PROJECT_SLUG>-<KEY>-<SPRINT_MODEL>" --model "<SPRINT_MODEL>" --permission-mode "<PERMISSION_MODE>" "/monolynx:work <KEY>"
 ```
 
-Powyższa komenda dotyczy **backendu `claude`**. Dla **backendu `codex`** sesję startuje podkomenda `start` skryptu ticku - jedno samodzielne wywołanie `python3`, z wartościami literalnymi:
+Kolejność flag jest częścią komendy: `--allowedTools` przyjmuje listę wartości (`<tools...>` w `claude --help`), więc stoi **przed** `--permission-mode`, nigdy bezpośrednio przed promptem - inaczej połknęłaby `"/monolynx:work <KEY>"` jako kolejną regułę. Obie reguły idą jako jedna wartość w cudzysłowie, rozdzielone przecinkiem, bez spacji po przecinku. Prefiks `MONOLYNX_SPRINT_RUN=1 claude --bg` zostaje dosłownie w obu wariantach.
+
+WHY (MON-249): worktree sesji powstaje z HEAD głównego checkoutu, więc `/monolynx:work` na starcie przewija go do `origin/<BASE_BRANCH>` (podkrok 2c.1 skilla `work`). Klasyfikator trybu `auto` bywa, że tej komendy odmawia - niedeterministycznie, raz przechodzi, raz nie - i sesja kończyła turę linią `SPRINT-RUN STOP`. Wąska reguła allow rozstrzyga przed klasyfikatorem, także w subagentach sesji. Reguła jest bez wildcardu: nie obejmuje innego brancha ani innej formy komendy (`git pull`, `git merge` bez `--ff-only`, `git -C`, komenda złożona), a w komendzie złożonej każda podkomenda musi pasować do reguły osobno. Hook `bash_guard.py` wydaje dla tych samych dwóch komend jawne `allow`, ale pierwszeństwo decyzji hooka przed klasyfikatorem nie jest udokumentowane - gwarancję daje reguła z `--allowedTools`.
+
+Powyższe komendy dotyczą **backendu `claude`**. Backend `codex` zostaje bez zmian: jego komenda startu niżej nie dostaje `--allowedTools`, bo granicą sesji Codeksa jest sandbox, a nie tryb uprawnień Claude Code. Dla **backendu `codex`** sesję startuje podkomenda `start` skryptu ticku - jedno samodzielne wywołanie `python3`, z wartościami literalnymi:
 
 ```bash
 python3 "<katalog skilla>/scripts/sprint_run_tick.py" start --backend codex --slug "<PROJECT_SLUG>" --key "<KEY>" --model "<SPRINT_MODEL>" --prompt '$monolynx:work <KEY>'
@@ -536,7 +563,7 @@ Każdy kandydat pominięty w KROK 4 przez niezamknięty bloker ma w tabeli wiers
 
 Gdy KROK 4 wstrzymał dispatch przez limit sesji `waiting` (`dispatch.waiting_blocked` = `true`), pod tabelą napisz jednym zdaniem: `Dispatch wstrzymany: <waiting>/<MAX_WAITING> sesji czeka na człowieka - odpowiedz im, żeby tick znów startował sesje.`
 
-Potem sekcja **"Czekają na człowieka"** ze wszystkimi ticketami o werdykcie `waiting` oraz tymi `needs_human`, które wyczerpały auto-wznowienie. Dla każdego: klucz ticketu, powód jednym zdaniem i komenda `claude attach <session_id>`. Dochodzą do niej:
+Potem sekcja **"Czekają na człowieka"** ze wszystkimi ticketami o werdykcie `waiting` oraz tymi `needs_human`, które wyczerpały auto-wznowienie. Dla każdego: klucz ticketu, powód jednym zdaniem i komenda `claude attach <session_id>`. Powód `waiting` przepisz z pola `reason` bez przeredagowania - `brak postępu od <n> ticków` i powód zaczynający się od `brak postępu` mówią człowiekowi, że sesja mogła utknąć albo długo czeka sama (np. na CI), a nie że zadała pytanie. Dochodzą do niej:
 
 - każdy ticket pominięty przez etykietę `needs-local` - z powodem `needs-local` i komendą `/monolynx:work <KEY>` do uruchomienia interaktywnie zamiast `claude attach` (sesji w tle nie ma);
 - ticket pominięty przez niezamknięty bloker, ale tylko wtedy, gdy nic w sprincie już nie biegnie (patrz KROK 4) - z kluczami blokerów do zmergowania zamiast komendy `claude attach`;
@@ -602,9 +629,9 @@ Format samej linii jest bez zmian: to kontrakt z `sprint_run.sh`, który po niej
 
 1. **Nigdy nie pracujesz nad ticketem sam.** Żadnej edycji plików, żadnego commita, żadnego lintu. Widzisz coś do naprawienia w kodzie - to materiał na ticket, nie na Twoją turę. Jedyna zmiana w repozytorium, którą robi tick, to fast-forward głównego checkoutu przez `sprint_run_tick.py sync-base` w KROK 4.
 2. **Tick jest idempotentny.** Przed startem sesji sprawdzasz, czy taka nazwa już nie żyje; przed auto-wznowieniem sprawdzasz komentarze. Dwa ticki pod rząd nie mogą zdublować sesji ani komentarza.
-3. **Nie kasujesz sesji bez werdyktu `done`.** `claude rm` (backend `claude`) i `sprint_run_tick.py stop` (backend `codex`) tylko po tym, jak ticket jest w `in_review` albo `done`. Sesja `waiting` czeka na człowieka i musi go doczekać.
+3. **Nie kasujesz sesji bez werdyktu `done`.** `claude rm` (backend `claude`) i `sprint_run_tick.py stop` (backend `codex`) tylko po tym, jak ticket jest w `in_review` albo `done`. Sesja `waiting` zostaje nietknięta bez względu na powód (marker, pytanie, opcje, fraza oczekiwania, `brak postępu od <n> ticków`): albo czeka na człowieka i musi go doczekać, albo sama ruszy i następny tick zdejmie jej `waiting`.
 4. **Nie zmieniasz statusów ticketów.** Statusy przestawia `/monolynx:work` w swojej sesji. Ty tylko czytasz je i komentujesz.
 5. **Nazwy sesji są zamrożone**: `<PROJECT_SLUG>-<KEY>-<MODEL>` dla pracy (rozpoznawana także bez sufiksu modelu), `<PROJECT_SLUG>-sprint-run-<MODEL>` dla ticka. Inne narzędzia po nich rozpoznają sesje sprintu.
 6. **Język raportu: polski.** Komentarze w ticketach też.
-7. **Backend nie zmienia kontraktu.** Wybór `claude`/`codex` zmienia komendy (KROK 1, 2 i 4), nie kontrakt: linia `SPRINT-RUN: ...`, `SPRINT-RUN STOP: ...`, werdykty i reguła jednej żywej sesji na ticket są wspólne. Jeden backend na tick, bez mieszania flag. Czego Codex nie umie (nazwa sesji, tryb w tle, natywny sygnał "czeka na zgodę", model w `codex exec`), tego nie zastępujesz obejściem - wypisujesz to w raporcie. Jedynym sygnałem oczekiwania na człowieka pod Codeksem jest marker `SPRINT-RUN STOP:` w treści logu sesji.
+7. **Backend nie zmienia kontraktu.** Wybór `claude`/`codex` zmienia komendy (KROK 1, 2 i 4), nie kontrakt: linia `SPRINT-RUN: ...`, `SPRINT-RUN STOP: ...`, werdykty i reguła jednej żywej sesji na ticket są wspólne. Jeden backend na tick, bez mieszania flag. Czego Codex nie umie (nazwa sesji, tryb w tle, natywny sygnał "czeka na zgodę", model w `codex exec`), tego nie zastępujesz obejściem - wypisujesz to w raporcie. Pod Codeksem oczekiwanie na człowieka wynika wyłącznie z treści logu sesji (przede wszystkim marker `SPRINT-RUN STOP:`); detektor zastoju (`stall.json`, `MONOLYNX_SPRINT_STALL_TICKS`) działa tylko dla backendu `claude`.
 8. **Preflight i stan sesji idą tylko przez skrypt, zero `printenv`/`env`.** `scripts/sprint_run_tick.py` (`preflight`, `state`) jest jedynym sposobem sprawdzenia środowiska (KROK 1) i policzenia stanu sesji (KROK 2) - żadnych ręcznych `claude agents`/`claude logs`/`mktemp`/potoków obok niego w tych dwóch krokach. KROK 4 przy backendzie `claude` nadal woła `claude agents --json --all` wprost, żeby odczytać `id` świeżo wystartowanej sesji i potwierdzić `S` - to jedyne miejsce w tym skillu, gdzie ta komenda idzie bezpośrednio; przy backendzie `codex` identyfikator przychodzi w linii `STARTED` i tej komendy nie wołasz w ogóle. Nigdy `printenv`, `env`, `set`, `export -p`, `declare -x` ani `echo` zmiennej spoza `MONOLYNX_*`: incydent 18.09 wypisał tak sekrety (klucz OpenAI, token GitLaba) do transkryptu i logu pętli.

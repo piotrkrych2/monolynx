@@ -31,7 +31,7 @@ async def issue_list(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(select(Project).where(Project.slug == slug))
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
@@ -85,7 +85,7 @@ async def issue_detail(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(select(Project).where(Project.slug == slug))
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)
@@ -121,7 +121,7 @@ async def setup_guide(
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
 
-    result = await db.execute(select(Project).where(Project.slug == slug))
+    result = await db.execute(select(Project).where(Project.slug == slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()
     if project is None:
         return HTMLResponse("Project not found", status_code=404)

@@ -74,12 +74,20 @@ def test_sync_check_detects_nested_drift_and_sync_removes_stale_resource(source_
     assert sync_skills.main() == 0
 
 
+def _write_test_lock_stub(skills_dir: Path) -> None:
+    """`work` i `work-simple` pakuja `scripts/test_lock.py` (MON-251) - sztuczne drzewo musi go miec obok `references/`."""
+    scripts = skills_dir.parent / "scripts"
+    scripts.mkdir(exist_ok=True)
+    (scripts / "test_lock.py").write_text("# test_lock stub\n", encoding="utf-8")
+
+
 @pytest.mark.parametrize("check_only", [False, True])
 def test_sync_rejects_missing_reference_source(tmp_path, monkeypatch, check_only):
     source = tmp_path / "source"
     skill = source / "work"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("---\nname: work\ndescription: Work\n---\nWork\n", encoding="utf-8")
+    _write_test_lock_stub(source)
     monkeypatch.setattr(sync_skills, "SOURCE_DIR", source)
     monkeypatch.setattr(sync_skills, "TARGET_DIR", tmp_path / "target")
     monkeypatch.setattr(sys, "argv", ["sync_skills.py", "--check"] if check_only else ["sync_skills.py"])
@@ -139,6 +147,7 @@ def whole_file_source_tree(tmp_path, monkeypatch):
     references = skills.parent / "references"
     references.mkdir()
     (references / "runtime.md").write_text("# Runtime\n", encoding="utf-8")
+    _write_test_lock_stub(skills)
     for source_rel, target_name in WHOLE_FILE_ENTRIES:
         source_path = skills / source_rel
         source_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +219,7 @@ def test_bundled_resources_rejects_missing_whole_file_source(tmp_path, monkeypat
     references = source.parent / "references"
     references.mkdir()
     (references / "runtime.md").write_text("# Runtime\n", encoding="utf-8")
+    _write_test_lock_stub(source)
     for other_source_rel, other_target_name in WHOLE_FILE_ENTRIES:
         if other_source_rel == source_rel:
             continue
@@ -504,3 +514,29 @@ def test_skill_md_with_only_closing_marker_gets_no_transport_scripts(transport_t
     (skill / "SKILL.md").write_text(f"---\nname: closing-only\ndescription: C\n---\nTekst\n{sync_skills.TRANSPORT_CLOSE}\n", encoding="utf-8")
 
     assert set(sync_skills.bundled_resources("closing-only")) == {"references/runtime.md"}
+
+
+# MON-251: `test_lock.py` jedzie tylko z `work` i `work-simple` (kolejka testow miedzy worktree).
+TEST_LOCK_SKILLS = ("work", "work-simple")
+OTHER_SKILLS = sorted(path.parent.name for path in (ROOT / "plugin" / "skills").glob("*/SKILL.md") if path.parent.name not in TEST_LOCK_SKILLS)
+TEST_LOCK_SOURCE = ROOT / "plugin" / "scripts" / "test_lock.py"
+
+
+@pytest.mark.parametrize("skill", TEST_LOCK_SKILLS)
+def test_work_skills_bundle_test_lock_script(skill):
+    resources = sync_skills.bundled_resources(skill)
+
+    assert resources["scripts/test_lock.py"] == TEST_LOCK_SOURCE.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("skill", OTHER_SKILLS)
+def test_other_skills_do_not_bundle_test_lock_script(skill):
+    assert "scripts/test_lock.py" not in sync_skills.bundled_resources(skill)
+
+
+@pytest.mark.parametrize("skill", TEST_LOCK_SKILLS)
+def test_skill_ships_byte_identical_test_lock_copies(skill):
+    source = TEST_LOCK_SOURCE.read_bytes()
+
+    assert (ROOT / "plugin" / "skills" / skill / "scripts" / "test_lock.py").read_bytes() == source
+    assert (ROOT / "src" / "monolynx" / "static" / "skills" / f"monolynx-{skill}" / "scripts" / "test_lock.py").read_bytes() == source

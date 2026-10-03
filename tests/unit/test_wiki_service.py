@@ -225,18 +225,36 @@ class TestCreateWikiPage:
         mock_db.refresh.assert_awaited_once()
         mock_upload.assert_called_once()
 
-    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
-    @patch("monolynx.services.wiki.upload_markdown")
-    async def test_creates_page_with_parent(self, mock_upload, mock_embeddings):
-        """Tworzy strone z rodzicem."""
-        mock_upload.return_value = "proj/id.md"
-        parent_id = uuid.uuid4()
+    @staticmethod
+    def _db_with_parent_lookup(parent_exists: bool) -> AsyncMock:
+        """Sesja, w ktorej zapytanie o unikalnosc sluga zawsze jest wolne, a zapytanie o rodzica
+        (bez warunku na slug) trafia w strone projektu albo nie (MON-238)."""
+        parent = MagicMock() if parent_exists else None
+
+        async def _execute(stmt):
+            where = str(getattr(stmt, "whereclause", ""))
+            found = None if "slug" in where else parent
+            return MagicMock(
+                scalar_one_or_none=MagicMock(return_value=found),
+                scalar=MagicMock(return_value=found),
+                first=MagicMock(return_value=found),
+                scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=found))),
+            )
 
         mock_db = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.execute = AsyncMock(side_effect=_execute)
         mock_db.add = MagicMock()
         mock_db.commit = AsyncMock()
         mock_db.refresh = AsyncMock()
+        return mock_db
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_creates_page_with_parent(self, mock_upload, mock_embeddings):
+        """Tworzy strone z rodzicem, ktory istnieje w projekcie."""
+        mock_upload.return_value = "proj/id.md"
+        parent_id = uuid.uuid4()
+        mock_db = self._db_with_parent_lookup(parent_exists=True)
 
         result = await create_wiki_page(
             project_id=uuid.uuid4(),
@@ -249,6 +267,48 @@ class TestCreateWikiPage:
         )
 
         assert result.parent_id == parent_id
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_rejects_parent_outside_project_before_upload_and_write(self, mock_upload, mock_embeddings):
+        """Rodzic spoza projektu (albo nieistniejacy) to ValueError, bez uploadu do MinIO i bez zapisu (MON-238)."""
+        mock_db = self._db_with_parent_lookup(parent_exists=False)
+
+        with pytest.raises(ValueError) as info:
+            await create_wiki_page(
+                project_id=uuid.uuid4(),
+                project_slug="proj",
+                title="Child Page",
+                content="Content",
+                user_id=uuid.uuid4(),
+                parent_id=uuid.uuid4(),
+                db=mock_db,
+            )
+
+        assert str(info.value) == "Wskazana strona nadrzędna (parent_id) nie istnieje w tym projekcie"
+        mock_upload.assert_not_called()
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_awaited()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_page_without_parent_skips_parent_lookup_error(self, mock_upload, mock_embeddings):
+        """Strona root (parent_id=None) nie podlega walidacji rodzica, nawet gdy lookup rodzica nic nie zwraca."""
+        mock_upload.return_value = "proj/id.md"
+        mock_db = self._db_with_parent_lookup(parent_exists=False)
+
+        result = await create_wiki_page(
+            project_id=uuid.uuid4(),
+            project_slug="proj",
+            title="Root Page",
+            content="Content",
+            user_id=uuid.uuid4(),
+            db=mock_db,
+        )
+
+        assert result.parent_id is None
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_awaited()
 
     @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
@@ -594,6 +654,24 @@ class TestDeleteWikiPage:
 
     @patch("monolynx.services.wiki._collect_descendants", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.delete_object")
+    async def test_delete_page_scopes_descendants_to_page_project(self, mock_delete_obj, mock_collect):
+        """Potomkowie zbierani sa w obrebie projektu usuwanej strony (MON-238)."""
+        mock_collect.return_value = []
+        page = MagicMock()
+        page.id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
+        page.minio_path = "proj/page.md"
+        mock_db = AsyncMock()
+
+        await delete_wiki_page(page, mock_db)
+
+        mock_collect.assert_awaited_once()
+        args, kwargs = mock_collect.await_args
+        assert page.id in args
+        assert page.project_id in (*args, *kwargs.values())
+
+    @patch("monolynx.services.wiki._collect_descendants", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.delete_object")
     async def test_delete_page_with_children(self, mock_delete_obj, mock_collect):
         """Usuwanie strony z potomkami -- usuwa pliki MinIO wszystkich."""
         child1 = MagicMock()
@@ -637,12 +715,15 @@ class TestGetBreadcrumbs:
 
     async def test_page_with_parent(self):
         """Strona z rodzicem zwraca [parent, page]."""
+        project_id = uuid.uuid4()
         parent = MagicMock()
         parent.id = uuid.uuid4()
         parent.parent_id = None
+        parent.project_id = project_id
 
         page = MagicMock()
         page.parent_id = parent.id
+        page.project_id = project_id
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = parent
@@ -655,16 +736,20 @@ class TestGetBreadcrumbs:
 
     async def test_page_with_grandparent(self):
         """Strona z dziadkiem zwraca [grandparent, parent, page]."""
+        project_id = uuid.uuid4()
         grandparent = MagicMock()
         grandparent.id = uuid.uuid4()
         grandparent.parent_id = None
+        grandparent.project_id = project_id
 
         parent = MagicMock()
         parent.id = uuid.uuid4()
         parent.parent_id = grandparent.id
+        parent.project_id = project_id
 
         page = MagicMock()
         page.parent_id = parent.id
+        page.project_id = project_id
 
         mock_db = AsyncMock()
         call_count = 0
@@ -687,6 +772,7 @@ class TestGetBreadcrumbs:
         """Jesli rodzic nie istnieje (None), breadcrumbs sie zatrzymuja."""
         page = MagicMock()
         page.parent_id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None

@@ -25,6 +25,7 @@ Skrypt czytający JSON/XML/tekst z pliku, stdin albo z wyjścia innego narzędzi
 6. Handler HTTP, który czyta z MinIO/S3 albo innego zewnętrznego serwisu, ma to wywołanie w `try/except` mapowanym na kod z kontraktu endpointu, z `logger.exception`. Publiczny endpoint (np. `/blog/`) odpowiada 404, nigdy 500. Lista agregująca wiele elementów degraduje pojedynczy element (np. puste streszczenie), zamiast wywracać całą odpowiedź.
 7. Test pokrywa gałąź błędu storage (mock rzucający wyjątek) i asercję na kodzie odpowiedzi.
 8. Klient HTTP (CLI `monolynx`) sprawdza kształt odpowiedzi API i pliku konfiguracyjnego edytowanego przez człowieka przed użyciem. Brak wymaganego pola albo zły typ kończy się komunikatem na stderr i kodem wyjścia z kontraktu CLI, nigdy tracebackiem ani cichym fallbackiem (pusty string, `.get(..., "")`) z kodem 0.
+9. Wartość z wejścia zewnętrznego, która trafia do listy sterującej operacją nieodwracalną (id pipeline'u do anulowania, id sesji do usunięcia, ref do merge), ma sprawdzony typ i obecność przed zbudowaniem tej listy. `bool` nie jest poprawnym `int`. Zły element to kod 2 z indeksem, nigdy `null` w wyniku z kodem 0: wywołujący wykona operację na tym, co dostał.
 
 ## Pitfall
 
@@ -38,6 +39,7 @@ Docstring obiecuje "kod 2 przy błędnym wejściu", a implementacja robi `data["
 - MON-190: błąd subprocessu niezmapowany na kod wyjścia skryptu.
 - MON-125: odpowiedź HTTP i `config.toml` w CLI używane bez sprawdzenia kształtu (reguła roli powtórzona po MON-167 i MON-190).
 - MON-133: `monolynx wiki get --raw` na odpowiedzi bez `content` wypisywał pusty string z exit 0 (-25, powtórka MON-125). Retro sprintu „CLI monolynx - fundament + REST API v2” dopisało `cli/src/**` do `paths` i punkt 8.
+- MON-233: `target_cancel_glab` / `target_cancel_gh` w `mr_queue_state.py` budowały listę `cancel` z elementów bez walidacji `id` i `status` (-25, czwarta powtórka klasy po MON-167, MON-190, MON-125). Retro sprintu "Skille na CLI - transport CLI/MCP" dopisało punkt 9.
 
 ## What to check
 
@@ -46,4 +48,5 @@ Docstring obiecuje "kod 2 przy błędnym wejściu", a implementacja robi `data["
 - `try/except Exception` wokół całego parsowania zamiast walidacji -> ukrywa, który element jest zły.
 - Test błędów wejścia obejmuje tylko "plik nie istnieje" i "zły JSON" -> brakuje przypadków na poziomie elementu.
 - Wywołanie `minio_client`/`get_page_content` w handlerze HTTP bez `try/except` -> 500 na błędzie storage.
+- Lista id przekazywana do `cancel` / `rm` / `merge` zbudowana przez `elem.get("id")` bez sprawdzenia typu -> `null` albo `True` w liście sterującej operacją nieodwracalną.
 - `data.get("pole", "")` albo `or ""` na odpowiedzi API w CLI, po którym komenda kończy się kodem 0 -> cichy fallback zamiast błędu kontraktu.

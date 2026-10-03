@@ -1,0 +1,9 @@
+# claude logs ce847078 | claude 2.1.288 (Claude Code) | 2026-10-03 | MON-252: sesja MON-244 stoi na 'Czekam.' bez postepu (recap, ramka, pusty prompt, linia statusu); ogon TICK_DIR/logs/ce847078.log po render_log, odzyskany z transkryptu dyspozytora (sesja usunieta, segment przepisany doslownie z rec-9140-0.txt, linie 20-27)
+⏺ Czekam.
+※ recap: Domykam MON-244 po Twojej zgodzie: brakujący test dopisany, review 100/100, ale ostatni pełny przebieg testów rozbił się o kolizję na wspólnej bazie z równoległą sesją. Następny krok: powtórzyć
+pełny przebieg, gdy cudzy kontener skończy, potem commit, push i MR. (disable recaps in /config)
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── monolynx-MON-244-opus ─
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+MON-244 | worktree-MON-244 | Opus 5.5 | ctx:34% | limit sesji:9% | limit tyg:30%
+⏵⏵ auto mode on · ← 6 agents · 1 shell

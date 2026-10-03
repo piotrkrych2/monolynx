@@ -1,0 +1,21 @@
+# command: monolynx graph node --help
+# tool_version: monolynx 0.2.0 (drzewo zrodel, MON-248, niewydane)
+# captured: 2026-10-03
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                                                                                                                                        
+ Usage: monolynx graph node [OPTIONS] {node_id}                                                                                                                                                         
+                                                                                                                                                                                                        
+ Pokaż node wraz z sąsiedztwem (node'y, krawędzie i głębokość każdego node'a).                                                                                                                          
+                                                                                                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    node_id      <str>  Identyfikator node'a (pole id z `graph nodes`). [required]                                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --depth                <int range> [x>=1]  Głębokość sąsiedztwa, min. 1, serwer obcina do 5 (domyślnie 1 po stronie serwera).                                                                        │
+│ --relation-type        <str>               Typ relacji: CONTAINS, CALLS, IMPORTS, INHERITS, USES lub IMPLEMENTS. Można powtarzać.                                                                    │
+│ --node-type            <str>               Typ sąsiada: File, Class, Method, Function, Const lub Module. Można powtarzać.                                                                            │
+│ --help                                     Show this message and exit.                                                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+# exit: 0

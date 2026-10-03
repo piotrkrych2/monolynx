@@ -511,7 +511,8 @@ class TestCreateEntryValidation:
             json={"ticket_id": str(ticket.id), "scheduled_date": "2026-05-20"},
         )
         assert resp.status_code == 400
-        assert "czlonkiem" in resp.json()["detail"]
+        # MON-239: ticket z cudzego projektu nie jest odroznialny od nieistniejacego
+        assert resp.json()["detail"] == "Ticket nie istnieje"
 
     async def test_create_entry_duplicate_returns_400(self, client, db_session):
         uid = uuid.uuid4().hex[:8]

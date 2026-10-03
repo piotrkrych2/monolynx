@@ -27,12 +27,28 @@ Zasady:
   skryptu dokladnie jak wyzej) przechodzi bez decyzji hooka, przed regulami
   ponizej - slowa w tresci argumentow (`git commit`, `pytest`, `merge`) nie sa
   wtedy komenda. Odczyt (`MONOLYNX_READ_OPS`, preflight, komendy get/list/
-  search/...) i zapis koncza sie tak samo: ten hook nie ma jawnego "allow",
-  wiec zapis wraca do zwyklego systemu uprawnien klienta (jak zapisy MCP).
+  search/...) i zapis koncza sie tak samo: ta sciezka nie wydaje jawnego
+  "allow", wiec zapis wraca do zwyklego systemu uprawnien klienta (jak zapisy MCP).
   `--yes`/`-y` i komendy login/logout/set/unset/delete/remove w pierwszych
   trzech slowach CLI nie dostaja wyjatku - stare reguly dzialaja jak dotad.
   Komenda zlozona, inny skrypt, `.bak` albo `notmonolynx_op.py` tez wracaja do
   starych regul.
+- Fast-forward do brancha bazowego (MON-249): dokladnie `git fetch origin <B>`
+  albo `git merge --ff-only origin/<B>` dostaje jawne "allow" dla kazdej roli,
+  takze przy MONOLYNX_SPRINT_RUN=1. <B> to MONOLYNX_BASE_BRANCH, a gdy pusta
+  MONOLYNX_MR_TARGET; brak obu, dwie rozne wartosci albo nazwa spoza
+  [A-Za-z0-9._/-] wylaczaja wyjatek. Inny branch, brak --ff-only, dodatkowa
+  flaga, refspec, `git -C`, cudzyslow, komenda zlozona, `$`/`~`/glob oraz
+  pull/reset/rebase/checkout ida starymi regulami. To jedyne jawne "allow"
+  w tym hooku.
+- Wrapper kolejki testow (MON-251): komenda prosta `python3 <katalog>/scripts/test_lock.py
+  [--timeout <cyfry>] -- <komenda...>` (te same ograniczenia skladni co wyzej, nazwa
+  pliku dokladnie `test_lock.py`) jest rozpakowywana do owinietej komendy jako PIERWSZY
+  krok oceny, przed wyjatkiem tmp-cleanup, a wszystkie reguly (tmp-cleanup,
+  monolynx_call_kind, fast-forward MON-249, destrukcyjne, glab/git, ruff read-only, TEST_LINT)
+  oceniaja ja jak gola komende - wrapper nie daje ani wyjatku, ani allow, ani dodatkowego
+  deny. Rozpakowanie jest jednorazowe (wrapper w wrapperze, nieznana flaga, brak `--`,
+  pusta komenda albo skladnia powloki -> stare reguly na calym stringu).
 - Operacje destrukcyjne (rm -rf, force-push, curl|sh, zapis do ~/.ssh,
   DROP/TRUNCATE w SQL, mkfs/dd na urzadzenie): subagent -> deny,
   glowna sesja -> ask. Wyjatek `rm -rf` (MON-174): cel pod /tmp, pod
@@ -52,7 +68,8 @@ Zasady:
   (zwykly system uprawnien).
 
 Wyjscie: brak outputu + exit 0 = przepusc; JSON z permissionDecision
-deny/ask = zablokuj / zapytaj uzytkownika.
+deny/ask = zablokuj / zapytaj uzytkownika; allow = przepusc bez pytania
+(tylko wyjatek MON-249).
 
 Ladowanie i zaufanie (MON-184): ten skrypt jest deklarowany w
 plugin/hooks/hooks.json (matcher PreToolUse/Bash) i uruchamiany przez klienta
@@ -277,6 +294,58 @@ def is_tmp_cleanup(cmd: str) -> bool:
     return True
 
 
+# Skladnia powloki zmieniajaca znaczenie komendy poza widocznymi tokenami, takze wewnatrz
+# cudzyslowu (fail-closed): `|;&`, backtick, nowa linia/CR, `$`, `~`, redirecty, glob,
+# nawiasy `(` `)` (subshell).
+_MONOLYNX_UNSAFE = re.compile(r"[|;&`\n\r$~<>*?\[{()]")
+
+
+def _test_lock_inner_tokens(tokens: list) -> "list | None":
+    """`python3 <...>/scripts/test_lock.py [--timeout <cyfry>] -- <komenda...>`: tokeny owinietej
+    komendy albo None. Nazwa pliku dokladnie `test_lock.py`, katalog `scripts`, bez `..`."""
+    if tokens[0] not in ("python3", "python") or len(tokens) < 3:
+        return None
+    script = PurePosixPath(tokens[1])
+    if script.name != "test_lock.py" or ".." in script.parts or script.parent.name != "scripts":
+        return None
+    index = 2
+    if tokens[index] == "--timeout":
+        if len(tokens) < index + 2 or not re.fullmatch(r"[0-9]+", tokens[index + 1]):
+            return None
+        index += 2
+    if index >= len(tokens) or tokens[index] != "--" or index + 1 >= len(tokens):
+        return None
+    return tokens[index + 1 :]
+
+
+def test_lock_inner(cmd: str) -> "str | None":
+    """MON-251: wrapper kolejki testow (`test_lock.py`) w formie prostej -> owinieta komenda
+    (`shlex.join`), ktora dalej oceniaja WSZYSTKIE reguly jak gola komende. To nie jest allow ani
+    wyjatek: decyzja dla wrappera == decyzja dla owinietej komendy. Fail-closed jak
+    `monolynx_call_kind` (ten sam `_MONOLYNX_UNSAFE`); inne dopasowanie, wrapper w wrapperze
+    (rozpakowanie tylko raz) albo blad `shlex` -> None i stare reguly oceniaja caly string."""
+    stripped = cmd.strip()
+    if not stripped or _MONOLYNX_UNSAFE.search(stripped):
+        return None
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    inner = _test_lock_inner_tokens(tokens)
+    if inner is None or _test_lock_inner_tokens(inner) is not None:
+        return None
+    return shlex.join(inner)
+
+
+# Rozpakowanie jako pierwszy krok oceny `cmd`, przed is_tmp_cleanup i kazda inna regula: wrapper
+# nie moze ani otwierac drogi, ani ukrywac komendy przed zadna z nich, wiec decyzja dla wrappera
+# jest rowna decyzji dla golej komendy takze dla wyjatku tmp-cleanup.
+_unwrapped = test_lock_inner(cmd)
+if _unwrapped is not None:
+    cmd = _unwrapped
+
 if is_tmp_cleanup(cmd):
     sys.exit(0)
 
@@ -292,19 +361,21 @@ MONOLYNX_READ_OPS = frozenset(
         "get_board",
         "list_sprints",
         "get_burndown",
+        "get_sprint",
         "list_acceptance_criteria",
         "list_labels",
         "search_wiki",
         "get_wiki_page",
         "list_wiki_pages",
         "get_wiki_config",
+        "list_graph_nodes",
+        "get_graph_node",
+        "query_graph",
+        "find_graph_path",
+        "get_graph_stats",
     }
 )
 _MONOLYNX_SCRIPTS = ("monolynx_op.py", "monolynx_transport.py")
-# Skladnia powloki zmieniajaca znaczenie komendy poza widocznymi tokenami, takze wewnatrz
-# cudzyslowu (fail-closed): `|;&`, backtick, nowa linia/CR, `$`, `~`, redirecty, glob,
-# nawiasy `(` `)` (subshell).
-_MONOLYNX_UNSAFE = re.compile(r"[|;&`\n\r$~<>*?\[{()]")
 _MONOLYNX_OP_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 # Flagi globalne CLI przed grupa (cli/src/monolynx_cli/main.py); te z wartoscia pochlaniaja nastepny token.
 _MONOLYNX_VALUE_FLAGS = ("--output", "-o", "--profile", "--project", "--timeout")
@@ -378,6 +449,53 @@ def monolynx_call_kind(cmd: str) -> "str | None":
 # system uprawnien klienta, a odczyt nie jest dodatkowo blokowany.
 if monolynx_call_kind(cmd) is not None:
     sys.exit(0)
+
+_BASE_BRANCH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+# Kazdy znak, ktory zmienia znaczenie komendy poza widocznymi tokenami. Tab,
+# nowa linia i CR sa tu, bo split() dzieli takze po nich - bez tego
+# "git fetch\norigin\ndevelop" dawaloby dokladne tokeny.
+_BASE_SYNC_UNSAFE = re.compile(r"[|;&`\n\r\t$~<>*?\[\]{}()\"'\\]")
+
+
+def base_branch_sync_kind(cmd: str, environ) -> "str | None":
+    """Fast-forward do brancha bazowego (MON-249): 'fetch', 'merge' albo None.
+
+    Rozpoznaje wylacznie `git fetch origin <B>` i `git merge --ff-only
+    origin/<B>`, gdzie <B> to MONOLYNX_BASE_BRANCH, a gdy pusta
+    MONOLYNX_MR_TARGET. Wszystko inne zwraca None i wraca do zwyklych regul.
+    """
+    base = (environ.get("MONOLYNX_BASE_BRANCH") or "").strip()
+    target = (environ.get("MONOLYNX_MR_TARGET") or "").strip()
+    # Obie ustawione i rozne to blad konfiguracji (preflight sprint-run go
+    # odrzuca), wiec nie zgadujemy, ktora wartosc jest wlasciwa.
+    if base and target and base != target:
+        return None
+    branch = base or target
+    if not branch or ".." in branch or not _BASE_BRANCH_NAME.fullmatch(branch):
+        return None
+    if _BASE_SYNC_UNSAFE.search(cmd):
+        return None
+    tokens = cmd.strip().split()
+    if tokens == ["git", "fetch", "origin", branch]:
+        return "fetch"
+    if tokens == ["git", "merge", "--ff-only", "origin/" + branch]:
+        return "merge"
+    return None
+
+
+# Jedyne jawne "allow" w tym hooku (MON-249), swiadomie przed rozgalezieniem na
+# role - wbrew hook-allow-fail-closed.md pkt 2. Ticket wymaga wszystkich rol:
+# fast-forward z brancha bazowego nie przepisuje historii, a przy rozjechanej
+# historii konczy sie bledem. Jawne allow zamiast braku decyzji, bo brak decyzji
+# oddaje komende zwyklemu systemowi uprawnien. Allow z hooka nie znosi regul
+# deny/ask klienta, a pierwszenstwo nad klasyfikatorem trybu auto nie jest
+# udokumentowane (dokumentacja Claude Code, permissions / permission-modes,
+# stan 2026-10-03) - gwarancje daje waska regula --allowedTools od dyspozytora.
+if base_branch_sync_kind(cmd, os.environ) is not None:
+    decide(
+        "allow",
+        "Fast-forward do brancha bazowego (git fetch / git merge --ff-only origin/<B>) [MON-249]",
+    )
 
 _DOCKER_COMPOSE_PRE_SUBCOMMAND_FLAGS = ("-p", "--profile")
 _DOCKER_COMPOSE_RUN_FLAGS = ("--rm", "--no-deps", "-T")

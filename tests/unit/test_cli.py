@@ -490,3 +490,246 @@ class TestCliModuleBlock:
 
         source = inspect.getsource(monolynx.cli)
         assert 'if __name__ == "__main__"' in source or "if __name__ == '__main__'" in source
+
+
+def _validate(name: str) -> str:
+    from monolynx import cli as cli_module
+
+    return cli_module.validate_test_db_name(name)
+
+
+@pytest.mark.unit
+class TestValidateTestDbName:
+    """Walidacja nazwy bazy testowej -- ostatnia bariera przed usunieciem bazy."""
+
+    @pytest.mark.parametrize("name", ["open_sentry_test_ab12cd34", "open_sentry_test_MON-250", "open_sentry_test_a_b-C9"])
+    def test_valid_name_returned_unchanged(self, name):
+        assert _validate(name) == name
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "open_sentry",
+            "open_sentry_test",
+            "open_sentry_test_",
+            "open_sentry_test_a;b",
+            'open_sentry_test_a"b',
+            "open_sentry_test_a'b",
+            "open_sentry_test_a b",
+            "x_open_sentry_test_a",
+            "",
+        ],
+    )
+    def test_invalid_name_raises_value_error(self, name):
+        with pytest.raises(ValueError):
+            _validate(name)
+
+    def test_name_with_trailing_newline_raises(self):
+        """`$` bez `\\Z` przepuszcza koncowy newline -- nazwa musi byc odrzucona."""
+        with pytest.raises(ValueError):
+            _validate("open_sentry_test_abc\n")
+
+    def test_name_of_63_chars_accepted(self):
+        name = "open_sentry_test_" + "a" * (63 - len("open_sentry_test_"))
+        assert len(name) == 63
+        assert _validate(name) == name
+
+    def test_name_of_64_chars_rejected(self):
+        name = "open_sentry_test_" + "a" * (64 - len("open_sentry_test_"))
+        assert len(name) == 64
+        with pytest.raises(ValueError):
+            _validate(name)
+
+    def test_test_db_prefix_constant(self):
+        from monolynx import cli as cli_module
+
+        assert cli_module.TEST_DB_PREFIX == "open_sentry_test_"
+
+
+def _make_prune_engine(rows, failing_names=()):
+    """Engine z mockowanym polaczeniem: 1. execute zwraca wiersze pg_stat_database, kolejne to usuwanie baz."""
+    from sqlalchemy.exc import OperationalError
+
+    select_result = MagicMock()
+    select_result.all.return_value = rows
+    conn = AsyncMock()
+
+    async def execute(stmt, *args, **kwargs):
+        if conn.execute.await_count == 1:
+            return select_result
+        sql = str(stmt)
+        if any(f'"{name}"' in sql for name in failing_names):
+            raise OperationalError(sql, {}, Exception("database is being accessed by other users"))
+        return MagicMock()
+
+    conn.execute = AsyncMock(side_effect=execute)
+    connect_cm = MagicMock()
+    connect_cm.__aenter__ = AsyncMock(return_value=conn)
+    connect_cm.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.connect.return_value = connect_cm
+    engine.dispose = AsyncMock()
+    return engine, conn
+
+
+_PRUNE_SETTINGS_URL = "postgresql+asyncpg://user:pw@dbhost:5432/open_sentry_test_run1"
+
+
+async def _run_prune(rows, failing_names=()):
+    from types import SimpleNamespace
+
+    from monolynx import cli as cli_module
+
+    engine, conn = _make_prune_engine(rows, failing_names)
+    settings = SimpleNamespace(DATABASE_URL=_PRUNE_SETTINGS_URL)
+    with (
+        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=engine) as mock_create,
+        patch("monolynx.config.settings", settings),
+    ):
+        await cli_module.prune_test_dbs_cmd()
+    return engine, conn, mock_create
+
+
+def _drop_sqls(conn):
+    return [str(c.args[0]) for c in conn.execute.await_args_list[1:] if "DROP DATABASE" in str(c.args[0])]
+
+
+@pytest.mark.unit
+class TestPruneTestDbsRegistration:
+    """prune-test-dbs musi byc bezargumentowe i zarejestrowane (.claude/rules/makefile-cli.md)."""
+
+    def test_commands_contains_prune_test_dbs(self):
+        assert "prune-test-dbs" in COMMANDS
+
+    def test_commands_prune_points_to_function(self):
+        from monolynx import cli as cli_module
+
+        assert COMMANDS["prune-test-dbs"] is cli_module.prune_test_dbs_cmd
+
+    def test_prune_cmd_takes_no_arguments(self):
+        from monolynx import cli as cli_module
+
+        assert len(inspect.signature(cli_module.prune_test_dbs_cmd).parameters) == 0
+
+    def test_prune_cmd_is_coroutine_function(self):
+        from monolynx import cli as cli_module
+
+        assert inspect.iscoroutinefunction(cli_module.prune_test_dbs_cmd)
+
+
+@pytest.mark.unit
+class TestPruneTestDbsCmd:
+    """prune-test-dbs: sprzata porzucone bazy open_sentry_test_* bez aktywnych polaczen."""
+
+    async def test_drops_only_databases_without_connections(self):
+        rows = [("open_sentry_test_idle1", 0), ("open_sentry_test_busy", 2), ("open_sentry_test_idle2", 0)]
+
+        _, conn, _ = await _run_prune(rows)
+
+        drops = _drop_sqls(conn)
+        assert len(drops) == 2
+        assert any('"open_sentry_test_idle1"' in sql for sql in drops)
+        assert any('"open_sentry_test_idle2"' in sql for sql in drops)
+        assert not any("open_sentry_test_busy" in sql for sql in drops)
+
+    async def test_database_with_single_connection_not_dropped(self):
+        """Granica numbackends: 1 polaczenie to juz baza aktywna."""
+        _, conn, _ = await _run_prune([("open_sentry_test_one", 1)])
+
+        assert _drop_sqls(conn) == []
+
+    async def test_drop_statement_quotes_identifier_and_has_no_force(self):
+        _, conn, _ = await _run_prune([("open_sentry_test_x", 0)])
+
+        drops = _drop_sqls(conn)
+        assert drops == ['DROP DATABASE "open_sentry_test_x"']
+        assert "FORCE" not in drops[0].upper()
+
+    async def test_connects_to_postgres_database_in_autocommit(self):
+        _, _, mock_create = await _run_prune([])
+
+        mock_create.assert_called_once()
+        url = mock_create.call_args.args[0]
+        assert url.database == "postgres"
+        assert url.host == "dbhost"
+        assert mock_create.call_args.kwargs["isolation_level"] == "AUTOCOMMIT"
+
+    async def test_first_statement_selects_from_pg_stat_database(self):
+        _, conn, _ = await _run_prune([])
+
+        first_sql = str(conn.execute.await_args_list[0].args[0])
+        assert "pg_stat_database" in first_sql
+        assert "DROP DATABASE" not in first_sql.upper()
+
+    async def test_invalid_name_from_database_not_dropped(self):
+        rows = [('open_sentry_test_a"; DROP DATABASE open_sentry; --', 0), ("open_sentry", 0), ("open_sentry_test_ok", 0)]
+
+        _, conn, _ = await _run_prune(rows)
+
+        assert _drop_sqls(conn) == ['DROP DATABASE "open_sentry_test_ok"']
+
+    async def test_drop_error_does_not_block_remaining_databases(self, capsys):
+        rows = [("open_sentry_test_first", 0), ("open_sentry_test_second", 0)]
+
+        engine, conn, _ = await _run_prune(rows, failing_names=["open_sentry_test_first"])
+
+        drops = _drop_sqls(conn)
+        assert len(drops) == 2
+        assert '"open_sentry_test_second"' in drops[1]
+        engine.dispose.assert_awaited_once()
+
+        lines = capsys.readouterr().out.strip().splitlines()
+        failed = [line for line in lines if "open_sentry_test_first" in line]
+        ok = [line for line in lines if "open_sentry_test_second" in line]
+        assert len(failed) == 1
+        assert "BLAD" in failed[0]
+        assert "usunieto" not in failed[0]
+        assert len(ok) == 1
+        assert "usunieto" in ok[0]
+        assert "1" in lines[-1]
+        assert "2" not in lines[-1]
+
+    async def test_engine_disposed_after_successful_run(self):
+        engine, _, _ = await _run_prune([("open_sentry_test_a", 0)])
+
+        engine.dispose.assert_awaited_once()
+
+    async def test_engine_disposed_when_select_fails(self):
+        from types import SimpleNamespace
+
+        from monolynx import cli as cli_module
+
+        engine, conn = _make_prune_engine([])
+        conn.execute = AsyncMock(side_effect=RuntimeError("connection refused"))
+        settings = SimpleNamespace(DATABASE_URL=_PRUNE_SETTINGS_URL)
+        with (
+            patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=engine),
+            patch("monolynx.config.settings", settings),
+            pytest.raises(RuntimeError),
+        ):
+            await cli_module.prune_test_dbs_cmd()
+
+        engine.dispose.assert_awaited_once()
+
+    async def test_output_reports_dropped_and_skipped_with_names(self, capsys):
+        rows = [("open_sentry_test_gone", 0), ("open_sentry_test_busy", 3)]
+
+        await _run_prune(rows)
+
+        lines = capsys.readouterr().out.splitlines()
+        gone = [line for line in lines if "open_sentry_test_gone" in line]
+        busy = [line for line in lines if "open_sentry_test_busy" in line]
+        assert len(gone) == 1
+        assert "usunieto" in gone[0]
+        assert len(busy) == 1
+        assert "pominieto" in busy[0]
+        assert "usunieto" not in busy[0]
+
+    async def test_summary_counts_only_dropped(self, capsys):
+        rows = [("open_sentry_test_a", 0), ("open_sentry_test_b", 0), ("open_sentry_test_c", 5)]
+
+        await _run_prune(rows)
+
+        last_line = capsys.readouterr().out.strip().splitlines()[-1]
+        assert "2" in last_line
+        assert "3" not in last_line

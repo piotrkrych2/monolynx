@@ -2,8 +2,10 @@
 
 Routery cienkie jak toole MCP (`mcp_server.py`, sekcja "--- Projekty ---") --
 zadnej logiki biznesowej tutaj, tylko auth/uprawnienia -> serwis -> mapowanie
-na schemat. `require_permission()` wolane jawnie tylko tam, gdzie odpowiadajacy
-tool MCP (przez swoj serwis) sprawdza uprawnienie -- parytet z MCP (MON-131)."""
+na schemat. `require_permission()` wolane jawnie tam, gdzie funkcja serwisu nie
+sprawdza uprawnienia sama (settings:write|delete, users:write|delete); etykiety
+sprawdza serwis (scrum:read|write), a jego ValueError wraca jako 403 przez
+`service_error`."""
 
 from __future__ import annotations
 
@@ -161,7 +163,10 @@ async def list_labels(
     per_page: int = Query(DEFAULT_PER_PAGE, ge=1, le=MAX_PER_PAGE),
 ) -> PaginatedResponse[LabelSummaryResponse]:
     user, project = user_and_project
-    labels = await projects_service.list_labels(db, user, project)
+    try:
+        labels = await projects_service.list_labels(db, user, project)
+    except ValueError as exc:
+        raise service_error(exc) from exc
     return paginate([LabelSummaryResponse.from_domain(lb) for lb in labels], page, per_page)
 
 

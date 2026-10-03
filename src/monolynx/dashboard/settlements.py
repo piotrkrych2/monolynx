@@ -25,6 +25,7 @@ from sqlalchemy.orm import selectinload
 from monolynx.dashboard.helpers import (
     _get_user_id,
     flash,
+    get_session_user,
     render_project_page,
     templates,
 )
@@ -42,6 +43,9 @@ from monolynx.services.settlements import (
     create_settlement,
     delete_settlement,
     delete_settlement_attachment,
+    ensure_settlement_permission,
+    ensure_ticket_project_write,
+    get_permitted_project_ids,
     get_settlement_attachment_bytes,
     update_settlement,
     upload_settlement_attachment,
@@ -201,15 +205,15 @@ async def settlement_create_form(
     slug: str,
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
+    user_id = user.id
 
     project = await _get_project(slug, db)
     await require_permission(db, user_id, project.id, "rozliczenia", "write")
 
-    is_superuser = bool(request.session.get("is_superuser", False))
-    all_projects = await _get_projects_with_write(user_id, db, is_superuser)
+    all_projects = await _get_projects_with_write(user_id, db, user.is_superuser)
 
     return await render_project_page(
         request,
@@ -236,15 +240,15 @@ async def settlement_create(
     notes: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
+    user_id = user.id
 
     project = await _get_project(slug, db)
     await require_permission(db, user_id, project.id, "rozliczenia", "write")
 
-    is_superuser = bool(request.session.get("is_superuser", False))
-    all_projects = await _get_projects_with_write(user_id, db, is_superuser)
+    all_projects = await _get_projects_with_write(user_id, db, user.is_superuser)
 
     # Parsuj project_ids z listy stringow na UUID
     project_ids: list[uuid.UUID] = []
@@ -340,6 +344,7 @@ async def settlement_detail(
     await require_permission(db, user_id, project.id, "rozliczenia", "read")
 
     settlement = await _get_settlement(settlement_id, project.id, db)
+    await ensure_settlement_permission(db, user_id, settlement, "read")
 
     # Render markdown dla notatek
     notes_html = render_markdown_html(settlement.notes) if settlement.notes else ""
@@ -376,21 +381,23 @@ async def settlement_edit_form(
     settlement_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
+    user_id = user.id
 
     project = await _get_project(slug, db)
     await require_permission(db, user_id, project.id, "rozliczenia", "write")
 
     settlement = await _get_settlement(settlement_id, project.id, db)
+    # Formularz i bledy walidacji renderuja dane rozliczenia, wiec odmowa musi je poprzedzac
+    await ensure_settlement_permission(db, user_id, settlement, "write")
 
     if settlement.status != "draft":
         flash(request, "Rozliczenie mozna edytowac tylko w statusie draft", "error")
         return RedirectResponse(url=f"/dashboard/{slug}/rozliczenia/{settlement_id}", status_code=303)
 
-    is_superuser = bool(request.session.get("is_superuser", False))
-    all_projects = await _get_projects_with_write(user_id, db, is_superuser)
+    all_projects = await _get_projects_with_write(user_id, db, user.is_superuser)
 
     # Pre-populate form_data z settlement
     selected_project_ids = [p.id for p in settlement.projects]
@@ -429,21 +436,23 @@ async def settlement_edit(
     notes: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse(url="/auth/login", status_code=303)
+    user_id = user.id
 
     project = await _get_project(slug, db)
     await require_permission(db, user_id, project.id, "rozliczenia", "write")
 
     settlement = await _get_settlement(settlement_id, project.id, db)
+    # Formularz i bledy walidacji renderuja dane rozliczenia, wiec odmowa musi je poprzedzac
+    await ensure_settlement_permission(db, user_id, settlement, "write")
 
     if settlement.status != "draft":
         flash(request, "Rozliczenie mozna edytowac tylko w statusie draft", "error")
         return RedirectResponse(url=f"/dashboard/{slug}/rozliczenia/{settlement_id}", status_code=303)
 
-    is_superuser = bool(request.session.get("is_superuser", False))
-    all_projects = await _get_projects_with_write(user_id, db, is_superuser)
+    all_projects = await _get_projects_with_write(user_id, db, user.is_superuser)
 
     # Parsuj project_ids
     project_ids: list[uuid.UUID] = []
@@ -652,6 +661,7 @@ async def settlement_download_attachment(
     await require_permission(db, user_id, project.id, "rozliczenia", "read")
 
     settlement = await _get_settlement(settlement_id, project.id, db)
+    await ensure_settlement_permission(db, user_id, settlement, "read")
 
     matching = [a for a in settlement.attachments if a.id == attachment_id]
     if not matching:
@@ -725,7 +735,8 @@ async def settlement_search_tickets(
     """HTMX endpoint -- wyszukiwanie ticketow do podpiecia (max 20).
 
     Filtruje po numerze (np. "12" lub "MNX-12") i po fragmencie tytulu (ILIKE).
-    Ogranicza do projektow powiazanych z rozliczeniem i wyklucza juz podpiete tickety.
+    Ogranicza do projektow powiazanych z rozliczeniem, w ktorych user ma rozliczenia:write,
+    i wyklucza juz podpiete tickety.
     """
     user_id = _get_user_id(request)
     if user_id is None:
@@ -741,7 +752,8 @@ async def settlement_search_tickets(
     if settlement.status != "draft":
         return HTMLResponse("", status_code=200)
 
-    settlement_project_ids = [p.id for p in settlement.projects]
+    write_project_ids = await get_permitted_project_ids(db, user_id, "write")
+    settlement_project_ids = [p.id for p in settlement.projects if p.id in write_project_ids]
     linked_ticket_ids = {t.id for t in settlement.tickets}
 
     results: list[Ticket] = []
@@ -788,7 +800,11 @@ async def settlement_link_ticket(
     settlement_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
-    """Podepnij ticket do rozliczenia (tylko draft, tylko projekty M2M, wymaga write)."""
+    """Podepnij ticket do rozliczenia (tylko draft, tylko projekty M2M).
+
+    Wymaga rozliczenia:read we wszystkich projektach rozliczenia oraz rozliczenia:write
+    w projekcie ze sluga i w projekcie ticketu.
+    """
     user_id = _get_user_id(request)
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
@@ -797,6 +813,7 @@ async def settlement_link_ticket(
     await require_permission(db, user_id, project.id, "rozliczenia", "write")
 
     settlement = await _get_settlement(settlement_id, project.id, db)
+    await ensure_settlement_permission(db, user_id, settlement, "read")
 
     if settlement.status != "draft":
         flash(request, "Mozna podpiac ticket tylko do rozliczenia w statusie draft", "error")
@@ -822,6 +839,8 @@ async def settlement_link_ticket(
         flash(request, str(e), "error")
         return RedirectResponse(url=f"/dashboard/{slug}/rozliczenia/{settlement_id}", status_code=303)
 
+    await ensure_ticket_project_write(db, user_id, ticket)
+
     # Dodaj tylko jesli jeszcze nie jest podpiete
     linked_ids = {t.id for t in settlement.tickets}
     if ticket.id not in linked_ids:
@@ -842,7 +861,11 @@ async def settlement_unlink_ticket(
     ticket_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
-    """Odepnij ticket od rozliczenia (tylko draft, wymaga write)."""
+    """Odepnij ticket od rozliczenia (tylko draft).
+
+    Wymaga rozliczenia:read we wszystkich projektach rozliczenia oraz rozliczenia:write
+    w projekcie ze sluga i w projekcie ticketu.
+    """
     user_id = _get_user_id(request)
     if user_id is None:
         return RedirectResponse(url="/auth/login", status_code=303)
@@ -851,6 +874,7 @@ async def settlement_unlink_ticket(
     await require_permission(db, user_id, project.id, "rozliczenia", "write")
 
     settlement = await _get_settlement(settlement_id, project.id, db)
+    await ensure_settlement_permission(db, user_id, settlement, "read")
 
     if settlement.status != "draft":
         flash(request, "Mozna odpiac ticket tylko od rozliczenia w statusie draft", "error")
@@ -860,6 +884,8 @@ async def settlement_unlink_ticket(
     if ticket_to_remove is None:
         flash(request, "Ticket nie jest podpiety do tego rozliczenia", "error")
         return RedirectResponse(url=f"/dashboard/{slug}/rozliczenia/{settlement_id}", status_code=303)
+
+    await ensure_ticket_project_write(db, user_id, ticket_to_remove)
 
     settlement.tickets.remove(ticket_to_remove)
     await db.commit()

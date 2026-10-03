@@ -1,0 +1,28 @@
+# command: monolynx ticket create --help
+# tool_version: monolynx 0.2.0 (drzewo zrodel, MON-247, niewydane)
+# captured: 2026-10-03
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                                                                                                                                        
+ Usage: monolynx ticket create [OPTIONS]                                                                                                                                                                
+                                                                                                                                                                                                        
+ Utwórz ticket; z --brief wypisuje tylko id, key, title, status, sprint_id i relacje.                                                                                                                   
+                                                                                                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *  --title                    <str>   Tytuł ticketu. [required]                                                                                                                                      │
+│    --description              <str>   Opis (markdown); `-` czyta ze stdin.                                                                                                                           │
+│    --description-file         <path>  Plik z opisem (UTF-8).                                                                                                                                         │
+│    --priority                 <str>   Priorytet.                                                                                                                                                     │
+│    --sp,--story-points        <int>   Story points.                                                                                                                                                  │
+│    --sprint                   <str>   ID sprintu.                                                                                                                                                    │
+│    --assignee                 <str>   E-mail przypisanej osoby.                                                                                                                                      │
+│    --due                      <str>   Termin (RRRR-MM-DD).                                                                                                                                           │
+│    --label                    <str>   ID etykiety; można powtarzać.                                                                                                                                  │
+│    --ac                       <str>   Kryterium akceptacji; można powtarzać.                                                                                                                         │
+│    --spec-page                <str>   ID strony wiki ze specyfikacją.                                                                                                                                │
+│    --blocked-by               <str>   UUID ticketu blokującego; można powtarzać.                                                                                                                     │
+│    --brief                            Wypisz tylko id, key, title, status, sprint_id, blocked_by i blocks.                                                                                           │
+│    --help                             Show this message and exit.                                                                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+# exit: 0

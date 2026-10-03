@@ -296,10 +296,20 @@ class TestGetTicket:
     async def test_get_ticket_from_other_project_raises(self, db_session):
         """Ticket istnieje (poprawny UUID), ale nalezy do innego projektu -- filtr project_id w SELECT musi to wylapac."""
         user_a, project_a = await _setup(db_session, "get-cross-a")
-        _user_b, project_b = await _setup(db_session, "get-cross-b")
+        project_b = await _make_project(db_session, "get-cross-b")
+        await _make_member(db_session, project_b, user_a)
         ticket = await _make_ticket(db_session, project_a, number=1)
 
         with pytest.raises(ValueError, match=r"^Ticket nie istnieje$"):
+            await svc.get_ticket(db_session, user_a, project_b, str(ticket.id))
+
+    async def test_get_ticket_without_membership_raises_permission_error(self, db_session):
+        """User spoza projektu dostaje odmowe uprawnienia, a nie "Ticket nie istnieje" (check przed lookupem)."""
+        user_a, project_a = await _setup(db_session, "get-nomember-a")
+        _user_b, project_b = await _setup(db_session, "get-nomember-b")
+        ticket = await _make_ticket(db_session, project_a, number=1)
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia scrum:read$"):
             await svc.get_ticket(db_session, user_a, project_b, str(ticket.id))
 
 
