@@ -32,6 +32,7 @@ from monolynx_cli.options import get_options
 
 PER_PAGE = 100
 STDIN_MARKER = "-"
+BRIEF_TICKET_KEYS = ("id", "key", "title", "status", "sprint_id", "blocked_by", "blocks")
 
 
 def _stdin_is_tty() -> bool:
@@ -134,6 +135,61 @@ def without_none(data: dict[str, Any]) -> dict[str, Any]:
 
 def _invalid_page(detail: str) -> MonolynxAPIError:
     return MonolynxAPIError(200, "Nieprawidłowa odpowiedź serwera", detail)
+
+
+def require_list_with_blockers(payload: Any) -> dict[str, Any]:
+    """Sprawdź kontrakt odpowiedzi `ticket list`: koperta z `items`, każdy element z listą `blocked_by`.
+
+    Serwer sprzed MON-246 nie niesie `blocked_by`; kolumna z kluczami blokerów pokazałaby wtedy
+    puste pole, nieodróżnialne od ticketu bez blokerów, więc brak pola to błąd kontraktu.
+    """
+    if not isinstance(payload, dict):
+        raise _invalid_page("Odpowiedź nie jest obiektem JSON.")
+    items = payload.get("items")
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise _invalid_page("Pole items nie jest listą obiektów.")
+    for index, item in enumerate(items):
+        blockers = item.get("blocked_by")
+        if not isinstance(blockers, list):
+            raise _invalid_page(f"Element items[{index}] nie ma listy blocked_by (serwer bez obsługi blokerów w liście ticketów).")
+        for position, blocker in enumerate(blockers):
+            if not isinstance(blocker, dict) or not isinstance(blocker.get("key"), str) or not blocker["key"]:
+                raise _invalid_page(f"Element items[{index}].blocked_by[{position}] nie jest obiektem z niepustym kluczem key.")
+    return payload
+
+
+def require_spec_page_id(payload: Any) -> dict[str, Any]:
+    """Sprawdź kontrakt odpowiedzi `ticket get`: klucz `spec_page_id` musi istnieć (wartość `null` jest poprawna)."""
+    if not isinstance(payload, dict):
+        raise _invalid_page("Odpowiedź nie jest obiektem JSON.")
+    if "spec_page_id" not in payload:
+        raise _invalid_page("Brak pola spec_page_id (serwer bez obsługi spec_page_id w szczegółach ticketu).")
+    return payload
+
+
+def require_brief_ticket(payload: Any) -> dict[str, Any]:
+    """Sprawdź kontrakt odpowiedzi `ticket create|update` pod `--brief` i zwróć tylko 7 pól w stałej kolejności.
+
+    Brak klucza albo zły typ to błąd kontraktu, nigdy puste pole z kodem 0: agent czytający
+    potwierdzenie zapisu nie odróżniłby `""` od ticketu bez statusu. `sprint_id` może być `null`.
+    """
+    if not isinstance(payload, dict):
+        raise _invalid_page("Odpowiedź nie jest obiektem JSON.")
+    for name in ("id", "key"):
+        value = payload.get(name)
+        if not isinstance(value, str) or not value:
+            raise _invalid_page(f"Pole {name} nie jest niepustym tekstem.")
+    for name in ("title", "status", "sprint_id"):
+        if name not in payload:
+            raise _invalid_page(f"Brak pola {name} w odpowiedzi ticketu.")
+    for name in ("blocked_by", "blocks"):
+        relations = payload.get(name)
+        if not isinstance(relations, list):
+            raise _invalid_page(f"Pole {name} nie jest listą (brak lub zły typ w odpowiedzi ticketu).")
+        for position, relation in enumerate(relations):
+            if not isinstance(relation, dict) or not isinstance(relation.get("key"), str) or not relation["key"]:
+                raise _invalid_page(f"Element {name}[{position}] nie jest obiektem z niepustym kluczem key.")
+    return {name: payload[name] for name in BRIEF_TICKET_KEYS}
 
 
 def fetch_all(client: MonolynxClient, path: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:

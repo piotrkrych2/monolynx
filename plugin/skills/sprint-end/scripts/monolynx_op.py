@@ -20,6 +20,11 @@ Wywolanie:
                 tablica JSON stringow w jednej wartosci; wartosc bool jako
                 `true` albo `false`
 
+Parametry `compact` (`list_tickets`, -> `--compact`: lista bez opisow) i `brief`
+(`create_ticket`, `update_ticket`, -> `--brief`: potwierdzenie tylko z id, key, title,
+status, sprint_id, blocked_by i blocks) sa parametrami wrappera, nie tooli MCP; wrapper
+nigdy nie wlacza ich sam, a przy fallbacku (kod 3) tool MCP wolasz bez nich.
+
 CLI jest wolane jako `monolynx -o json --project <slug> <grupa> <komenda>
 [pozycyjne] [flagi w kolejnosci podania parametrow]`. Parametry z dluga trescia
 (`content` komentarza i wiki, `description` ticketu) ida do CLI przez stdin
@@ -41,9 +46,12 @@ Kody wyjscia:
         wartosci, argument pozycyjny, zly JSON listy, zla wartosc bool, brak
         pliku `@sciezka`); CLI nie jest wolane
 
-`get_ticket` przez CLI nie zwraca `spec_page_id` (API v2 nie ma tego pola):
-na stderr pojawia sie linia `OP-NOTE: ...`; kto potrzebuje pola, doczytuje je
-toolem MCP get_ticket.
+`create_sprint` wymaga `--name` i `--start_date`, a `find_graph_path` `--source_id` i `--target_id`
+(brak -> 64, CLI nie jest wolane). Graf (MON-248) ma tylko odczyty: `list_graph_nodes`,
+`get_graph_node` (`--node_id` pozycyjny), `query_graph`, `find_graph_path`, `get_graph_stats`;
+narzedzia zapisu grafu nie maja komendy CLI i zawsze koncza sie kodem 3.
+`goal` sprintu trafia do argv CLI jako zwykla opcja po rozwinieciu `-` / `@plik`
+przez wrapper, bo CLI nie ma `--goal -` (literal `-` stalby sie celem sprintu).
 
 Kody wyjscia CLI pochodza z `tests/fixtures/monolynx/` (CLI 0.1.0, `auth
 whoami` bez tokenu = 3, nieistniejaca komenda = 2) i z `cli/src/monolynx_cli/
@@ -71,12 +79,18 @@ READ_OPS = frozenset(
         "get_board",
         "list_sprints",
         "get_burndown",
+        "get_sprint",
         "list_acceptance_criteria",
         "list_labels",
         "search_wiki",
         "get_wiki_page",
         "list_wiki_pages",
         "get_wiki_config",
+        "list_graph_nodes",
+        "get_graph_node",
+        "query_graph",
+        "find_graph_path",
+        "get_graph_stats",
     }
 )
 
@@ -86,8 +100,6 @@ _CLI_TIMEOUT = 120
 _OP_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _PARAM_FLAG = re.compile(r"^--([a-z][a-z0-9_]*)$")
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-
-_GET_TICKET_NOTE = "OP-NOTE: get_ticket przez CLI nie zwraca spec_page_id - potrzebne pole doczytaj toolem MCP get_ticket"
 
 # Rodzaje mapowania parametru -> argv CLI.
 _OPT = "opt"  # --flag <wartosc>
@@ -116,8 +128,8 @@ _TICKET_COMMON = {
 }
 
 # op -> (komenda CLI, parametry pozycyjne [(nazwa, wymagany)], parametry-flagi).
-# Flagi sprawdzone wobec `monolynx <grupa> <komenda> --help` (CLI 0.1.0, fixture'y w
-# tests/fixtures/monolynx/) i wobec `cli/src/monolynx_cli/commands/`.
+# Flagi sprawdzone wobec `monolynx <grupa> <komenda> --help` (fixture'y w
+# tests/fixtures/monolynx/: CLI 0.1.0 oraz `*.source.txt` z drzewa zrodel dla flag niewydanych) i wobec `cli/src/monolynx_cli/commands/`.
 OPS = {
     "get_ticket": (("ticket", "get"), (("ticket_id", True),), {}),
     "list_tickets": (
@@ -132,6 +144,7 @@ OPS = {
             "overdue": (_PRESENT, "--overdue"),
             "label_id": (_OPT, "--label"),
             "page": (_OPT, "--page"),
+            "compact": (_PRESENT, "--compact"),
         },
     ),
     "search_tickets": (
@@ -151,7 +164,13 @@ OPS = {
     "update_ticket": (
         ("ticket", "update"),
         (("ticket_id", True),),
-        {**_STATUS, **_TICKET_COMMON, "label_ids": (_LIST_REPLACE, "--label"), "blocked_by_ids": (_BLOCKERS, "--blocked-by", "--no-blockers")},
+        {
+            **_STATUS,
+            **_TICKET_COMMON,
+            "label_ids": (_LIST_REPLACE, "--label"),
+            "blocked_by_ids": (_BLOCKERS, "--blocked-by", "--no-blockers"),
+            "brief": (_PRESENT, "--brief"),
+        },
     ),
     "create_ticket": (
         ("ticket", "create"),
@@ -162,12 +181,25 @@ OPS = {
             "acceptance_criteria": (_LIST, "--ac"),
             "spec_page_id": (_OPT, "--spec-page"),
             "blocked_by_ids": (_LIST, "--blocked-by"),
+            "brief": (_PRESENT, "--brief"),
         },
     ),
     "get_board": (("sprint", "board"), (), {}),
     "list_sprints": (("sprint", "list"), (), _STATUS),
     "complete_sprint": (("sprint", "complete"), (("sprint_id", True),), {}),
     "get_burndown": (("sprint", "burndown"), (("sprint_id", False),), {}),
+    "get_sprint": (("sprint", "get"), (("sprint_id", True),), {}),
+    "start_sprint": (("sprint", "start"), (("sprint_id", True),), {}),
+    "create_sprint": (
+        ("sprint", "create"),
+        (),
+        {"name": (_OPT, "--name"), "start_date": (_OPT, "--start"), "end_date": (_OPT, "--end"), "goal": (_OPT, "--goal")},
+    ),
+    "update_sprint": (
+        ("sprint", "update"),
+        (("sprint_id", True),),
+        {"name": (_OPT, "--name"), "goal": (_OPT, "--goal"), "start_date": (_OPT, "--start"), "end_date": (_OPT, "--end")},
+    ),
     "list_acceptance_criteria": (("ticket", "ac", "list"), (("ticket_id", True),), {}),
     "add_acceptance_criterion": (("ticket", "ac", "add"), (("ticket_id", True), ("description", True)), {}),
     "update_acceptance_criterion": (
@@ -201,7 +233,32 @@ OPS = {
         },
     ),
     "get_wiki_config": (("wiki", "config", "get"), (), {}),
+    "list_graph_nodes": (
+        ("graph", "nodes"),
+        (),
+        {"type": (_OPT, "--type"), "search": (_OPT, "--search"), "limit": (_OPT, "--limit")},
+    ),
+    "get_graph_node": (
+        ("graph", "node"),
+        (("node_id", True),),
+        {"depth": (_OPT, "--depth"), "relation_types": (_LIST, "--relation-type"), "node_types": (_LIST, "--node-type")},
+    ),
+    "query_graph": (
+        ("graph", "query"),
+        (),
+        {"node_type": (_OPT, "--node-type"), "search": (_OPT, "--search"), "limit": (_OPT, "--limit")},
+    ),
+    "find_graph_path": (
+        ("graph", "path"),
+        (),
+        {"source_id": (_OPT, "--source-id"), "target_id": (_OPT, "--target-id")},
+    ),
+    "get_graph_stats": (("graph", "stats"), (), {}),
 }
+
+# Wymagane parametry-flagi: krotka flag w OPS nie wyraza wymagalnosci (maja ja tylko pozycyjne).
+# Brak -> kod 64 przed wywolaniem CLI, zamiast bledu uzycia CLI (kod 2 -> fallback na MCP).
+REQUIRED_FLAG_PARAMS = {"create_sprint": ("name", "start_date"), "find_graph_path": ("source_id", "target_id")}
 
 
 class _UsageError(Exception):
@@ -302,6 +359,10 @@ def _build(op: str, params: list[tuple[str, str]]) -> tuple[list[str], str | Non
     if not _SLUG.match(slug):
         raise _UsageError("brak albo niepoprawny --project_slug (male litery, cyfry, myslniki)")
 
+    for name in REQUIRED_FLAG_PARAMS.get(op, ()):
+        if name not in values:
+            raise _UsageError(f"brak wymaganego parametru {name}")
+
     argv = ["-o", "json", "--project", slug, *command]
     for name, required in positional:
         if name not in values:
@@ -388,8 +449,6 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.buffer.flush()
         if result.stderr:
             sys.stderr.write(_decode(result.stderr))
-        if op == "get_ticket":
-            print(_GET_TICKET_NOTE, file=sys.stderr)
         return 0
     detail = _decode(result.stderr).strip()
     if result.returncode in (2, 3):

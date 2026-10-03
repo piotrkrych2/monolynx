@@ -62,7 +62,7 @@ class TestCreateProject:
             follow_redirects=False,
         )
         assert response.status_code == 200
-        assert "juz istnieje" in response.text
+        assert "jest zajęty" in response.text
 
     async def test_create_project_empty_name(self, client, db_session):
         """Walidacja pustych pol."""

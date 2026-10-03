@@ -14,7 +14,7 @@ from monolynx.database import get_db
 from monolynx.models.user_api_token import UserApiToken
 from monolynx.services.mcp_auth import generate_api_token
 
-from .helpers import _get_user_id, flash, templates
+from .helpers import flash, get_session_user, templates
 
 router = APIRouter(prefix="/dashboard", tags=["profile"])
 
@@ -22,9 +22,10 @@ router = APIRouter(prefix="/dashboard", tags=["profile"])
 @router.get("/profile/tokens", response_class=HTMLResponse, response_model=None)
 async def tokens_list(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse | RedirectResponse:
     """Lista tokenow API zalogowanego uzytkownika."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse("/auth/login", status_code=303)
+    user_id = user.id
 
     result = await db.execute(select(UserApiToken).where(UserApiToken.user_id == user_id).order_by(UserApiToken.created_at.desc()))
     tokens = result.scalars().all()
@@ -35,9 +36,10 @@ async def tokens_list(request: Request, db: AsyncSession = Depends(get_db)) -> H
 @router.post("/profile/tokens/create", response_class=HTMLResponse, response_model=None)
 async def token_create(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse | RedirectResponse:
     """Generowanie nowego tokenu API."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse("/auth/login", status_code=303)
+    user_id = user.id
 
     form = await request.form()
     name = str(form.get("name", "")).strip()
@@ -71,10 +73,10 @@ async def token_create(request: Request, db: AsyncSession = Depends(get_db)) -> 
 @router.get("/profile/mcp-guide", response_class=HTMLResponse, response_model=None)
 async def mcp_guide(
     request: Request,
+    db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
     """Instrukcja konfiguracji MCP dla Claude Code."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    if await get_session_user(request, db) is None:
         return RedirectResponse("/auth/login", status_code=303)
 
     return templates.TemplateResponse(request, "dashboard/profile/mcp_guide.html", {"app_url": settings.APP_URL})
@@ -83,10 +85,10 @@ async def mcp_guide(
 @router.get("/profile/cli-guide", response_class=HTMLResponse, response_model=None)
 async def cli_guide(
     request: Request,
+    db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
     """Instrukcja logowania klienta CLI (OAuth, token dla CI)."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    if await get_session_user(request, db) is None:
         return RedirectResponse("/auth/login", status_code=303)
 
     return templates.TemplateResponse(request, "dashboard/profile/cli_guide.html", {"app_url": settings.APP_URL})
@@ -99,9 +101,10 @@ async def token_revoke(
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
     """Dezaktywacja tokenu API."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse("/auth/login", status_code=303)
+    user_id = user.id
 
     result = await db.execute(
         select(UserApiToken).where(

@@ -38,7 +38,7 @@ async def get_burndown_data(
     start_date = sprint.start_date
     today = date.today()
 
-    tickets_result = await db.execute(select(Ticket).where(Ticket.sprint_id == sprint.id))
+    tickets_result = await db.execute(select(Ticket).where(Ticket.sprint_id == sprint.id, Ticket.project_id == project_id))
     tickets = tickets_result.scalars().all()
 
     total_story_points = sum(t.story_points or 0 for t in tickets)

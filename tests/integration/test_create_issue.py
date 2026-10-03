@@ -72,6 +72,16 @@ def _make_mock_factory(db_session):
     return _factory
 
 
+@pytest.fixture(autouse=True)
+def _allow_permissions():
+    """Użytkownik z `_create_project_and_user` nie jest członkiem projektu, więc check RBAC narzędzia (MON-242) jest pominięty.
+
+    Odmowę dla ról testuje tests/integration/test_mcp_module_rbac.py.
+    """
+    with patch("monolynx.mcp_server._require", AsyncMock(return_value=None)):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Happy path -- minimalne dane
 # ---------------------------------------------------------------------------

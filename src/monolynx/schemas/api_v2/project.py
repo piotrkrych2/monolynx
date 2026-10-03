@@ -109,14 +109,13 @@ class InviteMemberRequest(BaseModel):
 
 
 class InviteMemberResponse(BaseModel):
-    """`InviteMemberResult` -- `invitation_token`/`expires_at` obecne tylko dla nowego konta."""
+    """`InviteMemberResult` -- `expires_at` obecne tylko dla nowego konta; token zaproszenia idzie wylacznie mailem."""
 
     model_config = ConfigDict(from_attributes=True)
 
     email: str
     role: str
     is_new_user: bool
-    invitation_token: uuid.UUID | None = None
     expires_at: datetime | None = None
 
 

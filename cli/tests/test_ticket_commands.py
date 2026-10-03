@@ -37,6 +37,25 @@ ENVELOPE = {
 }
 
 
+LIST_ENVELOPE = {
+    "items": [
+        {"id": "a1", "title": "Alfa", "blocked_by": []},
+        {"id": "b2", "title": "Beta", "blocked_by": []},
+    ],
+    "page": 1,
+    "per_page": 20,
+    "total": 2,
+    "total_pages": 1,
+}
+
+DETAIL_RECORD = {"id": "x", "title": "t", "spec_page_id": None}
+CONTRACT_ERROR = "Nieprawidłowa odpowiedź serwera"
+
+
+def _envelope_for(command):
+    return LIST_ENVELOPE if command == ["list"] else ENVELOPE
+
+
 def _setup(monkeypatch, mock_transport, *, payload=None, status=200, project=SLUG, handler=None):
     monkeypatch.setenv("MONOLYNX_TOKEN", "tok-test-1234")
     monkeypatch.setenv("MONOLYNX_ENDPOINT", "https://api.test")
@@ -49,7 +68,7 @@ def _setup(monkeypatch, mock_transport, *, payload=None, status=200, project=SLU
             return httpx.Response(204)
         if status >= 400:
             return httpx.Response(status, json={"title": "Błąd walidacji", "detail": "Zły status"}, headers=_PROBLEM_CT)
-        return httpx.Response(status, json=payload if payload is not None else {"id": "x", "title": "t"})
+        return httpx.Response(status, json=payload if payload is not None else DETAIL_RECORD)
 
     transport, requests = mock_transport(handler or default_handler)
     monkeypatch.setattr(
@@ -97,7 +116,7 @@ _ID_COMMANDS = [
 def test_ticket_identifier_is_passed_unchanged_in_path(runner, monkeypatch, mock_transport, args, method, suffix, status, ticket, fmt):
     args = [a.replace("{t}", ticket) for a in args]
 
-    result, requests = _run(runner, monkeypatch, mock_transport, args, fmt=fmt, status=status, payload=ENVELOPE)
+    result, requests = _run(runner, monkeypatch, mock_transport, args, fmt=fmt, status=status, payload={**ENVELOPE, "spec_page_id": None})
 
     assert result.exit_code == 0, result.output
     assert len(requests) == 1
@@ -127,7 +146,7 @@ def test_list_maps_every_flag_to_query(runner, monkeypatch, mock_transport):
             "--label", "lab-1",
             "--page", "3",
         ],
-        payload=ENVELOPE,
+        payload=LIST_ENVELOPE,
     )  # fmt: skip
 
     assert result.exit_code == 0, result.output
@@ -147,7 +166,7 @@ def test_list_maps_every_flag_to_query(runner, monkeypatch, mock_transport):
 
 
 def test_list_without_flags_sends_no_filter_params(runner, monkeypatch, mock_transport):
-    result, requests = _run(runner, monkeypatch, mock_transport, ["list"], payload=ENVELOPE)
+    result, requests = _run(runner, monkeypatch, mock_transport, ["list"], payload=LIST_ENVELOPE)
 
     assert result.exit_code == 0, result.output
     params = _params(requests[0])
@@ -190,7 +209,7 @@ def test_search_maps_query_and_flags(runner, monkeypatch, mock_transport):
 
 @pytest.mark.parametrize("command", [["list"], ["search", "x"]])
 def test_list_and_search_page_flag_maps_to_page_query(runner, monkeypatch, mock_transport, command):
-    result, requests = _run(runner, monkeypatch, mock_transport, [*command, "--page", "3"], payload=ENVELOPE)
+    result, requests = _run(runner, monkeypatch, mock_transport, [*command, "--page", "3"], payload=_envelope_for(command))
 
     assert result.exit_code == 0, result.output
     assert _params(requests[0])["page"] == "3"
@@ -212,23 +231,27 @@ _FETCH_ALL_COMMANDS = [
     ["ac", "list", "MON-1"],
 ]
 
-_LIST_COMMANDS = [*_PAGED_COMMANDS, *_FETCH_ALL_COMMANDS]
+_LIST_COMMANDS = [["search", "x"], *_FETCH_ALL_COMMANDS]
 
 
 @pytest.mark.parametrize("command", _PAGED_COMMANDS)
 def test_list_commands_render_json_envelope_unchanged(runner, monkeypatch, mock_transport, command):
-    result, _ = _run(runner, monkeypatch, mock_transport, command, fmt="json", payload=ENVELOPE)
+    envelope = _envelope_for(command)
+
+    result, _ = _run(runner, monkeypatch, mock_transport, command, fmt="json", payload=envelope)
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == ENVELOPE
+    assert json.loads(result.stdout) == envelope
 
 
 @pytest.mark.parametrize("command", _PAGED_COMMANDS)
 def test_list_commands_render_yaml_envelope_unchanged(runner, monkeypatch, mock_transport, command):
-    result, _ = _run(runner, monkeypatch, mock_transport, command, fmt="yaml", payload=ENVELOPE)
+    envelope = _envelope_for(command)
+
+    result, _ = _run(runner, monkeypatch, mock_transport, command, fmt="yaml", payload=envelope)
 
     assert result.exit_code == 0, result.output
-    assert yaml.safe_load(result.stdout) == ENVELOPE
+    assert yaml.safe_load(result.stdout) == envelope
 
 
 @pytest.mark.parametrize("command", _FETCH_ALL_COMMANDS)
@@ -310,7 +333,7 @@ def test_list_commands_render_table_with_values(runner, monkeypatch, mock_transp
 
 
 def test_get_renders_single_record_json(runner, monkeypatch, mock_transport):
-    record = {"id": "t1", "key": "MON-1", "title": "Rekord"}
+    record = {"id": "t1", "key": "MON-1", "title": "Rekord", "spec_page_id": None}
 
     result, _ = _run(runner, monkeypatch, mock_transport, ["get", "MON-1"], payload=record)
 
@@ -762,14 +785,14 @@ def test_ticket_with_path_traversal_is_encoded_not_interpreted(runner, monkeypat
     ids=["ticket", "comment-list-ticket", "criterion-slash", "criterion-space"],
 )
 def test_identifier_with_special_characters_is_encoded_in_path(runner, monkeypatch, mock_transport, args, raw_suffix):
-    result, requests = _run(runner, monkeypatch, mock_transport, args, status=200, payload=ENVELOPE)
+    result, requests = _run(runner, monkeypatch, mock_transport, args, status=200, payload={**ENVELOPE, "spec_page_id": None})
 
     assert result.exit_code == 0, result.output
     assert requests[0].url.raw_path.startswith(f"{P}{raw_suffix}".encode())
 
 
 def test_project_slug_dotdot_exits_2_without_request(runner, monkeypatch, mock_transport):
-    requests = _setup(monkeypatch, mock_transport, payload=ENVELOPE)
+    requests = _setup(monkeypatch, mock_transport, payload=LIST_ENVELOPE)
 
     result = runner.invoke(app, ["-o", "json", "--project", "..", "ticket", "list"])
 
@@ -779,7 +802,7 @@ def test_project_slug_dotdot_exits_2_without_request(runner, monkeypatch, mock_t
 
 
 def test_project_slug_with_slash_is_encoded_in_ticket_path(runner, monkeypatch, mock_transport):
-    requests = _setup(monkeypatch, mock_transport, payload=ENVELOPE)
+    requests = _setup(monkeypatch, mock_transport, payload=LIST_ENVELOPE)
 
     result = runner.invoke(app, ["-o", "json", "--project", "a/b", "ticket", "list"])
 
@@ -816,6 +839,459 @@ def test_ticket_list_search_help_does_not_promise_description_search(runner):
     option_help = text.split("--search", 1)[1].split(" --", 1)[0]
     assert "tytu" in option_help.lower()
     assert "opis" not in option_help.lower()
+
+
+# ---------------------------------------------------------------------------
+# MON-246: ticket list niesie blocked_by, ticket get niesie spec_page_id
+# ---------------------------------------------------------------------------
+
+_BLOCKER_A = {"id": "u-a", "key": "MON-5", "title": "Bloker A", "status": "todo"}
+_BLOCKER_B = {"id": "u-b", "key": "MON-7", "title": "Bloker B", "status": "in_progress"}
+_BLOCKER_C = {"id": "u-c", "key": "MON-9", "title": "Bloker C", "status": "done"}
+
+BLOCKED_ENVELOPE = {
+    "items": [
+        {"id": "a1", "title": "Alfa", "blocked_by": [_BLOCKER_A, _BLOCKER_B]},
+        {"id": "b2", "title": "Beta", "blocked_by": [_BLOCKER_C]},
+        {"id": "c3", "title": "Gamma", "blocked_by": []},
+    ],
+    "page": 1,
+    "per_page": 20,
+    "total": 3,
+    "total_pages": 1,
+}
+
+_SPEC_ID = "7c1e2d3f-aaaa-bbbb-cccc-0123456789ab"
+
+
+def _envelope_with_items(items):
+    return {**LIST_ENVELOPE, "items": items, "total": len(items)}
+
+
+def test_list_json_keeps_full_blocked_by_objects(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["list"], fmt="json", payload=BLOCKED_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == BLOCKED_ENVELOPE
+
+
+def test_list_yaml_keeps_full_blocked_by_objects(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["list"], fmt="yaml", payload=BLOCKED_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(result.stdout) == BLOCKED_ENVELOPE
+
+
+def test_list_csv_blocked_by_column_holds_comma_separated_keys(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["list"], fmt="csv", payload=BLOCKED_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert list(csv.reader(io.StringIO(result.stdout))) == [
+        ["id", "title", "blocked_by"],
+        ["a1", "Alfa", "MON-5, MON-7"],
+        ["b2", "Beta", "MON-9"],
+        ["c3", "Gamma", ""],
+    ]
+
+
+def test_list_table_blocked_by_column_holds_keys_of_the_right_row(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["list"], fmt="table", payload=BLOCKED_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert any("blocked_by" in line for line in lines)
+    alfa = next(line for line in lines if "Alfa" in line)
+    beta = next(line for line in lines if "Beta" in line)
+    gamma = next(line for line in lines if "Gamma" in line)
+    assert "MON-5, MON-7" in alfa
+    assert "MON-9" not in alfa
+    assert "MON-9" in beta
+    assert "MON-5" not in beta
+    assert "MON-" not in gamma
+    assert '"key"' not in result.stdout
+    assert "Bloker A" not in result.stdout
+
+
+@pytest.mark.parametrize("fmt", ["json", "yaml", "table", "csv"])
+@pytest.mark.parametrize(
+    "bad_item",
+    [
+        {"id": "a1", "title": "Alfa"},
+        {"id": "a1", "title": "Alfa", "blocked_by": None},
+        {"id": "a1", "title": "Alfa", "blocked_by": "MON-5"},
+    ],
+    ids=["missing", "null", "string"],
+)
+def test_list_item_without_blocked_by_list_is_contract_error(runner, monkeypatch, mock_transport, bad_item, fmt):
+    good = {"id": "g1", "title": "Dobry", "blocked_by": []}
+    payload = _envelope_with_items([good, bad_item])
+
+    result, requests = _run(runner, monkeypatch, mock_transport, ["list"], fmt=fmt, payload=payload)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert len(requests) == 1
+    assert CONTRACT_ERROR in result.stderr
+    assert result.stdout == ""
+
+
+def test_list_empty_items_is_not_a_contract_error(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["list"], fmt="json", payload=_envelope_with_items([]))
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["items"] == []
+
+
+def test_search_does_not_require_blocked_by(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["search", "x"], fmt="json", payload=ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == ENVELOPE
+
+
+def test_get_json_keeps_spec_page_id(runner, monkeypatch, mock_transport):
+    record = {"id": "t1", "key": "MON-1", "title": "Ze specyfikacją", "spec_page_id": _SPEC_ID}
+
+    result, _ = _run(runner, monkeypatch, mock_transport, ["get", "MON-1"], fmt="json", payload=record)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == record
+
+
+def test_get_table_shows_spec_page_id(runner, monkeypatch, mock_transport):
+    record = {"id": "t1", "key": "MON-1", "title": "Ze specyfikacją", "spec_page_id": _SPEC_ID}
+
+    result, _ = _run(runner, monkeypatch, mock_transport, ["get", "MON-1"], fmt="table", payload=record)
+
+    assert result.exit_code == 0, result.output
+    assert "spec_page_id" in result.stdout
+    assert _SPEC_ID in result.stdout
+
+
+def test_get_accepts_null_spec_page_id(runner, monkeypatch, mock_transport):
+    record = {"id": "t1", "key": "MON-1", "title": "Bez specyfikacji", "spec_page_id": None}
+
+    result, _ = _run(runner, monkeypatch, mock_transport, ["get", "MON-1"], fmt="table", payload=record)
+
+    assert result.exit_code == 0, result.output
+    assert "spec_page_id" in result.stdout
+
+
+@pytest.mark.parametrize("fmt", ["json", "yaml", "table", "csv"])
+def test_get_without_spec_page_id_key_is_contract_error(runner, monkeypatch, mock_transport, fmt):
+    record = {"id": "t1", "key": "MON-1", "title": "Stary serwer"}
+
+    result, requests = _run(runner, monkeypatch, mock_transport, ["get", "MON-1"], fmt=fmt, payload=record)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert len(requests) == 1
+    assert CONTRACT_ERROR in result.stderr
+    assert "spec_page_id" in result.stderr
+    assert result.stdout == ""
+
+
+def _assert_contract_error(result, requests, detail):
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert len(requests) == 1
+    assert CONTRACT_ERROR in result.stderr
+    assert detail in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("fmt", ["json", "yaml", "table", "csv"])
+@pytest.mark.parametrize("command", [["list"], ["get", "MON-1"]], ids=["list", "get"])
+@pytest.mark.parametrize("payload", [[{"id": "a1"}], "tekst", 7], ids=["list", "string", "int"])
+def test_non_object_response_is_contract_error(runner, monkeypatch, mock_transport, command, payload, fmt):
+    result, requests = _run(runner, monkeypatch, mock_transport, command, fmt=fmt, payload=payload)
+
+    _assert_contract_error(result, requests, "nie jest obiektem JSON")
+
+
+@pytest.mark.parametrize("fmt", ["json", "yaml", "table", "csv"])
+@pytest.mark.parametrize(
+    "items",
+    ["brak", None, {"a1": 1}, "tekst", ["tekst"], [None], [{"id": "g1", "title": "Dobry", "blocked_by": []}, 5], [[]]],
+    ids=["string", "null", "dict", "string-2", "item-string", "item-null", "item-int-after-good", "item-list"],
+)
+def test_list_items_not_a_list_of_objects_is_contract_error(runner, monkeypatch, mock_transport, items, fmt):
+    payload = {**LIST_ENVELOPE, "items": items}
+
+    result, requests = _run(runner, monkeypatch, mock_transport, ["list"], fmt=fmt, payload=payload)
+
+    _assert_contract_error(result, requests, "items nie jest listą obiektów")
+
+
+@pytest.mark.parametrize("fmt", ["json", "yaml", "table", "csv"])
+@pytest.mark.parametrize(
+    "bad_blocker",
+    [
+        "MON-5",
+        None,
+        5,
+        ["MON-5"],
+        {"id": "u-a", "title": "Bez klucza", "status": "todo"},
+        {"id": "u-a", "key": 5, "title": "Klucz liczbą", "status": "todo"},
+        {"id": "u-a", "key": None, "title": "Klucz null", "status": "todo"},
+        {"id": "u-a", "key": "", "title": "Klucz pusty", "status": "todo"},
+    ],
+    ids=["string", "null", "int", "list", "no-key", "key-int", "key-null", "key-empty"],
+)
+def test_list_malformed_blocker_is_contract_error(runner, monkeypatch, mock_transport, bad_blocker, fmt):
+    good = {"id": "g1", "title": "Dobry", "blocked_by": [_BLOCKER_A]}
+    bad = {"id": "a1", "title": "Zły", "blocked_by": [_BLOCKER_B, bad_blocker]}
+
+    result, requests = _run(runner, monkeypatch, mock_transport, ["list"], fmt=fmt, payload=_envelope_with_items([good, bad]))
+
+    _assert_contract_error(result, requests, "items[1].blocked_by[1]")
+    assert "MON-7" not in result.output
+    assert "MON-5" not in result.stdout
+
+
+@pytest.mark.parametrize("fmt", ["json", "yaml", "table", "csv"])
+def test_list_missing_blocked_by_reports_item_index(runner, monkeypatch, mock_transport, fmt):
+    good = {"id": "g1", "title": "Dobry", "blocked_by": [_BLOCKER_A]}
+    bad = {"id": "a1", "title": "Zły"}
+
+    result, requests = _run(runner, monkeypatch, mock_transport, ["list"], fmt=fmt, payload=_envelope_with_items([good, bad]))
+
+    _assert_contract_error(result, requests, "items[1] nie ma listy blocked_by")
+
+
+# ---------------------------------------------------------------------------
+# MON-247: ticket list --compact, ticket create|update --brief
+# ---------------------------------------------------------------------------
+
+_COMPACT_ENVELOPE = {
+    "items": [
+        {"id": "a1", "title": "Alfa", "blocked_by": [_BLOCKER_A, _BLOCKER_B]},
+        {"id": "b2", "title": "Beta", "blocked_by": [_BLOCKER_C]},
+    ],
+    "page": 1,
+    "per_page": 20,
+    "total": 2,
+    "total_pages": 1,
+}
+
+_BRIEF_KEYS = ["id", "key", "title", "status", "sprint_id", "blocked_by", "blocks"]
+_BRIEF_COMMANDS = [["create", "--title", "T"], ["update", "MON-42", "--title", "T"]]
+_BRIEF_IDS = ["create", "update"]
+
+_FULL_TICKET = {
+    "id": "7e1c0a52-0000-4000-8000-00000000aaaa",
+    "key": "MON-42",
+    "title": "Pełny ticket",
+    "description": "Długi opis, który tryb zwięzły ma pominąć",
+    "status": "todo",
+    "priority": "high",
+    "story_points": 3,
+    "sprint_id": "sprint-uuid-1",
+    "assignee_email": "jan@example.com",
+    "due_date": "2026-12-31",
+    "label_ids": ["l1"],
+    "blocked_by": [_BLOCKER_A, _BLOCKER_B],
+    "created_via_ai": False,
+    "created_at": "2026-10-01T10:00:00",
+    "updated_at": "2026-10-02T10:00:00",
+    "comments": [{"id": "c1", "content": "Komentarz"}],
+    "attachments": [],
+    "acceptance_criteria": [{"id": "ac1", "description": "Kryterium", "is_completed": False}],
+    "spec_page_id": _SPEC_ID,
+    "blocks": [_BLOCKER_C],
+}
+
+
+def _without(record, *keys):
+    return {key: value for key, value in record.items() if key not in keys}
+
+
+def test_list_compact_flag_sends_compact_true_in_query(runner, monkeypatch, mock_transport):
+    result, requests = _run(runner, monkeypatch, mock_transport, ["list", "--compact"], payload=_COMPACT_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert _params(requests[0]) == {"compact": "true"}
+
+
+def test_list_without_compact_flag_sends_no_compact_param(runner, monkeypatch, mock_transport):
+    result, requests = _run(runner, monkeypatch, mock_transport, ["list", "--status", "todo"], payload=_COMPACT_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert _params(requests[0]) == {"status": "todo"}
+
+
+def test_list_compact_keeps_other_filters_in_query(runner, monkeypatch, mock_transport):
+    result, requests = _run(runner, monkeypatch, mock_transport, ["list", "--compact", "--status", "todo", "--page", "2"], payload=_COMPACT_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert _params(requests[0]) == {"compact": "true", "status": "todo", "page": "2"}
+
+
+def test_list_compact_json_renders_envelope_with_full_blockers(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["list", "--compact"], fmt="json", payload=_COMPACT_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == _COMPACT_ENVELOPE
+
+
+def test_list_compact_csv_blocked_by_column_holds_comma_separated_keys(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["list", "--compact"], fmt="csv", payload=_COMPACT_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    assert list(csv.reader(io.StringIO(result.stdout))) == [
+        ["id", "title", "blocked_by"],
+        ["a1", "Alfa", "MON-5, MON-7"],
+        ["b2", "Beta", "MON-9"],
+    ]
+
+
+def test_list_compact_table_blocked_by_column_holds_keys_of_the_right_row(runner, monkeypatch, mock_transport):
+    result, _ = _run(runner, monkeypatch, mock_transport, ["list", "--compact"], fmt="table", payload=_COMPACT_ENVELOPE)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    alfa = next(line for line in lines if "Alfa" in line)
+    beta = next(line for line in lines if "Beta" in line)
+    assert "MON-5, MON-7" in alfa
+    assert "MON-9" in beta
+    assert "Bloker A" not in result.stdout
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+def test_brief_json_has_exactly_the_seven_keys_in_order(runner, monkeypatch, mock_transport, command):
+    result, _ = _run(runner, monkeypatch, mock_transport, [*command, "--brief"], payload=_FULL_TICKET)
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.stdout)
+    assert list(body) == _BRIEF_KEYS
+    assert body == {key: _FULL_TICKET[key] for key in _BRIEF_KEYS}
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+def test_brief_yaml_keeps_full_relation_objects(runner, monkeypatch, mock_transport, command):
+    result, _ = _run(runner, monkeypatch, mock_transport, [*command, "--brief"], fmt="yaml", payload=_FULL_TICKET)
+
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(result.stdout) == {key: _FULL_TICKET[key] for key in _BRIEF_KEYS}
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+def test_without_brief_json_keeps_full_payload(runner, monkeypatch, mock_transport, command):
+    result, _ = _run(runner, monkeypatch, mock_transport, command, payload=_FULL_TICKET)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == _FULL_TICKET
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+def test_brief_sends_the_same_request_as_without_brief(runner, monkeypatch, mock_transport, command):
+    _, plain = _run(runner, monkeypatch, mock_transport, command, payload=_FULL_TICKET)
+    _, brief = _run(runner, monkeypatch, mock_transport, [*command, "--brief"], payload=_FULL_TICKET)
+
+    assert len(plain) == 1
+    assert len(brief) == 1
+    assert brief[0].method == plain[0].method
+    assert brief[0].url.raw_path == plain[0].url.raw_path
+    assert _body(brief[0]) == _body(plain[0])
+    assert "brief" not in _body(brief[0])
+    assert _params(brief[0]) == {}
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+def test_brief_accepts_null_sprint_id(runner, monkeypatch, mock_transport, command):
+    record = {**_FULL_TICKET, "sprint_id": None}
+
+    result, _ = _run(runner, monkeypatch, mock_transport, [*command, "--brief"], payload=record)
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.stdout)
+    assert "sprint_id" in body
+    assert body["sprint_id"] is None
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+def test_brief_csv_flattens_blocked_by_and_blocks_to_comma_separated_keys(runner, monkeypatch, mock_transport, command):
+    result, _ = _run(runner, monkeypatch, mock_transport, [*command, "--brief"], fmt="csv", payload=_FULL_TICKET)
+
+    assert result.exit_code == 0, result.output
+    assert list(csv.reader(io.StringIO(result.stdout))) == [
+        _BRIEF_KEYS,
+        [_FULL_TICKET["id"], "MON-42", "Pełny ticket", "todo", "sprint-uuid-1", "MON-5, MON-7", "MON-9"],
+    ]
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+def test_brief_table_flattens_blocked_by_and_blocks_to_comma_separated_keys(runner, monkeypatch, mock_transport, command):
+    result, _ = _run(runner, monkeypatch, mock_transport, [*command, "--brief"], fmt="table", payload=_FULL_TICKET)
+
+    assert result.exit_code == 0, result.output
+    assert "MON-5, MON-7" in result.stdout
+    assert "Bloker A" not in result.stdout
+    assert "Bloker C" not in result.stdout
+    assert "Długi opis" not in result.stdout
+
+
+_BRIEF_BAD_PAYLOADS = [
+    pytest.param([_FULL_TICKET], id="list"),
+    pytest.param("tekst", id="string"),
+    pytest.param(7, id="int"),
+    pytest.param(_without(_FULL_TICKET, "id"), id="no-id"),
+    pytest.param(_without(_FULL_TICKET, "key"), id="no-key"),
+    pytest.param({**_FULL_TICKET, "id": ""}, id="id-empty"),
+    pytest.param({**_FULL_TICKET, "id": 5}, id="id-int"),
+    pytest.param({**_FULL_TICKET, "key": ""}, id="key-empty"),
+    pytest.param({**_FULL_TICKET, "key": None}, id="key-null"),
+    pytest.param(_without(_FULL_TICKET, "title"), id="no-title"),
+    pytest.param(_without(_FULL_TICKET, "status"), id="no-status"),
+    pytest.param(_without(_FULL_TICKET, "sprint_id"), id="no-sprint-id"),
+    pytest.param(_without(_FULL_TICKET, "blocks"), id="no-blocks"),
+    pytest.param({**_FULL_TICKET, "blocks": None}, id="blocks-null"),
+    pytest.param({**_FULL_TICKET, "blocks": "MON-9"}, id="blocks-string"),
+    pytest.param(_without(_FULL_TICKET, "blocked_by"), id="no-blocked-by"),
+    pytest.param({**_FULL_TICKET, "blocked_by": None}, id="blocked-by-null"),
+    pytest.param({**_FULL_TICKET, "blocked_by": "MON-5"}, id="blocked-by-string"),
+]
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+@pytest.mark.parametrize("payload", _BRIEF_BAD_PAYLOADS)
+def test_brief_response_breaking_contract_is_contract_error(runner, monkeypatch, mock_transport, command, payload):
+    result, requests = _run(runner, monkeypatch, mock_transport, [*command, "--brief"], payload=payload)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert len(requests) == 1
+    assert CONTRACT_ERROR in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("command", _BRIEF_COMMANDS, ids=_BRIEF_IDS)
+@pytest.mark.parametrize("field", ["blocked_by", "blocks"])
+@pytest.mark.parametrize(
+    "bad_relation",
+    [
+        "MON-5",
+        None,
+        5,
+        ["MON-5"],
+        {"id": "u-a", "title": "Bez klucza", "status": "todo"},
+        {"id": "u-a", "key": "", "title": "Klucz pusty", "status": "todo"},
+        {"id": "u-a", "key": 5, "title": "Klucz liczbą", "status": "todo"},
+        {"id": "u-a", "key": None, "title": "Klucz null", "status": "todo"},
+    ],
+    ids=["string", "null", "int", "list", "no-key", "key-empty", "key-int", "key-null"],
+)
+def test_brief_malformed_relation_element_is_contract_error_naming_field_and_index(runner, monkeypatch, mock_transport, command, field, bad_relation):
+    payload = {**_FULL_TICKET, field: [_BLOCKER_A, bad_relation]}
+
+    result, requests = _run(runner, monkeypatch, mock_transport, [*command, "--brief"], payload=payload)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert len(requests) == 1
+    assert CONTRACT_ERROR in result.stderr
+    assert f"{field}[1]" in result.stderr
+    assert result.stdout == ""
 
 
 # ---------------------------------------------------------------------------

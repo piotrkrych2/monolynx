@@ -61,7 +61,7 @@ async def get_api_user_and_project(
 
     Ta sama logika co _get_user_and_project() w mcp_server.py: 404 dla braku/
     nieaktywnego projektu, 403 dla braku czlonkostwa. Uprawnienia per modul
-    (check_permission) poza zakresem tej zaleznosci.
+    (module:action) sprawdzaja serwisy albo `require_permission` w routerze.
     """
     result = await db.execute(select(Project).where(Project.slug == project_slug, Project.is_active.is_(True)))
     project = result.scalar_one_or_none()

@@ -1,0 +1,18 @@
+# command: monolynx graph query --help
+# tool_version: monolynx 0.2.0 (drzewo zrodel, MON-248, niewydane)
+# captured: 2026-10-03
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                                                                                                                                        
+ Usage: monolynx graph query [OPTIONS]                                                                                                                                                                  
+                                                                                                                                                                                                        
+ Pobierz graf albo podgraf projektu (node'y i krawędzie).                                                                                                                                               
+                                                                                                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --node-type        <str>                     Typ node'a: File, Class, Method, Function, Const lub Module.                                                                                            │
+│ --search           <str>                     Fragment nazwy lub ścieżki pliku: zwraca dopasowane node'y i ich bezpośrednich sąsiadów.                                                                │
+│ --limit            <int range> [1<=x<=1000]  Maksymalna liczba node'ów, 1-1000 (domyślnie 200 po stronie serwera).                                                                                   │
+│ --help                                       Show this message and exit.                                                                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+# exit: 0

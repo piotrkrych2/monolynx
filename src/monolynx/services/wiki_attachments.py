@@ -22,6 +22,7 @@ from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.minio_client import get_attachment, upload_object
+from monolynx.services.permissions import ensure_permission
 
 MAX_WIKI_UPLOAD_SIZE = 200 * 1024 * 1024
 
@@ -110,7 +111,8 @@ async def get_wiki_attachment(
     *,
     get_object: ObjectGetter | None = None,
 ) -> WikiAttachmentContent:
-    """Zawartosc najnowszego (created_at desc) zalacznika o danej nazwie na stronie projektu."""
+    """Zawartosc najnowszego (created_at desc) zalacznika o danej nazwie na stronie projektu. Wymaga wiki:read."""
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
     result = await db.execute(
         select(WikiAttachment)
         .join(WikiPage, WikiAttachment.wiki_page_id == WikiPage.id)
@@ -143,11 +145,12 @@ async def add_wiki_page_attachment(
     *,
     upload_object: ObjectUploader | None = None,
 ) -> WikiAttachment:
-    """Dodaj zalacznik do strony wiki. Plik zakodowany w base64, limit MAX_WIKI_UPLOAD_SIZE.
+    """Dodaj zalacznik do strony wiki. Wymaga wiki:write. Plik zakodowany w base64, limit MAX_WIKI_UPLOAD_SIZE.
 
     Walidacje (nazwa, base64, rozmiar, mime_type) wspolne z add_wiki_file -- patrz prywatne
     helpery modulu powyzej.
     """
+    await ensure_permission(db, user.id, project.id, "wiki", "write")
     filename = _validate_filename(filename)
     file_bytes = _decode_base64(file_base64)
     mime_type = _validate_mime_type(mime_type)
@@ -175,7 +178,8 @@ async def add_wiki_page_attachment(
 
 
 async def list_wiki_page_attachments(db: AsyncSession, user: User, project: Project, page_id: str) -> list[WikiAttachment]:
-    """Lista zalacznikow strony wiki (bez tresci), rosnaco wg daty utworzenia."""
+    """Lista zalacznikow strony wiki (bez tresci), rosnaco wg daty utworzenia. Wymaga wiki:read."""
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
     page_result = await db.execute(select(WikiPage).where(WikiPage.id == uuid.UUID(page_id), WikiPage.project_id == project.id))
     if page_result.scalar_one_or_none() is None:
         raise ValueError("Strona wiki nie istnieje")
@@ -204,7 +208,8 @@ async def add_wiki_file(
     *,
     upload_object: ObjectUploader | None = None,
 ) -> WikiFile:
-    """Dodaj globalny plik do repozytorium wiki projektu. Walidacje wspolne z add_wiki_page_attachment."""
+    """Dodaj globalny plik do repozytorium wiki projektu. Wymaga wiki:write. Walidacje wspolne z add_wiki_page_attachment."""
+    await ensure_permission(db, user.id, project.id, "wiki", "write")
     filename = _validate_filename(filename)
     file_bytes = _decode_base64(file_base64)
     mime_type = _validate_mime_type(mime_type)
@@ -236,7 +241,8 @@ async def get_wiki_file(
     *,
     get_object: ObjectGetter | None = None,
 ) -> WikiFileContent:
-    """Zawartosc globalnego pliku wiki (base64)."""
+    """Zawartosc globalnego pliku wiki (base64). Wymaga wiki:read."""
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
     result = await db.execute(select(WikiFile).where(WikiFile.id == uuid.UUID(file_id), WikiFile.project_id == project.id))
     wiki_file = result.scalar_one_or_none()
     if wiki_file is None:
@@ -256,7 +262,8 @@ async def update_wiki_file(
     description: str | None = None,
     filename: str | None = None,
 ) -> WikiFile:
-    """Aktualizuj opis lub nazwe globalnego pliku wiki. Podaj tylko pola do zmiany."""
+    """Aktualizuj opis lub nazwe globalnego pliku wiki. Wymaga wiki:write. Podaj tylko pola do zmiany."""
+    await ensure_permission(db, user.id, project.id, "wiki", "write")
     result = await db.execute(select(WikiFile).where(WikiFile.id == uuid.UUID(file_id), WikiFile.project_id == project.id))
     wiki_file = result.scalar_one_or_none()
     if wiki_file is None:
@@ -275,6 +282,7 @@ async def update_wiki_file(
 
 
 async def list_wiki_files(db: AsyncSession, user: User, project: Project) -> list[WikiFile]:
-    """Lista globalnych plikow projektu, malejaco wg daty utworzenia."""
+    """Lista globalnych plikow projektu, malejaco wg daty utworzenia. Wymaga wiki:read."""
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
     result = await db.execute(select(WikiFile).where(WikiFile.project_id == project.id).order_by(WikiFile.created_at.desc()))
     return list(result.scalars().all())

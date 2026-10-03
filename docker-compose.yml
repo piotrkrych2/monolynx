@@ -107,6 +107,7 @@ services:
       SKIP_LANDING_PAGE: ${SKIP_LANDING_PAGE:-false}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_AUTO_CREATE_USERS: ${GOOGLE_AUTO_CREATE_USERS:-true}
     depends_on:
       db:
         condition: service_healthy

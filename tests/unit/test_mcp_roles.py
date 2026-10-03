@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
 from monolynx.mcp_server import (
     assign_role,
@@ -434,10 +435,10 @@ class TestUpdateRole:
         ):
             await update_role(ctx, roles_project.slug, "not-a-uuid", name="Test")
 
-    async def test_aktualizacja_permissions_roli_systemowej_jest_dozwolona(
+    async def test_aktualizacja_permissions_roli_systemowej_jest_odrzucona(
         self, db_session, owner_user, roles_project, owner_member, mock_factory, mock_verify
     ):
-        """update_role moze zmieniac permissions roli systemowej (tylko nie nazwe)."""
+        """update_role nie zmienia permissions roli systemowej nawet dla ownera (MON-243)."""
         system_role = Role(
             name="Admin",
             project_id=roles_project.id,
@@ -447,15 +448,16 @@ class TestUpdateRole:
         db_session.add(system_role)
         await db_session.flush()
 
-        new_perms = {"scrum": ["read", "write"]}
         ctx = _make_ctx()
         with (
             patch("monolynx.mcp_server.async_session_factory", mock_factory),
             patch("monolynx.mcp_server.verify_mcp_token", mock_verify),
+            pytest.raises(ValueError, match="Brak uprawnienia"),
         ):
-            result = await update_role(ctx, roles_project.slug, str(system_role.id), permissions=new_perms)
+            await update_role(ctx, roles_project.slug, str(system_role.id), permissions={"scrum": ["read", "write"]})
 
-        assert result["permissions"] == new_perms
+        persisted = (await db_session.execute(select(Role.permissions).where(Role.id == system_role.id))).scalar_one()
+        assert persisted == {"scrum": ["read"]}
 
 
 # ---------------------------------------------------------------------------

@@ -39,7 +39,7 @@ czy pójdzie ona przez CLI `monolynx`, czy przez tool MCP, decyduje wspólny blo
    (`.claude/rules/external-tool-output.md`). Operacja tylko do odczytu trafia
    też do `READ_OPS` i do kopii `MONOLYNX_READ_OPS` w `plugin/hooks/bash_guard.py`.
 5. **Operacja bez komendy CLI zostaje przy MCP.** Pipelines, `log_time`,
-   `get_work_report`, graf i narzędzia metody LLM Wiki nie mają wpisu w `OPS`;
+   `get_work_report`, zapis grafu i narzędzia metody LLM Wiki nie mają wpisu w `OPS`;
    wrapper zwraca dla nich kod 3 i skill woła tool MCP. Nie dopisuj do `OPS`
    operacji, której CLI nie ma.
 6. **Pola, nie tekst.** Wynik z CLI to JSON z API v2. Skill, który polega na

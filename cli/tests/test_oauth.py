@@ -993,7 +993,7 @@ def test_make_refresh_hook_passes_timeout_to_refresh(auth_server):
 
 API_SLUG = "testproj"
 API_PAGE_ID = "22222222-2222-4222-8222-222222222222"
-_API_BODY = {"items": [], "page": 1, "per_page": 100, "total": 0, "total_pages": 1, "id": "x", "slug": API_SLUG}
+_API_BODY = {"items": [], "page": 1, "per_page": 100, "total": 0, "total_pages": 1, "id": "x", "slug": API_SLUG, "spec_page_id": None}
 
 
 def install_api_server(monkeypatch, mock_transport) -> FakeAuthServer:

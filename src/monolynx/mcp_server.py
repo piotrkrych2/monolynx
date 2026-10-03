@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
@@ -70,6 +71,8 @@ from monolynx.services import work_plan as work_plan_service
 from monolynx.services.activity import get_activity_log as svc_get_activity_log
 from monolynx.services.burndown import get_burndown_data as svc_get_burndown_data
 from monolynx.services.email import send_invitation_email
+from monolynx.services.graph import ensure_search_not_blank
+from monolynx.services.graph import format_graph_dsl as _format_graph_dsl
 from monolynx.services.heartbeat import create_heartbeat as svc_create_heartbeat
 from monolynx.services.heartbeat import delete_heartbeat as svc_delete_heartbeat
 from monolynx.services.heartbeat import get_heartbeat_status
@@ -78,7 +81,7 @@ from monolynx.services.mcp_auth import verify_bearer_token, verify_mcp_token
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment as minio_upload_attachment
 from monolynx.services.minio_client import upload_object as minio_upload_object
-from monolynx.services.permissions import check_permission, get_user_permissions
+from monolynx.services.permissions import check_permission, ensure_can_manage_role, ensure_permission, get_user_permissions
 from monolynx.services.settlements import (
     change_settlement_status as svc_change_settlement_status,
 )
@@ -92,6 +95,10 @@ from monolynx.services.settlements import (
     delete_settlement_attachment as svc_delete_settlement_attachment,
 )
 from monolynx.services.settlements import (
+    ensure_settlement_permission,
+    ensure_ticket_project_write,
+    fully_permitted_settlements_clause,
+    get_permitted_project_ids,
     get_settlement_attachment_bytes,
     validate_settlement_ticket_link,
 )
@@ -526,107 +533,6 @@ def _format_sprint_detail(sprint: Sprint, project_code: str, tickets: list[dict[
     return "\n".join(lines)
 
 
-def _format_graph_dsl(data: dict[str, Any]) -> str:
-    """Konwertuj dict z nodes/edges na kompaktowy Arrow DSL dla LLM.
-
-    Format bez depth_map (backwards-compatible):
-        [Type] name (key=val,key2=val2)
-        source_name --EDGE_TYPE--> target_name
-
-    Format z depth_map (grupowanie po depth rings i typie relacji):
-        --- Depth 1 ---
-        [Class] Contact (path=contacts/models.py,line=13)
-
-        --- Depth 2 ---
-        [Method] Contact.clean (path=contacts/models.py,line=168)
-
-        === INHERITS ===
-        Contact --INHERITS--> BaseInfoModel
-
-        === CONTAINS ===
-        contacts/models.py --CONTAINS--> Contact
-
-    Krawędzie zsynchronizowane z zewnętrznego ekstraktora (graphify) niosą metadane
-    pochodzenia w edge["metadata"] - confidence (EXTRACTED/INFERRED/AMBIGUOUS) i
-    source_relation (oryginalna relacja przed mapowaniem). Gdy obecne, doklejane są
-    w nawiasie za strzałką, np. `X --REFERENCES--> Y (confidence=INFERRED,source_relation=references)`.
-    EXTRACTED to relacja odczytana wprost z AST; INFERRED/AMBIGUOUS to zgadywana przez
-    ekstraktor - traktuj ją z mniejszym zaufaniem niż EXTRACTED.
-    """
-    nodes: list[dict[str, Any]] = data.get("nodes", [])
-    edges: list[dict[str, Any]] = data.get("edges", [])
-    depth_map: dict[str, int] | None = data.get("depth_map")
-
-    node_map: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
-
-    lines: list[str] = [f"{len(nodes)} nodes, {len(edges)} edges", ""]
-
-    def _edge_meta_suffix(e: dict[str, Any]) -> str:
-        md = e.get("metadata") or {}
-        if not md:
-            return ""
-        return f" ({','.join(f'{k}={v}' for k, v in md.items())})"
-
-    def _node_line(n: dict[str, Any]) -> str:
-        ntype = n.get("type", "Unknown")
-        meta_parts: list[str] = []
-        if n.get("file_path"):
-            meta_parts.append(f"path={n['file_path']}")
-        if n.get("line_number"):
-            meta_parts.append(f"line={n['line_number']}")
-        md = n.get("metadata") or {}
-        for k, v in md.items():
-            meta_parts.append(f"{k}={v}")
-        meta_str = f" ({','.join(meta_parts)})" if meta_parts else ""
-        return f"[{ntype}] {n['name']}{meta_str}"
-
-    if depth_map:
-        # Grupuj nodes po depth level
-        by_depth: dict[int, list[dict[str, Any]]] = {}
-        for n in nodes:
-            d = depth_map.get(n["id"], 0)
-            by_depth.setdefault(d, []).append(n)
-
-        for depth_level in sorted(by_depth.keys()):
-            lines.append(f"--- Depth {depth_level} ---")
-            for n in by_depth[depth_level]:
-                lines.append(_node_line(n))
-            lines.append("")
-    else:
-        # Backwards-compatible: grupuj po typie node'a
-        by_type: dict[str, list[dict[str, Any]]] = {}
-        for n in nodes:
-            by_type.setdefault(n.get("type", "Unknown"), []).append(n)
-
-        for _ntype, nlist in by_type.items():
-            for n in nlist:
-                lines.append(_node_line(n))
-        lines.append("")
-
-    if edges:
-        if depth_map:
-            # Grupuj edges po typie relacji
-            by_edge_type: dict[str, list[dict[str, Any]]] = {}
-            for e in edges:
-                by_edge_type.setdefault(e["type"], []).append(e)
-
-            for etype in sorted(by_edge_type.keys()):
-                lines.append(f"=== {etype} ===")
-                for e in by_edge_type[etype]:
-                    src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
-                    tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
-                    lines.append(f"{src} --{etype}--> {tgt}{_edge_meta_suffix(e)}")
-                lines.append("")
-        else:
-            # Backwards-compatible: płaska lista edges
-            for e in edges:
-                src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
-                tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
-                lines.append(f"{src} --{e['type']}--> {tgt}{_edge_meta_suffix(e)}")
-
-    return "\n".join(lines)
-
-
 def _interval_human(value: int, unit: str) -> str:
     """Zamien (5, 'minutes') -> '5 min', (1, 'hours') -> '1 hr', (1, 'days') -> '1 day'."""
     u = unit.lower()
@@ -748,9 +654,11 @@ def _format_tickets_table(
     Format:
         20 tickets (page 1/3)
 
-        Key      | Title                    | Status      | Pri    | Assignee     | Sprint   | SP | Due        | Labels
-        MON-20   | Fix login timeout        | in_progress | high   | jan@ex.com   | Sprint 5 | 3  | 2026-03-20 | backend, urgent
-        MON-19   | Dodaj eksport PDF        | todo        | medium | --           | Sprint 5 | 5  | --         |
+        Key      | Title                    | Status      | Pri    | Assignee     | Sprint   | SP | Due        | Labels          | Blocked by
+        MON-20   | Fix login timeout        | in_progress | high   | jan@ex.com   | Sprint 5 | 3  | 2026-03-20 | backend, urgent | MON-3, MON-7
+        MON-19   | Dodaj eksport PDF        | todo        | medium | --           | Sprint 5 | 5  | --         |                 | --
+
+    "Blocked by": klucze blokerow rosnaco po numerze, `--` gdy ticket nie ma blokerow.
     """
     header_line = f"{total} tickets (page {page}/{total_pages})"
 
@@ -759,7 +667,7 @@ def _format_tickets_table(
 
     col_header = (
         "Key      | Title                                    | Status      | Pri    "
-        "| Assignee              | Sprint            | SP | Due        | Labels"
+        "| Assignee              | Sprint            | SP | Due        | Labels | Blocked by"
     )
     rows: list[str] = [header_line, "", col_header]
 
@@ -773,7 +681,10 @@ def _format_tickets_table(
         sp = str(t.story_points) if t.story_points is not None else "--"
         due = t.due_date.isoformat() if t.due_date else "--"
         labels = ", ".join(lb.name for lb in t.labels) if t.labels else ""
-        rows.append(f"{key:<8} | {title:<40} | {status:<11} | {priority:<6} | {assignee:<21} | {sprint:<17} | {sp:<2} | {due:<10} | {labels}")
+        blockers = ", ".join(f"{project_code}-{b.number}" for b in sorted(t.blocked_by, key=lambda b: b.number)) or "--"
+        rows.append(
+            f"{key:<8} | {title:<40} | {status:<11} | {priority:<6} | {assignee:<21} | {sprint:<17} | {sp:<2} | {due:<10} | {labels} | {blockers}"
+        )
 
     return "\n".join(rows)
 
@@ -818,6 +729,11 @@ async def _get_user_member_and_project(ctx: Context[Any, Any], project_slug: str
             raise ValueError(f"Uzytkownik nie jest czlonkiem projektu '{project_slug}'")
 
     return user, member, project
+
+
+async def _require(db: AsyncSession, user: User, project: Project, module: str, action: str) -> None:
+    """Sprawdz uprawnienie roli do modulu i akcji (ValueError "Brak uprawnienia <modul>:<akcja>")."""
+    await ensure_permission(db, user.id, project.id, module, action)
 
 
 # --- Projekty ---
@@ -934,8 +850,11 @@ async def invite_member(
       jest link do ustawienia hasla.
     - Nie mozna zaprosic osoby, ktora juz jest czlonkiem projektu.
 
+    Rola nadawana przy zaproszeniu nie moze miec wiecej uprawnien niz zapraszajacy.
+    Token zaproszenia trafia wylacznie mailem, nie jest zwracany.
+
     Zwraca: { message, user_email, role } oraz opcjonalnie
-    { invitation_id, expires_at } jesli wyslano zaproszenie emailowe.
+    { expires_at } jesli wyslano zaproszenie emailowe.
     """
     calling_user, _calling_member, project = await _get_user_member_and_project(ctx, project_slug)
 
@@ -960,7 +879,6 @@ async def invite_member(
         ),
         "user_email": invite.email,
         "role": invite.role,
-        "invitation_id": str(invite.invitation_token),
         "expires_at": invite.expires_at.isoformat(),
     }
 
@@ -1093,11 +1011,13 @@ async def list_issues(
     Filtrowanie po statusie (unresolved/resolved) i tekscie.
     Paginacja po 20. Domyslnie tylko nierozwiazane.
     ID w tabeli to pelne UUID uzywane w get_issue.
+    Wymaga 500ki:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
     per_page = 20
 
     async with async_session_factory() as db:
+        await _require(db, user, project, "500ki", "read")
         conditions: list[Any] = [Issue.project_id == project.id]
         if status in ("unresolved", "resolved"):
             conditions.append(Issue.status == status)
@@ -1188,10 +1108,12 @@ async def get_issue(
     eventow z: exception type+message, kompaktowym stack trace (ostatnie 3-4 ramki),
     request method+path+status i srodowiskiem.
     ID issue jest widoczne w pierwszej linii - uzywaj go w update_issue_status.
+    Wymaga 500ki:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await _require(db, user, project, "500ki", "read")
         result = await db.execute(
             select(Issue).where(
                 Issue.id == uuid.UUID(issue_id),
@@ -1215,8 +1137,14 @@ async def update_issue_status(
     issue_id: str,
     status: str,
 ) -> dict[str, Any]:
-    """Zmien status bledu (unresolved/resolved)."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Zmien status bledu (unresolved/resolved).
+
+    Wymaga 500ki:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "500ki", "write")
 
     if status not in ("unresolved", "resolved"):
         raise ValueError("Status musi byc 'unresolved' lub 'resolved'")
@@ -1262,8 +1190,13 @@ async def create_issue(
     - severity: low / medium / high / critical (domyslnie medium)
     - environment: production / staging / development (opcjonalny)
     - traceback: stack trace jako string (opcjonalny)
+
+    Wymaga 500ki:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "500ki", "write")
 
     title_stripped = title.strip() if title else ""
     if not title_stripped:
@@ -1350,11 +1283,13 @@ async def list_monitors(
         ID | Name | URL | Active | Interval | Uptime 24h | Last Check
     gdzie Last Check = 'OK/FAIL status_code response_time timestamp' lub '--' jesli brak.
     Active: yes/no. Interval: '5 min', '1 hr', '1 day'.
+    Wymaga monitoring:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
     twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
 
     async with async_session_factory() as db:
+        await _require(db, user, project, "monitoring", "read")
         result = await db.execute(select(Monitor).where(Monitor.project_id == project.id).order_by(Monitor.created_at))
         monitors = result.scalars().all()
 
@@ -1422,11 +1357,14 @@ async def get_monitor(
         Timestamp           | Status | Code | Response Time | Error
         2026-03-15 14:22:00 | OK     | 200  | 45ms          |
         2026-03-15 14:12:00 | FAIL   | 503  | --            | Connection refused
+
+    Wymaga monitoring:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
     twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
 
     async with async_session_factory() as db:
+        await _require(db, user, project, "monitoring", "read")
         result = await db.execute(
             select(Monitor).where(
                 Monitor.id == uuid.UUID(monitor_id),
@@ -1475,8 +1413,12 @@ async def create_monitor(
 
     interval_unit: minutes | hours | days (domyslnie: minutes)
     interval_value: 1-60 (domyslnie: 5)
+    Wymaga monitoring:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "monitoring", "write")
 
     # Walidacja nazwy
     name = name.strip()
@@ -1544,8 +1486,12 @@ async def update_monitor(
 
     interval_unit: minutes | hours | days
     interval_value: 1-60
+    Wymaga monitoring:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "monitoring", "write")
 
     # Walidacja przed otwarciem sesji DB
     if name is not None:
@@ -1710,7 +1656,8 @@ async def list_tickets(
     """Lista ticketow w projekcie — kompaktowy format pipe-separated.
 
     Pierwsza linia: "<total> tickets (page <page>/<total_pages>)"
-    Naglowek kolumn + wiersze: Key | Title | Status | Pri | Assignee | Sprint | SP | Due | Labels
+    Naglowek kolumn + wiersze: Key | Title | Status | Pri | Assignee | Sprint | SP | Due | Labels | Blocked by
+    (Blocked by: klucze blokerow rosnaco po numerze, `--` gdy brak)
 
     Filtrowanie po statusie, priorytecie, sprincie, tekscie, dacie granicznej i etykiecie.
     due_date_before: tickety z due_date <= data (YYYY-MM-DD)
@@ -2065,13 +2012,18 @@ async def create_ticket_from_issue(
 
     Automatycznie wypelnia tytul i opis na podstawie danych issue.
     Jesli sprint_id nie podano, ticket laduje w backlogu.
+    Wymaga 500ki:write i scrum:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    if priority not in PRIORITIES:
-        priority = "medium"
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        # scrum:write first: the MON-241 contract expects this message for roles lacking both
+        await _require(db, user, project, "scrum", "write")
+        await _require(db, user, project, "500ki", "write")
+
+        if priority not in PRIORITIES:
+            priority = "medium"
+
         result = await db.execute(
             select(Issue)
             .options(selectinload(Issue.tickets))
@@ -2159,6 +2111,8 @@ async def create_ticket_from_issue(
         )
 
         resolved_sprint_id = uuid.UUID(sprint_id) if sprint_id else None
+        if resolved_sprint_id is not None:
+            await tickets_service.ensure_sprint_in_project(db, project.id, resolved_sprint_id)
 
         next_number = await get_next_ticket_number(project.id, db)
 
@@ -2322,10 +2276,12 @@ async def start_sprint(
     """Rozpocznij sprint (zmiana statusu na active).
 
     Tylko jeden aktywny sprint na projekt.
+    Wymaga scrum:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "scrum", "write")
         error = await svc_start_sprint(uuid.UUID(sprint_id), project.id, db)
         if error:
             raise ValueError(error)
@@ -2339,10 +2295,14 @@ async def complete_sprint(
     project_slug: str,
     sprint_id: str,
 ) -> dict[str, Any]:
-    """Zakoncz sprint. Niedokonczone tickety wracaja do backloga."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Zakoncz sprint. Niedokonczone tickety wracaja do backloga.
+
+    Wymaga scrum:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "scrum", "write")
         error = await svc_complete_sprint(uuid.UUID(sprint_id), project.id, db)
         if error:
             raise ValueError(error)
@@ -2410,10 +2370,14 @@ async def add_attachment(
 
     ticket_id: UUID ticketa lub klucz (np. MNX-12).
     Maksymalny rozmiar: 200MB. Zwraca attachment_id, filename, url, size, uploaded_at.
+    Wymaga scrum:write.
     """
     max_size = 200 * 1024 * 1024  # 200MB
 
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "scrum", "write")
 
     # Walidacja i sanityzacja filename
     if not filename or not filename.strip():
@@ -2507,8 +2471,12 @@ async def log_time(
 
     ticket_id: UUID ticketa lub klucz (np. MNX-12).
     date_logged w formacie YYYY-MM-DD. duration_minutes musi byc > 0.
+    Wymaga scrum:write.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "scrum", "write")
 
     if duration_minutes <= 0:
         raise ValueError("Czas musi byc wiekszy niz 0")
@@ -2557,7 +2525,8 @@ async def get_work_report(
 ) -> dict[str, Any]:
     """Raport zalogowanego czasu pracy: suma godzin + agregacje wg uzytkownika, projektu i sprintu.
 
-    project_slug: opcjonalne - bez niego raport obejmuje wszystkie projekty uzytkownika.
+    project_slug: opcjonalne - bez niego raport obejmuje wszystkie projekty uzytkownika z uprawnieniem reports:read.
+    Wymaga reports:read w projekcie (superuser: wszystkie projekty).
     date_from, date_to: YYYY-MM-DD, granice wlacznie. Pominiecie obu = caly okres
     (inaczej niz dashboard, ktory domyslnie pokazuje ostatnie 30 dni).
     user_email: filtr po autorze wpisow. sprint_id: UUID sprintu.
@@ -2583,8 +2552,6 @@ async def get_work_report(
 
     async with async_session_factory() as db:
         allowed_project_ids = await _get_user_project_ids(user.id, db, user.is_superuser)
-        if not allowed_project_ids:
-            raise ValueError("Uzytkownik nie ma dostepu do zadnego projektu")
 
         if project_slug is not None:
             proj_result = await db.execute(select(Project.id).where(Project.slug == project_slug, Project.is_active.is_(True)))
@@ -2592,9 +2559,17 @@ async def get_work_report(
             if requested_id is None:
                 raise ValueError(f"Projekt '{project_slug}' nie istnieje")
             if requested_id not in allowed_project_ids:
-                raise ValueError(f"Uzytkownik nie jest czlonkiem projektu '{project_slug}'")
+                # allowed_project_ids jest zawezone do reports:read, wiec odroznij brak czlonkostwa od braku uprawnienia
+                member_result = await db.execute(
+                    select(ProjectMember.user_id).where(ProjectMember.project_id == requested_id, ProjectMember.user_id == user.id)
+                )
+                if member_result.scalar_one_or_none() is None:
+                    raise ValueError(f"Uzytkownik nie jest czlonkiem projektu '{project_slug}'")
+                raise ValueError(f"Brak uprawnienia do raportow projektu '{project_slug}' (reports:read)")
             project_ids = [requested_id]
         else:
+            if not allowed_project_ids:
+                raise ValueError("Uzytkownik nie ma dostepu do zadnego projektu")
             project_ids = allowed_project_ids
 
         user_ids = None
@@ -2787,13 +2762,16 @@ async def create_wiki_page(
 
     parent_id -- UUID strony nadrzednej (opcjonalnie, dla podstron).
     is_public -- czy strona ma byc dostepna publicznie pod /blog/{slug} (bez logowania).
+    Wymaga wiki:write (rowniez dla is_public=True, jak w dashboardzie).
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
-    if not title.strip():
-        raise ValueError("Tytul jest wymagany")
-
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "wiki", "write")
+
+        if not title.strip():
+            raise ValueError("Tytul jest wymagany")
+
         page = await svc_create_wiki_page(
             project_id=project.id,
             project_slug=project.slug,
@@ -2831,11 +2809,14 @@ async def update_wiki_page(
 
     Podaj tylko pola do zmiany. is_public=True/False publikuje/wycofuje strone z /blog/{slug};
     None (domyslnie) nie zmienia flagi.
+    Wymaga wiki:write (rowniez dla zmiany is_public, jak w dashboardzie).
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
         from sqlalchemy.orm import selectinload
+
+        await ensure_permission(db, user.id, project.id, "wiki", "write")
 
         result = await db.execute(
             select(WikiPage)
@@ -2878,12 +2859,14 @@ async def search_wiki(
 
     query -- zapytanie w jezyku naturalnym
     limit -- maksymalna liczba wynikow (domyslnie 10)
+    Wymaga wiki:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     from monolynx.services.embeddings import search_wiki_pages
 
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "wiki", "read")
         return await search_wiki_pages(project.id, query, db, limit=limit)
 
 
@@ -2893,10 +2876,12 @@ async def delete_wiki_page(
     project_slug: str,
     page_id: str,
 ) -> dict[str, Any]:
-    """Usun strone wiki wraz z podstronami."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Usun strone wiki wraz z podstronami. Wymaga wiki:delete."""
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "wiki", "delete")
+
         result = await db.execute(select(WikiPage).where(WikiPage.id == uuid.UUID(page_id), WikiPage.project_id == project.id))
         page = result.scalar_one_or_none()
         if page is None:
@@ -2984,7 +2969,7 @@ async def lint_wiki(
 ) -> dict[str, Any]:
     """Przeskanuj wiki projektu - sieroty, martwe linki, sprzeczności, luki.
 
-    Wymaga wiki_llm_enabled=True. Zwraca raport z kluczami:
+    Wymaga wiki:read i wiki_llm_enabled=True. Zwraca raport z kluczami:
     - orphans: podstrony bez backlinku przychodzącego
     - dead_links: referencje [[slug]] lub [[uuid]] nierozwiązane do stron projektu
     - contradictions: strony z markerem "> **Sprzeczność"
@@ -2992,12 +2977,14 @@ async def lint_wiki(
     - skipped_generated: liczba stron generowanych maszynowo (np. logów pipeline'ów)
       pominiętych przy liczeniu sierot
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    if not is_wiki_llm_enabled(project):
-        raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "wiki", "read")
+
+        if not is_wiki_llm_enabled(project):
+            raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+
         return await svc_lint_wiki(project.id, db)
 
 
@@ -3009,17 +2996,19 @@ async def get_wiki_backlinks(
 ) -> dict[str, Any]:
     """Pobierz linki przychodzące i wychodzące dla strony wiki.
 
-    Wymaga wiki_llm_enabled=True.
+    Wymaga wiki:read i wiki_llm_enabled=True.
     Zwraca: incoming (strony wskazujące na tę stronę) i outgoing (strony na które wskazuje).
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    if not is_wiki_llm_enabled(project):
-        raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
-
-    page_uuid = uuid.UUID(page_id)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "wiki", "read")
+
+        if not is_wiki_llm_enabled(project):
+            raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+
+        page_uuid = uuid.UUID(page_id)
+
         # Sprawdź że strona należy do projektu
         result = await db.execute(select(WikiPage.id).where(WikiPage.id == page_uuid, WikiPage.project_id == project.id))
         if result.scalar_one_or_none() is None:
@@ -3057,16 +3046,18 @@ async def regenerate_wiki_index(
 ) -> dict[str, Any]:
     """Przebuduj stronę wiki-index - katalog wszystkich stron projektu.
 
-    Wymaga wiki_llm_enabled=True.
+    Wymaga wiki:write i wiki_llm_enabled=True.
     Dla każdej strony: tytuł (link [[slug]]), 1-zdaniowe summary, liczba backlinków.
     Tworzy stronę wiki-index jeśli nie istnieje.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
-    if not is_wiki_llm_enabled(project):
-        raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
-
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "wiki", "write")
+
+        if not is_wiki_llm_enabled(project):
+            raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+
         index_page, page_count = await svc_regenerate_wiki_index(project=project, user_id=user.id, db=db)
 
     return {
@@ -3085,19 +3076,21 @@ async def append_wiki_log(
 ) -> dict[str, Any]:
     """Dopisz wpis do dziennika wiki (wiki-log, append-only).
 
-    Wymaga wiki_llm_enabled=True.
+    Wymaga wiki:write i wiki_llm_enabled=True.
     Format wpisu: - [YYYY-MM-DD HH:MM] <entry>
     Tworzy stronę wiki-log jeśli nie istnieje.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
-    if not is_wiki_llm_enabled(project):
-        raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
-
-    if not entry.strip():
-        raise ValueError("Wpis dziennika nie może być pusty")
-
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "wiki", "write")
+
+        if not is_wiki_llm_enabled(project):
+            raise ValueError("Metoda LLM Wiki jest wyłączona dla tego projektu")
+
+        if not entry.strip():
+            raise ValueError("Wpis dziennika nie może być pusty")
+
         log_page = await svc_append_wiki_log(project=project, entry=entry.strip(), user_id=user.id, db=db)
 
     return {
@@ -3120,8 +3113,14 @@ async def create_graph_node(
     line_number: int | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Utworz node w grafie polaczen. type: File, Class, Method, Function, Const, Module."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Utworz node w grafie polaczen. type: File, Class, Method, Function, Const, Module.
+
+    Wymaga connections:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "write")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3151,8 +3150,14 @@ async def list_graph_nodes(
     search: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    """Lista node'ow w grafie polaczen z opcjonalnym filtrowaniem po typie i nazwie."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Lista node'ow w grafie polaczen z opcjonalnym filtrowaniem po typie i nazwie.
+
+    Wymaga connections:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "read")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3187,8 +3192,12 @@ async def get_graph_node(
 
     Wynik zawiera sekcje "Depth N" (grupowanie po glebokosci sciezki) oraz
     sekcje "=== EDGE_TYPE ===" (grupowanie krawedzi po typie relacji).
+    Wymaga connections:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "read")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3214,8 +3223,14 @@ async def delete_graph_node(
     project_slug: str,
     node_id: str,
 ) -> dict[str, Any]:
-    """Usun node i wszystkie jego krawedzie."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Usun node i wszystkie jego krawedzie.
+
+    Wymaga connections:delete.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "delete")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3236,8 +3251,14 @@ async def create_graph_edge(
     type: str,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Utworz krawedz miedzy node'ami. type: CONTAINS, CALLS, IMPORTS, INHERITS, USES, IMPLEMENTS."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Utworz krawedz miedzy node'ami. type: CONTAINS, CALLS, IMPORTS, INHERITS, USES, IMPLEMENTS.
+
+    Wymaga connections:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "write")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3260,8 +3281,14 @@ async def delete_graph_edge(
     target_id: str,
     type: str,
 ) -> dict[str, Any]:
-    """Usun krawedz miedzy node'ami."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Usun krawedz miedzy node'ami.
+
+    Wymaga connections:delete.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "delete")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3298,15 +3325,18 @@ async def query_graph(
         filtruje TYLKO dopasowania - sasiedzi zwracani sa niezaleznie od typu. limit ogranicza
         wtedy liczbe dopasowan, nie calego podgrafu.
     node_type: bez `search` - filtruje caly zwracany podgraf po typie node'a.
+    Wymaga connections:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "read")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
 
+    ensure_search_not_blank(search)
     if search is not None:
-        if not search.strip():
-            raise ValueError("search nie moze byc pusty")
         data = await graph_service.search_graph(project.id, search=search, type_filter=node_type, limit=limit)
     else:
         data = await graph_service.get_graph(project.id, type_filter=node_type, limit=limit)
@@ -3320,8 +3350,14 @@ async def find_graph_path(
     source_id: str,
     target_id: str,
 ) -> str:
-    """Znajdz najkrotsza sciezke miedzy dwoma node'ami. Zwraca kompaktowy format Arrow DSL."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Znajdz najkrotsza sciezke miedzy dwoma node'ami. Zwraca kompaktowy format Arrow DSL.
+
+    Wymaga connections:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "read")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3335,8 +3371,14 @@ async def get_graph_stats(
     ctx: Context[Any, Any],
     project_slug: str,
 ) -> dict[str, Any]:
-    """Statystyki grafu: liczba node'ow i krawedzi per typ."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Statystyki grafu: liczba node'ow i krawedzi per typ.
+
+    Wymaga connections:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "read")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3350,8 +3392,14 @@ async def bulk_create_graph_nodes(
     project_slug: str,
     nodes: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Masowe tworzenie node'ow. Kazdy element: {type, name, file_path?, line_number?, metadata?}."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Masowe tworzenie node'ow. Kazdy element: {type, name, file_path?, line_number?, metadata?}.
+
+    Wymaga connections:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "write")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3397,8 +3445,14 @@ async def bulk_create_graph_edges(
     project_slug: str,
     edges: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Masowe tworzenie krawedzi. Kazdy element: {source_id, target_id, type, metadata?}."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Masowe tworzenie krawedzi. Kazdy element: {source_id, target_id, type, metadata?}.
+
+    Wymaga connections:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "write")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3457,8 +3511,12 @@ async def replace_graph(
     60000 krawedzi. Dla wiekszych payloadow dziel na czesci: pierwsze wywolanie z
     clear_first=True, kolejne z clear_first=False (dokladaja bez kasowania).
     Zwraca statystyki: deleted/inserted nodes+edges, skipped_edges (brakujacy endpoint).
+    Wymaga connections:delete.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "connections", "delete")
 
     if not graph_service.is_enabled():
         raise ValueError("Baza grafowa nie jest wlaczona (ENABLE_GRAPH_DB=false)")
@@ -3491,10 +3549,14 @@ async def list_heartbeats(
     ctx: Context[Any, Any],
     project_slug: str,
 ) -> list[dict[str, Any]]:
-    """Lista heartbeatow projektu z aktualnym statusem i URL do pingowania."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Lista heartbeatow projektu z aktualnym statusem i URL do pingowania.
+
+    Wymaga heartbeat:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await _require(db, user, project, "heartbeat", "read")
         result = await db.execute(select(Heartbeat).where(Heartbeat.project_id == project.id).order_by(Heartbeat.created_at))
         heartbeats = result.scalars().all()
 
@@ -3507,10 +3569,14 @@ async def get_heartbeat(
     project_slug: str,
     heartbeat_id: str,
 ) -> dict[str, Any]:
-    """Szczegoly heartbeatu: token, URL do pinga, status, last_ping_at, period, grace."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Szczegoly heartbeatu: token, URL do pinga, status, last_ping_at, period, grace.
+
+    Wymaga heartbeat:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await _require(db, user, project, "heartbeat", "read")
         result = await db.execute(
             select(Heartbeat).where(
                 Heartbeat.id == uuid.UUID(heartbeat_id),
@@ -3536,8 +3602,12 @@ async def create_heartbeat(
 
     period -- oczekiwany interwal w minutach (np. 60 = co godzine)
     grace -- dodatkowy czas tolerancji w minutach (domyslnie 1 minuta)
+    Wymaga heartbeat:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "heartbeat", "write")
 
     if not name.strip():
         raise ValueError("Nazwa heartbeatu jest wymagana")
@@ -3575,8 +3645,12 @@ async def update_heartbeat(
 
     period -- oczekiwany interwal w minutach
     grace -- dodatkowy czas tolerancji w minutach
+    Wymaga heartbeat:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "heartbeat", "write")
 
     data: dict[str, Any] = {}
     if name is not None:
@@ -3606,10 +3680,15 @@ async def delete_heartbeat(
     project_slug: str,
     heartbeat_id: str,
 ) -> dict[str, Any]:
-    """Usuwa heartbeat z projektu."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Usuwa heartbeat z projektu.
+
+    Wymaga heartbeat:delete.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await _require(db, user, project, "heartbeat", "delete")
+
         # Verify existence before deleting for a clear error message
         result = await db.execute(
             select(Heartbeat).where(
@@ -3640,8 +3719,12 @@ async def get_activity_log(
 
     Filtrowanie po entity_type (ticket, sprint, monitor, wiki, member),
     entity_id (UUID konkretnego obiektu), actor_email (email lub "ai" dla operacji AI).
+    Wymaga settings:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "settings", "read")
 
     limit = min(limit, 200)
     limit = max(limit, 1)
@@ -3715,14 +3798,17 @@ async def get_burndown(
     """Dane burndown chart dla sprintu -- ideal line, actual line, velocity, prognoza.
 
     Jesli sprint_id nie podany, uzywa aktywnego sprintu.
+    Wymaga scrum:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
-
-    sprint_uuid: uuid.UUID | None = None
-    if sprint_id is not None:
-        sprint_uuid = uuid.UUID(sprint_id)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "scrum", "read")
+
+        sprint_uuid: uuid.UUID | None = None
+        if sprint_id is not None:
+            sprint_uuid = uuid.UUID(sprint_id)
+
         return await svc_get_burndown_data(db, project.id, sprint_uuid)
 
 
@@ -3736,10 +3822,12 @@ async def get_attachment(
     ticket_id: str,
     attachment_id: str,
 ) -> dict[str, Any]:
-    """Pobierz zawartosc zalacznika z ticketa (base64). ticket_id: UUID lub klucz (np. MNX-12). Obrazki zwracane jako data URI."""
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    """Pobierz zawartosc zalacznika z ticketa (base64). ticket_id: UUID lub klucz (np. MNX-12). Obrazki zwracane jako data URI. Wymaga scrum:read."""
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
+        await ensure_permission(db, user.id, project.id, "scrum", "read")
+
         resolved_id = await tickets_service.resolve_ticket_uuid(ticket_id, project.id, db)
         result = await db.execute(
             select(TicketAttachment)
@@ -4116,6 +4204,7 @@ async def create_role(
     async with async_session_factory() as db:
         if not await check_permission(db, user.id, project.id, "settings", "write"):
             raise ValueError("Brak uprawnienia do tworzenia rol (settings:write)")
+        await ensure_can_manage_role(db, user.id, project.id, granted=permissions)
 
         role = Role(
             name=name,
@@ -4185,6 +4274,9 @@ async def update_role(
         role = role_result.scalar_one_or_none()
         if role is None:
             raise ValueError(f"Rola '{role_id}' nie istnieje w projekcie '{project_slug}'")
+
+        if permissions is not None:
+            await ensure_can_manage_role(db, user.id, project.id, granted=permissions, edited_role=role)
 
         if name is not None:
             if role.is_system:
@@ -4306,6 +4398,8 @@ async def assign_role(
         if role is None:
             raise ValueError(f"Rola '{role_id}' nie istnieje w projekcie '{project_slug}'")
 
+        await ensure_can_manage_role(db, calling_user.id, project.id, granted=role.permissions, assigned_role=role, target_member=member)
+
         member.role_id = role.id
         member.role = role.name.lower()
 
@@ -4395,6 +4489,19 @@ async def _get_settlement_for_mcp(
     return settlement
 
 
+async def _ensure_settlement_access_for_mcp(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    settlement: Settlement,
+    action: str,
+) -> None:
+    """Wymaga rozliczenia:<action> we wszystkich projektach rozliczenia; odmowa jako ValueError."""
+    try:
+        await ensure_settlement_permission(db, user_id, settlement, action)
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from exc
+
+
 def _settlement_to_dict(s: Settlement) -> dict[str, Any]:
     """Konwertuj obiekt Settlement do dict dla MCP."""
     return {
@@ -4430,7 +4537,8 @@ async def list_settlements(
 
     status: draft | sent | paid (opcjonalnie).
     date_from / date_to: YYYY-MM-DD (filtruje po period_from/period_to).
-    Wymaga rozliczenia:read.
+    Wymaga rozliczenia:read; rozliczenia z projektem, w ktorym user nie ma
+    rozliczenia:read, nie sa listowane.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
     per_page = 20
@@ -4442,6 +4550,7 @@ async def list_settlements(
         conditions = [
             SettlementProject.project_id == project.id,
             Settlement.is_active.is_(True),
+            fully_permitted_settlements_clause(await get_permitted_project_ids(db, user.id, "read")),
         ]
         if status and status in {"draft", "sent", "paid"}:
             conditions.append(Settlement.status == status)
@@ -4490,7 +4599,7 @@ async def get_settlement(
 ) -> dict[str, Any]:
     """Pobierz szczegoly rozliczenia (projekty, tickety, zalaczniki).
 
-    Wymaga rozliczenia:read.
+    Wymaga rozliczenia:read we wszystkich projektach powiazanych z rozliczeniem.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -4499,6 +4608,7 @@ async def get_settlement(
             raise ValueError("Brak uprawnienia rozliczenia:read")
 
         settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+        await _ensure_settlement_access_for_mcp(db, user.id, settlement, "read")
 
     result = _settlement_to_dict(settlement)
     result["tickets"] = [
@@ -4707,7 +4817,8 @@ async def link_ticket_to_settlement(
 ) -> dict[str, Any]:
     """Podepnij ticket do rozliczenia (tylko draft, ticket musi byc z projektu M2M).
 
-    Wymaga rozliczenia:write.
+    Wymaga rozliczenia:read we wszystkich projektach powiazanych z rozliczeniem
+    oraz rozliczenia:write w projekcie ticketu.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -4716,6 +4827,7 @@ async def link_ticket_to_settlement(
             raise ValueError("Brak uprawnienia rozliczenia:write")
 
         settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+        await _ensure_settlement_access_for_mcp(db, user.id, settlement, "read")
 
         ticket_result = await db.execute(select(Ticket).options(selectinload(Ticket.project)).where(Ticket.id == uuid.UUID(ticket_id)))
         ticket = ticket_result.scalar_one_or_none()
@@ -4723,6 +4835,10 @@ async def link_ticket_to_settlement(
             raise ValueError("Ticket nie istnieje")
 
         await validate_settlement_ticket_link(db, settlement, ticket)
+        try:
+            await ensure_ticket_project_write(db, user.id, ticket)
+        except HTTPException as exc:
+            raise ValueError(str(exc.detail)) from exc
 
         linked_ids = {t.id for t in settlement.tickets}
         if ticket.id not in linked_ids:
@@ -4741,7 +4857,8 @@ async def unlink_ticket_from_settlement(
 ) -> dict[str, Any]:
     """Odepnij ticket od rozliczenia (tylko draft).
 
-    Wymaga rozliczenia:write.
+    Wymaga rozliczenia:read we wszystkich projektach powiazanych z rozliczeniem
+    oraz rozliczenia:write w projekcie ticketu.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -4750,6 +4867,7 @@ async def unlink_ticket_from_settlement(
             raise ValueError("Brak uprawnienia rozliczenia:write")
 
         settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+        await _ensure_settlement_access_for_mcp(db, user.id, settlement, "read")
 
         if settlement.status != "draft":
             raise ValueError("Mozna odpiac ticket tylko od rozliczenia w statusie draft")
@@ -4757,6 +4875,10 @@ async def unlink_ticket_from_settlement(
         ticket_to_remove = next((t for t in settlement.tickets if t.id == uuid.UUID(ticket_id)), None)
         if ticket_to_remove is None:
             raise ValueError("Ticket nie jest podpiety do tego rozliczenia")
+        try:
+            await ensure_ticket_project_write(db, user.id, ticket_to_remove)
+        except HTTPException as exc:
+            raise ValueError(str(exc.detail)) from exc
 
         settlement.tickets.remove(ticket_to_remove)
         await db.commit()
@@ -4772,7 +4894,7 @@ async def list_settlement_tickets(
 ) -> list[dict[str, Any]]:
     """Lista ticketow podpietych do rozliczenia.
 
-    Wymaga rozliczenia:read.
+    Wymaga rozliczenia:read we wszystkich projektach powiazanych z rozliczeniem.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -4781,6 +4903,7 @@ async def list_settlement_tickets(
             raise ValueError("Brak uprawnienia rozliczenia:read")
 
         settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+        await _ensure_settlement_access_for_mcp(db, user.id, settlement, "read")
 
     return [
         {
@@ -4802,7 +4925,7 @@ async def list_settlement_attachments(
 ) -> list[dict[str, Any]]:
     """Lista metadanych zalacznikow rozliczenia (bez zawartosci pliku).
 
-    Wymaga rozliczenia:read.
+    Wymaga rozliczenia:read we wszystkich projektach powiazanych z rozliczeniem.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -4811,6 +4934,7 @@ async def list_settlement_attachments(
             raise ValueError("Brak uprawnienia rozliczenia:read")
 
         settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+        await _ensure_settlement_access_for_mcp(db, user.id, settlement, "read")
 
         # Pobierz email uploadera dla kazdego zalacznika
         uploader_ids = {a.uploaded_by_id for a in (settlement.attachments or [])}
@@ -4916,7 +5040,7 @@ async def get_settlement_attachment(
 ) -> dict[str, Any]:
     """Pobierz zawartosc zalacznika rozliczenia (base64 + mime_type).
 
-    Wymaga rozliczenia:read.
+    Wymaga rozliczenia:read we wszystkich projektach powiazanych z rozliczeniem.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -4925,6 +5049,7 @@ async def get_settlement_attachment(
             raise ValueError("Brak uprawnienia rozliczenia:read")
 
         settlement = await _get_settlement_for_mcp(db, uuid.UUID(settlement_id), project.id)
+        await _ensure_settlement_access_for_mcp(db, user.id, settlement, "read")
 
         matching = [a for a in (settlement.attachments or []) if a.id == uuid.UUID(attachment_id)]
         if not matching:
@@ -5122,10 +5247,11 @@ async def install_monolynx_skills(
 _TICKET_KEY_GLOBAL_RE = re.compile(r"^([A-Za-z]{1,10})-(\d+)$")
 
 
-async def _resolve_ticket_globally(ticket_id_str: str) -> uuid.UUID:
+async def _resolve_ticket_globally(ticket_id_str: str, user_id: uuid.UUID) -> uuid.UUID:
     """Zamien ticket_id (UUID lub klucz globalny np. MON-70) na UUID ticketa.
 
-    Nie wymaga project_id — resolwuje po project.code + ticket.number.
+    Nie wymaga project_id — resolwuje po project.code + ticket.number, tylko w aktywnych
+    projektach uzytkownika. Komunikat bez echa klucza: ticket cudzy i nieistniejacy sa nieodroznialni.
     """
     try:
         return uuid.UUID(ticket_id_str)
@@ -5143,6 +5269,7 @@ async def _resolve_ticket_globally(ticket_id_str: str) -> uuid.UUID:
         result = await db.execute(
             select(Ticket.id)
             .join(Project, Ticket.project_id == Project.id)
+            .join(ProjectMember, (ProjectMember.project_id == Project.id) & (ProjectMember.user_id == user_id))
             .where(
                 func.upper(Project.code) == code,
                 Ticket.number == number,
@@ -5151,7 +5278,7 @@ async def _resolve_ticket_globally(ticket_id_str: str) -> uuid.UUID:
         )
         ticket_uuid = result.scalar_one_or_none()
         if ticket_uuid is None:
-            raise ValueError(f"Ticket '{ticket_id_str}' nie istnieje")
+            raise ValueError("Ticket nie istnieje")
         return ticket_uuid
 
 
@@ -5180,7 +5307,7 @@ async def schedule_ticket(
     except ValueError:
         raise ValueError("Data musi byc w formacie YYYY-MM-DD") from None
 
-    ticket_uuid = await _resolve_ticket_globally(ticket_id)
+    ticket_uuid = await _resolve_ticket_globally(ticket_id, user.id)
 
     async with async_session_factory() as db:
         result = await work_plan_service.schedule(db, user.id, ticket_uuid, date_obj, position, notes)
@@ -5316,7 +5443,9 @@ async def list_work_plan(
     if project_slug is not None:
         async with async_session_factory() as db:
             proj_result = await db.execute(
-                select(Project.id).where(
+                select(Project.id)
+                .join(ProjectMember, (ProjectMember.project_id == Project.id) & (ProjectMember.user_id == user.id))
+                .where(
                     Project.slug == project_slug,
                     Project.is_active.is_(True),
                 )
@@ -5349,7 +5478,9 @@ async def get_today_tasks(
     if project_slug is not None:
         async with async_session_factory() as db:
             proj_result = await db.execute(
-                select(Project.id).where(
+                select(Project.id)
+                .join(ProjectMember, (ProjectMember.project_id == Project.id) & (ProjectMember.user_id == user.id))
+                .where(
                     Project.slug == project_slug,
                     Project.is_active.is_(True),
                 )
@@ -5380,7 +5511,7 @@ async def get_ticket_schedule(
     """
     user = await _auth(ctx)
 
-    ticket_uuid = await _resolve_ticket_globally(ticket_id)
+    ticket_uuid = await _resolve_ticket_globally(ticket_id, user.id)
 
     async with async_session_factory() as db:
         entries = await work_plan_service.schedule_for_ticket(db, user.id, ticket_uuid)
@@ -5412,8 +5543,12 @@ async def create_pipeline(
     meta: dodatkowe metadane (JSONB, opcjonalne)
 
     Zwraca pipeline_id i listę stepów.
+    Wymaga scrum:write.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "scrum", "write")
 
     if pipeline_type not in PIPELINE_TYPES:
         raise ValueError(f"Nieprawidlowy pipeline_type: {pipeline_type!r}. Dozwolone: {PIPELINE_TYPES}")
@@ -5479,8 +5614,12 @@ async def create_pipeline_job(
     agent_type: typ agenta (np. backend-developer)
 
     Zwraca job_id i status.
+    Wymaga scrum:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "scrum", "write")
 
     # Walidacja stepu odbywa sie w create_job (wyszukanie po pipeline_id + step_name),
     # co pokrywa oba typy pipeline (ticket_work: research/coding/wrap-up,
@@ -5534,8 +5673,12 @@ async def update_pipeline_job(
 
     Przejscie na 'running' ustawia started_at. Status terminalny ustawia finished_at
     i propaguje status do stepu i pipeline'u.
+    Wymaga scrum:write.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "scrum", "write")
 
     if status is not None and status not in PIPELINE_JOB_STATUSES:
         raise ValueError(f"Nieprawidlowy status: {status!r}. Dozwolone: {PIPELINE_JOB_STATUSES}")
@@ -5589,8 +5732,12 @@ async def append_job_log(
     Pierwsze wywołanie tworzy stronę wiki i ustawia job.wiki_page_id.
     Kolejne dopisują do istniejącej strony separator + znacznik czasu + content.
     Strona jest wykluczona z embeddingów RAG (exclude_from_embeddings=True).
+    Wymaga scrum:write.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "scrum", "write")
 
     try:
         job_uuid = uuid.UUID(job_id)
@@ -5636,8 +5783,12 @@ async def finish_pipeline(
 
     Po zamknięciu opcjonalnie dopisuje wpis do dziennika wiki-log
     (tylko gdy LLM Wiki włączone dla projektu).
+    Wymaga scrum:write.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "scrum", "write")
 
     if status is not None and status not in PIPELINE_STATUSES:
         raise ValueError(f"Nieprawidlowy status: {status!r}. Dozwolone: {PIPELINE_STATUSES}")
@@ -5686,11 +5837,13 @@ async def list_pipelines(
     page: numer strony (domyslnie 1, 20 per_page)
 
     Zwraca liste z informacjami o stepach (bez jobow) oraz ticket_key gdy dostepny.
+    Wymaga scrum:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
 
     per_page = 20
     async with async_session_factory() as db:
+        await _require(db, user, project, "scrum", "read")
         items, total = await pipelines_service.list_pipelines(
             db, project.id, status=status, pipeline_type=pipeline_type, page=page, per_page=per_page
         )
@@ -5723,8 +5876,12 @@ async def get_pipeline(
     pipeline_id: UUID pipeline'u
 
     Zwraca pelne dane pipeline'u lacznie z jobami, czasami i ticket_key.
+    Wymaga scrum:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "scrum", "read")
 
     try:
         pipeline_uuid = uuid.UUID(pipeline_id)
@@ -5757,8 +5914,12 @@ async def get_pipeline_job_log(
     job_id: UUID joba
 
     Zwraca zawartosc strony wiki loga lub pusty content gdy log nie istnieje.
+    Wymaga scrum:read.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "scrum", "read")
 
     try:
         job_uuid = uuid.UUID(job_id)
@@ -5809,8 +5970,12 @@ async def clean_pipeline_logs(
     sprint_id: UUID sprintu
 
     Zwraca liczbę usuniętych stron wiki ({"deleted": N}).
+    Wymaga wiki:delete.
     """
-    _user, project = await _get_user_and_project(ctx, project_slug)
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "delete")
 
     try:
         sprint_uuid = uuid.UUID(sprint_id)

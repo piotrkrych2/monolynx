@@ -62,8 +62,20 @@ ALLOWED_CLI_COMMANDS = {
     "monolynx config get",
     "monolynx config set",
     "monolynx config list",
+    "monolynx graph nodes",
+    "monolynx graph node",
+    "monolynx graph query",
+    "monolynx graph path",
+    "monolynx graph stats",
 }
-REQUIRED_CLI_GROUPS = {"project", "member", "ticket", "sprint", "wiki"}
+REQUIRED_CLI_GROUPS = {"project", "member", "ticket", "sprint", "wiki", "graph"}
+GRAPH_CLI_COMMANDS = {
+    "monolynx graph nodes",
+    "monolynx graph node",
+    "monolynx graph query",
+    "monolynx graph path",
+    "monolynx graph stats",
+}
 TOOLS_LABEL = {"pl": "Dostępne komendy", "en": "Available commands"}
 MCP_LABEL = {"pl": "Dostępne narzędzia MCP", "en": "Available MCP tools"}
 
@@ -351,6 +363,14 @@ class TestCliFeatureContent:
         assert content is not None
         groups = {t["name"].split()[1] for t in content["mcp_tools"] if t["name"].startswith("monolynx ")}
         assert groups >= REQUIRED_CLI_GROUPS
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_mcp_tools_list_every_graph_command(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        names = {t["name"] for t in content["mcp_tools"]}
+        assert names >= GRAPH_CLI_COMMANDS, sorted(GRAPH_CLI_COMMANDS - names)
 
     @pytest.mark.parametrize("lang", ["pl", "en"])
     def test_text_has_required_facts(self, lang):

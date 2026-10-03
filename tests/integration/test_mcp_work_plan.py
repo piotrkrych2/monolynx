@@ -328,7 +328,7 @@ class TestTicketIdResolution:
         assert isinstance(result, dict)
 
     async def test_resolve_ticket_globally_called_for_key(self):
-        """Wywolanie schedule_ticket z kluczem przekazuje klucz do _resolve_ticket_globally."""
+        """schedule_ticket przekazuje klucz i id uzytkownika do _resolve_ticket_globally (MON-239)."""
         from monolynx.mcp_server import schedule_ticket
 
         mock_user = _mock_user()
@@ -351,7 +351,7 @@ class TestTicketIdResolution:
 
             await schedule_ticket(_make_ctx(), ticket_id="TST-5", scheduled_date=str(date.today()))
 
-        mock_resolve.assert_called_once_with("TST-5")
+        mock_resolve.assert_called_once_with("TST-5", mock_user.id)
 
     async def test_get_ticket_schedule_with_uuid(self):
         """get_ticket_schedule z ticket_id jako UUID -- zwraca liste."""
@@ -404,7 +404,7 @@ class TestTicketIdResolution:
             result = await get_ticket_schedule(_make_ctx(), ticket_id="TST-2")
 
         assert isinstance(result, list)
-        mock_resolve.assert_called_once_with("TST-2")
+        mock_resolve.assert_called_once_with("TST-2", mock_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -514,15 +514,15 @@ class TestScheduleConflict:
 
 @pytest.mark.integration
 class TestMembershipAuthorization:
-    """User nie bedacy czlonkiem projektu nie moze zaplanowac ticketu."""
+    """User nie bedacy czlonkiem projektu nie moze zaplanowac ticketu (komunikat jak dla nieistniejacego)."""
 
     async def test_non_member_schedule_ticket_returns_error(self):
-        """schedule_ticket dla usera spoza projektu rzuca ValueError z czytelnym komunikatem."""
+        """schedule_ticket dla usera spoza projektu rzuca ValueError "Ticket nie istnieje"."""
         from monolynx.mcp_server import schedule_ticket
 
         mock_user = _mock_user()
         ticket_id = str(uuid.uuid4())
-        error_msg = "Uzytkownik nie jest czlonkiem projektu"
+        error_msg = "Ticket nie istnieje"
 
         with (
             patch("monolynx.mcp_server._auth", AsyncMock(return_value=mock_user)),
@@ -539,16 +539,16 @@ class TestMembershipAuthorization:
                     scheduled_date=str(date.today()),
                 )
 
-        error_text = str(exc_info.value).lower()
-        assert any(kw in error_text for kw in ("czlonek", "member", "dostep", "nie jest"))
+        # MON-239: ticket z cudzego projektu jest nieodroznialny od nieistniejacego
+        assert str(exc_info.value) == "Ticket nie istnieje"
 
     async def test_non_member_error_is_not_empty(self):
-        """Komunikat bledu czlonkostwa nie jest pusty."""
+        """Komunikat serwisu jest przekazywany do ValueError bez zmian."""
         from monolynx.mcp_server import schedule_ticket
 
         mock_user = _mock_user()
         ticket_id = str(uuid.uuid4())
-        error_msg = "Uzytkownik nie jest czlonkiem projektu"
+        error_msg = "Ticket nie istnieje"
 
         with (
             patch("monolynx.mcp_server._auth", AsyncMock(return_value=mock_user)),
@@ -565,7 +565,7 @@ class TestMembershipAuthorization:
                     scheduled_date=str(date.today()),
                 )
 
-        assert len(str(exc_info.value)) > 5
+        assert str(exc_info.value) == error_msg
 
 
 # ---------------------------------------------------------------------------

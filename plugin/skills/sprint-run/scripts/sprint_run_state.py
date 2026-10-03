@@ -11,6 +11,17 @@ Laczy trzy zrodla:
 "done" (ticket w recenzji/zakonczony) albo "needs_human" (rozjazd miedzy
 stanem ticketu a stanem sesji, wymaga recznej interwencji).
 
+"waiting" dla zywej sesji wynika z czterech sygnalow w logu (kolejnosc w
+classify): marker `SPRINT-RUN STOP:`, pytanie (linia konczaca sie "?"),
+numerowane opcje z fraza decyzji (takze bez pytajnika; MON-252) oraz ostatnia
+wypowiedz asystenta konczaca sie fraza oczekiwania ("Czekam", "waiting for";
+reason "brak postępu: ...").Wejscie uzytkownika w logu (linia `❯ <tekst>`)
+zdejmuje wszystkie cztery: liczy sie tylko tekst PO ostatnim takim wejsciu.
+Do tego detektor zastoju (MON-252): gdy znormalizowany ogon logu sesji nie
+zmienil sie przez MONOLYNX_SPRINT_STALL_TICKS kolejnych tickow (domyslnie 2),
+a classify daje "running", werdykt to "waiting" z reason "brak postępu od <n>
+ticków". Stan miedzy tickami to `<state-dir>/stall.json`, patrz CLI.
+
 Stan sesji (session_state) jest wyznaczany z ZAMKNIETEJ listy stanow martwych
 (_DEAD_SESSION_STATES) - kazdy inny literal, w tym nieznany jeszcze `claude`
 (np. przyszla wersja dodajaca "compacting"), jest traktowany jako zywy
@@ -32,9 +43,17 @@ JSON, brak pliku i niepoprawny ksztalt nie powinny nigdy rzucic tracebacku,
 tylko zakonczyc program czytelnym bledem po polsku.
 
 CLI:
-    python3 sprint_run_state.py --slug S --agents-file A --tickets-file T [--logs-dir D]
+    python3 sprint_run_state.py --slug S --agents-file A --tickets-file T [--logs-dir D] [--state-dir D]
 
     --agents-file - (myslnik) czyta liste agentow ze stdin zamiast z pliku.
+    --state-dir D - wlacza detektor zastoju: czyta i zapisuje `D/stall.json`,
+        JSON `{"<session_id>": {"hash": "<sha256>", "ticks": <int>}}` (tylko
+        sesje zywe z niepustym ogonem z TEGO przebiegu). D lezy POZA katalogiem
+        logow, bo ten jest czyszczony co tick. Bez opcji: zadnego pliku i zadnego
+        zastoju. Uszkodzony plik, zly wpis albo blad zapisu = brak historii
+        (zawsze "running", nigdy "waiting"), bez zmiany kodu wyjscia.
+    MONOLYNX_SPRINT_STALL_TICKS - prog zastoju w tickach (domyslnie 2,
+        niepoprawna wartosc -> 2, patrz parse_stall_ticks).
 
 Kody wyjscia:
     0  - raport wypisany poprawnie na stdout jako JSON.
@@ -46,7 +65,10 @@ Kody wyjscia:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -346,6 +368,69 @@ def waits_for_permission(session: dict[str, Any]) -> bool:
     return waiting_for == "permission prompt"
 
 
+# Wejscie uzytkownika w renderze TUI: "❯ <tekst>" (zaobserwowane w
+# logs-decision-options-answered.2.1.288.txt i logs-stop-answered.2.1.288.txt). Sam "❯"
+# to pusty prompt (logs-stall-czekam.2.1.288.txt), czyli chrome, nie odpowiedz.
+def _is_user_input(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("❯") and bool(stripped[1:].strip())
+
+
+# Linia opcji: cyfra(y) z kropka albo nawiasem na poczatku linii ("1. ...", "2) ..."). Kropka w
+# srodku ("zgoda na 4. poprawke", logs-stop-answered.2.1.288.txt) i podpowiedz TUI "1: Learn more
+# 2: ..." (logs-tip-numbered.2.1.288.txt, dwukropek) nie pasuja. Forma "N)" jest z definicji
+# ticketu MON-252, nie z fixture.
+_OPTION_LINE_RE = re.compile(r"^\d{1,2}[.)]\s+\S")
+
+# Fraza decyzji. "Decyzja dla Ciebie" ZAOBSERWOWANA (logs-decision-options-answered.2.1.288.txt,
+# logs-stop-answered.2.1.288.txt). "wybierz" i "opcja 1" Z DEFINICJI TICKETU MON-252, brak ich w
+# fixture'ach. Sama fraza bez listy albo sama lista bez frazy nie daje "waiting".
+_DECISION_PHRASE_RE = re.compile(r"decyzja dla ciebie|\bwybierz\b|\bopcja 1\b", re.IGNORECASE)
+
+# Fraza oczekiwania w ostatnim zdaniu wypowiedzi. "Czekam" ZAOBSERWOWANE
+# (logs-stall-czekam.2.1.288.txt, logs-waiting-phrase.2.1.288.txt); "waiting for" Z DEFINICJI
+# TICKETU MON-252. Granica slowa odrzuca "Zaczekamy", "Czekamy", "awaiting for".
+_WAIT_PHRASE_RE = re.compile(r"^czekam\b|\bwaiting for\b", re.IGNORECASE)
+
+# Linie zmienne TUI, ktore nie swiadcza o postepie sesji - wypadaja z hasha ogona w detektorze
+# zastoju i koncza wypowiedz asystenta. Zaobserwowane: linia statusu "... | ctx:34% | limit
+# sesji:9% | limit tyg:30%" i jej urwany fragment "limit tyg:31%", "3% until auto-compact"
+# (logs-waiting-phrase.2.1.288.txt), linia trybu "⏵⏵ auto mode on ...", ramka "────" i pusty "❯"
+# (logs-stall-czekam.2.1.288.txt).
+_STATUS_LINE_RE = re.compile(r"(?:ctx|limit sesji|limit tyg):\s*\d+%|^\d+% until auto-compact$")
+
+
+def _is_volatile_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith(("─", "⏵⏵")) or stripped == "❯" or bool(_STATUS_LINE_RE.search(stripped))
+
+
+def _ends_utterance(line: str) -> bool:
+    """Pierwsza linia "chrome" po wypowiedzi: recap "※", prompt "❯", "[-]", "✦" (podpowiedz) albo linia zmienna TUI."""
+    stripped = line.strip()
+    return stripped.startswith(("※", "❯", "[-]", "✦")) or _is_volatile_line(stripped)
+
+
+def _has_numbered_options(lines: list[str]) -> bool:
+    options = sum(1 for line in lines if _OPTION_LINE_RE.match(line.strip()))
+    return options >= 2 and any(_DECISION_PHRASE_RE.search(line) for line in lines)
+
+
+def _ends_with_wait_phrase(block: list[str]) -> bool:
+    """Czy wypowiedz asystenta (od "⏺" do pierwszej linii chrome) konczy sie fraza oczekiwania.
+
+    Wypowiedz zawinieta przez terminal na kilka linii jest sklejana przed podzialem na zdania.
+    """
+    parts: list[str] = []
+    for line in block:
+        if parts and _ends_utterance(line):
+            break
+        parts.append(line.strip())
+    text = " ".join(parts).lstrip("⏺").strip()
+    last_sentence = re.split(r"(?<=[.!?])\s+", text)[-1]
+    return bool(_WAIT_PHRASE_RE.search(last_sentence))
+
+
 def classify(ticket_status: str, session_state_value: str, log_tail: list[str]) -> tuple[str, str]:
     """Wyznacz (werdykt, uzasadnienie) na podstawie stanu ticketu i sesji.
 
@@ -356,7 +441,14 @@ def classify(ticket_status: str, session_state_value: str, log_tail: list[str]) 
     ogona - linie spinnera/statusu/promptu ("Symbioting…", "| ctx:...", "❯") miedzy
     kotwica a markerem/pytaniem wypychalyby je poza stale okno 5 linii (MON-191,
     tests/fixtures/claude/logs-stop-tui.2.1.278.txt). Brak kotwicy w ogonie -> stare
-    zachowanie sprzed MON-191, okno to ostatnie 5 linii.
+    zachowanie sprzed MON-191 dla markera STOP i pytajnika (ostatnie 5 linii).
+
+    MON-252: najpierw ogon jest obciety do linii PO ostatnim wejsciu uzytkownika
+    (`❯ <tekst>`; sam `❯` to pusty prompt, nie wejscie). Kolejnosc sygnalow:
+    marker STOP, pytajnik, numerowane opcje z fraza decyzji (bez kotwicy na calym
+    ogonie), fraza oczekiwania konczaca ostatnia wypowiedz asystenta (wymaga
+    kotwicy). Brak sygnalu -> "running". Stan miedzy tickami (zastoj) jest poza
+    classify, w build_report.
     """
     if session_state_value == "none":
         if ticket_status == "todo":
@@ -377,25 +469,34 @@ def classify(ticket_status: str, session_state_value: str, log_tail: list[str]) 
         )
 
     # session_state_value == "running"
-    anchor_indices = [i for i, line in enumerate(log_tail) if line.startswith("⏺")]
-    if anchor_indices:
-        window = log_tail[anchor_indices[-1] :]
-    else:
-        window = log_tail[-5:]
+    # Wejscie uzytkownika odcina historie: sygnaly sprzed odpowiedzi juz sa obsluzone (MON-252).
+    last_input = max((i for i, line in enumerate(log_tail) if _is_user_input(line)), default=-1)
+    tail = log_tail[last_input + 1 :]
+    anchor_indices = [i for i, line in enumerate(tail) if line.startswith("⏺")]
+    block = tail[anchor_indices[-1] :] if anchor_indices else None
+    window = block if block is not None else tail[-5:]
 
     if any(_STOP_MARKER_RE.search(line) for line in window):
         return "waiting", "Log zawiera marker SPRINT-RUN STOP - sesja czeka na decyzje czlowieka."
 
-    if anchor_indices:
+    if block is not None:
         # Kotwica: sprawdzamy KAZDA linie bloku, nie tylko ostatnia niepusta - po
         # pytaniu w renderze TUI ida linie spinnera/statusu/promptu, wiec ostatnia
         # niepusta linia calego ogona to prawie nigdy samo pytanie (MON-191).
-        if any(line.rstrip().endswith("?") for line in window if line.strip()):
+        if any(line.rstrip().endswith("?") for line in block if line.strip()):
             return "waiting", "Blok odpowiedzi zawiera pytanie - sesja czeka na odpowiedz czlowieka."
     else:
         last_nonempty = next((line for line in reversed(window) if line.strip()), None)
         if last_nonempty is not None and last_nonempty.rstrip().endswith("?"):
             return "waiting", "Ostatnia linia logu to pytanie - sesja czeka na odpowiedz czlowieka."
+
+    # Bez kotwicy patrzymy na caly ogon po wejsciu uzytkownika, nie na 5 ostatnich linii:
+    # w logs-decision-options-answered.2.1.288.txt fraza "Decyzja dla Ciebie" lezy 6. linia od konca.
+    if _has_numbered_options(block if block is not None else tail):
+        return "waiting", "Blok odpowiedzi zawiera numerowane opcje i fraze decyzji - sesja czeka na decyzje czlowieka."
+
+    if block is not None and _ends_with_wait_phrase(block):
+        return "waiting", "brak postępu: ostatni blok kończy się frazą oczekiwania"
 
     return "running", "Sesja w tle dziala, log nie sygnalizuje oczekiwania na czlowieka."
 
@@ -425,6 +526,57 @@ def parse_max_waiting(raw: str | None) -> int:
     return DEFAULT_MAX_WAITING
 
 
+DEFAULT_STALL_TICKS = 2
+
+
+def parse_stall_ticks(raw: str | None) -> int:
+    """Prog zastoju z MONOLYNX_SPRINT_STALL_TICKS; niepoprawna wartosc (w tym 0 i ujemna) -> domyslny."""
+    if raw is None:
+        return DEFAULT_STALL_TICKS
+    text = raw.strip()
+    if text.isascii() and text.isdigit() and int(text) > 0:
+        return int(text)
+    return DEFAULT_STALL_TICKS
+
+
+def _tail_digest(log_tail: list[str]) -> str | None:
+    """sha256 ogona bez linii zmiennych TUI; None, gdy nic nie zostalo (brak logu nie jest dowodem zastoju)."""
+    kept = [line.strip() for line in log_tail if line.strip() and not _is_volatile_line(line)]
+    if not kept:
+        return None
+    return hashlib.sha256("\n".join(kept).encode("utf-8")).hexdigest()
+
+
+def _load_stall_state(state_dir: Path | str) -> dict[str, dict[str, Any]]:
+    """Wczytaj `stall.json`; plik nieczytelny albo wpis niepoprawny = brak historii.
+
+    Granica systemu (plik moze byc uszkodzony po przerwanym zapisie): kazdy wpis jest sprawdzany
+    osobno. Brak historii zeruje licznik, czyli daje "running" - wariant odwracalny, falszywe
+    "waiting" zajmowaloby limit sesji waiting.
+    """
+    try:
+        data = json.loads((Path(state_dir) / "stall.json").read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    valid: dict[str, dict[str, Any]] = {}
+    for session_id, entry in data.items():
+        if not isinstance(entry, dict):
+            continue
+        digest, ticks = entry.get("hash"), entry.get("ticks")
+        # `type(...) is int`: bool jest podklasa int, a True nie jest poprawnym licznikiem
+        if isinstance(digest, str) and type(ticks) is int and ticks >= 0:
+            valid[session_id] = {"hash": digest, "ticks": ticks}
+    return valid
+
+
+def _save_stall_state(state_dir: Path | str, data: dict[str, dict[str, Any]]) -> None:
+    """Zapisz `stall.json`; blad zapisu nie przerywa raportu (nastepny tick zacznie bez historii)."""
+    with contextlib.suppress(OSError):
+        (Path(state_dir) / "stall.json").write_text(json.dumps(data), encoding="utf-8")
+
+
 def dispatch_capacity(summary: dict[str, int], slots: int, max_waiting: int) -> dict[str, Any]:
     """Ile sesji wolno wystartowac w tym ticku.
 
@@ -442,8 +594,24 @@ def dispatch_capacity(summary: dict[str, int], slots: int, max_waiting: int) -> 
     }
 
 
-def build_report(slug: str, tickets: list[dict[str, Any]], agents: list[Any], logs_dir: Path | str) -> dict[str, Any]:
-    """Zbuduj pelny raport stanu sprintu dla wszystkich ticketow, w kolejnosci wejscia."""
+def build_report(
+    slug: str,
+    tickets: list[dict[str, Any]],
+    agents: list[Any],
+    logs_dir: Path | str,
+    state_dir: Path | str | None = None,
+    stall_ticks: int = DEFAULT_STALL_TICKS,
+) -> dict[str, Any]:
+    """Zbuduj pelny raport stanu sprintu dla wszystkich ticketow, w kolejnosci wejscia.
+
+    state_dir (MON-252) wlacza detektor zastoju: dla zywej sesji z niepustym ogonem liczy
+    kolejne ticki z niezmienionym ogonem (pierwsza obserwacja = 0), a przy ticks >= stall_ticks
+    zamienia werdykt "running" na "waiting" z reason "brak postępu od <n> ticków". Inny werdykt
+    zostaje, licznik i tak jest aktualizowany. `<state_dir>/stall.json` zawiera tylko sesje
+    z tego przebiegu. state_dir=None: zachowanie sprzed MON-252 (brak pliku, brak zastoju).
+    """
+    previous = _load_stall_state(state_dir) if state_dir is not None else {}
+    current: dict[str, dict[str, Any]] = {}
     rows: list[dict[str, Any]] = []
     for ticket in tickets:
         key = ticket["key"]
@@ -467,6 +635,14 @@ def build_report(slug: str, tickets: list[dict[str, Any]], agents: list[Any], lo
             state_reason = session_state_reason(session)
             log_tail = read_log_tail(logs_dir, session_id, n=_LOG_TAIL_LINES) if session_id else []
 
+        stalled_ticks: int | None = None
+        if state_dir is not None and sess_state == "running" and isinstance(session_id, str):
+            digest = _tail_digest(log_tail)
+            if digest is not None:
+                old = previous.get(session_id)
+                stalled_ticks = old["ticks"] + 1 if old is not None and old["hash"] == digest else 0
+                current[session_id] = {"hash": digest, "ticks": stalled_ticks}
+
         verdict, reason = classify(ticket_status, sess_state, log_tail)
         if session is not None and sess_state == "running" and waits_for_permission(session):
             # Prompt o zgode (hook "ask" albo zwykle uprawnienie) w sesji bez
@@ -474,6 +650,8 @@ def build_report(slug: str, tickets: list[dict[str, Any]], agents: list[Any], lo
             # kreci sie w nieskonczonosc (MON-173). Zaobserwowane realnie:
             # {"state": "blocked", "status": "waiting", "waitingFor": "permission prompt"}.
             verdict, reason = "waiting", "sesja czeka na potwierdzenie uprawnien (claude attach)"
+        if stalled_ticks is not None and stalled_ticks >= stall_ticks and verdict == "running":
+            verdict, reason = "waiting", f"brak postępu od {stalled_ticks} ticków"
         if state_reason:
             reason = f"{reason}; {state_reason}"
         rows.append(
@@ -488,6 +666,8 @@ def build_report(slug: str, tickets: list[dict[str, Any]], agents: list[Any], lo
             }
         )
 
+    if state_dir is not None:
+        _save_stall_state(state_dir, current)
     return {"slug": slug, "tickets": rows, "summary": summarize(rows)}
 
 
@@ -536,6 +716,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--agents-file", required=True, help="plik JSON z lista agentow, albo '-' dla stdin")
     parser.add_argument("--tickets-file", required=True, help="plik JSON z lista ticketow sprintu")
     parser.add_argument("--logs-dir", default=None, help="katalog z ogonami logow sesji (<session_id>.log)")
+    parser.add_argument("--state-dir", default=None, help="katalog stanu detektora zastoju (stall.json); bez opcji detektor wylaczony")
 
     try:
         args = parser.parse_args(argv)
@@ -560,7 +741,14 @@ def main(argv: list[str]) -> int:
         return 2
 
     logs_dir = Path(args.logs_dir) if args.logs_dir else Path(".")
-    report = build_report(args.slug, tickets, agents, logs_dir)
+    report = build_report(
+        args.slug,
+        tickets,
+        agents,
+        logs_dir,
+        state_dir=args.state_dir,
+        stall_ticks=parse_stall_ticks(os.environ.get("MONOLYNX_SPRINT_STALL_TICKS")),
+    )
     print(json.dumps(report, ensure_ascii=False))
     return 0
 

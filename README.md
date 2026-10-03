@@ -113,6 +113,7 @@ docker compose -f docker-compose.prod.yml up -d
 | `ENABLE_MONITOR_LOOP` | `true` (dev) / `false` (prod) | Enable in-process monitor checker loop |
 | `SKIP_LANDING_PAGE` | `true` | Skip landing page, redirect straight to dashboard |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | _(empty = disabled)_ | Google OAuth login |
+| `GOOGLE_AUTO_CREATE_USERS` | `true` | `true` = first Google login creates an account, `false` = only existing / invited accounts can log in via Google |
 
 ### Traefik integration
 

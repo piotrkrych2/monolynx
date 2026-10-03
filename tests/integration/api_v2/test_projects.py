@@ -25,9 +25,11 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from monolynx.constants import DEFAULT_ROLE_PERMISSIONS
 from monolynx.models.label import Label
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.user import User
 from monolynx.services.auth import hash_password
 
@@ -244,6 +246,128 @@ class TestInviteMember:
         assert body["role"] == "member"
         assert body["is_new_user"] is True
         mock_send.assert_called_once()
+
+    async def test_new_email_response_has_no_invitation_token_but_mail_carries_it(self, client, db_session):
+        """MON-243: token zaproszenia nie wraca w odpowiedzi (przejęcie konta przez /auth/accept-invite/{token}), tylko w mailu."""
+        actor, project = await make_owner_project(db_session, "invite-notoken")
+        email = "bez-tokenu@example.com"
+
+        with patch("monolynx.api.v2.projects.send_invitation_email") as mock_send:
+            response = await client.post(
+                f"/api/v2/projects/{project.slug}/members",
+                headers=actor.headers,
+                json={"email": email, "role": "member"},
+            )
+
+        assert response.status_code == 201
+        stored = (await db_session.execute(select(User.invitation_token).where(User.email == email))).scalar_one()
+        assert stored is not None
+        assert "invitation_token" not in response.json()
+        assert str(stored) not in response.text
+        mock_send.assert_called_once_with(email, "", stored)
+
+    async def test_custom_role_with_only_users_write_cannot_invite_admin(self, client, db_session):
+        """MON-243: zapraszający nie nada roli z większą liczbą uprawnień, niż sam ma -> 403, brak konta i członkostwa."""
+        owner, project = await make_owner_project(db_session, "invite-esc")
+        inviter = await make_actor(db_session, "invite-esc-inviter")
+        role = Role(name="Tylko users", project_id=project.id, permissions={"users": ["read", "write"]}, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+        db_session.add(ProjectMember(project_id=project.id, user_id=inviter.user.id, role="member", role_id=role.id))
+        await db_session.flush()
+        email = "eskalacja-admin@example.com"
+
+        with patch("monolynx.api.v2.projects.send_invitation_email") as mock_send:
+            response = await client.post(
+                f"/api/v2/projects/{project.slug}/members",
+                headers=inviter.headers,
+                json={"email": email, "role": "admin"},
+            )
+
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+        detail = response.json()["detail"]
+        assert detail.startswith("Brak uprawnienia")
+        assert detail != "Brak uprawnienia users:write"
+        mock_send.assert_not_called()
+        assert (await db_session.execute(select(User).where(User.email == email))).scalar_one_or_none() is None
+        member_ids = (await db_session.execute(select(ProjectMember.user_id).where(ProjectMember.project_id == project.id))).scalars().all()
+        assert set(member_ids) == {owner.user.id, inviter.user.id}
+
+    async def _member_plus_users_write_inviter(self, db_session, project, tag):
+        """Zapraszający z rolą niesystemową: wszystko z "member" + users:write, nic ponad to."""
+        perms = {module: list(actions) for module, actions in DEFAULT_ROLE_PERMISSIONS["member"].items()}
+        perms["users"] = ["read", "write"]
+        inviter = await make_actor(db_session, tag)
+        role = Role(name="Member plus", project_id=project.id, permissions=perms, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+        db_session.add(ProjectMember(project_id=project.id, user_id=inviter.user.id, role="member", role_id=role.id))
+        await db_session.flush()
+        return inviter
+
+    async def test_inviter_with_all_member_permissions_plus_users_write_can_invite_member_role(self, client, db_session):
+        _, project = await make_owner_project(db_session, "invite-memplus-ok")
+        inviter = await self._member_plus_users_write_inviter(db_session, project, "invite-memplus-ok-inviter")
+        email = "member-plus-ok@example.com"
+
+        with patch("monolynx.api.v2.projects.send_invitation_email") as mock_send:
+            response = await client.post(
+                f"/api/v2/projects/{project.slug}/members",
+                headers=inviter.headers,
+                json={"email": email, "role": "member"},
+            )
+
+        assert response.status_code == 201
+        invited = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
+        role = (
+            await db_session.execute(select(ProjectMember.role).where(ProjectMember.project_id == project.id, ProjectMember.user_id == invited.id))
+        ).scalar_one()
+        assert role == "member"
+        mock_send.assert_called_once_with(email, "", invited.invitation_token)
+
+    async def test_inviter_with_all_member_permissions_plus_users_write_cannot_invite_admin_role(self, client, db_session):
+        """Brakuje tylko uprawnień ponad "member": 403 pada wyłącznie przez porównanie z rolą z zaproszenia, detail z warstwy serwisu."""
+        owner, project = await make_owner_project(db_session, "invite-memplus-deny")
+        inviter = await self._member_plus_users_write_inviter(db_session, project, "invite-memplus-deny-inviter")
+        email = "member-plus-deny@example.com"
+
+        with patch("monolynx.api.v2.projects.send_invitation_email") as mock_send:
+            response = await client.post(
+                f"/api/v2/projects/{project.slug}/members",
+                headers=inviter.headers,
+                json={"email": email, "role": "admin"},
+            )
+
+        assert response.status_code == 403
+        detail = response.json()["detail"]
+        assert detail.startswith("Brak uprawnienia")
+        assert detail != "Brak uprawnienia users:write"
+        mock_send.assert_not_called()
+        assert (await db_session.execute(select(User).where(User.email == email))).scalar_one_or_none() is None
+        member_ids = (await db_session.execute(select(ProjectMember.user_id).where(ProjectMember.project_id == project.id))).scalars().all()
+        assert set(member_ids) == {owner.user.id, inviter.user.id}
+
+    async def test_admin_can_invite_admin(self, client, db_session):
+        """Przeciwwaga MON-243: admin zapraszający z rolą 'admin' (równą własnej) przechodzi."""
+        _, project = await make_owner_project(db_session, "invite-admin-ok")
+        inviter = await make_actor(db_session, "invite-admin-ok-inviter")
+        await add_member(db_session, project, inviter.user, role="admin")
+        email = "admin-zaproszony@example.com"
+
+        with patch("monolynx.api.v2.projects.send_invitation_email"):
+            response = await client.post(
+                f"/api/v2/projects/{project.slug}/members",
+                headers=inviter.headers,
+                json={"email": email, "role": "admin"},
+            )
+
+        assert response.status_code == 201
+        invited = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
+        role = (
+            await db_session.execute(select(ProjectMember.role).where(ProjectMember.project_id == project.id, ProjectMember.user_id == invited.id))
+        ).scalar_one()
+        assert role == "admin"
 
     async def test_existing_active_user_added_without_email(self, client, db_session):
         actor, project = await make_owner_project(db_session, "invite-existing")

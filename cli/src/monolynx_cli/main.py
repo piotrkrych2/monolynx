@@ -1,6 +1,6 @@
 """Punkt wejścia CLI monolynx-cli: opcja --version, globalne flagi i szkielet 16 grup podkomend.
 
-`auth`, `config`, `project`, `member`, `ticket`, `sprint` i `wiki` mają realne komendy (moduły
+`auth`, `config`, `project`, `member`, `ticket`, `sprint`, `wiki` i `graph` (tylko odczyt) mają realne komendy (moduły
 monolynx_cli.commands.*). Pozostałe grupy są nadal puste -- kolejne tickety dodadzą do
 nich podkomendy, ewentualnie wynosząc rozrośniętą grupę do własnego modułu. Poza grupami root
 ma samodzielne komendy `completion <shell>` (skrypt uzupełniania na stdout, patrz
@@ -36,6 +36,7 @@ from monolynx_cli.client import DEFAULT_TIMEOUT, MonolynxError
 from monolynx_cli.commands.auth import app as auth_app
 from monolynx_cli.commands.completion import completion
 from monolynx_cli.commands.config import app as config_app
+from monolynx_cli.commands.graph import app as graph_app
 from monolynx_cli.commands.member import app as member_app
 from monolynx_cli.commands.project import app as project_app
 from monolynx_cli.commands.sprint import app as sprint_app
@@ -127,7 +128,6 @@ issues_app = typer.Typer(no_args_is_help=True)
 time_app = typer.Typer(no_args_is_help=True)
 plan_app = typer.Typer(no_args_is_help=True)
 rozliczenia_app = typer.Typer(no_args_is_help=True)
-graph_app = typer.Typer(no_args_is_help=True)
 pipeline_app = typer.Typer(no_args_is_help=True)
 heartbeat_app = typer.Typer(no_args_is_help=True)
 role_app = typer.Typer(no_args_is_help=True)

@@ -55,6 +55,7 @@ async def complete_sprint(sprint_id: uuid.UUID, project_id: uuid.UUID, db: Async
         update(Ticket)
         .where(
             Ticket.sprint_id == sprint_id,
+            Ticket.project_id == project_id,
             Ticket.status != "done",
         )
         .values(sprint_id=None, status="backlog")

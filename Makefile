@@ -1,4 +1,4 @@
-.PHONY: help dev down lint test build migrate createsuperuser shell worker backfill-embeddings backfill-backlinks backfill-dependencies sync-graph sync-graph-dry clear-all-graphs sync-agents sync-agents-check
+.PHONY: help dev down lint test build migrate prune-test-dbs createsuperuser shell worker backfill-embeddings backfill-backlinks backfill-dependencies sync-graph sync-graph-dry clear-all-graphs sync-agents sync-agents-check
 
 # Zaladuj .env, zeby targety hostowe (sync-graph) widzialy MONOLYNX_MCP_TOKEN itd.
 -include .env
@@ -40,6 +40,9 @@ migrate: ## Uruchom migracje Alembic
 
 migration: ## Stworz migracje (usage: make migration msg="add events table")
 	docker compose --profile dev exec app alembic revision --autogenerate -m "$(msg)"
+
+prune-test-dbs: ## Usun porzucone bazy testowe open_sentry_test_* po przerwanych przebiegach
+	docker compose --profile dev exec app python -m monolynx.cli prune-test-dbs
 
 # --- Uzytkownicy ---
 createsuperuser: ## Stworz superuzytkownika

@@ -13,7 +13,9 @@ from monolynx.models.role import Role
 from monolynx.models.user import User
 from monolynx.services.permissions import (
     check_permission,
+    ensure_permission,
     get_user_permissions,
+    missing_permissions,
     require_permission,
 )
 
@@ -361,3 +363,121 @@ class TestGetUserPermissions:
         # Dla projektu B -- brak uprawnień
         result_b = await get_user_permissions(db_session, user.id, project_b.id)
         assert result_b == {}
+
+
+# ---------------------------------------------------------------------------
+# ensure_permission
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestEnsurePermission:
+    async def test_member_bez_delete_dostaje_value_error_z_pelnym_komunikatem(self, db_session):
+        """Legacy rola member nie ma scrum:delete -- ValueError niesie dokladnie "Brak uprawnienia scrum:delete"."""
+        project = await _make_project(db_session, "ens1")
+        user = await _make_user(db_session, "ensure_member_delete@test.com")
+        await _make_member(db_session, project, user, role_str="member")
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia scrum:delete$"):
+            await ensure_permission(db_session, user.id, project.id, "scrum", "delete")
+
+    async def test_owner_z_delete_nie_rzuca(self, db_session):
+        """Legacy rola owner ma scrum:delete i wiki:delete -- helper zwraca None."""
+        project = await _make_project(db_session, "ens2")
+        user = await _make_user(db_session, "ensure_owner_delete@test.com")
+        await _make_member(db_session, project, user, role_str="owner")
+
+        assert await ensure_permission(db_session, user.id, project.id, "scrum", "delete") is None
+        assert await ensure_permission(db_session, user.id, project.id, "wiki", "delete") is None
+
+    async def test_komunikat_zawiera_modul_i_akcje_z_wywolania(self, db_session):
+        """Tekst zalezy od przekazanego modulu i akcji, a nie jest stalym literalem."""
+        project = await _make_project(db_session, "ens3")
+        user = await _make_user(db_session, "ensure_msg_wiki@test.com")
+        role = await _make_role(db_session, project, {"scrum": ["read"]})
+        await _make_member(db_session, project, user, role=role)
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia wiki:write$"):
+            await ensure_permission(db_session, user.id, project.id, "wiki", "write")
+
+    async def test_rola_niestandardowa_tylko_read_nie_ma_write(self, db_session):
+        """role_obj ma pierwszenstwo: rola {scrum: [read]} przepuszcza read i odrzuca write."""
+        project = await _make_project(db_session, "ens4")
+        user = await _make_user(db_session, "ensure_custom_read@test.com")
+        role = await _make_role(db_session, project, {"scrum": ["read"]})
+        await _make_member(db_session, project, user, role=role)
+
+        assert await ensure_permission(db_session, user.id, project.id, "scrum", "read") is None
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia scrum:write$"):
+            await ensure_permission(db_session, user.id, project.id, "scrum", "write")
+
+    async def test_user_spoza_projektu_dostaje_value_error(self, db_session):
+        """Brak czlonkostwa to brak uprawnienia, tak samo jak w check_permission."""
+        project = await _make_project(db_session, "ens5")
+        user = await _make_user(db_session, "ensure_outsider@test.com")
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia scrum:read$"):
+            await ensure_permission(db_session, user.id, project.id, "scrum", "read")
+
+    async def test_value_error_nie_jest_http_exception(self, db_session):
+        """Wariant serwisowy rzuca ValueError (mapowany przez service_error), nie HTTPException jak require_permission."""
+        project = await _make_project(db_session, "ens6")
+        user = await _make_user(db_session, "ensure_not_http@test.com")
+
+        with pytest.raises(ValueError) as exc_info:
+            await ensure_permission(db_session, user.id, project.id, "wiki", "read")
+
+        assert not isinstance(exc_info.value, HTTPException)
+
+
+# ---------------------------------------------------------------------------
+# missing_permissions (MON-243): czysta funkcja "nie nadasz wiecej, niz masz"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMissingPermissions:
+    def test_pusty_requested_nie_ma_brakow(self):
+        assert missing_permissions({}, {"scrum": ["read"]}) == []
+
+    def test_pusty_requested_i_pusty_held_nie_maja_brakow(self):
+        assert missing_permissions({}, {}) == []
+
+    def test_modul_z_pusta_lista_akcji_nie_jest_brakiem(self):
+        assert missing_permissions({"scrum": []}, {}) == []
+
+    def test_identyczne_uprawnienia_nie_maja_brakow(self):
+        perms = {"scrum": ["read", "write"], "wiki": ["read"]}
+
+        assert missing_permissions(perms, {"scrum": ["read", "write"], "wiki": ["read"]}) == []
+
+    def test_podzbior_held_nie_ma_brakow(self):
+        held = {"scrum": ["read", "write", "delete"], "wiki": ["read", "write"], "settings": ["read"]}
+
+        assert missing_permissions({"scrum": ["write"], "wiki": ["read"]}, held) == []
+
+    def test_brak_modulu_w_held_zwraca_wszystkie_akcje_modulu(self):
+        assert missing_permissions({"wiki": ["read", "write"]}, {"scrum": ["read", "write"]}) == ["wiki:read", "wiki:write"]
+
+    def test_brak_akcji_w_istniejacym_module_zwraca_tylko_te_akcje(self):
+        assert missing_permissions({"scrum": ["read", "write", "delete"]}, {"scrum": ["read", "write"]}) == ["scrum:delete"]
+
+    def test_akcja_z_innego_modulu_nie_pokrywa_braku(self):
+        assert missing_permissions({"wiki": ["delete"]}, {"scrum": ["delete"], "wiki": ["read"]}) == ["wiki:delete"]
+
+    def test_wiele_brakow_jest_posortowanych_niezaleznie_od_kolejnosci_wejscia(self):
+        requested = {"wiki": ["write", "delete"], "scrum": ["delete", "read"], "500ki": ["write"]}
+        held = {"scrum": ["read"], "wiki": ["delete"]}
+
+        assert missing_permissions(requested, held) == ["500ki:write", "scrum:delete", "wiki:write"]
+
+    def test_przyjmuje_dowolne_iterowalne_zamiast_list(self):
+        requested = {"scrum": ("write", "read")}
+        held = {"scrum": {"read"}}
+
+        assert missing_permissions(requested, held) == ["scrum:write"]
+
+    def test_held_z_dodatkowymi_modulami_nie_wplywa_na_wynik(self):
+        held = {"scrum": ["read"], "wiki": ["read", "write", "delete"], "settings": ["read", "write", "delete"]}
+
+        assert missing_permissions({"scrum": ["read", "write"]}, held) == ["scrum:write"]

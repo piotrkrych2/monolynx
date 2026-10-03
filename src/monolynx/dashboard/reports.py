@@ -22,6 +22,7 @@ from monolynx.models.sprint import Sprint
 from monolynx.models.ticket import Ticket
 from monolynx.models.user import User
 from monolynx.schemas.time_tracking import TimeTrackingFilter
+from monolynx.services.permissions import check_permission
 from monolynx.services.time_tracking import (
     aggregate_hours_per_project,
     aggregate_hours_per_sprint,
@@ -29,7 +30,7 @@ from monolynx.services.time_tracking import (
     get_work_report,
 )
 
-from .helpers import _get_user_id, templates
+from .helpers import get_session_user, templates
 
 router = APIRouter(prefix="/dashboard", tags=["reports"])
 
@@ -42,7 +43,7 @@ async def _get_user_project_ids(
     """Zwraca liste project_ids dostepnych dla uzytkownika.
 
     Superuser: wszystkie aktywne projekty.
-    Normalny user: projekty, w ktorych jest czlonkiem.
+    Normalny user: aktywne projekty, w ktorych jest czlonkiem i ma uprawnienie reports:read.
     """
     if is_superuser:
         result = await db.execute(select(Project.id).where(Project.is_active.is_(True)))
@@ -56,7 +57,11 @@ async def _get_user_project_ids(
             Project.is_active.is_(True),
         )
     )
-    return list(result.scalars().all())
+    allowed: list[uuid.UUID] = []
+    for project_id in result.scalars().all():
+        if await check_permission(db, user_id, project_id, "reports", "read"):
+            allowed.append(project_id)
+    return allowed
 
 
 def _parse_global_report_filters(
@@ -147,29 +152,42 @@ async def _resolve_report_context(
 ) -> tuple[uuid.UUID, list[uuid.UUID], TimeTrackingFilter, list[uuid.UUID]] | None:
     """Wspolny blok: auth + allowed projects + parse filters + effective project_ids.
 
-    Zwraca None jesli user niezalogowany, w przeciwnym razie tuple:
+    Zwraca None jesli user niezalogowany albo nieaktywny, w przeciwnym razie tuple:
     (user_id, allowed_project_ids, filters_with_effective_projects, effective_project_ids)
     """
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return None
 
-    is_superuser = request.session.get("is_superuser", False)
-    allowed_project_ids = await _get_user_project_ids(user_id, db, is_superuser)
+    allowed_project_ids = await _get_user_project_ids(user.id, db, user.is_superuser)
 
     base_filters = _parse_global_report_filters(request, allowed_project_ids)
-    effective_project_ids = base_filters.project_ids if base_filters.project_ids else allowed_project_ids
+    # Pusta lista dozwolonych projektow musi zostac pusta - nigdy "wszystko" (por. _apply_filters)
+    effective_project_ids = base_filters.project_ids if base_filters.project_ids is not None else allowed_project_ids
+
+    # user_id i sprint_id spoza efektywnych projektow odpadaja; podane, a odrzucone ID daje pusty raport
+    user_ids = base_filters.user_ids
+    if user_ids is not None:
+        result = await db.execute(
+            select(ProjectMember.user_id).where(ProjectMember.user_id.in_(user_ids), ProjectMember.project_id.in_(effective_project_ids))
+        )
+        user_ids = list(set(result.scalars().all()))
+
+    sprint_ids = base_filters.sprint_ids
+    if sprint_ids is not None:
+        result = await db.execute(select(Sprint.id).where(Sprint.id.in_(sprint_ids), Sprint.project_id.in_(effective_project_ids)))
+        sprint_ids = list(result.scalars().all())
 
     filters = TimeTrackingFilter(
         project_ids=effective_project_ids,
-        user_ids=base_filters.user_ids,
-        sprint_ids=base_filters.sprint_ids,
+        user_ids=user_ids,
+        sprint_ids=sprint_ids,
         date_from=base_filters.date_from,
         date_to=base_filters.date_to,
         created_via_ai=base_filters.created_via_ai,
     )
 
-    return user_id, allowed_project_ids, filters, effective_project_ids
+    return user.id, allowed_project_ids, filters, effective_project_ids
 
 
 @router.get("/reports", response_class=HTMLResponse, response_model=None)
@@ -237,7 +255,7 @@ async def global_reports(
     ticket_ids = list({e.ticket_id for e in report.entries})
     ticket_key_lookup: dict[str, str] = {}
     if ticket_ids:
-        tickets_result = await db.execute(select(Ticket).where(Ticket.id.in_(ticket_ids)))
+        tickets_result = await db.execute(select(Ticket).where(Ticket.id.in_(ticket_ids), Ticket.project_id.in_(effective_project_ids)))
         for t in tickets_result.scalars().all():
             code = project_code_lookup.get(str(t.project_id), "?")
             ticket_key_lookup[str(t.id)] = f"{code}-{t.number}"
@@ -292,7 +310,7 @@ async def global_chart_sprint_hours(
     if ctx is None:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    _user_id, _allowed, filters, _effective = ctx
+    _user_id, _allowed, filters, effective_project_ids = ctx
 
     hours_by_sprint = await aggregate_hours_per_sprint(filters, db)
 
@@ -300,7 +318,7 @@ async def global_chart_sprint_hours(
     sprint_ids = list(hours_by_sprint.keys())
     sprint_lookup: dict[str, str] = {}
     if sprint_ids:
-        result = await db.execute(select(Sprint).where(Sprint.id.in_(sprint_ids)))
+        result = await db.execute(select(Sprint).where(Sprint.id.in_(sprint_ids), Sprint.project_id.in_(effective_project_ids)))
         for s in result.scalars().all():
             sprint_lookup[str(s.id)] = s.name
 
@@ -326,7 +344,7 @@ async def global_chart_user_hours(
     if ctx is None:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    _user_id, _allowed, filters, _effective = ctx
+    _user_id, _allowed, filters, effective_project_ids = ctx
 
     hours_by_user = await aggregate_hours_per_user(filters, db)
 
@@ -334,7 +352,12 @@ async def global_chart_user_hours(
     user_ids_list = list(hours_by_user.keys())
     user_lookup: dict[str, str] = {}
     if user_ids_list:
-        result = await db.execute(select(User).where(User.id.in_(user_ids_list)))
+        result = await db.execute(
+            select(User)
+            .join(ProjectMember, ProjectMember.user_id == User.id)
+            .where(User.id.in_(user_ids_list), ProjectMember.project_id.in_(effective_project_ids))
+            .distinct()
+        )
         for u in result.scalars().all():
             user_lookup[str(u.id)] = u.email.split("@")[0]
 
@@ -362,7 +385,7 @@ async def global_chart_project_hours(
     if ctx is None:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    _user_id, _allowed, filters, _effective = ctx
+    _user_id, _allowed, filters, effective_project_ids = ctx
 
     hours_by_project = await aggregate_hours_per_project(filters, db)
 
@@ -370,7 +393,7 @@ async def global_chart_project_hours(
     project_ids_list = list(hours_by_project.keys())
     project_lookup: dict[str, str] = {}
     if project_ids_list:
-        result = await db.execute(select(Project).where(Project.id.in_(project_ids_list)))
+        result = await db.execute(select(Project).where(Project.id.in_(project_ids_list), Project.id.in_(effective_project_ids)))
         for p in result.scalars().all():
             project_lookup[str(p.id)] = p.name
 
@@ -428,7 +451,7 @@ async def global_export_report(
     ticket_lookup: dict[str, str] = {}
     ticket_key_lookup: dict[str, str] = {}
     if ticket_ids:
-        tickets_result = await db.execute(select(Ticket).where(Ticket.id.in_(ticket_ids)))
+        tickets_result = await db.execute(select(Ticket).where(Ticket.id.in_(ticket_ids), Ticket.project_id.in_(effective_project_ids)))
         for t in tickets_result.scalars().all():
             ticket_lookup[str(t.id)] = t.title
             code = project_lookup_code.get(str(t.project_id), "?")
@@ -523,12 +546,11 @@ async def search_projects(
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Wyszukiwanie projektow dla Tom Select (multi-select)."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    is_superuser = request.session.get("is_superuser", False)
-    allowed_project_ids = await _get_user_project_ids(user_id, db, is_superuser)
+    allowed_project_ids = await _get_user_project_ids(user.id, db, user.is_superuser)
 
     if not allowed_project_ids:
         return JSONResponse([])
@@ -559,12 +581,11 @@ async def search_users(
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Wyszukiwanie uzytkownikow dla Tom Select (multi-select)."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    is_superuser = request.session.get("is_superuser", False)
-    allowed_project_ids = await _get_user_project_ids(user_id, db, is_superuser)
+    allowed_project_ids = await _get_user_project_ids(user.id, db, user.is_superuser)
 
     if not allowed_project_ids:
         return JSONResponse([])
@@ -606,12 +627,11 @@ async def search_sprints(
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Wyszukiwanie sprintow dla Tom Select (multi-select)."""
-    user_id = _get_user_id(request)
-    if user_id is None:
+    user = await get_session_user(request, db)
+    if user is None:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    is_superuser = request.session.get("is_superuser", False)
-    allowed_project_ids = await _get_user_project_ids(user_id, db, is_superuser)
+    allowed_project_ids = await _get_user_project_ids(user.id, db, user.is_superuser)
 
     if not allowed_project_ids:
         return JSONResponse([])

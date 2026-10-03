@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from monolynx.dashboard.helpers import _get_user_id, templates
+from monolynx.dashboard.helpers import get_session_user, templates
 from monolynx.database import get_db
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
@@ -72,9 +72,10 @@ async def create_entry(
     db: AsyncSession = Depends(get_db),
 ) -> WorkPlanEntryResponse:
     """Tworzy nowy wpis planu pracy dla zalogowanego uzytkownika."""
-    user_id = _get_user_id(request)
-    if not user_id:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
+    user_id = user.id
 
     result = await work_plan_service.schedule(db, user_id, body.ticket_id, body.scheduled_date, body.position, body.notes)
     if isinstance(result, str):
@@ -90,9 +91,10 @@ async def update_entry(
     db: AsyncSession = Depends(get_db),
 ) -> WorkPlanEntryResponse:
     """Aktualizuje wpis planu pracy (tylko wlasciciel)."""
-    user_id = _get_user_id(request)
-    if not user_id:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
+    user_id = user.id
 
     # Odrozniamy "pole nie podane" od "podane jako null" przez model_fields_set
     notes_arg = body.notes if "notes" in body.model_fields_set else _UNSET
@@ -110,9 +112,10 @@ async def delete_entry(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     """Usuwa wpis planu pracy (tylko wlasciciel)."""
-    user_id = _get_user_id(request)
-    if not user_id:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
+    user_id = user.id
 
     err = await work_plan_service.unschedule(db, user_id, entry_id)
     if err:
@@ -130,9 +133,10 @@ async def api_data(
     db: AsyncSession = Depends(get_db),
 ) -> list[WorkPlanEntryResponse]:
     """Zwraca wpisy planu pracy dla zalogowanego uzytkownika w podanym zakresie (max 90 dni)."""
-    user_id = _get_user_id(request)
-    if not user_id:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
+    user_id = user.id
 
     if end < start:
         raise HTTPException(status_code=400, detail="end < start")
@@ -158,9 +162,10 @@ async def plan_view(
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse | RedirectResponse:
     """Glowny widok planu pracy (gantt lub calendar)."""
-    user_id = _get_user_id(request)
-    if not user_id:
+    user = await get_session_user(request, db)
+    if user is None:
         return RedirectResponse("/auth/login", status_code=303)
+    user_id = user.id
 
     if view not in ("gantt", "calendar"):
         view = "gantt"
@@ -176,8 +181,7 @@ async def plan_view(
     if parsed_end < parsed_start or (parsed_end - parsed_start).days > 90:
         parsed_start, parsed_end = default_start, default_end
 
-    is_superuser = request.session.get("is_superuser", False)
-    user_projects = await _get_user_projects(db, user_id, is_superuser)
+    user_projects = await _get_user_projects(db, user_id, user.is_superuser)
     user_project_ids = {p.id for p in user_projects}
 
     valid_project_uuids: list[UUID] = []
@@ -216,12 +220,12 @@ async def search_tickets(
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Autocomplete ticketow. Tylko z projektow, w ktorych user jest czlonkiem. Limit 20."""
-    user_id = _get_user_id(request)
-    if not user_id:
+    user = await get_session_user(request, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="Wymagane logowanie")
+    user_id = user.id
 
-    is_superuser = request.session.get("is_superuser", False)
-    user_projects = await _get_user_projects(db, user_id, is_superuser)
+    user_projects = await _get_user_projects(db, user_id, user.is_superuser)
     user_project_ids = {p.id for p in user_projects}
 
     filter_pids: list[UUID] = []

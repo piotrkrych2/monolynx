@@ -790,3 +790,110 @@ async def get_stats(project_id: uuid.UUID) -> dict[str, Any]:
         "nodes_by_type": node_counts,
         "edges_by_type": edge_counts,
     }
+
+
+def ensure_search_not_blank(search: str | None) -> None:
+    """Odrzuć `search` złożony z samych białych znaków; `None` oznacza brak filtra."""
+    if search is not None and not search.strip():
+        raise ValueError("search nie moze byc pusty")
+
+
+def format_graph_dsl(data: dict[str, Any]) -> str:
+    """Konwertuj dict z nodes/edges na kompaktowy Arrow DSL dla LLM.
+
+    Format bez depth_map (backwards-compatible):
+        [Type] name (key=val,key2=val2)
+        source_name --EDGE_TYPE--> target_name
+
+    Format z depth_map (grupowanie po depth rings i typie relacji):
+        --- Depth 1 ---
+        [Class] Contact (path=contacts/models.py,line=13)
+
+        --- Depth 2 ---
+        [Method] Contact.clean (path=contacts/models.py,line=168)
+
+        === INHERITS ===
+        Contact --INHERITS--> BaseInfoModel
+
+        === CONTAINS ===
+        contacts/models.py --CONTAINS--> Contact
+
+    Krawędzie zsynchronizowane z zewnętrznego ekstraktora (graphify) niosą metadane
+    pochodzenia w edge["metadata"] - confidence (EXTRACTED/INFERRED/AMBIGUOUS) i
+    source_relation (oryginalna relacja przed mapowaniem). Gdy obecne, doklejane są
+    w nawiasie za strzałką, np. `X --REFERENCES--> Y (confidence=INFERRED,source_relation=references)`.
+    EXTRACTED to relacja odczytana wprost z AST; INFERRED/AMBIGUOUS to zgadywana przez
+    ekstraktor - traktuj ją z mniejszym zaufaniem niż EXTRACTED.
+    """
+    nodes: list[dict[str, Any]] = data.get("nodes", [])
+    edges: list[dict[str, Any]] = data.get("edges", [])
+    depth_map: dict[str, int] | None = data.get("depth_map")
+
+    node_map: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
+
+    lines: list[str] = [f"{len(nodes)} nodes, {len(edges)} edges", ""]
+
+    def _edge_meta_suffix(e: dict[str, Any]) -> str:
+        md = e.get("metadata") or {}
+        if not md:
+            return ""
+        return f" ({','.join(f'{k}={v}' for k, v in md.items())})"
+
+    def _node_line(n: dict[str, Any]) -> str:
+        ntype = n.get("type", "Unknown")
+        meta_parts: list[str] = []
+        if n.get("file_path"):
+            meta_parts.append(f"path={n['file_path']}")
+        if n.get("line_number"):
+            meta_parts.append(f"line={n['line_number']}")
+        md = n.get("metadata") or {}
+        for k, v in md.items():
+            meta_parts.append(f"{k}={v}")
+        meta_str = f" ({','.join(meta_parts)})" if meta_parts else ""
+        return f"[{ntype}] {n['name']}{meta_str}"
+
+    if depth_map:
+        # Grupuj nodes po depth level
+        by_depth: dict[int, list[dict[str, Any]]] = {}
+        for n in nodes:
+            d = depth_map.get(n["id"], 0)
+            by_depth.setdefault(d, []).append(n)
+
+        for depth_level in sorted(by_depth.keys()):
+            lines.append(f"--- Depth {depth_level} ---")
+            for n in by_depth[depth_level]:
+                lines.append(_node_line(n))
+            lines.append("")
+    else:
+        # Backwards-compatible: grupuj po typie node'a
+        by_type: dict[str, list[dict[str, Any]]] = {}
+        for n in nodes:
+            by_type.setdefault(n.get("type", "Unknown"), []).append(n)
+
+        for _ntype, nlist in by_type.items():
+            for n in nlist:
+                lines.append(_node_line(n))
+        lines.append("")
+
+    if edges:
+        if depth_map:
+            # Grupuj edges po typie relacji
+            by_edge_type: dict[str, list[dict[str, Any]]] = {}
+            for e in edges:
+                by_edge_type.setdefault(e["type"], []).append(e)
+
+            for etype in sorted(by_edge_type.keys()):
+                lines.append(f"=== {etype} ===")
+                for e in by_edge_type[etype]:
+                    src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
+                    tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
+                    lines.append(f"{src} --{etype}--> {tgt}{_edge_meta_suffix(e)}")
+                lines.append("")
+        else:
+            # Backwards-compatible: płaska lista edges
+            for e in edges:
+                src = node_map.get(e["source_id"], {}).get("name", e["source_id"])
+                tgt = node_map.get(e["target_id"], {}).get("name", e["target_id"])
+                lines.append(f"{src} --{e['type']}--> {tgt}{_edge_meta_suffix(e)}")
+
+    return "\n".join(lines)

@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -20,6 +20,19 @@ from monolynx.models.work_plan import WorkPlanEntry
 _UNSET: Any = object()
 
 
+def _member_project_ids(user_id: uuid.UUID) -> Select[Any]:
+    """Aktywne projekty, w ktorych uzytkownik jest OBECNIE czlonkiem.
+
+    Jedyne zrodlo warunku widocznosci planu pracy: wpisy ze starych czlonkostw
+    i z projektow po soft delete maja byc niewidoczne i nieedytowalne.
+    """
+    return (
+        select(Project.id)
+        .join(ProjectMember, ProjectMember.project_id == Project.id)
+        .where(ProjectMember.user_id == user_id, Project.is_active.is_(True))
+    )
+
+
 async def schedule(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -29,27 +42,10 @@ async def schedule(
     notes: str | None = None,
 ) -> WorkPlanEntry | str:
     """Tworzy wpis planu pracy dla uzytkownika. Zwraca entry lub komunikat bledu."""
-    # Pobierz ticket z projektem (tylko aktywny projekt)
-    result = await db.execute(
-        select(Ticket)
-        .options(selectinload(Ticket.project))
-        .join(Project, Ticket.project_id == Project.id)
-        .where(Ticket.id == ticket_id, Project.is_active.is_(True))
-    )
-    ticket = result.scalar_one_or_none()
-    if ticket is None:
+    # Jeden komunikat dla ticketu nieistniejacego i spoza projektow uzytkownika (brak enumeracji)
+    result = await db.execute(select(Ticket.id).where(Ticket.id == ticket_id, Ticket.project_id.in_(_member_project_ids(user_id))))
+    if result.scalar_one_or_none() is None:
         return "Ticket nie istnieje"
-
-    # Sprawdz czlonkostwo w projekcie
-    result = await db.execute(
-        select(ProjectMember).where(
-            ProjectMember.project_id == ticket.project_id,
-            ProjectMember.user_id == user_id,
-        )
-    )
-    member = result.scalar_one_or_none()
-    if member is None:
-        return "Uzytkownik nie jest czlonkiem projektu"
 
     entry = WorkPlanEntry(
         user_id=user_id,
@@ -98,6 +94,11 @@ async def update(
     if entry.user_id != user_id:
         return "Brak dostepu"
 
+    # Wlasny wpis, ale utracone czlonkostwo / projekt po soft delete: bez mutacji
+    visible = await db.execute(select(Ticket.id).where(Ticket.id == entry.ticket_id, Ticket.project_id.in_(_member_project_ids(user_id))))
+    if visible.scalar_one_or_none() is None:
+        return "Brak dostepu"
+
     if scheduled_date is not None:
         entry.scheduled_date = scheduled_date
     if position is not None:
@@ -140,22 +141,24 @@ async def list_for_user_range(
     end_date: date,
     project_ids: list[uuid.UUID] | None = None,
 ) -> list[WorkPlanEntry]:
-    """Zwraca wpisy planu pracy dla uzytkownika w podanym zakresie dat."""
+    """Zwraca wpisy planu pracy dla uzytkownika w podanym zakresie dat (tylko z projektow, w ktorych jest czlonkiem)."""
     if end_date < start_date:
         return []
 
     query = (
         select(WorkPlanEntry)
         .options(selectinload(WorkPlanEntry.ticket).selectinload(Ticket.project))
+        .join(Ticket, WorkPlanEntry.ticket_id == Ticket.id)
         .where(
             WorkPlanEntry.user_id == user_id,
             WorkPlanEntry.scheduled_date >= start_date,
             WorkPlanEntry.scheduled_date <= end_date,
+            Ticket.project_id.in_(_member_project_ids(user_id)),
         )
     )
 
     if project_ids:
-        query = query.join(Ticket, WorkPlanEntry.ticket_id == Ticket.id).where(Ticket.project_id.in_(project_ids))
+        query = query.where(Ticket.project_id.in_(project_ids))
 
     query = query.order_by(WorkPlanEntry.scheduled_date, WorkPlanEntry.position)
 
@@ -180,9 +183,11 @@ async def schedule_for_ticket(db: AsyncSession, user_id: uuid.UUID, ticket_id: u
     result = await db.execute(
         select(WorkPlanEntry)
         .options(selectinload(WorkPlanEntry.ticket).selectinload(Ticket.project))
+        .join(Ticket, WorkPlanEntry.ticket_id == Ticket.id)
         .where(
             WorkPlanEntry.user_id == user_id,
             WorkPlanEntry.ticket_id == ticket_id,
+            Ticket.project_id.in_(_member_project_ids(user_id)),
         )
         .order_by(WorkPlanEntry.scheduled_date, WorkPlanEntry.position)
     )

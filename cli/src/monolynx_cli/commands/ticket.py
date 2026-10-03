@@ -8,7 +8,12 @@ i każda inna wartość użytkownika w ścieżce przechodzą przez `_common.path
 priorytetów i dat idą do API bez walidacji po stronie CLI: `create`, `update` i `bulk-update`
 odrzuca serwer (422 -> kod wyjścia 1), ale nieznany status lub priorytet w filtrze (`list`,
 `search`) serwer po cichu ignoruje - filtr nie działa, a odpowiedź to sukces.
-`list`, `search` zwracają jedną stronę w kopercie (`--page`); `comment list`, `label list`
+`list`, `search` zwracają jedną stronę w kopercie (`--page`); `list` waliduje, że każdy element
+niesie listę `blocked_by` (table i csv pokazują ją jako klucze po przecinku, json i yaml w pełni),
+a `get` waliduje obecność `spec_page_id`; brak pola to błąd kontraktu (kod 1) przed renderem;
+`list --compact` pomija opisy (parametr `compact` API, bez zmiany reszty odpowiedzi), a `create --brief` i
+`update --brief` wypisują tylko `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by` i `blocks` (filtr po
+stronie klienta, table i csv pokazują relacje jako klucze po przecinku); odpowiedź bez tych pól to błąd kontraktu; `comment list`, `label list`
 i `ac list` pobierają wszystkie strony (`_common.fetch_all`) i wypisują płaską listę.
 
 Tekst opisu i komentarza można podać flagą, przez `-` (stdin) albo z pliku
@@ -25,7 +30,8 @@ from typing import Annotated, Any
 import typer
 
 from monolynx_cli.commands import _common
-from monolynx_cli.output import emit
+from monolynx_cli.options import OutputFormat, get_options
+from monolynx_cli.output import emit, resolve_format
 
 app = typer.Typer(no_args_is_help=True)
 comment_app = typer.Typer(no_args_is_help=True)
@@ -44,6 +50,17 @@ def _ticket_path(slug: str, ticket: str, suffix: str = "") -> str:
     return _common.project_path(slug, f"/tickets/{_common.path_segment(ticket)}{suffix}")
 
 
+def _blocker_keys(blockers: list[Any]) -> str:
+    return ", ".join(b["key"] for b in blockers)
+
+
+def _emit_brief(ctx: typer.Context, payload: Any) -> None:
+    brief = _common.require_brief_ticket(payload)
+    if resolve_format(get_options(ctx).output) in (OutputFormat.TABLE, OutputFormat.CSV):
+        brief = {**brief, "blocked_by": _blocker_keys(brief["blocked_by"]), "blocks": _blocker_keys(brief["blocks"])}
+    emit(ctx, brief)
+
+
 @app.command("list")
 def list_tickets(
     ctx: typer.Context,
@@ -56,8 +73,9 @@ def list_tickets(
     overdue: Annotated[bool, typer.Option("--overdue", help="Tylko przeterminowane.")] = False,
     label: Annotated[str | None, typer.Option("--label", help="ID etykiety.")] = None,
     page: _PAGE_OPT = None,
+    compact: Annotated[bool, typer.Option("--compact", help="Lista bez opisów ticketów (pole description pominięte).")] = False,
 ) -> None:
-    """Wypisz tickety projektu z filtrami."""
+    """Wypisz tickety projektu z filtrami; każdy ticket niesie blokery (blocked_by), z --compact bez opisów."""
     client, slug = _common.open_project(ctx)
     params = _common.without_none(
         {
@@ -69,11 +87,14 @@ def list_tickets(
             "due_date_after": due_after,
             "overdue": "true" if overdue else None,
             "label_id": label,
+            "compact": "true" if compact else None,
             "page": page,
         }
     )
     with client:
-        payload = client.get(_common.project_path(slug, "/tickets"), params=params)
+        payload = _common.require_list_with_blockers(client.get(_common.project_path(slug, "/tickets"), params=params))
+    if resolve_format(get_options(ctx).output) in (OutputFormat.TABLE, OutputFormat.CSV):
+        payload = {**payload, "items": [{**item, "blocked_by": _blocker_keys(item["blocked_by"])} for item in payload["items"]]}
     emit(ctx, payload)
 
 
@@ -110,10 +131,10 @@ def search_tickets(
 
 @app.command("get")
 def get_ticket(ctx: typer.Context, ticket: _TICKET_ARG) -> None:
-    """Pokaż szczegóły ticketu."""
+    """Pokaż szczegóły ticketu, w tym spec_page_id (null, gdy ticket nie ma strony specyfikacji)."""
     client, slug = _common.open_project(ctx)
     with client:
-        payload = client.get(_ticket_path(slug, ticket))
+        payload = _common.require_spec_page_id(client.get(_ticket_path(slug, ticket)))
     emit(ctx, payload)
 
 
@@ -132,8 +153,9 @@ def create_ticket(
     ac: Annotated[list[str] | None, typer.Option("--ac", help="Kryterium akceptacji; można powtarzać.")] = None,
     spec_page: Annotated[str | None, typer.Option("--spec-page", help="ID strony wiki ze specyfikacją.")] = None,
     blocked_by: Annotated[list[str] | None, typer.Option("--blocked-by", help="UUID ticketu blokującego; można powtarzać.")] = None,
+    brief: Annotated[bool, typer.Option("--brief", help="Wypisz tylko id, key, title, status, sprint_id, blocked_by i blocks.")] = False,
 ) -> None:
-    """Utwórz ticket."""
+    """Utwórz ticket; z --brief wypisuje tylko id, key, title, status, sprint_id i relacje."""
     text = _common.read_text_option(description, description_file, option="--description", file_option="--description-file")
     client, slug = _common.open_project(ctx)
     body = _common.without_none(
@@ -153,6 +175,9 @@ def create_ticket(
     )
     with client:
         payload = client.post(_common.project_path(slug, "/tickets"), json=body)
+    if brief:
+        _emit_brief(ctx, payload)
+        return
     emit(ctx, payload)
 
 
@@ -172,8 +197,9 @@ def update_ticket(
     label: Annotated[list[str] | None, typer.Option("--label", help="ID etykiety (zastępuje dotychczasowe); można powtarzać.")] = None,
     blocked_by: Annotated[list[str] | None, typer.Option("--blocked-by", help="UUID ticketu blokującego (nadpisuje); można powtarzać.")] = None,
     no_blockers: Annotated[bool, typer.Option("--no-blockers", help="Usuń wszystkie blokery.")] = False,
+    brief: Annotated[bool, typer.Option("--brief", help="Wypisz tylko id, key, title, status, sprint_id, blocked_by i blocks.")] = False,
 ) -> None:
-    """Zaktualizuj ticket; do API trafiają tylko podane pola."""
+    """Zaktualizuj ticket; do API trafiają tylko podane pola, z --brief wynik skrócony do pól identyfikujących i relacji."""
     if blocked_by and no_blockers:
         raise _common.usage_error("Podaj --blocked-by albo --no-blockers, nie oba naraz.")
     text = _common.read_text_option(description, description_file, option="--description", file_option="--description-file")
@@ -196,6 +222,9 @@ def update_ticket(
     client, slug = _common.open_project(ctx)
     with client:
         payload = client.patch(_ticket_path(slug, ticket), json=body)
+    if brief:
+        _emit_brief(ctx, payload)
+        return
     emit(ctx, payload)
 
 

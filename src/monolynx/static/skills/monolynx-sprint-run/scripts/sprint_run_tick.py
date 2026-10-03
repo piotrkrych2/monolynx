@@ -60,6 +60,13 @@ Podkomendy:
       do `sprint_run_state.build_report`/`sprint_run_backend.classify_normalized`
       (logika werdyktow poza zakresem tego ticketu - MON-191).
 
+      MON-252: backend "claude" przekazuje do `build_report` TICK_DIR jako
+      katalog stanu detektora zastoju i prog z MONOLYNX_SPRINT_STALL_TICKS
+      (domyslnie 2). Plik `TICK_DIR/stall.json` (hash ogona logu i licznik
+      tickow bez zmiany, na sesje) lezy OBOK `logs/`, bo ten katalog jest
+      czyszczony co tick. Zywa sesja bez postepu przez prog tickow dostaje
+      werdykt `waiting`. Backend "codex" nie zapisuje stall.json.
+
       `--backend` (MON-185, domyslnie "claude") wybiera zrodlo stanu. Dla
       "claude" zachowanie jest dokladnie dzisiejsze (`claude agents --json
       --all` + `claude logs <id>`). Dla "codex" zrodlem jest WYLACZNIE rejestr
@@ -770,7 +777,14 @@ def _cmd_state(argv: list[str]) -> int:
             continue
         _write_session_log(logs_dir, session_id)
 
-    report = sprint_run_state.build_report(args.slug, tickets, agents, logs_dir)
+    report = sprint_run_state.build_report(
+        args.slug,
+        tickets,
+        agents,
+        logs_dir,
+        state_dir=tick_dir,
+        stall_ticks=sprint_run_state.parse_stall_ticks(os.environ.get("MONOLYNX_SPRINT_STALL_TICKS")),
+    )
     _add_dispatch(report, args.slots, args.max_waiting)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0

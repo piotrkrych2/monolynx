@@ -1539,6 +1539,10 @@ READ_ALLOW_COMMANDS = {
     "cli-wiki-config-get": "monolynx -o json --project monolynx wiki config get",
     "cli-sprint-board": "monolynx -o json --project monolynx sprint board",
     "cli-sprint-burndown": "monolynx -o json --project monolynx sprint burndown",
+    "op-query-graph-risky": f'{OP_SCRIPT} query_graph --project_slug monolynx --search "git push origin main pytest"',
+    "op-find-graph-path": f"{OP_SCRIPT} find_graph_path --project_slug monolynx --source_id a --target_id b",
+    "cli-graph-query-risky": 'monolynx -o json --project monolynx graph query --search "git push origin main pytest"',
+    "cli-graph-stats": "monolynx -o json --project monolynx graph stats",
     "cli-project-summary": "monolynx -o json project summary monolynx",
     "mnx-ticket-list": "mnx -o json --project monolynx ticket list",
 }
@@ -1827,6 +1831,26 @@ class TestMonolynxHookMarkerAndReadOps:
 
         assert set(hook_read_ops_literal()) == set(wrapper.READ_OPS)
 
+    def test_graph_read_ops_are_listed_in_hook_and_wrapper_read_ops(self):
+        graph_read_ops = {"list_graph_nodes", "get_graph_node", "query_graph", "find_graph_path", "get_graph_stats"}
+        wrapper = load_op_module()
+
+        assert graph_read_ops <= set(hook_read_ops_literal()), sorted(graph_read_ops - set(hook_read_ops_literal()))
+        assert graph_read_ops <= set(wrapper.READ_OPS), sorted(graph_read_ops - set(wrapper.READ_OPS))
+
+    def test_graph_write_ops_are_not_in_hook_read_ops(self):
+        graph_writes = {
+            "create_graph_node",
+            "delete_graph_node",
+            "create_graph_edge",
+            "delete_graph_edge",
+            "bulk_create_graph_nodes",
+            "bulk_create_graph_edges",
+            "replace_graph",
+        }
+
+        assert graph_writes.isdisjoint(hook_read_ops_literal())
+
     def test_hook_read_ops_literal_is_a_non_empty_set_of_strings(self):
         literal = hook_read_ops_literal()
 
@@ -1886,3 +1910,612 @@ class TestMonolynxExemptionBoundaries:
     def test_valid_script_forms_pass_for_main_session(self, cmd):
         exit_code, decision = run_hook(bash_payload(cmd), env_extra=MAIN_SESSION)
         assert_allow(exit_code, decision)
+
+
+# ---------------------------------------------------------------------------
+# MON-249: jawny allow dla `git fetch origin <B>` i `git merge --ff-only origin/<B>`
+# ---------------------------------------------------------------------------
+
+FF_BRANCH = "develop"
+
+# Rola x dodatkowe env. SPRINT_RUN=1 zamienia "ask" na "deny", ale nie moze zmienic jawnego allow.
+FF_ROLES = {
+    "main": (MAIN_SESSION, {}),
+    "subagent": (SUBAGENT, {}),
+    "main-sprint-run": (MAIN_SESSION, {"MONOLYNX_SPRINT_RUN": "1"}),
+    "subagent-sprint-run": (SUBAGENT, {"MONOLYNX_SPRINT_RUN": "1"}),
+}
+FF_PLAIN_ROLES = {name: FF_ROLES[name] for name in ("main", "subagent")}
+
+
+def ff_forms(branch):
+    return {"fetch": f"git fetch origin {branch}", "merge": f"git merge --ff-only origin/{branch}"}
+
+
+def run_ff(cmd, agent, env=None, base=FF_BRANCH, mr_target=None):
+    """Uruchom hooka z MONOLYNX_BASE_BRANCH (domyslnie `develop`); `None` = zmienna nieustawiona.
+    run_hook nie dziedziczy os.environ, wiec brak zmiennej naprawde znaczy brak."""
+    env_vars = dict(env or {})
+    if base is not None:
+        env_vars["MONOLYNX_BASE_BRANCH"] = base
+    if mr_target is not None:
+        env_vars["MONOLYNX_MR_TARGET"] = mr_target
+    return run_hook(bash_payload(cmd, **agent), env_extra=env_vars)
+
+
+def assert_explicit_allow(exit_code, decision):
+    """Jawne allow (JSON z permissionDecision=allow). `assert_allow` sprawdza coś odwrotnego:
+    brak decyzji, czyli stan sprzed MON-249."""
+    assert exit_code == 0
+    assert decision is not None
+    output = decision["hookSpecificOutput"]
+    assert output["hookEventName"] == "PreToolUse"
+    assert output["permissionDecision"] == "allow"
+
+
+def assert_unchanged_decision(kind, exit_code, decision, subagent, sprint_run=False):
+    """Decyzja sprzed MON-249. "none" = brak decyzji (pusty stdout), co jednoczesnie dowodzi braku
+    jawnego allow. "git-write" = komenda trafia w istniejaca regule: subagent deny, sesja glowna
+    ask (bez flag AUTO*), a w sesji w tle (SPRINT_RUN=1) ask zamienia sie w deny."""
+    if kind == "none":
+        assert_allow(exit_code, decision)
+    elif subagent or sprint_run:
+        assert_deny(exit_code, decision)
+    else:
+        assert_ask(exit_code, decision)
+
+
+# Komendy bliskie wyjatkowi, ktore MAJA zostac starym regulom. Wszystkie dla MONOLYNX_BASE_BRANCH=develop.
+FF_REJECTED = {
+    "other-branch-merge": ("none", "git merge --ff-only origin/main"),
+    "other-branch-fetch": ("none", "git fetch origin main"),
+    "branch-prefix-merge": ("none", "git merge --ff-only origin/develop2"),
+    "branch-prefix-fetch": ("none", "git fetch origin develop2"),
+    "branch-suffix-merge": ("none", "git merge --ff-only origin/xdevelop"),
+    "branch-suffix-fetch": ("none", "git fetch origin xdevelop"),
+    "merge-without-origin": ("none", "git merge --ff-only develop"),
+    "fetch-other-remote": ("none", "git fetch upstream develop"),
+    "merge-other-remote": ("none", "git merge --ff-only upstream/develop"),
+    "merge-without-ff-only": ("none", "git merge origin/develop"),
+    "merge-no-ff": ("none", "git merge --no-ff origin/develop"),
+    "merge-squash": ("none", "git merge --squash origin/develop"),
+    "merge-ff-only-and-no-ff": ("none", "git merge --ff-only --no-ff origin/develop"),
+    "merge-no-ff-and-ff-only": ("none", "git merge --no-ff --ff-only origin/develop"),
+    "merge-strategy-ours": ("none", "git merge --ff-only -s ours origin/develop"),
+    "merge-strategy-ours-without-ff-only": ("none", "git merge -s ours origin/develop"),
+    "merge-strategy-option-theirs": ("none", "git merge --ff-only -X theirs origin/develop"),
+    "merge-extra-flag": ("none", "git merge --ff-only origin/develop --no-edit"),
+    "merge-second-ref": ("none", "git merge --ff-only origin/develop origin/main"),
+    "fetch-second-ref": ("none", "git fetch origin develop main"),
+    "fetch-extra-word": ("none", "git fetch origin develop extra"),
+    "fetch-refspec": ("none", "git fetch origin develop:develop"),
+    "fetch-forced-refspec": ("none", "git fetch origin +develop:develop"),
+    "fetch-upload-pack": ("none", "git fetch --upload-pack=x origin develop"),
+    "fetch-trailing-prune": ("none", "git fetch origin develop --prune"),
+    "fetch-leading-prune": ("none", "git fetch --prune origin develop"),
+    "merge-with-C": ("none", "git -C /x merge --ff-only origin/develop"),
+    "fetch-with-C": ("none", "git -C /x fetch origin develop"),
+    "merge-with-c": ("none", "git -c k=v merge --ff-only origin/develop"),
+    "fetch-with-c": ("none", "git -c k=v fetch origin develop"),
+    "semicolon": ("none", "git fetch origin develop; git merge --ff-only origin/develop"),
+    "and-and": ("none", "git fetch origin develop && git merge --ff-only origin/develop"),
+    "or-or": ("none", "git fetch origin develop || git merge --ff-only origin/develop"),
+    "pipe": ("none", "git fetch origin develop | cat"),
+    "background": ("none", "git fetch origin develop & git merge --ff-only origin/develop"),
+    "newline-between-commands": ("none", "git fetch origin develop\ngit merge --ff-only origin/develop"),
+    "carriage-return-between-commands": ("none", "git fetch origin develop\rgit merge --ff-only origin/develop"),
+    # Tokeny po split() sa dokladnie te same, ale shell wykonalby kazda linie osobno.
+    "fetch-newline-as-separator": ("none", "git fetch\norigin\ndevelop"),
+    "fetch-carriage-return-as-separator": ("none", "git fetch\rorigin\rdevelop"),
+    "merge-newline-as-separator": ("none", "git merge\n--ff-only\norigin/develop"),
+    "merge-carriage-return-as-separator": ("none", "git merge\r--ff-only\rorigin/develop"),
+    "variable-in-fetch": ("none", "git fetch origin $BASE"),
+    "variable-in-merge": ("none", "git merge --ff-only origin/$BASE"),
+    "command-substitution": ("none", "git fetch origin $(echo develop)"),
+    "backtick": ("none", "git fetch origin `echo develop`"),
+    "tilde": ("none", "git fetch origin ~develop"),
+    "double-quoted-merge-ref": ("none", 'git merge --ff-only "origin/develop"'),
+    "single-quoted-merge-ref": ("none", "git merge --ff-only 'origin/develop'"),
+    "double-quoted-fetch-ref": ("none", 'git fetch origin "develop"'),
+    "single-quoted-fetch-ref": ("none", "git fetch origin 'develop'"),
+    "redirect-out": ("none", "git fetch origin develop > /tmp/out.txt"),
+    "redirect-in": ("none", "git merge --ff-only origin/develop < in.txt"),
+    "glob-star": ("none", "git fetch origin dev*"),
+    "glob-star-merge": ("none", "git merge --ff-only origin/dev*"),
+    "glob-question": ("none", "git fetch origin develo?"),
+    "glob-bracket": ("none", "git fetch origin [d]evelop"),
+    "brace": ("none", "git fetch origin {develop,main}"),
+    "parenthesis": ("none", "git fetch origin (develop)"),
+    "backslash": ("none", "git fetch origin develo\\p"),
+    "pull": ("none", "git pull origin develop"),
+    "pull-ff-only": ("none", "git pull --ff-only origin develop"),
+    "checkout": ("none", "git checkout origin/develop"),
+    "reset-hard": ("git-write", "git reset --hard origin/develop"),
+    "rebase": ("git-write", "git rebase origin/develop"),
+    "push": ("git-write", "git push origin develop"),
+    "push-force": ("git-write", "git push --force origin develop"),
+    "merge-then-push": ("git-write", "git merge --ff-only origin/develop && git push origin develop"),
+    "fetch-then-push": ("git-write", "git fetch origin develop ; git push origin develop"),
+    "fetch-newline-push": ("git-write", "git fetch origin develop\ngit push origin develop"),
+    "merge-then-reset": ("git-write", "git merge --ff-only origin/develop && git reset --hard origin/develop"),
+}
+
+# Wartosci <B>, ktorych komenda (zbudowana z tej wartosci, wiec tokeny pasuja) nie moze dostac wyjatku.
+FF_INVALID_BRANCHES = {
+    "leading-dash": "-x",
+    "space": "a b",
+    "dotdot": "a..b",
+    "dotdot-after-slash": "dev/../x",
+    "colon": "a:b",
+    "semicolon": "a;b",
+    "pipe": "a|b",
+    "ampersand": "a&b",
+    "dollar": "a$b",
+    "tilde": "a~b",
+    "star": "a*b",
+    "question": "a?b",
+    "bracket": "a[b",
+    "brace": "a{b",
+    "paren-open": "a(b",
+    "paren-close": "a)b",
+    "double-quote": 'a"b',
+    "single-quote": "a'b",
+    "backtick": "a`b",
+    "less-than": "a<b",
+    "greater-than": "a>b",
+    "backslash": "a\\b",
+    "leading-dot": ".dev",
+    "leading-slash": "/dev",
+    "leading-underscore": "_dev",
+}
+
+
+@pytest.mark.unit
+class TestFfOnlyExplicitAllow:
+    """Jawne allow dla DOKLADNIE `git fetch origin <B>` i `git merge --ff-only origin/<B>`."""
+
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("role", list(FF_ROLES), ids=list(FF_ROLES))
+    def test_exact_form_gets_explicit_allow(self, role, form):
+        agent, env = FF_ROLES[role]
+        exit_code, decision = run_ff(ff_forms(FF_BRANCH)[form], agent, env)
+        assert_explicit_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("branch", ["develop", "sprint/fix-uprawnien", "release-1.2_x", "a"])
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_branch_shapes_get_explicit_allow(self, role, branch, form):
+        agent, env = FF_PLAIN_ROLES[role]
+        exit_code, decision = run_ff(ff_forms(branch)[form], agent, env, base=branch)
+        assert_explicit_allow(exit_code, decision)
+
+    @pytest.mark.parametrize(
+        ("base", "mr_target", "branch"),
+        [
+            (None, "develop", "develop"),
+            (None, "sprint/fix-uprawnien", "sprint/fix-uprawnien"),
+            ("", "develop", "develop"),
+            ("   ", "develop", "develop"),
+            ("develop", "develop", "develop"),
+            ("develop", "", "develop"),
+            ("  develop  ", None, "develop"),
+        ],
+        ids=["base-unset", "base-unset-slash-branch", "base-empty", "base-whitespace", "both-equal", "mr-target-empty", "base-padded"],
+    )
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_branch_resolution_gets_explicit_allow(self, role, form, base, mr_target, branch):
+        agent, env = FF_PLAIN_ROLES[role]
+        exit_code, decision = run_ff(ff_forms(branch)[form], agent, env, base=base, mr_target=mr_target)
+        assert_explicit_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_surrounding_whitespace_still_gets_explicit_allow(self, role, form):
+        agent, env = FF_PLAIN_ROLES[role]
+        cmd = f"   {ff_forms(FF_BRANCH)[form]}   "
+        exit_code, decision = run_ff(cmd, agent, env)
+        assert_explicit_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_repeated_inner_spaces_still_get_explicit_allow(self, role):
+        agent, env = FF_PLAIN_ROLES[role]
+        for cmd in ("git  fetch   origin  develop", "git   merge  --ff-only   origin/develop"):
+            exit_code, decision = run_ff(cmd, agent, env)
+            assert_explicit_allow(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestFfOnlyExceptionStaysNarrow:
+    """Wszystko poza dwiema dokladnymi formami zachowuje sie jak przed zmiana."""
+
+    @pytest.mark.parametrize("case", list(FF_REJECTED), ids=list(FF_REJECTED))
+    def test_rejected_form_keeps_previous_decision_for_main_session(self, case):
+        kind, cmd = FF_REJECTED[case]
+        exit_code, decision = run_ff(cmd, MAIN_SESSION)
+        assert_unchanged_decision(kind, exit_code, decision, subagent=False)
+
+    @pytest.mark.parametrize("case", list(FF_REJECTED), ids=list(FF_REJECTED))
+    def test_rejected_form_keeps_previous_decision_for_subagent(self, case):
+        kind, cmd = FF_REJECTED[case]
+        exit_code, decision = run_ff(cmd, SUBAGENT)
+        assert_unchanged_decision(kind, exit_code, decision, subagent=True)
+
+    @pytest.mark.parametrize("case", list(FF_REJECTED), ids=list(FF_REJECTED))
+    def test_rejected_form_keeps_previous_decision_in_sprint_run_main(self, case):
+        kind, cmd = FF_REJECTED[case]
+        exit_code, decision = run_ff(cmd, MAIN_SESSION, {"MONOLYNX_SPRINT_RUN": "1"})
+        assert_unchanged_decision(kind, exit_code, decision, subagent=False, sprint_run=True)
+
+    @pytest.mark.parametrize("case", list(FF_REJECTED), ids=list(FF_REJECTED))
+    def test_rejected_form_keeps_previous_decision_in_sprint_run_subagent(self, case):
+        kind, cmd = FF_REJECTED[case]
+        exit_code, decision = run_ff(cmd, SUBAGENT, {"MONOLYNX_SPRINT_RUN": "1"})
+        assert_unchanged_decision(kind, exit_code, decision, subagent=True, sprint_run=True)
+
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("branch", list(FF_INVALID_BRANCHES.values()), ids=list(FF_INVALID_BRANCHES))
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_invalid_branch_name_gets_no_exception(self, role, branch, form):
+        agent, env = FF_PLAIN_ROLES[role]
+        exit_code, decision = run_ff(ff_forms(branch)[form], agent, env, base=branch)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("branch", ["-x", "a..b", "a:b"], ids=["leading-dash", "dotdot", "colon"])
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_invalid_branch_from_mr_target_fallback_gets_no_exception(self, role, branch, form):
+        agent, env = FF_PLAIN_ROLES[role]
+        exit_code, decision = run_ff(ff_forms(branch)[form], agent, env, base=None, mr_target=branch)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_no_branch_variable_gets_no_exception(self, role, form):
+        agent, env = FF_PLAIN_ROLES[role]
+        exit_code, decision = run_ff(ff_forms(FF_BRANCH)[form], agent, env, base=None)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_blank_branch_variables_get_no_exception(self, role, form):
+        agent, env = FF_PLAIN_ROLES[role]
+        exit_code, decision = run_ff(ff_forms(FF_BRANCH)[form], agent, env, base="  ", mr_target="")
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("branch", ["develop", "main"])
+    @pytest.mark.parametrize("form", ["fetch", "merge"])
+    @pytest.mark.parametrize("role", list(FF_PLAIN_ROLES), ids=list(FF_PLAIN_ROLES))
+    def test_conflicting_branch_variables_get_no_exception(self, role, form, branch):
+        """Preflight sprint-run traktuje rozbiezne BASE_BRANCH i MR_TARGET jako blad konfiguracji,
+        wiec zadna z dwoch galezi nie moze dostac allow."""
+        agent, env = FF_PLAIN_ROLES[role]
+        exit_code, decision = run_ff(ff_forms(branch)[form], agent, env, base="develop", mr_target="main")
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("flag", ["MONOLYNX_AUTOPUSH", "MONOLYNX_AUTOTEST", "MONOLYNX_AUTOMERGE"])
+    def test_auto_flags_keep_explicit_allow_for_exact_form(self, flag):
+        exit_code, decision = run_ff(ff_forms(FF_BRANCH)["merge"], MAIN_SESSION, {flag: "true"})
+        assert_explicit_allow(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestFfOnlyExceptionDoesNotLoosenGitWrite:
+    """Ustawiony MONOLYNX_BASE_BRANCH nie luzuje push/reset/rebase na tym samym branchu."""
+
+    @pytest.mark.parametrize("cmd", ["git push origin develop", "git push --force origin develop", "git push"], ids=["push", "force", "bare"])
+    def test_push_to_base_branch_is_denied_for_subagent(self, cmd):
+        exit_code, decision = run_ff(cmd, SUBAGENT)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", ["git push origin develop", "git push --force origin develop", "git push"], ids=["push", "force", "bare"])
+    def test_push_to_base_branch_asks_main_session(self, cmd):
+        exit_code, decision = run_ff(cmd, MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    def test_push_to_base_branch_is_denied_in_sprint_run(self):
+        exit_code, decision = run_ff("git push origin develop", MAIN_SESSION, {"MONOLYNX_SPRINT_RUN": "1"})
+        assert_deny(exit_code, decision)
+
+    def test_autopush_keeps_push_without_decision(self):
+        """Stare zachowanie przy AUTOPUSH=true to brak decyzji; wyjatek MON-249 nie dodaje tu jawnego allow."""
+        exit_code, decision = run_ff("git push origin develop", MAIN_SESSION, {"MONOLYNX_AUTOPUSH": "true"})
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", ["git reset --hard origin/develop", "git rebase origin/develop"], ids=["reset-hard", "rebase"])
+    def test_reset_and_rebase_onto_base_branch_are_denied_for_subagent(self, cmd):
+        exit_code, decision = run_ff(cmd, SUBAGENT)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", ["git reset --hard origin/develop", "git rebase origin/develop"], ids=["reset-hard", "rebase"])
+    def test_reset_and_rebase_onto_base_branch_ask_main_session(self, cmd):
+        exit_code, decision = run_ff(cmd, MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+
+# MON-251: wrapper `test_lock.py` (kolejka testow miedzy worktree). Hook rozpakowuje PROSTA forme
+# `python3 <dir>/scripts/test_lock.py [--timeout N] -- <komenda>` i ocenia owinieta komende tak,
+# jakby byla wywolana bez wrappera; kazda inna forma wraca do starych regul na calym stringu.
+LOCK_SCRIPT = f"python3 {SKILL_SCRIPTS}/test_lock.py"
+LOCK_PREFIXES = {"plain": f"{LOCK_SCRIPT} -- ", "timeout": f"{LOCK_SCRIPT} --timeout 120 -- "}
+COMPOSE_PYTEST = (
+    "docker compose -p monolynx --profile dev run --rm --no-deps -v /abs/path:/app app pytest tests/ --cov=src/monolynx --cov-report=term"
+)
+RUFF_READONLY = "ruff check --no-fix src/"
+
+# W tym hooku "allow" i "brak decyzji" to to samo wyjscie, wiec rownowaznosc bare == wrapper
+# zabija zarowno mutanta "wrapper zawsze allow", jak i "wrapper zawsze deny" (komendy neutralne).
+EQUIVALENCE_COMMANDS = {
+    "pytest": "pytest tests/",
+    "pytest-verbose": "pytest tests/ -v",
+    "compose-pytest": COMPOSE_PYTEST,
+    "mypy": "mypy src/",
+    "ruff-readonly": RUFF_READONLY,
+    "ruff-bare": "ruff check src/",
+    "ruff-format-check": "ruff format --check src/",
+    "compose-exec-ruff-readonly": "docker compose exec -T app ruff check --no-fix src/",
+    "git-push": "git push origin x",
+    "git-commit": "git commit -m x",
+    "git-reset-hard": "git reset --hard",
+    "rm-rf-root": "rm -rf /",
+    "docker-rm": "docker rm -f db",
+    "glab-merge": "glab mr merge 5",
+    "glab-approve": "glab mr approve 5",
+    "echo": "echo ok",
+    "ls": "ls",
+    "rm-f-tmp-pytest-log": "rm -f /tmp/pytest.log",
+    "rm-f-tmp-x-log": "rm -f /tmp/x.log",
+}
+
+EQUIVALENCE_CONTEXTS = {
+    "subagent": (SUBAGENT, {}),
+    "main": (MAIN_SESSION, {}),
+    "main-autotest": (MAIN_SESSION, {"MONOLYNX_AUTOTEST": "true"}),
+    "main-sprint-run": (MAIN_SESSION, {"MONOLYNX_SPRINT_RUN": "1"}),
+    "main-all-flags": (MAIN_SESSION, {**ALL_AUTO_FLAGS, "MONOLYNX_AUTOMERGE": "true"}),
+}
+
+# Skladnia powloki w czesci wrappera (przed `--`) albo przed nim: komenda w srodku jest sama w sobie
+# poprawna i dla subagenta dostalaby allow, wiec tylko fail-closed na CALYM stringu daje deny/ask.
+LOCK_PREFIX_INJECTIONS = {
+    "dollar-in-timeout": f"{LOCK_SCRIPT} --timeout $T -- {{inner}}",
+    "command-substitution-in-timeout": f"{LOCK_SCRIPT} --timeout $(echo 5) -- {{inner}}",
+    "backtick-in-timeout": f"{LOCK_SCRIPT} --timeout `echo 5` -- {{inner}}",
+    "redirect-before-dashdash": f"{LOCK_SCRIPT} --timeout 5 > out.txt -- {{inner}}",
+    "glob-star-in-timeout": f"{LOCK_SCRIPT} --timeout 5* -- {{inner}}",
+    "glob-question-in-timeout": f"{LOCK_SCRIPT} --timeout 5? -- {{inner}}",
+    "bracket-in-timeout": f"{LOCK_SCRIPT} --timeout [5] -- {{inner}}",
+    "brace-in-timeout": f"{LOCK_SCRIPT} --timeout {{{{5}}}} -- {{inner}}",
+    "paren-in-timeout": f"{LOCK_SCRIPT} --timeout (5) -- {{inner}}",
+    "tilde-in-script-path": "python3 ~/x/scripts/test_lock.py -- {inner}",
+    "glob-in-script-path": f"python3 {SKILL_SCRIPTS}/*test_lock.py -- {{inner}}",
+    "semicolon-before-wrapper": f"true ; {LOCK_SCRIPT} -- {{inner}}",
+    "and-before-wrapper": f"ls && {LOCK_SCRIPT} -- {{inner}}",
+    "background-before-wrapper": f"ls & {LOCK_SCRIPT} -- {{inner}}",
+    "pipe-before-wrapper": f"echo x | {LOCK_SCRIPT} -- {{inner}}",
+    "newline-before-wrapper": f"echo hi\n{LOCK_SCRIPT} -- {{inner}}",
+    "carriage-return-before-wrapper": f"echo hi\r{LOCK_SCRIPT} -- {{inner}}",
+}
+
+LOCK_TRAILING_INJECTIONS = {
+    "semicolon": "; git push origin main",
+    "and-and": "&& ls",
+    "background": "& ls",
+    "pipe": "| cat",
+    "redirect-out": "> out.txt",
+    "redirect-in": "< in.txt",
+    "command-substitution": "$(ls)",
+    "backtick": "`ls`",
+    "dollar-variable": "$HOME",
+    "tilde": "~/x",
+    "glob-star": "*.py",
+    "glob-question": "?.py",
+    "bracket": "a[1",
+    "brace": "a{1",
+    "paren-open": "a(1",
+    "paren-close": "a)1",
+    "newline": "\nls",
+    "carriage-return": "\rls",
+}
+
+LOCK_INNERS = {"pytest": "pytest tests/", "ruff-readonly": RUFF_READONLY}
+
+# Forma wrappera, ktora NIE jest prosta: brak `--`, obca flaga, skrypt o innej nazwie albo poza `scripts`.
+LOCK_MALFORMED = {
+    "missing-dashdash": f"{LOCK_SCRIPT} {RUFF_READONLY}",
+    "missing-dashdash-after-timeout": f"{LOCK_SCRIPT} --timeout 5 {RUFF_READONLY}",
+    "unknown-flag": f"{LOCK_SCRIPT} --bogus -- {RUFF_READONLY}",
+    "unknown-flag-after-timeout": f"{LOCK_SCRIPT} --timeout 5 --bogus -- {RUFF_READONLY}",
+    "short-flag": f"{LOCK_SCRIPT} -t 5 -- {RUFF_READONLY}",
+    "timeout-letters": f"{LOCK_SCRIPT} --timeout abc -- {RUFF_READONLY}",
+    "timeout-negative": f"{LOCK_SCRIPT} --timeout -5 -- {RUFF_READONLY}",
+    "timeout-fractional": f"{LOCK_SCRIPT} --timeout 1.5 -- {RUFF_READONLY}",
+    "timeout-unit-suffix": f"{LOCK_SCRIPT} --timeout 5s -- {RUFF_READONLY}",
+    "double-wrapper-readonly-inside": f"{LOCK_SCRIPT} -- {LOCK_SCRIPT} -- {RUFF_READONLY}",
+    "double-wrapper-with-timeout": f"{LOCK_SCRIPT} --timeout 5 -- {LOCK_SCRIPT} --timeout 5 -- {RUFF_READONLY}",
+    "prefixed-name": f"python3 {SKILL_SCRIPTS}/notest_lock.py -- {RUFF_READONLY}",
+    "bak-suffix": f"python3 {SKILL_SCRIPTS}/test_lock.py.bak -- {RUFF_READONLY}",
+    "pyc-suffix": f"python3 {SKILL_SCRIPTS}/test_lock.pyc -- {RUFF_READONLY}",
+    "other-name-in-scripts-dir": f"python3 {SKILL_SCRIPTS}/other.py -- {RUFF_READONLY}",
+    "no-scripts-dir": f"python3 /x/test_lock.py -- {RUFF_READONLY}",
+    "script-dir-singular": f"python3 /x/script/test_lock.py -- {RUFF_READONLY}",
+    "script-dir-suffixed": f"python3 /x/scripts2/test_lock.py -- {RUFF_READONLY}",
+    "dotdot-in-path": f"python3 /a/../scripts/test_lock.py -- {RUFF_READONLY}",
+    "dotdot-leading": f"python3 ../scripts/test_lock.py -- {RUFF_READONLY}",
+    "script-only-mentioned": f"python3 /x/evil.py test_lock.py -- {RUFF_READONLY}",
+    "echo-lookalike": f"echo test_lock.py -- {RUFF_READONLY}",
+    "cat-lookalike": f"cat {SKILL_SCRIPTS}/test_lock.py -- {RUFF_READONLY}",
+    "python3-dash-c": f'python3 -c "test_lock.py" -- {RUFF_READONLY}',
+}
+
+
+def hook_decision(cmd, agent, env_extra):
+    return run_hook(bash_payload(cmd, **agent), env_extra=env_extra)
+
+
+@pytest.mark.unit
+class TestTestLockWrapperSubagent:
+    """Wrapper + komenda: decyzja jak dla golej komendy (subagent)."""
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize("inner", ["pytest tests/", COMPOSE_PYTEST], ids=["pytest", "compose-pytest"])
+    def test_wrapped_pytest_is_denied(self, prefix, inner):
+        exit_code, decision = hook_decision(prefix + inner, SUBAGENT, MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="subagent")
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize(
+        "inner",
+        [RUFF_READONLY, "ruff format --check src/", "docker compose exec -T app ruff check --no-fix src/"],
+        ids=["ruff-check", "ruff-format-check", "compose-exec-ruff-check"],
+    )
+    def test_wrapped_readonly_ruff_is_allowed(self, prefix, inner):
+        exit_code, decision = hook_decision(prefix + inner, SUBAGENT, MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_ruff_without_no_fix_is_denied(self, prefix):
+        exit_code, decision = hook_decision(prefix + "ruff check src/", SUBAGENT, MAIN_SESSION)
+        assert_deny(exit_code, decision, reason_substr="subagent")
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize("inner", ["git push origin x", "git commit -m x"], ids=["push", "commit"])
+    def test_wrapped_git_write_is_denied(self, prefix, inner):
+        exit_code, decision = hook_decision(prefix + inner, SUBAGENT, MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_destructive_command_is_denied(self, prefix):
+        exit_code, decision = hook_decision(prefix + "rm -rf /", SUBAGENT, MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize("inner", ["echo ok", "ls"])
+    def test_wrapped_neutral_command_has_no_decision(self, prefix, inner):
+        exit_code, decision = hook_decision(prefix + inner, SUBAGENT, MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestTestLockWrapperMainSession:
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize("inner", ["pytest tests/", COMPOSE_PYTEST], ids=["pytest", "compose-pytest"])
+    def test_wrapped_pytest_asks_without_autotest(self, prefix, inner):
+        exit_code, decision = hook_decision(prefix + inner, MAIN_SESSION, MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize("inner", ["pytest tests/", COMPOSE_PYTEST], ids=["pytest", "compose-pytest"])
+    def test_wrapped_pytest_is_allowed_with_autotest(self, prefix, inner):
+        exit_code, decision = hook_decision(prefix + inner, MAIN_SESSION, {"MONOLYNX_AUTOTEST": "true"})
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_pytest_in_sprint_run_without_autotest_is_denied(self, prefix):
+        exit_code, decision = hook_decision(prefix + "pytest tests/", MAIN_SESSION, {"MONOLYNX_SPRINT_RUN": "1"})
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_pytest_in_sprint_run_with_autotest_is_allowed(self, prefix):
+        exit_code, decision = hook_decision(prefix + "pytest tests/", MAIN_SESSION, {"MONOLYNX_SPRINT_RUN": "1", "MONOLYNX_AUTOTEST": "true"})
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_readonly_ruff_asks_without_autotest(self, prefix):
+        exit_code, decision = hook_decision(prefix + RUFF_READONLY, MAIN_SESSION, MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_readonly_ruff_is_allowed_with_autotest(self, prefix):
+        exit_code, decision = hook_decision(prefix + RUFF_READONLY, MAIN_SESSION, {"MONOLYNX_AUTOTEST": "true"})
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_git_push_asks_without_autopush(self, prefix):
+        exit_code, decision = hook_decision(prefix + "git push origin x", MAIN_SESSION, MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOPUSH")
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_git_push_is_allowed_with_autopush(self, prefix):
+        exit_code, decision = hook_decision(prefix + "git push origin x", MAIN_SESSION, {"MONOLYNX_AUTOPUSH": "true"})
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    def test_wrapped_git_commit_passes_through(self, prefix):
+        exit_code, decision = hook_decision(prefix + "git commit -m x", MAIN_SESSION, MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize("inner", ["echo ok", "ls"])
+    def test_wrapped_neutral_command_has_no_decision(self, prefix, inner):
+        exit_code, decision = hook_decision(prefix + inner, MAIN_SESSION, MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize("agent", [SUBAGENT, MAIN_SESSION], ids=["subagent", "main"])
+    def test_wrapped_tmp_log_cleanup_has_no_decision_despite_test_word_in_name(self, prefix, agent):
+        exit_code, decision = hook_decision(prefix + "rm -f /tmp/pytest.log", agent, MAIN_SESSION)
+        assert_allow(exit_code, decision)
+
+
+@pytest.mark.unit
+class TestTestLockWrapperEquivalence:
+    """Decyzja dla wrappera == decyzja dla golej komendy, w kazdym kontekscie."""
+
+    @pytest.mark.parametrize("prefix", list(LOCK_PREFIXES.values()), ids=list(LOCK_PREFIXES))
+    @pytest.mark.parametrize("context", list(EQUIVALENCE_CONTEXTS.values()), ids=list(EQUIVALENCE_CONTEXTS))
+    @pytest.mark.parametrize("bare", list(EQUIVALENCE_COMMANDS.values()), ids=list(EQUIVALENCE_COMMANDS))
+    def test_wrapper_decision_equals_bare_command_decision(self, bare, context, prefix):
+        agent, env_extra = context
+        bare_result = hook_decision(bare, agent, env_extra)
+        wrapped_result = hook_decision(prefix + bare, agent, env_extra)
+
+        assert wrapped_result == bare_result
+
+
+@pytest.mark.unit
+class TestTestLockWrapperFailClosed:
+    """Wrapper nie jest furtka: nie-prosta forma nie jest rozpakowywana, stare reguly oceniaja caly string."""
+
+    @pytest.mark.parametrize("inner", list(LOCK_INNERS.values()), ids=list(LOCK_INNERS))
+    @pytest.mark.parametrize("template", list(LOCK_PREFIX_INJECTIONS.values()), ids=list(LOCK_PREFIX_INJECTIONS))
+    def test_shell_syntax_around_wrapper_is_denied_for_subagent(self, template, inner):
+        exit_code, decision = hook_decision(template.format(inner=inner), SUBAGENT, MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("inner", list(LOCK_INNERS.values()), ids=list(LOCK_INNERS))
+    @pytest.mark.parametrize("template", list(LOCK_PREFIX_INJECTIONS.values()), ids=list(LOCK_PREFIX_INJECTIONS))
+    def test_shell_syntax_around_wrapper_asks_main_session(self, template, inner):
+        exit_code, decision = hook_decision(template.format(inner=inner), MAIN_SESSION, MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+    @pytest.mark.parametrize("inner", list(LOCK_INNERS.values()), ids=list(LOCK_INNERS))
+    @pytest.mark.parametrize("suffix", list(LOCK_TRAILING_INJECTIONS.values()), ids=list(LOCK_TRAILING_INJECTIONS))
+    def test_shell_syntax_after_wrapped_command_is_denied_for_subagent(self, suffix, inner):
+        exit_code, decision = hook_decision(f"{LOCK_SCRIPT} -- {inner} {suffix}", SUBAGENT, MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("inner", list(LOCK_INNERS.values()), ids=list(LOCK_INNERS))
+    @pytest.mark.parametrize("suffix", list(LOCK_TRAILING_INJECTIONS.values()), ids=list(LOCK_TRAILING_INJECTIONS))
+    def test_shell_syntax_after_wrapped_command_asks_main_session(self, suffix, inner):
+        exit_code, decision = hook_decision(f"{LOCK_SCRIPT} -- {inner} {suffix}", MAIN_SESSION, MAIN_SESSION)
+        assert_ask(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(LOCK_MALFORMED.values()), ids=list(LOCK_MALFORMED))
+    def test_malformed_wrapper_is_denied_for_subagent(self, cmd):
+        exit_code, decision = hook_decision(cmd, SUBAGENT, MAIN_SESSION)
+        assert_deny(exit_code, decision)
+
+    @pytest.mark.parametrize("cmd", list(LOCK_MALFORMED.values()), ids=list(LOCK_MALFORMED))
+    def test_malformed_wrapper_asks_main_session(self, cmd):
+        exit_code, decision = hook_decision(cmd, MAIN_SESSION, MAIN_SESSION)
+        assert_ask(exit_code, decision, reason_substr="AUTOTEST")
+
+    @pytest.mark.parametrize("cmd", list(LOCK_MALFORMED.values()), ids=list(LOCK_MALFORMED))
+    def test_malformed_wrapper_is_not_unlocked_by_autotest_for_subagent(self, cmd):
+        exit_code, decision = hook_decision(cmd, SUBAGENT, {"MONOLYNX_AUTOTEST": "true"})
+        assert_deny(exit_code, decision)
+
+    def test_chained_destructive_command_after_wrapper_is_still_denied_for_subagent(self):
+        exit_code, decision = hook_decision(f"{LOCK_SCRIPT} -- ls ; rm -rf /", SUBAGENT, MAIN_SESSION)
+        assert_deny(exit_code, decision)

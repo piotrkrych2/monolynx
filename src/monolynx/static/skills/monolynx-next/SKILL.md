@@ -83,14 +83,14 @@ python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJE
 
 Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
 
+Tryb zwiezly: `--compact true` przy `list_tickets`, gdy lista sluzy do przegladu statusow i blokerow bez czytania opisow (elementy bez pola `description`), oraz `--brief true` przy `create_ticket` i `update_ticket`, gdy po zapisie nie czytasz opisu (wynik to tylko pola `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by`, `blocks`). `compact` i `brief` to parametry wrappera, a nie tooli MCP: przy `mode=mcp` i przy fallbacku (kod 3) wywolujesz tool MCP bez nich. Wrapper sam niczego nie skraca - bez tych flag wynik jest pelny.
+
 Kody wyjscia wrappera:
 
 - `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
-- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami, z pominieciem parametrow wrappera `compact` i `brief` (tool MCP ich nie ma); jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, zapis grafu, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
 - `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
 - `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
-
-`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
 
 Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
 <!-- /shared:transport -->
@@ -126,8 +126,10 @@ i `content`, a blokery ticketu to lista `blocked_by` (elementy `key`,
   `done` i pozostałe statusy. Nie licz `in_review` jako zakończonego sprintu.
 - Ticket z brancha pobierz przez `get_ticket(project_slug, ticket_id)`.
   `in_progress` potwierdza rekomendację `resume`, niezależnie od sprintu.
-- Zależności czytaj wyłącznie z `get_ticket`: `list_tickets`, `get_board`
-  i `search_tickets` nie zwracają blokerów. Sekcja `## Blokery (relacja)`
+- Zależności czytaj wyłącznie z `get_ticket`: `get_board` i `search_tickets`
+  nie zwracają blokerów, a tabela MCP `list_tickets` ma w kolumnie
+  `Blocked by` same klucze, bez statusu blokera (przy `mode=cli` elementy
+  listy niosą `blocked_by`). Sekcja `## Blokery (relacja)`
   pojawia się w wyniku tylko przy relacjach, poza `## Description` (sekcja
   `## Zaleznosci` w opisie ticketu to proza szablonu `ticket-create`, nie
   relacja - pomijasz ją); linie `Blokowany przez: <KEY> | <status> | <tytuł>`

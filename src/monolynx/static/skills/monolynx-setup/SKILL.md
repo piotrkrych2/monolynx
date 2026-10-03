@@ -72,14 +72,14 @@ python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJE
 
 Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
 
+Tryb zwiezly: `--compact true` przy `list_tickets`, gdy lista sluzy do przegladu statusow i blokerow bez czytania opisow (elementy bez pola `description`), oraz `--brief true` przy `create_ticket` i `update_ticket`, gdy po zapisie nie czytasz opisu (wynik to tylko pola `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by`, `blocks`). `compact` i `brief` to parametry wrappera, a nie tooli MCP: przy `mode=mcp` i przy fallbacku (kod 3) wywolujesz tool MCP bez nich. Wrapper sam niczego nie skraca - bez tych flag wynik jest pelny.
+
 Kody wyjscia wrappera:
 
 - `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
-- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami, z pominieciem parametrow wrappera `compact` i `brief` (tool MCP ich nie ma); jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, zapis grafu, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
 - `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
 - `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
-
-`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
 
 Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
 <!-- /shared:transport -->
@@ -125,11 +125,24 @@ mcp__monolynx__get_wiki_page(project_slug="<PROJECT-SLUG>", page_id="<id>")
   dopasowanie, tak jak je zapisuje `/monolynx:project-toolchain`). Sekcja
   `## Mutacje` z treścią `narzedzie: brak` jest stanem **OK** - to świadoma
   decyzja właściciela repo, liczy się sama obecność sekcji, nie jej treść.
-  - **Wszystkie cztery obecne** - stan **OK**.
-  - **Brak któregokolwiek** (najczęściej `## Worktree` albo `## Mutacje` na
-    stronach zapisanych starszą wersją skilla) - stan **BRAK**, w tabeli
-    wymień brakujące nagłówki wprost. Skill naprawczy:
+  Gdy `## Worktree` jest obecny, sprawdź dodatkowo w jego sekcji (od tego
+  nagłówka do następnego nagłówka `## `) linię zaczynającą się dosłownie od
+  `izolacja testów:` (z `ó`, tak jak ją zapisuje
+  `/monolynx:project-toolchain`). Obie wartości pola, `tak` i `brak`, są
+  stanem **OK**: `izolacja testów: brak` to zapisana wiedza o projekcie
+  (testy z różnych worktree dzielą stan), nie brak konfiguracji. Liczy się
+  obecność linii, nie jej wartość.
+  - **Wszystkie cztery nagłówki obecne i linia `izolacja testów:` jest
+    w `## Worktree`** - stan **OK**.
+  - **Brak któregokolwiek nagłówka** (najczęściej `## Worktree` albo
+    `## Mutacje` na stronach zapisanych starszą wersją skilla) - stan
+    **BRAK**, w tabeli wymień brakujące nagłówki wprost. Skill naprawczy:
     `/monolynx:project-toolchain`.
+  - **Nagłówki są, ale w `## Worktree` nie ma linii `izolacja testów:`**
+    (strona zapisana wersją skilla sprzed tego pola) - stan **BRAK**,
+    w tabeli wymień brakujące pole wprost: `BRAK (brakuje: pole izolacja
+    testów w ## Worktree)`. Skill naprawczy: `/monolynx:project-toolchain`.
+    Gdy brakuje i nagłówka, i pola, wymień oba w jednym nawiasie.
 
 Błąd operacji (kod 2 wrappera albo błąd wywołania MCP, np. projekt bez
 członkostwa) - stan **BŁĄD: <treść błędu>**, bez skilla naprawczego i bez opcji w KROK 8 (proponowanie zapisu
@@ -410,7 +423,7 @@ Wypisz dokładnie siedem wierszy:
 | Punkt | Stan | Skill naprawczy |
 |---|---|---|
 | 1. Slug projektu | OK (`<slug>`, źródło: ...) / BRAK | - |
-| 2. Strona wiki `toolchain` | OK / BRAK (brakuje: ...) / nie sprawdzono / BŁĄD: <treść> | `/monolynx:project-toolchain` |
+| 2. Strona wiki `toolchain` | OK / BRAK (brakuje: <nagłówki i/albo pole `izolacja testów`>) / nie sprawdzono / BŁĄD: <treść> | `/monolynx:project-toolchain` |
 | 3. LLM Wiki (`wiki_llm_enabled`) | OK / BRAK / nie sprawdzono / BŁĄD: <treść> | `/monolynx:wiki-init` |
 | 4. Graf zależności w CI | OK / BRAK | `/monolynx:create-graph-ci-script` |
 | 5. Testy mutacyjne w CI | OK / BRAK / BRAK (bez opcji w KROK 8) | `/monolynx:create-mutation-ci-script` |

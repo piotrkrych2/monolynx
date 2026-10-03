@@ -1,0 +1,22 @@
+# command: monolynx graph --help
+# tool_version: monolynx 0.2.0 (drzewo zrodel, MON-248, niewydane)
+# captured: 2026-10-03
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                                                                                                                                        
+ Usage: monolynx graph [OPTIONS] COMMAND [ARGS]...                                                                                                                                                      
+                                                                                                                                                                                                        
+ Graf zależności kodu (moduł Połączenia).                                                                                                                                                               
+                                                                                                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ nodes  Wyświetl node'y grafu Połączeń z opcjonalnym filtrem po typie i nazwie.                                                                                                                       │
+│ node   Pokaż node wraz z sąsiedztwem (node'y, krawędzie i głębokość każdego node'a).                                                                                                                 │
+│ query  Pobierz graf albo podgraf projektu (node'y i krawędzie).                                                                                                                                      │
+│ path   Znajdź najkrótszą ścieżkę między dwoma node'ami (brak ścieżki daje puste listy).                                                                                                              │
+│ stats  Pokaż statystyki grafu: liczba node'ów i krawędzi, także per typ.                                                                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+# exit: 0

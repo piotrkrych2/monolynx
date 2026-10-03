@@ -1,7 +1,8 @@
 """Mapa kontraktu MCP <-> API v2 (MON-131).
 
-`TOOL_TO_ENDPOINT` wiąże 40 narzędzi MCP z endpointami `/api/v2`, które wystawiają
-tę samą operację (Projects, Scrum, Wiki). `INTENTIONALLY_UNMAPPED` opisuje powód,
+`TOOL_TO_ENDPOINT` wiąże 45 narzędzi MCP z endpointami `/api/v2`, które wystawiają
+tę samą operację (Projects, Scrum, Wiki oraz 5 odczytów grafu Połączeń, MON-248).
+`INTENTIONALLY_UNMAPPED` opisuje powód,
 dla którego pozostałe narzędzia nie mają odpowiednika w v2. Każde narzędzie
 zarejestrowane w `mcp_server.mcp` musi wystąpić dokładnie w jednym z tych słowników;
 pilnuje tego `tests/integration/test_api_v2_parity.py`.
@@ -11,7 +12,7 @@ Plik jest kontraktem także dla testów trwałości commita
 Nazwy i pola `ToolEndpointSpec` są częścią tego kontraktu.
 
 Placeholdery w `path` mają stałe nazwy: `{project_slug}`, `{ticket_id}`,
-`{criterion_id}`, `{sprint_id}`, `{page_id}`, `{member_id}`.
+`{criterion_id}`, `{sprint_id}`, `{page_id}`, `{member_id}`, `{node_id}`.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ _SPRINTS = "/api/v2/projects/{project_slug}/sprints"
 _SPRINT = "/api/v2/projects/{project_slug}/sprints/{sprint_id}"
 _WIKI_PAGES = "/api/v2/projects/{project_slug}/wiki/pages"
 _WIKI_PAGE = "/api/v2/projects/{project_slug}/wiki/pages/{page_id}"
+_GRAPH = "/api/v2/projects/{project_slug}/graph"
 
 
 TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
@@ -82,10 +84,11 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         "POST",
         "/api/v2/projects/{project_slug}/members",
         is_write=True,
-        field_map={"user_email": "email", "invitation_id": "invitation_token"},
+        field_map={"user_email": "email"},
         known_differences=(
-            "MCP zwraca message, user_email i (tylko dla nowego konta) invitation_id oraz expires_at; "
-            "v2 zwraca email, role, is_new_user oraz invitation_token i expires_at (null dla istniejącego konta)."
+            "MCP zwraca message, user_email, role i (tylko dla nowego konta) expires_at; "
+            "v2 zwraca email, role, is_new_user oraz expires_at (null dla istniejącego konta). "
+            "Żaden kanał nie zwraca tokenu zaproszenia - trafia wyłącznie do maila."
         ),
     ),
     "list_members": ToolEndpointSpec("GET", "/api/v2/projects/{project_slug}/members", is_write=False),
@@ -119,7 +122,9 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         is_write=False,
         known_differences=(
             "MCP zwraca tekst (tabela pipe-separated z tytułem obciętym do 40 znaków i nazwami sprintu oraz etykiet); "
-            "v2 zwraca PaginatedResponse z id sprintu, id etykiet i pełnym tytułem."
+            "v2 zwraca PaginatedResponse z id sprintu, id etykiet i pełnym tytułem. Blokery: MCP podaje klucze w ostatniej kolumnie "
+            "tekstowej, v2 pełne obiekty blocked_by (id, key, title, status). "
+            "v2 ma dodatkowo parametr query compact (elementy bez description), którego tool MCP nie ma."
         ),
     ),
     "search_tickets": ToolEndpointSpec(
@@ -133,8 +138,8 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         _TICKET,
         is_write=False,
         known_differences=(
-            "MCP zwraca tekst i dokłada linię Spec (spec_page_id) oraz sekcję Rozliczenia; v2 nie zwraca "
-            "spec_page_id ani rozliczeń. MCP pokazuje autora komentarza utworzonego przez AI jako 'ai', v2 jako email."
+            "MCP zwraca tekst i dokłada sekcję Rozliczenia, której v2 nie zwraca. "
+            "MCP pokazuje autora komentarza utworzonego przez AI jako 'ai', v2 jako email."
         ),
     ),
     "create_ticket": ToolEndpointSpec(
@@ -143,14 +148,20 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         is_write=True,
         known_differences=(
             "MCP zwraca skrót (id, key, title, status, due_date, spec_page_id, created_via_ai, acceptance_criteria_count, "
-            "message); v2 zwraca pełny TicketDetailResponse bez spec_page_id."
+            "message); v2 zwraca pełny TicketDetailResponse. Uprawnienia: MCP wymaga tylko scrum:write; v2 "
+            "czyta ticket po zapisie, więc przed zapisem wymaga też scrum:read (rola z samym scrum:write dostaje 403 "
+            "'Brak uprawnienia scrum:read' i nic nie zapisuje)."
         ),
     ),
     "update_ticket": ToolEndpointSpec(
         "PATCH",
         _TICKET,
         is_write=True,
-        known_differences="MCP zwraca skrót (id, key, title, status, due_date, message); v2 zwraca pełny TicketDetailResponse.",
+        known_differences=(
+            "MCP zwraca skrót (id, key, title, status, due_date, message); v2 zwraca pełny TicketDetailResponse. Uprawnienia: "
+            "MCP wymaga tylko scrum:write; v2 czyta ticket po zapisie, więc przed zapisem wymaga też scrum:read (rola z samym "
+            "scrum:write dostaje 403 'Brak uprawnienia scrum:read' i nic nie zapisuje)."
+        ),
     ),
     "delete_ticket": ToolEndpointSpec(
         "DELETE",
@@ -218,13 +229,21 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         "POST",
         f"{_SPRINT}/start",
         is_write=True,
-        known_differences="MCP zwraca message i sprint_id; v2 zwraca pełny SprintResponse ze statusem active.",
+        known_differences=(
+            "MCP zwraca message i sprint_id; v2 zwraca pełny SprintResponse ze statusem active. Uprawnienia: MCP wymaga tylko "
+            "scrum:write; v2 czyta sprint po zapisie, więc przed zapisem wymaga też scrum:read (rola z samym scrum:write dostaje "
+            "403 'Brak uprawnienia scrum:read' i nic nie zapisuje)."
+        ),
     ),
     "complete_sprint": ToolEndpointSpec(
         "POST",
         f"{_SPRINT}/complete",
         is_write=True,
-        known_differences="MCP zwraca message i sprint_id; v2 zwraca pełny SprintResponse ze statusem completed.",
+        known_differences=(
+            "MCP zwraca message i sprint_id; v2 zwraca pełny SprintResponse ze statusem completed. Uprawnienia: MCP wymaga tylko "
+            "scrum:write; v2 czyta sprint po zapisie, więc przed zapisem wymaga też scrum:read (rola z samym scrum:write dostaje "
+            "403 'Brak uprawnienia scrum:read' i nic nie zapisuje)."
+        ),
     ),
     "get_burndown": ToolEndpointSpec("GET", "/api/v2/projects/{project_slug}/burndown", is_write=False),
     # --- Wiki (8) ---
@@ -271,10 +290,51 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         is_write=True,
         known_differences="MCP zwraca wiki_llm_enabled i message; v2 zwraca tylko wiki_llm_enabled.",
     ),
+    # --- Graph (5) ---
+    "list_graph_nodes": ToolEndpointSpec(
+        "GET",
+        f"{_GRAPH}/nodes",
+        is_write=False,
+        known_differences="v2 zwraca ten sam goły JSON array co MCP, bez koperty paginacji; limit 1..1000 jest walidowany po stronie v2 (poza: 422).",
+    ),
+    "get_graph_node": ToolEndpointSpec(
+        "GET",
+        f"{_GRAPH}/nodes/{{node_id}}",
+        is_write=False,
+        known_differences=(
+            "MCP zwraca tekst Arrow DSL (sekcje Depth i krawędzie pogrupowane po typie relacji); v2 zwraca JSON "
+            "{node, nodes, edges, depth_map} i dodatkowo node (węzeł startowy). Nieistniejący node: MCP ValueError "
+            "'Node nie istnieje', v2 404 problem+json z tym samym detail. depth >= 1 jest walidowane tylko w v2 "
+            "(depth=0: 422 problem+json); tool MCP nie sprawdza dolnej granicy depth."
+        ),
+    ),
+    "query_graph": ToolEndpointSpec(
+        "GET",
+        f"{_GRAPH}/query",
+        is_write=False,
+        known_differences=(
+            "MCP zwraca tekst Arrow DSL; v2 zwraca JSON {nodes, edges}, z którego format_graph_dsl daje ten sam tekst. "
+            "Puste search: MCP ValueError, v2 422 problem+json z tym samym detail. limit 1..1000 jest walidowany tylko "
+            "w v2 (poza zakresem: 422 problem+json); tool MCP nie sprawdza granic limit."
+        ),
+    ),
+    "find_graph_path": ToolEndpointSpec(
+        "GET",
+        f"{_GRAPH}/path",
+        is_write=False,
+        known_differences=(
+            "MCP zwraca tekst Arrow DSL; v2 zwraca JSON {nodes, edges}, z którego format_graph_dsl daje ten sam tekst (brak ścieżki: puste listy)."
+        ),
+    ),
+    "get_graph_stats": ToolEndpointSpec("GET", f"{_GRAPH}/stats", is_write=False),
 }
 
 
 _OUT_OF_SCOPE_MODULE = "moduł {module} poza zakresem API v2 (MON-142 obejmuje tylko Projects, Scrum i Wiki)"
+_GRAPH_WRITE_REASON = (
+    "zapis grafu Połączeń robi wyłącznie synchronizacja cicd/sync_graph.py przez MCP (replace_graph); "
+    "API v2 i CLI wystawiają tylko odczyt grafu (MON-248)"
+)
 
 INTENTIONALLY_UNMAPPED: dict[str, str] = {
     **dict.fromkeys(
@@ -292,19 +352,14 @@ INTENTIONALLY_UNMAPPED: dict[str, str] = {
     **dict.fromkeys(
         [
             "create_graph_node",
-            "list_graph_nodes",
-            "get_graph_node",
             "delete_graph_node",
             "create_graph_edge",
             "delete_graph_edge",
-            "query_graph",
-            "find_graph_path",
-            "get_graph_stats",
             "bulk_create_graph_nodes",
             "bulk_create_graph_edges",
             "replace_graph",
         ],
-        _OUT_OF_SCOPE_MODULE.format(module="Połączenia (Neo4j)"),
+        _GRAPH_WRITE_REASON,
     ),
     **dict.fromkeys(
         [

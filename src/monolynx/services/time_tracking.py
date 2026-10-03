@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import false, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -133,13 +133,18 @@ async def get_ticket_total_hours(ticket_id: uuid.UUID, db: AsyncSession) -> floa
 
 
 def _apply_filters(query, filters: TimeTrackingFilter):  # type: ignore[no-untyped-def]
-    """Aplikuje filtry do zapytania bazowego."""
-    if filters.project_ids:
-        query = query.where(TimeTrackingEntry.project_id.in_(filters.project_ids))
-    if filters.user_ids:
-        query = query.where(TimeTrackingEntry.user_id.in_(filters.user_ids))
-    if filters.sprint_ids:
-        query = query.where(TimeTrackingEntry.sprint_id.in_(filters.sprint_ids))
+    """Aplikuje filtry do zapytania bazowego.
+
+    Filtr list (project_ids, user_ids, sprint_ids): None = brak ograniczenia, pusta lista = zero wierszy.
+    Pusta lista nie moze oznaczac "wszystko" - uzytkownik bez dozwolonych projektow dostalby wtedy
+    wpisy wszystkich projektow. Brak ograniczenia wymaga jawnego None.
+    """
+    if filters.project_ids is not None:
+        query = query.where(TimeTrackingEntry.project_id.in_(filters.project_ids) if filters.project_ids else false())
+    if filters.user_ids is not None:
+        query = query.where(TimeTrackingEntry.user_id.in_(filters.user_ids) if filters.user_ids else false())
+    if filters.sprint_ids is not None:
+        query = query.where(TimeTrackingEntry.sprint_id.in_(filters.sprint_ids) if filters.sprint_ids else false())
     if filters.date_from is not None:
         query = query.where(TimeTrackingEntry.date_logged >= filters.date_from)
     if filters.date_to is not None:

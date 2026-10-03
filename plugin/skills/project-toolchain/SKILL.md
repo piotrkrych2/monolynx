@@ -53,14 +53,14 @@ python3 <katalog skilla>/scripts/monolynx_op.py get_ticket --project_slug <PROJE
 
 Wartosc bool to `true` albo `false`, lista to tablica JSON w jednej wartosci. Dluga tresc (komentarz, opis, strona wiki) i kazda wartosc ze znakami specjalnymi powloki: zapisz do pliku i podaj jako `@<sciezka pliku>`. Komend `monolynx ...` nie skladaj samodzielnie - mapowanie operacji na komendy CLI zyje we wrapperze.
 
+Tryb zwiezly: `--compact true` przy `list_tickets`, gdy lista sluzy do przegladu statusow i blokerow bez czytania opisow (elementy bez pola `description`), oraz `--brief true` przy `create_ticket` i `update_ticket`, gdy po zapisie nie czytasz opisu (wynik to tylko pola `id`, `key`, `title`, `status`, `sprint_id`, `blocked_by`, `blocks`). `compact` i `brief` to parametry wrappera, a nie tooli MCP: przy `mode=mcp` i przy fallbacku (kod 3) wywolujesz tool MCP bez nich. Wrapper sam niczego nie skraca - bez tych flag wynik jest pelny.
+
 Kody wyjscia wrappera:
 
 - `0` - stdout to JSON API v2 z CLI. Niesie te same dane co tekstowa odpowiedz toola MCP, pod nazwami pol JSON.
-- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami; jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, graf, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
+- `3` z ostatnia linia `OP-FALLBACK: mcp tool=<nazwa>` - wywolaj ten tool MCP z tymi samymi argumentami, z pominieciem parametrow wrappera `compact` i `brief` (tool MCP ich nie ma); jego aktualny schemat poznaj mechanizmem runtime przed wywolaniem. To zwykla sciezka operacji bez komendy CLI (Pipelines, `log_time`, zapis grafu, LLM Wiki). Brak tego toola w runtime: stop z nazwa brakujacej operacji.
 - `2` - blad operacji (API, siec, przekroczony czas). Przy zapisie nie ponawiaj na slepo przez MCP: najpierw odczytem sprawdz, czy zapis doszedl.
 - `64` - blad uzycia wrappera, CLI nie bylo wolane. Popraw argumenty.
-
-`get_ticket` przez CLI nie zwraca `spec_page_id` (linia `OP-NOTE:` na stderr) - gdy pole jest potrzebne, doczytaj je toolem MCP `get_ticket`.
 
 Subagent pracuje przez MCP, chyba ze dostal w prompcie wynik `mode=cli` i literalna sciezke wrappera. `MONOLYNX_TRANSPORT=mcp` w srodowisku wymusza MCP w preflighcie i we wrapperze (zachowanie sprzed wprowadzenia CLI).
 <!-- /shared:transport -->
@@ -160,6 +160,61 @@ potrzebuje osobnego wariantu: w sekcji `## Worktree` wpisz wtedy `jak wyzej`.
 **Czy sa testy**: policz pliki testowe (`tests/`, `test/`, `*_test.go`,
 `*.test.ts`, `spec/`). Zero plikow -> projekt nie ma testow.
 
+**Izolacja testow miedzy worktree**: ustal, czy dwa przebiegi testow uruchomione
+rownolegle z dwoch kopii repo (git worktree) dziela stan. Dyspozytor sprintu
+prowadzi kilka ticketow naraz, kazdy w osobnym worktree; wspolny stan sprawia,
+ze przebiegi psuja sobie nawzajem wyniki, a czerwony test nie mowi nic o kodzie.
+Konfiguracje testow czytasz jako dane (fixture'y i pliki konfiguracyjne runnera,
+np. `conftest.py`, `jest.config.*`, `phpunit.xml`, plik compose, `.env.example`,
+Makefile). Testow nie uruchamiasz. Szukasz trzech rzeczy:
+
+- **baza danych o stalej nazwie** - nazwa zaszyta w fixture'ach albo
+  w konfiguracji testow (literal w URL-u polaczenia, `CREATE DATABASE` /
+  `DROP DATABASE` na stalej nazwie), ta sama dla kazdego przebiegu;
+- **staly port** - testy podnosza serwer albo usluge na numerze portu wpisanym
+  na sztywno;
+- **wspolny katalog** - cache, pliki tymczasowe albo artefakty pod stala sciezka
+  poza katalogiem repo (np. `/tmp/<nazwa>`), albo wolumen wspolny dla kontenerow.
+
+Projekt bez testow (zero plikow wyzej) dostaje `izolacja testów: tak` - nie ma
+przebiegow, ktore moglyby sie zderzyc. W pozostalych przypadkach:
+
+| Co ustaliles | Pole `izolacja testów` | Komenda `test:` w `## Worktree` |
+|---|---|---|
+| Zadnego z trzech wspolnych zasobow | `tak` | bez zmian |
+| Testy izoluja sie same (np. losowa nazwa bazy na kazdy przebieg, port przydzielany przez system, katalog tymczasowy tworzony przez runner) | `tak` | bez zmian |
+| Wspolny zasob jest, a projekt ma parametr izolacji | `tak` | z dopisanym parametrem (nizej) |
+| Wspolny zasob jest, parametru izolacji nie ma | `brak` | bez zmian |
+| Nie da sie ustalic z plikow (konfiguracja rozproszona, nazwa skladana w kodzie, ktorego nie rozumiesz) | pytanie do uzytkownika w KROK 3 | bez zmian do czasu odpowiedzi |
+
+**Parametr izolacji** to zmienna srodowiskowa albo opcja runnera, ktora
+konfiguracja testow faktycznie ODCZYTUJE i ktora zmienia nazwe wspolnego zasobu
+(np. zmienna z nazwa bazy testowej, czytana w fixture przed zalozeniem bazy).
+Rozpoznajesz go po odczycie w kodzie konfiguracji testow, nie po nazwie.
+Zmiennej, ktorej testy nie czytaja, nie dopisujesz - niczego by nie izolowala,
+a pole `tak` byloby wtedy nieprawda.
+
+Strona `toolchain` jest jedna na projekt, a wartosc parametru ma byc inna dla
+kazdego ticketu. Zapisujesz ja wiec z placeholderem `<KEY>` w miejscu klucza
+ticketu. Przy stacku Dockera parametr idzie jako `-e` zaraz po `--no-deps`
+(opcja podkomendy `run`, przed `-v`):
+
+```bash
+docker compose -p <nazwa-projektu-compose> [--profile <profil>] run --rm --no-deps -e <ZMIENNA>=<staly-prefiks>_<KEY> -v "$PWD":<workdir> <service> <komenda testow>
+```
+
+Przyklad wartosci: `-e TEST_DATABASE_NAME=open_sentry_test_<KEY>`. Parametr
+dopisujesz tylko do `test:` - `lint:` zostaje bez niego. Gdy `test:` mialoby
+wartosc `jak wyzej` (projekt bez Dockera), a parametr izolacji istnieje,
+zapisujesz w `test:` pelna komende z parametrem zamiast `jak wyzej`; forme
+przekazania parametru (opcja runnera albo zmienna ustawiana przed komenda)
+potwierdzasz z uzytkownikiem w KROK 3 i nie zgadujesz jej.
+
+`<KEY>` podstawia LITERALNIE ten, kto uruchamia komende: wpisuje klucz ticketu
+wprost (np. `MON-252`), bez `$VAR` i bez `$(...)` - sesja pracujaca w worktree
+odrzuca komendy z wartoscia obliczana w locie. Komenda z niepodstawionym `<KEY>`
+nie moze trafic do shella.
+
 ## KROK 3: Potwierdz z uzytkownikiem
 
 Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik wie.
@@ -171,6 +226,7 @@ Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik 
 > | Lint | `[wykryta komenda]` |
 > | Test | `[wykryta komenda]` |
 > | Worktree | `[wariant worktree lint i test, albo "jak wyzej"]` |
+> | Izolacja testow miedzy worktree | **[tak / brak / nie ustalono]** - [powod jednym zdaniem; przy parametrze izolacji jego nazwa] |
 >
 > Testy w repo: **[znaleziono N plikow / brak]**
 >
@@ -178,8 +234,28 @@ Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik 
 > 2. Kto uruchamia lint i testy: **user** (domyslnie, agent wypisuje komendy)
 >    czy **agent** (odpala sam)?
 > 3. Stosowac TDD - testy pisane przed implementacja? (tak / nie)
+> 4. Izolacja testow sie zgadza? (tak / podaj poprawna)
 
 Poczekaj na odpowiedzi. Przy braku testow w repo pytanie o TDD pomin (wpisz `nie`).
+
+Wiersz `Izolacja testow miedzy worktree` wypelniasz ustaleniem z KROK 2 i
+podajesz przy nim, co je uzasadnia (np. "fixture zaklada baze o stalej nazwie
+`app_test`", "nazwa bazy losowana na kazdy przebieg"). Gdy wykryles parametr
+izolacji, pokaz komende `test:` juz z dopisanym parametrem i `<KEY>` i powiedz
+jednym zdaniem, ze `<KEY>` podstawia literalnie uruchamiajacy komende.
+
+Gdy w KROK 2 wyszlo `nie ustalono`, pytanie 4 zastap dwoma jawnymi pytaniami
+i nie zapisuj strony bez odpowiedzi na pierwsze:
+
+> 4. Czy testy uruchomione rownolegle z dwoch kopii repo dziela stan (ta sama
+>    baza, ten sam port, ten sam katalog)? (tak / nie)
+> 5. Jesli tak: czy jest zmienna albo opcja, ktora ten stan rozdziela (np. nazwa
+>    bazy testowej)? Podaj jej nazwe i przykladowa wartosc, albo "nie ma".
+
+Odpowiedzi mapujesz tak samo jak w tabeli z KROK 2: brak wspolnego stanu ->
+`tak`; wspolny stan z parametrem -> `tak` i parametr w `test:`; wspolny stan bez
+parametru -> `brak`. Pola nie zostawiasz pustego i nie wpisujesz trzeciej
+wartosci - na stronie stoi wylacznie `tak` albo `brak`.
 
 Wiersz `Worktree` wypelniasz wariantem wyprowadzonym w KROK 2. Powiedz przy nim
 jednym zdaniem, ze wariant worktree dziala tylko przy podniesionym stacku
@@ -290,7 +366,8 @@ framework: [pytest | vitest | go test | ...]
 ## Worktree
 
 lint: [komenda lint dla kopii repo, albo "jak wyzej"]
-test: [komenda test dla kopii repo, albo "jak wyzej"]
+test: [komenda test dla kopii repo, albo "jak wyzej"; z parametrem izolacji i <KEY>, gdy projekt go ma]
+izolacja testów: [tak | brak]
 
 ## TDD
 
@@ -315,9 +392,24 @@ kto odpala: [user | agent]
 
 Trzymaj sie tych naglowkow i etykiet. Zmiana formatu psuje odczyt w `work`.
 
-Sekcja `## Worktree` powstaje zawsze, tak jak `## Mutacje`. Projekt bez Dockera
-dostaje w obu polach `jak wyzej` - to odeslanie do `## Lint` i `## Test`, nie
-brak danych.
+Sekcja `## Worktree` powstaje zawsze, tak jak `## Mutacje`, i ma zawsze trzy
+pola w tej kolejnosci: `lint:`, `test:`, `izolacja testów:`. Projekt bez Dockera
+dostaje w `lint:` i `test:` wartosc `jak wyzej` - to odeslanie do `## Lint`
+i `## Test`, nie brak danych (wyjatek: `test:` z parametrem izolacji, KROK 2).
+
+Pole `izolacja testów:` stoi zaraz pod `test:` i ma dokladnie jedna z dwoch
+wartosci, takze wtedy, gdy `lint:` i `test:` to `jak wyzej`:
+
+- `izolacja testów: tak` - rownolegle przebiegi testow z roznych worktree nie
+  dziela stanu: nie ma wspolnego zasobu, testy izoluja sie same, albo izoluje
+  je parametr dopisany do `test:`;
+- `izolacja testów: brak` - przebiegi dziela stan i nie ma parametru, ktory by
+  go rozdzielil; rownolegle testy z dwoch worktree moga sie zderzyc.
+
+Etykiete pisz doslownie `izolacja testów:` (z `ó`) - tej linii szuka
+`/monolynx:setup`. Placeholder `<KEY>` w `test:` zostaje na stronie jako
+`<KEY>`: klucz ticketu podstawia literalnie uruchamiajacy komende, bez `$VAR`
+i bez `$(...)`.
 
 ## KROK 6: Podsumowanie
 
@@ -325,6 +417,10 @@ Wyswietl uzytkownikowi:
 
 - Zapisana komende lint i test
 - Wariant worktree obu komend (albo `jak wyzej`)
+- Izolacje testow miedzy worktree (`tak` albo `brak`) z powodem; przy `brak`
+  napisz wprost, ze testy uruchomione rownolegle z dwoch worktree moga sie
+  zderzyc, a przy parametrze izolacji - ze `<KEY>` w komendzie `test:` trzeba
+  przed uruchomieniem zastapic literalnym kluczem ticketu
 - Kto je odpala
 - Czy TDD wlaczone
 - Narzedzie mutacyjne i jego komende diffowa (albo `brak` wraz z powodem)
@@ -344,7 +440,7 @@ Jesli uzytkownik wybral **agent** jako uruchamiajacego, przypomnij o fladze:
 
 1. **Nie zgaduj komend** - tabela w KROK 2 to punkt wyjscia, nie odpowiedz. Zawsze potwierdz z uzytkownikiem
 2. **Nie uruchamiaj wykrytych komend** zeby je zweryfikowac - to konfiguracja, nie test. Lint na brudnym drzewie roboczym zwroci mylacy wynik. **Wyjatek**: `--help` i `--version` wolno uruchomic. To odpytanie narzedzia o wlasny interfejs, nie przebieg testow ani mutacji - KROK 4 tego wprost wymaga
-3. **Format strony jest kontraktem** - `work` i `work-simple` czytaja naglowki i etykiety doslownie. Dotyczy to takze sekcji `## Worktree`: pracujac w git worktree oba skille biora komendy z jej pol `lint:` i `test:`, a wartosc `jak wyzej` odsyla je do `## Lint` i `## Test`
+3. **Format strony jest kontraktem** - `work` i `work-simple` czytaja naglowki i etykiety doslownie. Dotyczy to takze sekcji `## Worktree`: pracujac w git worktree oba skille biora komendy z jej pol `lint:` i `test:`, a wartosc `jak wyzej` odsyla je do `## Lint` i `## Test`. Trzecie pole, `izolacja testów:`, ma wylacznie wartosc `tak` albo `brak` i jest obecne zawsze - `/monolynx:setup` szuka tej linii doslownie i przy jej braku pokazuje BRAK. `<KEY>` w `test:` to placeholder klucza ticketu, podstawiany literalnie przez uruchamiajacego
 4. **Respektuj reguly repo** - jesli `CLAUDE.md` mowi "tylko przez docker" albo "Claude nigdy nie odpala testow", zapisz to w sekcji Uwagi i domyslnie ustaw `kto odpala: user`
 5. **Jedna strona per projekt** - slug zawsze `toolchain`, bez wariantow. Slug wynika z tytulu strony, wiec tytul musi brzmiec dokladnie `Toolchain` - zmiana tytulu zrywa odczyt w `work` i `work-simple`, ktore szukaja strony po slugu `toolchain`
 6. **Nie instaluj narzedzia mutacyjnego** - to jednorazowy setup wlasciciela repo, per jezyk i per runner. Skill je wykrywa i podaje instrukcje, nie sciaga (precedens: graphify)

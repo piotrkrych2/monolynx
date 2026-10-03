@@ -58,6 +58,16 @@ def _sample_node(node_id=None, name="TestNode", node_type="File"):
     }
 
 
+@pytest.fixture(autouse=True)
+def _allow_permissions():
+    """User i projekt są mockami bez członkostwa w bazie, więc check RBAC narzędzia (MON-242) jest pominięty.
+
+    Odmowę dla ról testuje tests/integration/test_mcp_module_rbac.py.
+    """
+    with patch("monolynx.mcp_server._require", AsyncMock(return_value=None)):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # 1. create_graph_node
 # ---------------------------------------------------------------------------

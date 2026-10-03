@@ -12,9 +12,10 @@ from functools import partial
 from typing import TYPE_CHECKING, Final
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import ColumnElement, delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from monolynx.constants import (
     MAX_ATTACHMENTS_PER_SETTLEMENT,
@@ -25,9 +26,11 @@ from monolynx.constants import (
     SETTLEMENT_STATES,
 )
 from monolynx.models.project import Project
+from monolynx.models.project_member import ProjectMember
 from monolynx.models.settlement import Settlement
 from monolynx.models.settlement_attachment import SettlementAttachment
 from monolynx.models.settlement_project import SettlementProject
+from monolynx.models.user import User
 from monolynx.services import minio_client
 from monolynx.services.permissions import check_permission
 
@@ -65,6 +68,84 @@ async def validate_settlement_ticket_link(
     settlement_project_ids = {p.id for p in (settlement.projects or [])}
     if ticket.project_id not in settlement_project_ids:
         raise ValueError("Ticket nie nalezy do zadnego projektu powiazanego z tym rozliczeniem")
+
+
+async def get_permitted_project_ids(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    action: str,
+) -> set[uuid.UUID]:
+    """Aktywne projekty, w ktorych user ma rozliczenia:<action> (wszystkie dla superusera).
+
+    Liczone raz dla calej listy, zeby uniknac N+1 przy filtrowaniu rozliczen.
+    """
+    user_result = await db.execute(select(User.is_superuser).where(User.id == user_id, User.is_active.is_(True)))
+    is_superuser = user_result.scalar_one_or_none()
+    if is_superuser is None:
+        return set()
+    if is_superuser:
+        result = await db.execute(select(Project.id).where(Project.is_active.is_(True)))
+        return set(result.scalars().all())
+
+    member_result = await db.execute(
+        select(Project.id)
+        .join(ProjectMember, ProjectMember.project_id == Project.id)
+        .where(
+            ProjectMember.user_id == user_id,
+            Project.is_active.is_(True),
+        )
+    )
+    return {pid for pid in member_result.scalars().all() if await check_permission(db, user_id, pid, "rozliczenia", action)}
+
+
+def fully_permitted_settlements_clause(permitted_project_ids: set[uuid.UUID]) -> ColumnElement[bool]:
+    """Warunek SQL: rozliczenie nie ma aktywnego projektu spoza `permitted_project_ids`.
+
+    Wspolny dla count i zapytania glownego list, zeby paginacja zgadzala sie z wynikiem.
+    """
+    linked = aliased(SettlementProject)
+    outside = (
+        select(linked.settlement_id)
+        .join(Project, Project.id == linked.project_id)
+        .where(
+            linked.settlement_id == Settlement.id,
+            Project.is_active.is_(True),
+            linked.project_id.not_in(list(permitted_project_ids)),
+        )
+    )
+    return ~exists(outside)
+
+
+async def ensure_settlement_permission(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    settlement: Settlement,
+    action: str,
+) -> None:
+    """Wymaga rozliczenia:<action> we WSZYSTKICH aktywnych projektach rozliczenia (HTTPException 403).
+
+    Brak aktywnych projektow tez jest odmowa. Komunikat nie zawiera nazwy projektu,
+    bo user bez dostepu do jednego z nich nie moze o nim sie dowiedziec z odmowy.
+    """
+    projects = [p for p in (settlement.projects or []) if p.is_active]
+    if not projects:
+        raise HTTPException(status_code=403, detail="Rozliczenie nie ma aktywnych projektow")
+    for project in projects:
+        if not await check_permission(db, user_id, project.id, "rozliczenia", action):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Brak uprawnienia rozliczenia:{action} we wszystkich projektach rozliczenia",
+            )
+
+
+async def ensure_ticket_project_write(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    ticket: Ticket,
+) -> None:
+    """Wymaga rozliczenia:write w projekcie ticketu (HTTPException 403)."""
+    if not await check_permission(db, user_id, ticket.project_id, "rozliczenia", "write"):
+        raise HTTPException(status_code=403, detail="Brak uprawnienia rozliczenia:write w projekcie ticketu")
 
 
 async def change_settlement_status(

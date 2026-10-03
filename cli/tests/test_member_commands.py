@@ -208,7 +208,6 @@ _INVITED = {
     "email": "nowy@example.com",
     "role": "member",
     "is_new_user": True,
-    "invitation_token": "tok-zaproszenia",
     "expires_at": "2026-02-01T00:00:00Z",
 }
 

@@ -1182,8 +1182,8 @@ class TestRoleEdit:
         await db_session.refresh(role)
         assert role.name == "NewName"
 
-    async def test_role_edit_system_role_name_not_changed(self, client, db_session):
-        """POST /settings/roles/{id}/edit nie zmienia nazwy roli systemowej."""
+    async def test_role_edit_system_role_name_and_permissions_not_changed(self, client, db_session):
+        """POST /settings/roles/{id}/edit nie zmienia nazwy ani permissions roli systemowej, nawet dla superusera (MON-243)."""
         project = await _create_project(db_session, slug="sp-re-sysrole")
         sys_role = Role(
             name="SystemRole",
@@ -1200,10 +1200,12 @@ class TestRoleEdit:
             data={"name": "NewNameAttempt", "perm_scrum_read": "on"},
             follow_redirects=False,
         )
-        assert resp.status_code == 303
+        assert resp.status_code == 200
+        assert "Brak uprawnienia" in resp.text
 
         await db_session.refresh(sys_role)
         assert sys_role.name == "SystemRole"
+        assert sys_role.permissions == {"settings": ["read", "write", "delete"]}
 
     async def test_role_edit_empty_name_shows_error(self, client, db_session):
         """POST /settings/roles/{id}/edit z pusta nazwa pokazuje blad dla custom roli."""

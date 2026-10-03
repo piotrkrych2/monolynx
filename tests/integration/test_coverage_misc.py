@@ -698,7 +698,7 @@ class TestCreateProjectPostCoverage:
         assert "male litery" in resp.text
 
     async def test_create_project_duplicate_slug(self, client, db_session):
-        """Duplikat sluga -> blad 'juz istnieje'."""
+        """Duplikat sluga -> blad 'jest zajety' z propozycja."""
         await login_session(client, db_session, email="cov-proj-post-8@test.com")
 
         # Pierwszy projekt
@@ -714,7 +714,7 @@ class TestCreateProjectPostCoverage:
             data={"name": "Second", "slug": "cov-dup-slug", "code": "CD2"},
         )
         assert resp.status_code == 200
-        assert "juz istnieje" in resp.text
+        assert "Slug „cov-dup-slug” jest zajęty, proponujemy „cov-dup-slug-2”." in resp.text
 
 
 # ============================================================
@@ -744,6 +744,7 @@ class TestUpdateIssueStatusCoverage:
         resp = await client.patch(
             f"/api/v1/issues/{issue.id}/status",
             json={"status": "resolved"},
+            headers={"X-Monolynx-Key": project.api_key},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -770,6 +771,7 @@ class TestUpdateIssueStatusCoverage:
         resp = await client.patch(
             f"/api/v1/issues/{issue.id}/status",
             json={"status": "ignored"},
+            headers={"X-Monolynx-Key": project.api_key},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -793,6 +795,7 @@ class TestUpdateIssueStatusCoverage:
         resp = await client.patch(
             f"/api/v1/issues/{issue.id}/status",
             json={"status": "unresolved"},
+            headers={"X-Monolynx-Key": project.api_key},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -816,24 +819,37 @@ class TestUpdateIssueStatusCoverage:
         resp = await client.patch(
             f"/api/v1/issues/{issue.id}/status",
             json={"status": "closed"},
+            headers={"X-Monolynx-Key": project.api_key},
         )
         assert resp.status_code == 422
         assert "Invalid status" in resp.json()["detail"]
 
     async def test_update_status_not_found(self, client, db_session):
-        """Nieistniejacy issue -> 404."""
+        """Nieistniejacy issue (z poprawnym kluczem) -> 404."""
+        project = _make_project("cov-iss-notfound")
+        db_session.add(project)
+        await db_session.flush()
+
         fake_id = uuid.uuid4()
         resp = await client.patch(
             f"/api/v1/issues/{fake_id}/status",
             json={"status": "resolved"},
+            headers={"X-Monolynx-Key": project.api_key},
         )
         assert resp.status_code == 404
         assert "not found" in resp.json()["detail"].lower()
 
     async def test_update_status_no_body(self, client, db_session):
-        """Brak body -> 422 (pydantic validation)."""
+        """Brak body (z poprawnym kluczem) -> 422 (pydantic validation)."""
+        project = _make_project("cov-iss-nobody")
+        db_session.add(project)
+        await db_session.flush()
+
         fake_id = uuid.uuid4()
-        resp = await client.patch(f"/api/v1/issues/{fake_id}/status")
+        resp = await client.patch(
+            f"/api/v1/issues/{fake_id}/status",
+            headers={"X-Monolynx-Key": project.api_key},
+        )
         assert resp.status_code == 422
 
     async def test_update_status_empty_status(self, client, db_session):
@@ -854,6 +870,7 @@ class TestUpdateIssueStatusCoverage:
         resp = await client.patch(
             f"/api/v1/issues/{issue.id}/status",
             json={"status": ""},
+            headers={"X-Monolynx-Key": project.api_key},
         )
         assert resp.status_code == 422
 
@@ -878,6 +895,7 @@ class TestUpdateIssueStatusCoverage:
         resp = await client.patch(
             f"/api/v1/issues/{issue.id}/status",
             json={"status": "resolved"},
+            headers={"X-Monolynx-Key": project.api_key},
         )
         assert resp.status_code == 200
 

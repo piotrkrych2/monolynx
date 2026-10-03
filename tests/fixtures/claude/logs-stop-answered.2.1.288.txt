@@ -1,0 +1,7 @@
+# claude logs ce847078 | claude 2.1.288 (Claude Code) | 2026-10-03 | MON-252: sesja MON-244 konczy tura markerem SPRINT-RUN STOP, po nim odpowiedz uzytkownika; ogon TICK_DIR/logs/ce847078.log po render_log, odzyskany z transkryptu dyspozytora (sesja usunieta, segment przepisany doslownie z rec-7797-0.txt, linie 1-6)
+Uwaga krytyka bez odjęcia: POST nie sprawdza limitu 255 znaków sluga, więc taki slug kończy się błędem 500 (było tak przed ticketem), a /check oznacza go jako niepoprawny.
+Decyzja dla Ciebie: zgoda na 4. poprawkę (jeden test) albo zamknięcie mimo score poniżej progu. Wznowienie: /monolynx:work MON-244.
+Ochrona hooka: potwierdzona. Reguła krytyka dopisana do pamięci qa-testera jako powtórzona (wraca z MON-140) - materiał dla /monolynx:retro.
+SPRINT-RUN STOP: wyczerpany limit poprawek qa-testera (review 75/100, brak testu gałęzi POST "kod zajęty bez wolnego wariantu")
+new task? /clear to save 331.7k tokens
+❯ zgoda na 4. poprawkę, dopisz test i domknij ticket

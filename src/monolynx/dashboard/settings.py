@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from monolynx.constants import (
     ACTION_LABELS,
+    DEFAULT_ROLE_PERMISSIONS,
     MEMBER_ROLES,
     MODULE_LABELS,
     PERMISSION_ACTIONS,
@@ -25,7 +26,7 @@ from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.role import Role
 from monolynx.models.user import User
-from monolynx.services.permissions import require_permission
+from monolynx.services.permissions import ensure_can_manage_role, require_permission
 
 from .helpers import SLUG_PATTERN, _get_user_id, flash, render_project_page, templates
 
@@ -276,6 +277,13 @@ async def member_add(
         if selected_role is None:
             return _member_error("Wybrana rola nie istnieje w tym projekcie")
 
+    granted = selected_role.permissions if selected_role else DEFAULT_ROLE_PERMISSIONS["member"]
+    try:
+        await ensure_can_manage_role(db, user_id, project.id, granted=granted, assigned_role=selected_role)
+    except ValueError as exc:
+        flash(request, str(exc), "error")
+        return RedirectResponse(url=f"/dashboard/{slug}/settings", status_code=303)
+
     member = ProjectMember(
         project_id=project.id,
         user_id=user.id,
@@ -364,6 +372,12 @@ async def member_role(
         new_role_obj = role_result.scalar_one_or_none()
         if new_role_obj is None:
             flash(request, "Wybrana rola nie istnieje w tym projekcie", "error")
+            return RedirectResponse(url=f"/dashboard/{slug}/settings", status_code=303)
+
+        try:
+            await ensure_can_manage_role(db, user_id, project.id, granted=new_role_obj.permissions, assigned_role=new_role_obj, target_member=member)
+        except ValueError as exc:
+            flash(request, str(exc), "error")
             return RedirectResponse(url=f"/dashboard/{slug}/settings", status_code=303)
 
         member.role_id = new_role_obj.id
@@ -516,6 +530,16 @@ async def role_create(
             db=db,
         )
 
+    try:
+        await ensure_can_manage_role(db, user_id, project.id, granted=permissions)
+    except ValueError as exc:
+        return await render_project_page(
+            request,
+            "dashboard/settings/role_form.html",
+            _create_error_ctx(str(exc)),
+            db=db,
+        )
+
     new_role = Role(
         name=name,
         project_id=project.id,
@@ -604,6 +628,36 @@ async def role_edit(
 
     form = await request.form()
 
+    # Buduj permissions z checkboxow
+    permissions: dict[str, list[str]] = {}
+    for module in PERMISSION_MODULES:
+        actions = []
+        for action in PERMISSION_ACTIONS:
+            if form.get(f"perm_{module}_{action}"):
+                actions.append(action)
+        if actions:
+            permissions[module] = actions
+
+    # Przed jakakolwiek mutacja roli, zeby odmowa nie zostawila zmienionej nazwy w sesji
+    try:
+        await ensure_can_manage_role(db, user_id, project.id, granted=permissions, edited_role=role)
+    except ValueError as exc:
+        return await render_project_page(
+            request,
+            "dashboard/settings/role_form.html",
+            {
+                "project": project,
+                "role": role,
+                "error": str(exc),
+                "permission_modules": PERMISSION_MODULES,
+                "permission_actions": PERMISSION_ACTIONS,
+                "module_labels": MODULE_LABELS,
+                "action_labels": ACTION_LABELS,
+                "active_module": "settings",
+            },
+            db=db,
+        )
+
     # Nie pozwalaj edytowac nazwy rol systemowych
     if not role.is_system:
         new_name = str(form.get("name", "")).strip()
@@ -641,15 +695,6 @@ async def role_edit(
             )
         role.name = new_name
 
-    # Buduj permissions z checkboxow
-    permissions: dict[str, list[str]] = {}
-    for module in PERMISSION_MODULES:
-        actions = []
-        for action in PERMISSION_ACTIONS:
-            if form.get(f"perm_{module}_{action}"):
-                actions.append(action)
-        if actions:
-            permissions[module] = actions
     role.permissions = permissions
 
     try:

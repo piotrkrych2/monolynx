@@ -63,8 +63,12 @@ def service_error(exc: ValueError) -> ApiV2Error:
 async def require_permission(db: AsyncSession, user: User, project: Project, module: str, action: str) -> None:
     """403 problem+json, gdy uzytkownik nie ma `module:action` w projekcie.
 
-    Wolane jawnie tylko tam, gdzie odpowiadajacy tool MCP (przez swoj serwis)
-    sprawdza uprawnienie - parytet z MCP (MON-131), bez dodatkowych sprawdzen.
+    Wolane w routerze dla operacji, ktorych funkcja serwisu nie sprawdza sama
+    (brak usera w serwisie: start/complete sprintu, burndown, strony wiki,
+    ustawienia, czlonkowie) oraz jako sprawdzenie scrum:read przed zapisem,
+    gdy odpowiedz czyta zasob po commit. Pozostale uprawnienia sprawdzaja
+    serwisy (`ensure_permission`), a ich ValueError wraca przez `service_error`.
+    Tekst `detail` jest identyczny jak w `ensure_permission`.
     """
     if not await check_permission(db, user.id, project.id, module, action):
         raise ApiV2Error(status=403, title="Forbidden", detail=f"Brak uprawnienia {module}:{action}")

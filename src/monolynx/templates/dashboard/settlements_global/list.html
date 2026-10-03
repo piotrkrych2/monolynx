@@ -126,7 +126,8 @@
         <tbody>
             {% if settlements %}
                 {% for s in settlements %}
-                {% set first_project = s.projects[0] if s.projects else none %}
+                {% set s_projects = visible_projects[s.id] %}
+                {% set first_project = s_projects[0] if s_projects else none %}
                 <tr class="border-b border-gray-200 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
 
                     <!-- Numer -->
@@ -173,14 +174,14 @@
 
                     <!-- Projekty -->
                     <td class="px-4 py-3">
-                        {% set proj_count = s.projects | length %}
+                        {% set proj_count = s_projects | length %}
                         {% if proj_count == 0 %}
                         <span class="text-gray-400 text-xs">—</span>
                         {% elif proj_count == 1 %}
-                        <span class="text-sm text-gray-700 dark:text-gray-300">{{ s.projects[0].name | e }}</span>
+                        <span class="text-sm text-gray-700 dark:text-gray-300">{{ s_projects[0].name | e }}</span>
                         {% else %}
                         <span class="inline-flex items-center gap-1 text-xs font-medium bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-2 py-0.5 rounded-full cursor-default"
-                              title="{{ s.projects | map(attribute='name') | join(', ') }}">
+                              title="{{ s_projects | map(attribute='name') | join(', ') }}">
                             {{ proj_count }} projektów
                         </span>
                         {% endif %}
@@ -188,7 +189,7 @@
 
                     <!-- Tickety -->
                     <td class="px-4 py-3 text-center text-gray-700 dark:text-gray-300">
-                        {{ s.tickets | length }}
+                        {{ visible_ticket_counts[s.id] }}
                     </td>
 
                     <!-- Załączniki -->

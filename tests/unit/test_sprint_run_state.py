@@ -1,18 +1,26 @@
 """Testy klasyfikatora stanu sprintu: plugin/scripts/sprint_run_state.py.
 
-TDD: plik sprint_run_state.py jeszcze NIE ISTNIEJE w chwili pisania tych testow.
-Te testy SA specyfikacja jego kontraktu dla backend-developera (MON-167):
+Testy kontraktu modulu (MON-167):
 
     match_session(agents, slug, key) -> dict | None
     session_state(session) -> "running" | "exited"
     session_state_reason(session) -> str | None
     read_log_tail(logs_dir, session_id, n=5) -> list[str]
     classify(ticket_status, session_state, log_tail) -> tuple[str, str]
-    build_report(slug, tickets, agents, logs_dir) -> dict
+    build_report(slug, tickets, agents, logs_dir, state_dir=None, stall_ticks=DEFAULT_STALL_TICKS) -> dict
     summarize(rows) -> dict
     parse_max_waiting(raw) -> int                          (MON-222)
+    parse_stall_ticks(raw) -> int                          (MON-252)
     dispatch_capacity(summary, slots, max_waiting) -> dict (MON-222)
     main(argv: list[str]) -> int
+
+MON-252 (sesje, ktore tylko czekaja, a klasyfikator widzial je jako `running`): `classify`
+zdejmuje `waiting` wejsciem uzytkownika (`<znak promptu U+276F> <tekst>`), rozpoznaje numerowane opcje z fraza
+decyzji i fraze oczekiwania w ostatniej wypowiedzi, a `build_report` ze `state_dir` liczy
+kolejne ticki z niezmienionym ogonem logu (plik stall.json) i po `stall_ticks` zamienia
+`running` na `waiting`. Logi sesji tych przypadkow to fixture'y
+tests/fixtures/claude/logs-*.2.1.288.txt (ogony po render_log odzyskane z transkryptu
+dyspozytora, naglowek w pierwszej linii).
 
 MON-172 (pierwszy realny przebieg dyspozytora) zmienia kontrakt session_state: zamiast
 bialej listy stanow zywych (kazdy nieznany literal -> "exited", co mapowalo pracujaca
@@ -24,12 +32,9 @@ czytelne ostrzezenie dla literalu spoza znanej listy zywych/martwych, dopisywane
 "reason" wiersza w build_report. Zbiory literalow sa wyprowadzone z realnego zrzutu
 `claude agents --json --all` w tests/fixtures/claude/agents-json-all.2.1.270.json.
 
-Dopoki modul nie istnieje, cala klasa testow jest skipowana (pytest.skip na
-poziomie modulu) -- czerwone/skipniete do czasu implementacji, potem zielone.
-
 Kontrakt CLI dla main() (zamrozony, patrz brief Team Managera dla MON-167):
-    --slug S --agents-file A --tickets-file T [--logs-dir D]
-    --agents-file - czyta stdin.
+    --slug S --agents-file A --tickets-file T [--logs-dir D] [--state-dir D]
+    --agents-file - czyta stdin. Prog zastoju z MONOLYNX_SPRINT_STALL_TICKS (parse_stall_ticks).
 Exit: 0 OK; 2 blad wejscia (niepoprawny JSON, brak pliku, tickets nie-lista);
 64 blad uzycia (brak wymaganych argumentow) -- main() ZWRACA 64, nie rzuca
 SystemExit (argparse domyslnie rzucalby, wiec implementacja MUSI to przechwycic).
@@ -56,9 +61,6 @@ import pytest
 
 STATE_PATH = Path(__file__).resolve().parents[2] / "plugin" / "scripts" / "sprint_run_state.py"
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "claude"
-
-if not STATE_PATH.exists():
-    pytest.skip("sprint_run_state.py jeszcze nie zaimplementowany (TDD)", allow_module_level=True)
 
 _spec = importlib.util.spec_from_file_location("sprint_run_state", STATE_PATH)
 assert _spec is not None and _spec.loader is not None
@@ -1286,10 +1288,9 @@ class TestMainCli:
 # MON-185: classify()/summarize() sa juz BACKEND-AGNOSTYCZNE z konstrukcji --
 # przyjmuja tylko stringi (session_state_value, log_tail) i dicty z kluczem
 # "verdict", nigdy nie widza "backend"/"runtime". Te testy NIE importuja
-# plugin/scripts/sprint_run_backend.py (jeszcze nie istnieje, patrz
-# tests/unit/test_sprint_run_backend.py, ktory jest wlasciwa specyfikacja
-# adaptera) -- celowo, zeby nie ryzykowac zepsucia calego tego pliku importem
-# modulu, ktorego jeszcze nie ma. Dowodza WPROST na publicznym API
+# plugin/scripts/sprint_run_backend.py (adapter ma wlasne testy w
+# tests/unit/test_sprint_run_backend.py) -- celowo, zeby ten plik zalezal
+# tylko od sprint_run_state.py. Dowodza WPROST na publicznym API
 # sprint_run_state.py, ze classify()/summarize() NIE WYMAGAJA zadnej zmiany
 # dla MON-185: bridge w sprint_run_backend.classify_normalized (patrz jego
 # docstring) tylko mapuje znormalizowany rekord Codex/Claude na te same
@@ -1385,7 +1386,7 @@ class TestParseMaxWaiting:
     def test_positive_integer_is_returned(self, raw, expected):
         assert state.parse_max_waiting(raw) == expected
 
-    @pytest.mark.parametrize("raw", [None, "", "   ", "abc", "0", "-1", "2.5"])
+    @pytest.mark.parametrize("raw", [None, "", "   ", "abc", "0", "-1", "2.5", "\u00b2", "\u0663"])
     def test_invalid_or_non_positive_falls_back_to_default(self, raw):
         assert state.parse_max_waiting(raw) == state.DEFAULT_MAX_WAITING == 2
 
@@ -1463,3 +1464,832 @@ class TestDispatchCapacity:
         assert summary == snapshot
         assert result["free_slots"] == 2
         assert result["can_start"] == 2
+
+
+# ---------------------------------------------------------------------------
+# MON-252: sesje, ktore tylko czekaja (wejscie uzytkownika, numerowane opcje,
+# fraza oczekiwania, detektor zastoju)
+#
+# Fixture'y tests/fixtures/claude/logs-*.2.1.288.txt to segmenty jednej sesji
+# przepisane doslownie z ogonow logow odzyskanych z transkryptu dyspozytora
+# (sesje MON-244/MON-249 usuniete, `claude logs` ich juz nie zwraca). Naglowek w
+# pierwszej linii pliku podaje sesje i zrodlo. Stan "pytanie przed odpowiedzia
+# uzytkownika" nie zostal przechwycony osobno: testy budują go z realnego
+# fixture przez odciecie ostatniej linii `<znak promptu U+276F> <tekst>` (_question_state).
+#
+# Literaly: "Czekam", "Decyzja dla Ciebie", "<znak promptu U+276F> <tekst>", "SPRINT-RUN STOP:" i linia
+# podpowiedzi TUI "1: Learn more   2: Knew this already   0: Dismiss" sa
+# ZAOBSERWOWANE w fixture'ach. Frazy "waiting for", "wybierz" i "opcja 1" pochodza
+# Z DEFINICJI TICKETU MON-252, nie z fixture - testy wejsc z tymi frazami budują
+# linie sztucznie (komentarz przy kazdym).
+# ---------------------------------------------------------------------------
+
+STALL_FIXTURE_NAME = "logs-stall-czekam.2.1.288.txt"
+WAITING_PHRASE_FIXTURE_NAME = "logs-waiting-phrase.2.1.288.txt"
+DECISION_FIXTURE_NAME = "logs-decision-options-answered.2.1.288.txt"
+STOP_ANSWERED_FIXTURE_NAME = "logs-stop-answered.2.1.288.txt"
+TIP_FIXTURE_NAME = "logs-tip-numbered.2.1.288.txt"
+
+SESSION_ID = "a1111111"
+
+CZEKAM_LINE = "⏺ Czekam."
+PIPELINE_WAIT_LINE = "⏺ Czekam na pipeline MR !158 (2909085940)."
+STATUS_LINE = "MON-244 | worktree-MON-244 | Opus 5.5 | ctx:34% | limit sesji:9% | limit tyg:30%"
+MODE_LINE = "⏵⏵ auto mode on · ← 6 agents · 1 shell"
+AUTO_COMPACT_LINE = "3% until auto-compact"
+LIMIT_FRAGMENT_LINE = "limit tyg:31%"
+RECAP_TAIL_LINE = "pełny przebieg, gdy cudzy kontener skończy, potem commit, push i MR. (disable recaps in /config)"
+DECISION_PHRASE_LINE = "Decyzja dla Ciebie - jak domknąć review:"
+# Jedyna widoczna opcja z przechwycenia 13946c6f (rec-9309): druga linia listy, pierwsza poza ogonem.
+SINGLE_OPTION_LINE = (
+    "2. Powtórka pełnego przebiegu lokalnie (ok. 20-70 min) - sensowna dopiero, gdy żadna inna sesja nie używa bazy testowej. "
+    "Review nadal zostaje po Twojej stronie."
+)
+# Wypowiedz z przechwycenia 0b8e0d22 zawinieta przez terminal na dwie linie: "Czekam" stoi w srodku drugiej
+# linii, a po nim recap.
+WRAPPED_WAIT_LINES = [
+    (
+        "⏺ Pełny przebieg nr 1: 1786 failed / 1280 errors - błędy sqlalchemy w setupie, bo równolegle inna sesja sprintu "
+        "odpaliła pełne testy na wspólnej bazie open_sentry_test. To kolizja środowiska, nie kod"
+    ),
+    "(zawężone testy grafu i CLI zielone). Czekam na zwolnienie bazy i powtarzam pełny przebieg.",
+    (
+        "※ recap: MON-248 (odczyt grafu przez API v2 i CLI): kod, testy i dokumentacja gotowe, ale pełny przebieg testów padł "
+        "przez kolizję na wspólnej bazie testowej. Następny krok: powtórzyć pełne"
+    ),
+    "testy po zwolnieniu bazy, potem review krytyka.",
+]
+
+
+def _fixture_lines(name):
+    """Linie logu z fixture 2.1.288 bez naglowka `# claude logs ...`.
+
+    Fixture to ogon po render_log (zwykly tekst, bez sekwencji sterujacych), czyli to,
+    co sprint_run_tick.py zapisuje w TICK_DIR/logs/<id>.log - czytamy go jak ten plik.
+    """
+    lines = (FIXTURES_DIR / name).read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("# claude logs "), name
+    return lines[1:]
+
+
+def _replace_line(lines, old, new):
+    assert lines.count(old) == 1, old
+    return [new if line == old else line for line in lines]
+
+
+def _question_state(name):
+    """Fixture bez ostatniej linii `<znak promptu U+276F> <tekst>`: stan sprzed odpowiedzi uzytkownika."""
+    lines = _fixture_lines(name)
+    # Realny log ma po `znak promptu` twardą spację (U+00A0), nie zwykłą.
+    assert lines[-1].startswith("\u276f") and lines[-1][1:].strip(), f"{name}: ostatnia linia fixture nie jest wejściem użytkownika: {lines[-1]!r}"
+    return lines[:-1]
+
+
+def _stall_lines(first_line="⏺ Sprawdzam wynik pelnego przebiegu."):
+    """Ogon sesji MON-244 z fixture stall; `⏺ Czekam.` podmienione, zeby fraza oczekiwania
+    nie dawala werdyktu `waiting` i zastoj byl jedynym sygnalem."""
+    return _replace_line(_fixture_lines(STALL_FIXTURE_NAME), CZEKAM_LINE, first_line)
+
+
+def _volatile_lines():
+    """Ogon stall z dodatkowymi liniami zmiennymi TUI z przechwycenia waiting-phrase
+    (`N% until auto-compact`, urwany fragment statusu `limit tyg:..%`)."""
+    lines = _stall_lines()
+    prompt = lines.index("\u276f")
+    return [*lines[:prompt], AUTO_COMPACT_LINE, "\u276f", LIMIT_FRAGMENT_LINE, *lines[prompt + 1 :]]
+
+
+def _verdict(lines):
+    return state.classify("in_progress", "running", lines)
+
+
+_RUNNING_REASON = _verdict(["czytam pliki"])[1]
+
+
+class _Ticker:
+    """Kolejne ticki dyspozytora: ten sam katalog logow i stanu, jedna sesja w tle.
+
+    state_dir lezy obok logs_dir (tak jak TICK_DIR/stall.json obok TICK_DIR/logs), bo logs_dir
+    jest czyszczony co tick. stall_ticks=None pomija argument, czyli sprawdza wartosc domyslna.
+    """
+
+    def __init__(self, tmp_path, stall_ticks=None, with_state_dir=True):
+        self.logs_dir = tmp_path / "logs"
+        self.logs_dir.mkdir()
+        self.state_dir = tmp_path / "state" if with_state_dir else None
+        if self.state_dir is not None:
+            self.state_dir.mkdir()
+        self.stall_ticks = stall_ticks
+
+    def run(self, log_lines, *, session_id=SESSION_ID, agent_state="running", ticket_status="in_progress"):
+        if log_lines is not None:
+            (self.logs_dir / f"{session_id}.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+        tickets = [{"key": "MON-1", "status": ticket_status, "assignee": None}]
+        agents = [bg_agent("monolynx-MON-1", session_id=f"uuid-{session_id}", agent_id=session_id, agent_state=agent_state)]
+        if self.stall_ticks is None:
+            report = state.build_report("monolynx", tickets, agents, self.logs_dir, state_dir=self.state_dir)
+        else:
+            report = state.build_report("monolynx", tickets, agents, self.logs_dir, state_dir=self.state_dir, stall_ticks=self.stall_ticks)
+        return report["tickets"][0]
+
+    def stall_path(self):
+        assert self.state_dir is not None
+        return self.state_dir / "stall.json"
+
+    def stall_data(self):
+        return json.loads(self.stall_path().read_text(encoding="utf-8"))
+
+
+@pytest.mark.unit
+class TestParseStallTicks:
+    def test_default_constant_is_two(self):
+        assert state.DEFAULT_STALL_TICKS == 2
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [("3", 3), (" 3 ", 3), ("1", 1), ("2", 2), ("10", 10)],
+    )
+    def test_positive_integer_is_returned(self, raw, expected):
+        assert state.parse_stall_ticks(raw) == expected
+
+    # "\u00b2" (indeks gorny) i "\u0663" (cyfra arabsko-indyjska) przechodza str.isdigit(), ale int() na pierwszym
+    # rzuca ValueError, a drugi daje 3 - wartosc spoza ASCII ma wrocic do domyslnej bez wyjatku.
+    @pytest.mark.parametrize("raw", [None, "", "   ", "abc", "0", "-1", "2.5", "\u00b2", "\u0663"])
+    def test_invalid_or_non_positive_falls_back_to_default(self, raw):
+        assert state.parse_stall_ticks(raw) == state.DEFAULT_STALL_TICKS == 2
+
+
+@pytest.mark.unit
+class TestClassifyUserInput:
+    """Wejscie uzytkownika `<znak promptu U+276F> <tekst>` zdejmuje `waiting`: sygnaly liczą sie tylko z linii po nim."""
+
+    @pytest.mark.parametrize(
+        ("fixture_name", "reason_fragment"),
+        [
+            pytest.param(STOP_ANSWERED_FIXTURE_NAME, "SPRINT-RUN STOP", id="marker-stop"),
+            pytest.param(DECISION_FIXTURE_NAME, "numerowane opcje", id="numerowane-opcje"),
+        ],
+    )
+    def test_answer_turns_waiting_session_into_running(self, fixture_name, reason_fragment):
+        answered = _fixture_lines(fixture_name)
+        question = _question_state(fixture_name)
+
+        verdict, reason = _verdict(question)
+        assert verdict == "waiting"
+        assert reason_fragment in reason
+        assert _verdict(answered) == ("running", _RUNNING_REASON)
+
+    @pytest.mark.parametrize("fixture_name", [STOP_ANSWERED_FIXTURE_NAME, DECISION_FIXTURE_NAME])
+    @pytest.mark.parametrize("empty_prompt", ["\u276f", "  \u276f  "])
+    def test_empty_prompt_does_not_clear_waiting(self, fixture_name, empty_prompt):
+        # Pusty prompt TUI to chrome, nie odpowiedz: pytanie nadal czeka.
+        assert _verdict([*_question_state(fixture_name), empty_prompt])[0] == "waiting"
+
+    @pytest.mark.parametrize("fixture_name", [STOP_ANSWERED_FIXTURE_NAME, DECISION_FIXTURE_NAME])
+    def test_real_user_input_with_non_breaking_space_clears_waiting(self, fixture_name):
+        # Realne wejście z przechwycenia ma `<znak promptu>\xa0<tekst>`; rozpoznanie tylko po `znak promptu` + zwykłej spacji by je pominęło.
+        answered = _fixture_lines(fixture_name)
+        assert answered[-1].startswith("\u276f\xa0")
+
+        assert _verdict(answered) == ("running", _RUNNING_REASON)
+
+    @pytest.mark.parametrize("fixture_name", [STOP_ANSWERED_FIXTURE_NAME, DECISION_FIXTURE_NAME])
+    def test_prompt_with_only_a_non_breaking_space_is_not_user_input(self, fixture_name):
+        assert _verdict([*_question_state(fixture_name), "\u276f\xa0"])[0] == "waiting"
+
+    def test_indented_user_input_counts(self):
+        assert _verdict([*_question_state(STOP_ANSWERED_FIXTURE_NAME), "  \u276f zgoda"]) == ("running", _RUNNING_REASON)
+
+    def test_prompt_char_in_the_middle_of_a_line_is_not_user_input(self):
+        verdict, _ = _verdict([*_question_state(STOP_ANSWERED_FIXTURE_NAME), "wynik \u276f ok"])
+        assert verdict == "waiting"
+
+    @pytest.mark.parametrize(
+        ("fixture_name", "new_block", "reason_fragment"),
+        [
+            pytest.param(STOP_ANSWERED_FIXTURE_NAME, ["⏺ Zrobić też drugi test?"], "pytanie", id="pytajnik"),
+            pytest.param(
+                STOP_ANSWERED_FIXTURE_NAME,
+                ["⏺ Zatrzymuję się.", "SPRINT-RUN STOP: brak toolchain"],
+                "SPRINT-RUN STOP",
+                id="marker-stop",
+            ),
+            # Linie z "wybierz" i listą zbudowane sztucznie: fraza "wybierz" pochodzi z definicji ticketu.
+            pytest.param(
+                DECISION_FIXTURE_NAME,
+                ["⏺ Mam dwa warianty.", "Wybierz wariant:", "1. wariant A", "2. wariant B"],
+                "numerowane opcje",
+                id="numerowane-opcje",
+            ),
+        ],
+    )
+    def test_signal_after_user_input_is_waiting_again(self, fixture_name, new_block, reason_fragment):
+        answered = _fixture_lines(fixture_name)
+        assert _verdict(answered)[0] == "running"
+
+        verdict, reason = _verdict([*answered, *new_block])
+
+        assert verdict == "waiting"
+        assert reason_fragment in reason
+
+    def test_wait_phrase_after_user_input_is_waiting_again(self):
+        lines = _replace_line(_fixture_lines(STALL_FIXTURE_NAME), "\u276f", "\u276f sprawdź status")
+        assert _verdict(lines)[0] == "running"
+
+        verdict, reason = _verdict([*lines, "⏺ Czekam na CI."])
+
+        assert verdict == "waiting"
+        assert reason.startswith("brak postępu")
+
+    def test_only_the_last_user_input_counts(self):
+        lines = ["\u276f pierwsze", "SPRINT-RUN STOP: x", "\u276f drugie"]
+        assert _verdict(lines) == ("running", _RUNNING_REASON)
+
+    @pytest.mark.parametrize(
+        "lines",
+        [
+            pytest.param(["⏺ Czekam na CI.", "\u276f czy to działa?"], id="z-kotwica"),
+            pytest.param(["pracuję nad testami", "\u276f czy to działa?"], id="bez-kotwicy"),
+        ],
+    )
+    def test_question_mark_in_user_input_is_not_an_assistant_question(self, lines):
+        assert _verdict(lines) == ("running", _RUNNING_REASON)
+
+
+@pytest.mark.unit
+class TestClassifyNumberedOptions:
+    """Numerowane opcje + fraza decyzji = `waiting` takze bez pytajnika."""
+
+    @staticmethod
+    def _options_block(phrase_line, first="1. pierwszy wariant", second="2. drugi wariant"):
+        return ["⏺ Mam dwa warianty dalszej pracy.", phrase_line, first, second, "Rekomenduję pierwszy."]
+
+    def test_real_decision_without_question_mark_is_waiting(self):
+        lines = _question_state(DECISION_FIXTURE_NAME)
+        assert not any(line.rstrip().endswith("?") for line in lines)
+
+        verdict, reason = _verdict(lines)
+
+        # Fraza stoi 6. linią od końca, poza oknem 5 linii: wykrycie musi patrzeć na cały ogon.
+        assert verdict == "waiting"
+        assert "numerowane opcje" in reason
+
+    # "Decyzja dla Ciebie" zaobserwowana w fixture; "wybierz" i "opcja 1" z definicji ticketu.
+    @pytest.mark.parametrize(
+        "phrase_line",
+        [
+            DECISION_PHRASE_LINE,
+            "DECYZJA DLA CIEBIE - wybór wariantu:",
+            "Wybierz wariant:",
+            "wybierz jeden z dwóch",
+            "Najlepsza będzie opcja 1 (szybsza).",
+            "OPCJA 1 jest szybsza.",
+        ],
+    )
+    @pytest.mark.parametrize(("first", "second"), [("1. pierwszy wariant", "2. drugi wariant"), ("1) pierwszy wariant", "2) drugi wariant")])
+    def test_numbered_list_with_decision_phrase_is_waiting(self, phrase_line, first, second):
+        verdict, reason = _verdict(self._options_block(phrase_line, first, second))
+
+        assert verdict == "waiting"
+        assert "numerowane opcje" in reason
+
+    def test_three_options_with_phrase_are_waiting(self):
+        lines = [DECISION_PHRASE_LINE, "1. A", "2. B", "3. C"]
+        assert _verdict(lines)[0] == "waiting"
+
+    def test_list_without_decision_phrase_is_running(self):
+        lines = ["⏺ Poniżej dwa warianty dalszej pracy:", "1. pierwszy wariant", "2. drugi wariant"]
+        assert _verdict(lines) == ("running", _RUNNING_REASON)
+
+    @pytest.mark.parametrize("phrase_line", [DECISION_PHRASE_LINE, "Wybierz wariant:", "Najlepsza będzie opcja 1."])
+    def test_decision_phrase_without_list_is_running(self, phrase_line):
+        assert _verdict(["⏺ Mam dwa warianty dalszej pracy.", phrase_line]) == ("running", _RUNNING_REASON)
+
+    def test_real_phrase_with_digit_in_the_middle_of_a_line_is_running(self):
+        # Realne linie sesji MON-244 sprzed markera: "Decyzja dla Ciebie: ... zgoda na 4. poprawkę ..." bez listy.
+        lines = _fixture_lines(STOP_ANSWERED_FIXTURE_NAME)[:3]
+        assert any("Decyzja dla Ciebie" in line for line in lines)
+        assert _verdict(lines) == ("running", _RUNNING_REASON)
+
+    def test_digit_not_at_the_start_of_a_line_is_not_an_option(self):
+        lines = [DECISION_PHRASE_LINE, "krok 1. pierwszy wariant", "krok 2. drugi wariant"]
+        assert _verdict(lines) == ("running", _RUNNING_REASON)
+
+    def test_single_option_with_decision_phrase_is_running(self):
+        assert _verdict([DECISION_PHRASE_LINE, SINGLE_OPTION_LINE]) == ("running", _RUNNING_REASON)
+
+    def test_tui_tip_line_is_not_an_option_list(self):
+        tip = _fixture_lines(TIP_FIXTURE_NAME)
+        assert "1: Learn more   2: Knew this already   0: Dismiss" in tip
+
+        assert _verdict([*tip, DECISION_PHRASE_LINE]) == ("running", _RUNNING_REASON)
+
+    def test_tui_tip_line_is_not_counted_as_the_second_option(self):
+        # Jedna prawdziwa opcja + linia podpowiedzi TUI: gdyby podpowiedz liczyla sie jako opcja, bylyby dwie.
+        tip = _fixture_lines(TIP_FIXTURE_NAME)
+
+        assert _verdict([DECISION_PHRASE_LINE, SINGLE_OPTION_LINE, *tip]) == ("running", _RUNNING_REASON)
+
+
+@pytest.mark.unit
+class TestClassifyWaitingPhrase:
+    """Ostatnia wypowiedz asystenta konczy sie fraza oczekiwania = `waiting` (zastoj bez pytania)."""
+
+    def test_czekam_fixture_with_empty_prompt_is_waiting(self):
+        lines = _fixture_lines(STALL_FIXTURE_NAME)
+        assert "\u276f" in lines
+
+        verdict, reason = _verdict(lines)
+
+        assert verdict == "waiting"
+        assert reason.startswith("brak postępu")
+
+    def test_waiting_phrase_fixture_with_tui_hint_is_waiting(self):
+        verdict, reason = _verdict(_fixture_lines(WAITING_PHRASE_FIXTURE_NAME))
+
+        assert verdict == "waiting"
+        assert reason.startswith("brak postępu")
+
+    def test_wrapped_utterance_with_wait_sentence_in_the_second_line_is_waiting(self):
+        verdict, reason = _verdict(WRAPPED_WAIT_LINES)
+
+        assert verdict == "waiting"
+        assert reason.startswith("brak postępu")
+
+    # Trzy pierwsze zdania z przechwyconych sesji MON-244/MON-248; reszta wariantów zbudowana sztucznie
+    # ("waiting for" pochodzi z definicji ticketu, małe litery i wielkość liter to sprawdzenie wymagania z kontraktu).
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param(CZEKAM_LINE, id="czekam-kropka"),
+            pytest.param(PIPELINE_WAIT_LINE, id="czekam-na-pipeline"),
+            pytest.param("⏺ Pełny przebieg wystartował (ok. 25 min). Czekam na wynik.", id="po-innym-zdaniu"),
+            pytest.param("⏺ czekam na wynik.", id="male-litery"),
+            pytest.param("⏺ Uruchomiłem testy, waiting for CI.", id="waiting-for"),
+            pytest.param("⏺ Now Waiting For the pipeline.", id="waiting-for-wielkosc-liter"),
+        ],
+    )
+    def test_wait_phrase_in_last_sentence_is_waiting(self, line):
+        verdict, reason = _verdict([line])
+
+        assert verdict == "waiting"
+        assert reason.startswith("brak postępu")
+
+    # Warianty zbudowane sztucznie: "Czekam" w nieostatnim zdaniu oraz granica słowa
+    # ("Zaczekamy", "Poczekam", "Czekamy", "awaiting for", "waiting forever").
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param("⏺ Czekam na CI. Pipeline zielony, merguję MR.", id="czekam-w-srodku-wypowiedzi"),
+            pytest.param("⏺ Zaczekamy na pipeline.", id="zaczekamy"),
+            pytest.param("⏺ Poczekam na pipeline.", id="poczekam"),
+            pytest.param("⏺ Czekamy na pipeline.", id="czekamy"),
+            pytest.param("⏺ Done, not awaiting for anything.", id="awaiting-for"),
+            pytest.param("⏺ Stop waiting forever on this.", id="waiting-forever"),
+        ],
+    )
+    def test_phrase_not_ending_the_utterance_or_not_a_whole_word_is_running(self, line):
+        assert _verdict([line]) == ("running", _RUNNING_REASON)
+
+    def test_earlier_utterance_with_wait_phrase_is_ignored(self):
+        assert _verdict([CZEKAM_LINE, "⏺ Pipeline zielony, merguję MR."]) == ("running", _RUNNING_REASON)
+
+    def test_wait_phrase_in_recap_below_the_utterance_is_ignored(self):
+        # W fixture recap pod wypowiedzią zawiera "Czekam na wynik pipeline"; sama wypowiedź jest podmieniona.
+        lines = _replace_line(_fixture_lines(WAITING_PHRASE_FIXTURE_NAME), PIPELINE_WAIT_LINE, "⏺ Pipeline MR !158 jest zielony, merguję.")
+        assert any("Czekam" in line for line in lines)
+
+        assert _verdict(lines) == ("running", _RUNNING_REASON)
+
+    def test_wait_phrase_cleared_by_user_input_is_running(self):
+        lines = _replace_line(_fixture_lines(STALL_FIXTURE_NAME), "\u276f", "\u276f sprawdź status")
+
+        assert _verdict(lines) == ("running", _RUNNING_REASON)
+
+    def test_stop_marker_wins_over_wait_phrase_reason(self):
+        verdict, reason = _verdict([CZEKAM_LINE, "SPRINT-RUN STOP: brak toolchain"])
+
+        assert verdict == "waiting"
+        assert "SPRINT-RUN STOP" in reason
+
+    # Kazdy znacznik konca wypowiedzi (_ends_utterance) ma wlasne wejscie, na ktorym jest JEDYNYM powodem
+    # wyniku: wypowiedz `⏺ Czekam.` i zaraz po niej dokladnie jedna linia chrome z fixture'a, bez recapu.
+    # Bez tego znacznika linia chrome wchodzi do sklejonej wypowiedzi, ostatnie zdanie przestaje byc
+    # "Czekam" i wynik to `running`. Pusty prompt jest pokryty w _ends_utterance dwa razy (krotka
+    # "prompt" i linia zmienna), wiec usuniecie tylko jednego z nich nie zmienia wyniku - przypadek
+    # sprawdza zachowanie, nie rozroznia tych dwoch.
+    @pytest.mark.parametrize(
+        ("fixture", "prefix", "nth"),
+        [
+            pytest.param(STALL_FIXTURE_NAME, "※ recap", 0, id="recap"),
+            pytest.param(STALL_FIXTURE_NAME, "─", 0, id="ramka-z-nazwa-sesji"),
+            pytest.param(STALL_FIXTURE_NAME, "─", 1, id="ramka-zwykla"),
+            pytest.param(STALL_FIXTURE_NAME, "⏵⏵", 0, id="linia-trybu"),
+            pytest.param(STALL_FIXTURE_NAME, "MON-244 |", 0, id="linia-statusu"),
+            pytest.param(STALL_FIXTURE_NAME, "\u276f", 0, id="pusty-prompt"),
+            pytest.param(WAITING_PHRASE_FIXTURE_NAME, "[-]", 0, id="nawias-minus"),
+            pytest.param(WAITING_PHRASE_FIXTURE_NAME, "✦", 0, id="podpowiedz-tui"),
+            pytest.param(WAITING_PHRASE_FIXTURE_NAME, "3% until", 0, id="auto-compact"),
+            pytest.param(WAITING_PHRASE_FIXTURE_NAME, "limit tyg:", 0, id="urwany-fragment-statusu"),
+        ],
+    )
+    def test_each_utterance_end_marker_alone_ends_the_utterance(self, fixture, prefix, nth):
+        chrome_lines = [line for line in _fixture_lines(fixture) if line.startswith(prefix)]
+        assert len(chrome_lines) > nth, f"{fixture}: brak linii zaczynajacej sie od {prefix!r}"
+
+        verdict, reason = _verdict([CZEKAM_LINE, chrome_lines[nth]])
+
+        assert verdict == "waiting"
+        assert reason.startswith("brak postępu")
+
+    def test_stall_fixture_without_recap_is_ended_by_the_frame(self):
+        lines = _fixture_lines(STALL_FIXTURE_NAME)
+        recap = lines.index(next(line for line in lines if line.startswith("※ recap")))
+        # Odciete dwie linie to realny recap (naglowek + zawinieta kontynuacja), a nastepna linia to ramka.
+        assert lines[recap + 1] == RECAP_TAIL_LINE
+        assert lines[recap + 2].startswith("─")
+
+        verdict, reason = _verdict([*lines[:recap], *lines[recap + 2 :]])
+
+        assert verdict == "waiting"
+        assert reason.startswith("brak postępu")
+
+    def test_waiting_phrase_fixture_without_recap_is_ended_by_the_bracket_marker(self):
+        lines = _fixture_lines(WAITING_PHRASE_FIXTURE_NAME)
+        recap = lines.index(next(line for line in lines if line.startswith("※ recap")))
+        assert lines[recap + 1] == "krok to merge po zielonym CI."
+        assert lines[recap + 2] == "[-]"
+
+        verdict, reason = _verdict([*lines[:recap], *lines[recap + 2 :]])
+
+        assert verdict == "waiting"
+        assert reason.startswith("brak postępu")
+
+    # Ogon bez kotwicy `⏺` nie ma "ostatniej wypowiedzi asystenta": zdanie na koncu to moze byc dowolna
+    # linia (wyjscie narzedzia), wiec fraza oczekiwania nie daje `waiting`.
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param("Uruchomiłem testy. Czekam na CI.", id="czekam"),
+            pytest.param("Uruchomiłem testy, waiting for CI.", id="waiting-for"),
+        ],
+    )
+    def test_wait_phrase_without_anchor_is_running(self, line):
+        assert _verdict([line]) == ("running", _RUNNING_REASON)
+
+
+@pytest.mark.unit
+class TestBuildReportSessionFixtures:
+    """Te same logi przez plik <id>.log: read_log_tail (render_log) -> classify."""
+
+    @pytest.mark.parametrize(
+        ("lines", "verdict", "reason_fragment"),
+        [
+            pytest.param(_fixture_lines(STALL_FIXTURE_NAME), "waiting", "brak postępu", id="czekam"),
+            pytest.param(_fixture_lines(WAITING_PHRASE_FIXTURE_NAME), "waiting", "brak postępu", id="fraza-oczekiwania"),
+            pytest.param(_question_state(DECISION_FIXTURE_NAME), "waiting", "numerowane opcje", id="opcje-bez-odpowiedzi"),
+            pytest.param(_fixture_lines(DECISION_FIXTURE_NAME), "running", "Sesja w tle dziala", id="opcje-z-odpowiedzia"),
+            pytest.param(_question_state(STOP_ANSWERED_FIXTURE_NAME), "waiting", "SPRINT-RUN STOP", id="stop-bez-odpowiedzi"),
+            pytest.param(_fixture_lines(STOP_ANSWERED_FIXTURE_NAME), "running", "Sesja w tle dziala", id="stop-z-odpowiedzia"),
+            pytest.param(_fixture_lines(TIP_FIXTURE_NAME), "running", "Sesja w tle dziala", id="podpowiedz-tui"),
+        ],
+    )
+    def test_log_file_is_classified(self, tmp_path, lines, verdict, reason_fragment):
+        row = _Ticker(tmp_path, with_state_dir=False).run(lines)
+
+        assert row["verdict"] == verdict
+        assert reason_fragment in row["reason"]
+
+
+@pytest.mark.unit
+class TestStallDetector:
+    @pytest.mark.parametrize("stall_ticks", [1, 2, 3, 4])
+    def test_verdict_flips_to_waiting_exactly_at_the_threshold(self, tmp_path, stall_ticks):
+        ticker = _Ticker(tmp_path, stall_ticks=stall_ticks)
+        lines = _stall_lines()
+
+        for _ in range(stall_ticks):
+            row = ticker.run(lines)
+            assert row["verdict"] == "running"
+            assert row["reason"] == _RUNNING_REASON
+        row = ticker.run(lines)
+
+        assert row["verdict"] == "waiting"
+        assert row["reason"] == f"brak postępu od {stall_ticks} ticków"
+        assert ticker.stall_data()[SESSION_ID]["ticks"] == stall_ticks
+
+    def test_default_threshold_is_two_ticks_when_stall_ticks_is_omitted(self, tmp_path):
+        ticker = _Ticker(tmp_path)
+        lines = _stall_lines()
+
+        rows = [ticker.run(lines) for _ in range(3)]
+
+        assert [row["verdict"] for row in rows] == ["running", "running", "waiting"]
+        assert rows[2]["reason"] == "brak postępu od 2 ticków"
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            pytest.param("⏺ Sprawdzam wynik pelnego przebiegu.", "⏺ Sprawdzam wynik testow.", id="tresc-odpowiedzi"),
+            pytest.param(RECAP_TAIL_LINE, "pełny przebieg i review krytyka. (disable recaps in /config)", id="recap"),
+        ],
+    )
+    def test_changed_tail_resets_the_counter(self, tmp_path, old, new):
+        ticker = _Ticker(tmp_path, stall_ticks=2)
+        before = _stall_lines()
+        after = _replace_line(before, old, new)
+
+        ticker.run(before)
+        ticker.run(before)
+        hash_before = ticker.stall_data()[SESSION_ID]["hash"]
+        assert ticker.stall_data()[SESSION_ID]["ticks"] == 1
+
+        assert ticker.run(after)["verdict"] == "running"
+        entry = ticker.stall_data()[SESSION_ID]
+        assert entry["ticks"] == 0
+        assert entry["hash"] != hash_before
+        assert ticker.run(after)["verdict"] == "running"
+        assert ticker.run(after)["verdict"] == "waiting"
+
+    def test_returning_to_an_earlier_tail_does_not_restore_its_counter(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=2)
+        first = _stall_lines()
+        second = _replace_line(first, "⏺ Sprawdzam wynik pelnego przebiegu.", "⏺ Sprawdzam wynik testow.")
+
+        ticker.run(first)
+        ticker.run(first)
+        ticker.run(second)
+        row = ticker.run(first)
+
+        assert row["verdict"] == "running"
+        assert ticker.stall_data()[SESSION_ID]["ticks"] == 0
+
+    def test_new_session_starts_from_zero(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=1)
+        lines = _stall_lines()
+        ticker.run(lines)
+        assert ticker.run(lines)["verdict"] == "waiting"
+
+        row = ticker.run(lines, session_id="b2222222")
+
+        assert row["verdict"] == "running"
+        assert ticker.stall_data()["b2222222"]["ticks"] == 0
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            pytest.param(STATUS_LINE, STATUS_LINE.replace("ctx:34%", "ctx:41%"), id="status-ctx"),
+            pytest.param(STATUS_LINE, STATUS_LINE.replace("limit sesji:9%", "limit sesji:12%"), id="status-limit-sesji"),
+            pytest.param(STATUS_LINE, STATUS_LINE.replace("limit tyg:30%", "limit tyg:33%"), id="status-limit-tygodnia"),
+            pytest.param(AUTO_COMPACT_LINE, "4% until auto-compact", id="until-auto-compact"),
+            pytest.param(LIMIT_FRAGMENT_LINE, "limit tyg:32%", id="urwany-fragment-statusu"),
+            pytest.param(MODE_LINE, MODE_LINE.replace("6 agents", "7 agents"), id="linia-trybu"),
+        ],
+    )
+    def test_volatile_tui_line_does_not_reset_the_counter(self, tmp_path, old, new):
+        ticker = _Ticker(tmp_path, stall_ticks=2)
+        base = _volatile_lines()
+        variant = _replace_line(base, old, new)
+
+        ticker.run(base)
+        ticker.run(variant)
+        row = ticker.run(base)
+
+        assert row["verdict"] == "waiting"
+        assert row["reason"] == "brak postępu od 2 ticków"
+
+
+@pytest.mark.unit
+class TestStallStateFile:
+    def test_file_lives_in_state_dir_with_hash_and_ticks_per_session(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=3)
+        lines = _stall_lines()
+
+        ticker.run(lines)
+        first = ticker.stall_data()
+        ticker.run(lines)
+        second = ticker.stall_data()
+
+        assert set(first) == {SESSION_ID}
+        assert set(first[SESSION_ID]) == {"hash", "ticks"}
+        assert re.fullmatch(r"[0-9a-f]{64}", first[SESSION_ID]["hash"])
+        assert type(first[SESSION_ID]["ticks"]) is int
+        assert first[SESSION_ID]["ticks"] == 0
+        assert second[SESSION_ID] == {"hash": first[SESSION_ID]["hash"], "ticks": 1}
+        assert not (ticker.logs_dir / "stall.json").exists()
+
+    def test_file_keeps_only_sessions_from_the_current_run(self, tmp_path):
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        for session_id in ("a1111111", "b2222222"):
+            (logs_dir / f"{session_id}.log").write_text("\n".join(_stall_lines()) + "\n", encoding="utf-8")
+        tickets = [
+            {"key": "MON-1", "status": "in_progress", "assignee": None},
+            {"key": "MON-2", "status": "in_progress", "assignee": None},
+        ]
+        agents = [
+            bg_agent("monolynx-MON-1", session_id="uuid-1", agent_id="a1111111"),
+            bg_agent("monolynx-MON-2", session_id="uuid-2", agent_id="b2222222"),
+        ]
+
+        state.build_report("monolynx", tickets, agents, logs_dir, state_dir=state_dir)
+        both = json.loads((state_dir / "stall.json").read_text(encoding="utf-8"))
+        state.build_report("monolynx", tickets, agents[:1], logs_dir, state_dir=state_dir)
+        remaining = json.loads((state_dir / "stall.json").read_text(encoding="utf-8"))
+
+        assert set(both) == {"a1111111", "b2222222"}
+        assert set(remaining) == {"a1111111"}
+
+    def test_without_state_dir_nothing_is_written_and_verdict_never_flips(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=1, with_state_dir=False)
+        lines = _stall_lines()
+
+        rows = [ticker.run(lines) for _ in range(4)]
+
+        assert [row["verdict"] for row in rows] == ["running"] * 4
+        assert list(tmp_path.rglob("stall.json")) == []
+
+    def test_build_report_called_without_state_dir_keeps_the_old_behaviour(self, tmp_path):
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        (logs_dir / f"{SESSION_ID}.log").write_text("\n".join(_stall_lines()) + "\n", encoding="utf-8")
+        tickets = [{"key": "MON-1", "status": "in_progress", "assignee": None}]
+        agents = [bg_agent("monolynx-MON-1", agent_id=SESSION_ID)]
+
+        verdicts = [state.build_report("monolynx", tickets, agents, logs_dir)["tickets"][0]["verdict"] for _ in range(4)]
+
+        assert verdicts == ["running"] * 4
+        assert list(tmp_path.rglob("stall.json")) == []
+
+    @pytest.mark.parametrize("log_lines", [None, []], ids=["brak-logu", "pusty-log"])
+    def test_session_without_log_tail_has_no_entry_and_stays_running(self, tmp_path, log_lines):
+        ticker = _Ticker(tmp_path, stall_ticks=1)
+
+        rows = [ticker.run(log_lines) for _ in range(3)]
+
+        assert [row["verdict"] for row in rows] == ["running"] * 3
+        assert ticker.stall_data() == {}
+
+    def test_exited_session_keeps_its_verdict(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=1)
+        lines = _stall_lines()
+
+        rows = [ticker.run(lines, agent_state="exited", ticket_status="in_review") for _ in range(3)]
+
+        assert [row["verdict"] for row in rows] == ["done"] * 3
+
+    def test_existing_waiting_verdict_keeps_its_own_reason(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=1)
+        lines = _question_state(STOP_ANSWERED_FIXTURE_NAME)
+
+        for _ in range(3):
+            row = ticker.run(lines)
+            assert row["verdict"] == "waiting"
+            assert "SPRINT-RUN STOP" in row["reason"]
+            assert "brak postępu od" not in row["reason"]
+
+    def test_stall_reason_keeps_the_unknown_state_note(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=1)
+        lines = _stall_lines()
+
+        ticker.run(lines, agent_state="compacting")
+        row = ticker.run(lines, agent_state="compacting")
+
+        assert row["verdict"] == "waiting"
+        assert row["reason"] == "brak postępu od 1 ticków; nieznany stan 'compacting', traktuje jako zywy"
+
+    def test_unwritable_state_file_does_not_break_the_report(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=1)
+        ticker.stall_path().mkdir()
+        lines = _stall_lines()
+
+        rows = [ticker.run(lines) for _ in range(3)]
+
+        assert [row["verdict"] for row in rows] == ["running"] * 3
+
+    @pytest.mark.parametrize("raw", ["{niepoprawny json", "[]", "null", '"tekst"', "42", ""], ids=lambda raw: raw or "pusty")
+    def test_corrupt_state_file_is_treated_as_missing(self, tmp_path, raw):
+        ticker = _Ticker(tmp_path, stall_ticks=1)
+        ticker.stall_path().write_text(raw, encoding="utf-8")
+
+        row = ticker.run(_stall_lines())
+
+        assert row["verdict"] == "running"
+        assert ticker.stall_data()[SESSION_ID]["ticks"] == 0
+
+    # Hash we wpisie to prawdziwy hash ogona, wiec poprawny wpis dalby `waiting` (stall_ticks=1); zly wpis
+    # ma byc potraktowany jak brak: `running` i licznik od zera (-5, 7.0 i True przeszlyby jako liczby).
+    @pytest.mark.parametrize(
+        "make_entry",
+        [
+            pytest.param(lambda digest: {"hash": digest, "ticks": True}, id="ticks-bool"),
+            pytest.param(lambda digest: {"hash": digest, "ticks": -5}, id="ticks-ujemne"),
+            pytest.param(lambda digest: {"hash": digest, "ticks": 7.0}, id="ticks-float"),
+            pytest.param(lambda digest: {"hash": digest, "ticks": "5"}, id="ticks-napis"),
+            pytest.param(lambda digest: {"hash": digest, "ticks": None}, id="ticks-null"),
+            pytest.param(lambda digest: {"hash": digest}, id="brak-ticks"),
+            pytest.param(lambda digest: {"hash": 5, "ticks": 3}, id="hash-liczba"),
+            pytest.param(lambda digest: {"hash": None, "ticks": 3}, id="hash-null"),
+            pytest.param(lambda digest: {"ticks": 3}, id="brak-hash"),
+            pytest.param(lambda digest: [], id="wpis-lista"),
+            pytest.param(lambda digest: "x", id="wpis-napis"),
+            pytest.param(lambda digest: None, id="wpis-null"),
+        ],
+    )
+    def test_malformed_entry_is_treated_as_missing(self, tmp_path, make_entry):
+        ticker = _Ticker(tmp_path, stall_ticks=1)
+        lines = _stall_lines()
+        ticker.run(lines)
+        digest = ticker.stall_data()[SESSION_ID]["hash"]
+        ticker.stall_path().write_text(json.dumps({SESSION_ID: make_entry(digest)}), encoding="utf-8")
+
+        row = ticker.run(lines)
+
+        assert row["verdict"] == "running"
+        assert ticker.stall_data()[SESSION_ID] == {"hash": digest, "ticks": 0}
+
+    def test_valid_stored_entry_is_continued(self, tmp_path):
+        ticker = _Ticker(tmp_path, stall_ticks=5)
+        lines = _stall_lines()
+        ticker.run(lines)
+        digest = ticker.stall_data()[SESSION_ID]["hash"]
+        ticker.stall_path().write_text(json.dumps({SESSION_ID: {"hash": digest, "ticks": 4}}), encoding="utf-8")
+
+        row = ticker.run(lines)
+
+        assert row["verdict"] == "waiting"
+        assert row["reason"] == "brak postępu od 5 ticków"
+
+
+@pytest.mark.unit
+class TestMainStall:
+    STALL_ENV = "MONOLYNX_SPRINT_STALL_TICKS"
+
+    def _tick(self, tmp_path, capsys, extra_args):
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir(exist_ok=True)
+        (logs_dir / f"{SESSION_ID}.log").write_text("pracuję nad testami\n", encoding="utf-8")
+        agents_file = tmp_path / "agents.json"
+        agents_file.write_text(json.dumps([bg_agent("monolynx-MON-1", session_id="uuid-1", agent_id=SESSION_ID)]), encoding="utf-8")
+        tickets_file = tmp_path / "tickets.json"
+        tickets_file.write_text(json.dumps([{"key": "MON-1", "status": "in_progress", "assignee": None}]), encoding="utf-8")
+        argv = [
+            "--slug",
+            "monolynx",
+            "--agents-file",
+            str(agents_file),
+            "--tickets-file",
+            str(tickets_file),
+            "--logs-dir",
+            str(logs_dir),
+            *extra_args,
+        ]
+
+        assert state.main(argv) == 0
+        return json.loads(capsys.readouterr().out)["tickets"][0]
+
+    def test_state_dir_option_writes_stall_file(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.delenv(self.STALL_ENV, raising=False)
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+
+        self._tick(tmp_path, capsys, ["--state-dir", str(state_dir)])
+
+        data = json.loads((state_dir / "stall.json").read_text(encoding="utf-8"))
+        assert set(data) == {SESSION_ID}
+
+    def test_without_state_dir_option_no_file_is_written_and_verdict_stays_running(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.setenv(self.STALL_ENV, "1")
+        monkeypatch.chdir(tmp_path)
+
+        rows = [self._tick(tmp_path, capsys, []) for _ in range(3)]
+
+        assert [row["verdict"] for row in rows] == ["running"] * 3
+        assert list(tmp_path.rglob("stall.json")) == []
+
+    @pytest.mark.parametrize(
+        ("raw", "threshold"),
+        [
+            pytest.param("1", 1, id="1"),
+            pytest.param("3", 3, id="3"),
+            pytest.param(None, 2, id="brak-zmiennej"),
+            pytest.param("abc", 2, id="napis"),
+            pytest.param("0", 2, id="zero"),
+        ],
+    )
+    def test_threshold_comes_from_environment(self, tmp_path, capsys, monkeypatch, raw, threshold):
+        if raw is None:
+            monkeypatch.delenv(self.STALL_ENV, raising=False)
+        else:
+            monkeypatch.setenv(self.STALL_ENV, raw)
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+
+        for _ in range(threshold):
+            assert self._tick(tmp_path, capsys, ["--state-dir", str(state_dir)])["verdict"] == "running"
+        row = self._tick(tmp_path, capsys, ["--state-dir", str(state_dir)])
+
+        assert row["verdict"] == "waiting"
+        assert row["reason"] == f"brak postępu od {threshold} ticków"

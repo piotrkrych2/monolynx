@@ -20,31 +20,52 @@ _api_key_cache: dict[str, tuple[uuid.UUID, float]] = {}
 CACHE_TTL = 60
 
 
-async def verify_api_key(
-    x_monolynx_key: str = Header(...),
-    db: AsyncSession = Depends(get_db),
-) -> Project:
-    """FastAPI dependency -- walidacja API key z cache."""
+async def _resolve_project_by_key(key: str, db: AsyncSession) -> Project | None:
+    """Projekt aktywny dla klucza API (cache + DB) albo None."""
     now = time.time()
-    if x_monolynx_key in _api_key_cache:
-        project_id, cached_at = _api_key_cache[x_monolynx_key]
+    if key in _api_key_cache:
+        project_id, cached_at = _api_key_cache[key]
         if now - cached_at < CACHE_TTL:
             project = await db.get(Project, project_id)
-            if project is not None:
+            # Soft-deleted project must not keep accepting requests until the TTL expires.
+            if project is not None and project.is_active:
                 return project
+        # pop, not del: a concurrent request with the same key may have removed the entry during the await above.
+        _api_key_cache.pop(key, None)
 
     result = await db.execute(
         select(Project).where(
-            Project.api_key == x_monolynx_key,
+            Project.api_key == key,
             Project.is_active.is_(True),
         )
     )
     project = result.scalar_one_or_none()
     if project is None:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        return None
 
-    _api_key_cache[x_monolynx_key] = (project.id, now)
+    _api_key_cache[key] = (project.id, now)
     return project
+
+
+async def verify_api_key(
+    x_monolynx_key: str = Header(...),
+    db: AsyncSession = Depends(get_db),
+) -> Project:
+    """FastAPI dependency -- walidacja API key z cache."""
+    project = await _resolve_project_by_key(x_monolynx_key, db)
+    if project is None:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return project
+
+
+async def verify_api_key_optional(
+    x_monolynx_key: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> Project | None:
+    """Jak verify_api_key, ale brak naglowka daje None (endpoint z alternatywnym poswiadczeniem)."""
+    if x_monolynx_key is None:
+        return None
+    return await verify_api_key(x_monolynx_key, db)
 
 
 def hash_password(password: str) -> str:
