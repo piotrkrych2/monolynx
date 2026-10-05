@@ -785,6 +785,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "Zajawka na liście i opis w meta pochodzą z opisu wpisu, a gdy go brak - ze streszczenia treści."
                     ),
                 },
+                {
+                    "title": "Bloki wpisu bloga",
+                    "desc": (
+                        "Wpis piszesz zwykłym markdownem, a strona dostaje gotowe bloki: wyróżnienia (uwaga, wskazówka, ostrzeżenie) i TL;DR, "
+                        "cytat z autorem, obrazek z podpisem, kod z nazwą pliku i przyciskiem kopiowania, kotwice nagłówków oraz przypisy. "
+                        "HTML bloków generuje serwer, a treść autora jest sanityzowana, więc własne skrypty, klasy i identyfikatory nie trafią na stronę."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -884,6 +892,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "A post's URL does not change when the page title changes, and a previous URL redirects (301) to the current one. "
                     "The /blog/ list orders posts by publication date, so editing an older post does not reshuffle it. "
                     "The list teaser and the meta description come from the post description, or from a content summary when there is none."
+                ),
+            },
+            {
+                "title": "Blog post blocks",
+                "desc": (
+                    "You write a post in plain markdown and the page gets ready-made blocks: callouts (note, tip, warning) and TL;DR, "
+                    "a quote with its author, an image with a caption, code with a file name and a copy button, heading anchors and footnotes. "
+                    "The server generates the block HTML and sanitizes the author's content, so custom scripts, classes and ids never reach the page."
                 ),
             },
         ],

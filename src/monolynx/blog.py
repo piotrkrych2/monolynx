@@ -10,6 +10,9 @@ tam 404). Strona publiczna bez wiersza BlogPost to 404 -- wiersz zakładają `en
 migracja. Lista sortuje po `published_at`, zajawka to `description` z fallbackiem na streszczenie
 treści.
 
+MON-255: treść wpisu renderuje `services/blog_blocks.render_post_html` (bloki + sanityzacja nh3);
+streszczenie (zajawka, meta description) liczy się ze źródła bez znaczników bloków (`strip_block_markers`).
+
 Rejestrowany bezwarunkowo w main.py, niezależnie od flagi SKIP_LANDING_PAGE -- ta flaga
 bramkuje marketingową stronę landing, a blog to treść linkowana z zewnątrz (podobnie jak
 endpointy .md, które też nie są nią bramkowane).
@@ -37,8 +40,9 @@ from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.blog import PublicPost, get_public_post_by_slug, list_public_posts
+from monolynx.services.blog_blocks import render_post_html, strip_block_markers
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
-from monolynx.services.wiki import extract_summary, get_page_content, render_markdown_public
+from monolynx.services.wiki import extract_summary, get_page_content
 
 logger = logging.getLogger("monolynx.blog")
 
@@ -70,7 +74,7 @@ async def _fetch_summary(item: PublicPost) -> str:
     except Exception:
         logger.exception("Blad pobierania tresci strony wiki z MinIO dla listy /blog/ (page_id=%s)", page.id)
         return ""
-    return extract_summary(content)
+    return extract_summary(strip_block_markers(content))
 
 
 async def _public_breadcrumbs(page: WikiPage, post: BlogPost, db: AsyncSession) -> list[dict[str, str]]:
@@ -203,8 +207,8 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
     except Exception:
         logger.exception("Blad pobierania tresci strony wiki z MinIO (page_id=%s)", page.id)
         raise HTTPException(status_code=404, detail="Nie znaleziono strony") from None
-    content_html = render_markdown_public(content)
-    meta_description = post.description or extract_summary(content)
+    content_html = render_post_html(content)
+    meta_description = post.description or extract_summary(strip_block_markers(content))
 
     # Okladka musi nalezec do tej strony (set_post_meta to pilnuje, ale zalacznik mogl byc potem
     # przeniesiony/usuniety) -- brak wiersza = domyslny og:image layoutu.

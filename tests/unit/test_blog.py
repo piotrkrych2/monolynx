@@ -1,9 +1,7 @@
 """Testy jednostkowe MON-201 -- sanityzacja markdown (nh3) dla publicznego /blog/{slug}
 i odczyt publicznych stron wiki (get_public_page_by_slug).
 
-Zanim implementacja powstanie, import ponizej ma sie NIE powiesc (render_markdown_public
-i get_public_page_by_slug jeszcze nie istnieja w monolynx.services.wiki) -- to jest
-zamierzone, TDD: testy sa specyfikacja dla backend-developera.
+Dotycza render_markdown_public i get_public_page_by_slug z monolynx.services.wiki.
 """
 
 from datetime import UTC, datetime
@@ -134,6 +132,33 @@ class TestRenderMarkdownHtmlUnchanged:
         result = render_markdown_html(raw)
 
         assert "<script>alert(1)</script>" in result
+
+
+@pytest.mark.unit
+class TestRenderMarkdownHtmlDoesNotRenderBlocks:
+    """Regresja MON-255: bloki wpisu (callout, figure, kod z tytulem) to domena
+    render_post_html(); render_markdown_html() (dashboard, tickety, komentarze) ich nie rusza."""
+
+    def test_alert_stays_plain_blockquote_without_callout_markup(self):
+        result = render_markdown_html("> [!NOTE]\n> Tresc alertu.")
+
+        assert "blog-callout" not in result
+        assert "<aside" not in result
+        assert "<blockquote>" in result
+        assert "[!NOTE]" in result
+
+    def test_standalone_image_with_title_is_not_wrapped_in_figure(self):
+        result = render_markdown_html('![Opis](https://example.com/y.png "Podpis")')
+
+        assert "<img" in result
+        assert "<figure" not in result
+        assert "blog-figure" not in result
+
+    def test_fence_with_title_has_no_blog_code_wrapper(self):
+        result = render_markdown_html('```python title="app/main.py"\nprint(1)\n```')
+
+        assert "blog-code" not in result
+        assert "<button" not in result
 
 
 @pytest.mark.unit
