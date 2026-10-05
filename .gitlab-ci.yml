@@ -143,6 +143,19 @@ trivy-scan:
 
 # Runner jest shell executorem (`image:` jest ignorowane, na hoście nie ma apk),
 # więc dockle startuje jako kontener z hosta i czyta obraz przez socket dockera.
+# Dwa wyjątki, oba sprawdzone na obrazie runtime (dockle 0.4.14 i 0.4.15 dają
+# ten sam wynik, więc wersji nie podbijamy):
+# - `-af settings.py` (CIS-DI-0010): fałszywy alarm po nazwie pliku, w obrazie
+#   to monolynx/dashboard/settings.py (router FastAPI) i mcp/server/auth/settings.py
+#   (model pydantic biblioteki mcp), żaden nie zawiera sekretów. Dopasowanie jest
+#   po nazwie bazowej, więc obejmuje każdy `settings.py`; nowy plik o tej nazwie
+#   trzeba sprawdzić ręcznie. Sam check CIS-DI-0010 zostaje włączony.
+# - `-i DKL-DI-0005`: zgłaszana jest warstwa obrazu bazowego python:3.12-slim
+#   (`apt-get dist-clean`, którego dockle nie rozpoznaje), a własne `RUN` w
+#   Dockerfile czyszczą `/var/lib/apt/lists`. Check jest wyłączony dla całego
+#   obrazu; do zdjęcia, gdy dockle zacznie rozpoznawać `dist-clean`.
+# `.gitlab-ci.yml` w `changes`, bo zmiana wyjątków ma uruchamiać skan, inaczej
+# błąd w konfiguracji wychodzi dopiero przy następnej zmianie Dockerfile.
 dockle-scan:
   stage: test
   extends: .docker-dind
@@ -152,11 +165,12 @@ dockle-scan:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
     - docker pull "$CI_REGISTRY_IMAGE:test"
-    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock goodwithtech/dockle:v${DOCKLE_VERSION} --exit-code 1 "$CI_REGISTRY_IMAGE:test"
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock goodwithtech/dockle:v${DOCKLE_VERSION} --exit-code 1 -af settings.py -i DKL-DI-0005 "$CI_REGISTRY_IMAGE:test"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - Dockerfile
+        - .gitlab-ci.yml
 
 # CLI jest samodzielna paczka (requires-python >=3.10), wiec sprawdzamy ja na
 # calym zakresie wersji, bez bazy. Runner jest shell executorem (`image:` jest
