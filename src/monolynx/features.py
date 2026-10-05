@@ -799,7 +799,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "desc": "Agent AI może przeczytać dowolną stronę i wyszukać informacje semantycznie — tak jakby był członkiem zespołu.",
                 },
             ],
-            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami i plikami projektu — 13 narzędzi MCP.",
+            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami i plikami projektu oraz metadanymi wpisów bloga - 16 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_wiki_pages", "desc": "Pełne drzewo hierarchii z parent_id i głębokością"},
                 {"name": "get_wiki_page", "desc": "Treść strony + breadcrumby do nawigacji"},
@@ -814,6 +814,9 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 {"name": "get_wiki_file", "desc": "Pobierz zawartość globalnego pliku (base64)"},
                 {"name": "update_wiki_file", "desc": "Zaktualizuj opis lub nazwę pliku"},
                 {"name": "list_wiki_files", "desc": "Lista globalnych plików w repozytorium wiki"},
+                {"name": "list_blog_posts", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft"},
+                {"name": "get_blog_post", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown"},
+                {"name": "set_blog_post_meta", "desc": "Metadane wpisu: slug, opis, autor, tagi, język, tłumaczenie, okładka, data weryfikacji"},
             ],
             "tech_details": [
                 {
@@ -897,7 +900,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             },
             {"title": "AI searches wiki via MCP", "desc": "Your AI agent can read any page and search semantically — as if it were a team member."},
         ],
-        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments and project files — 13 MCP tools.",
+        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments, project files and blog post metadata - 16 MCP tools.",
         "mcp_tools": [
             {"name": "list_wiki_pages", "desc": "Full hierarchy tree with parent_id and depth"},
             {"name": "get_wiki_page", "desc": "Page content + breadcrumbs for navigation"},
@@ -912,6 +915,9 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             {"name": "get_wiki_file", "desc": "Get global file content (base64)"},
             {"name": "update_wiki_file", "desc": "Update file description or name"},
             {"name": "list_wiki_files", "desc": "List global files in wiki repository"},
+            {"name": "list_blog_posts", "desc": "List blog posts with metadata, drafts included; published or draft filter"},
+            {"name": "get_blog_post", "desc": "A blog post: metadata, public URLs and markdown content"},
+            {"name": "set_blog_post_meta", "desc": "Post metadata: slug, description, author, tags, language, translation, cover, verified date"},
         ],
         "tech_details": [
             {
@@ -1914,6 +1920,9 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                 {"name": "monolynx graph query", "desc": "Graf albo podgraf projektu (node'y i krawędzie), opcjonalnie po typie i frazie."},
                 {"name": "monolynx graph path", "desc": "Najkrótsza ścieżka między dwoma node'ami."},
                 {"name": "monolynx graph stats", "desc": "Statystyki grafu: liczba node'ów i krawędzi, także per typ."},
+                {"name": "monolynx blog list", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft."},
+                {"name": "monolynx blog get", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown."},
+                {"name": "monolynx blog meta", "desc": "Zmień metadane wpisu: slug, opis, autora, tagi, język, okładkę, datę weryfikacji."},
             ],
             "tech_details": [
                 {
@@ -2043,6 +2052,9 @@ def _feature_cli(lang: str) -> dict[str, Any]:
             {"name": "monolynx graph query", "desc": "The project's graph or a subgraph (nodes and edges), optionally by type and phrase."},
             {"name": "monolynx graph path", "desc": "Shortest path between two nodes."},
             {"name": "monolynx graph stats", "desc": "Graph statistics: node and edge counts, also per type."},
+            {"name": "monolynx blog list", "desc": "List blog posts with metadata, drafts included; published or draft filter."},
+            {"name": "monolynx blog get", "desc": "A blog post: metadata, public URLs and markdown content."},
+            {"name": "monolynx blog meta", "desc": "Change post metadata: slug, description, author, tags, language, cover, verified date."},
         ],
         "tech_details": [
             {

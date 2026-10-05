@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/monolynx-cli)](https://pypi.org/project/monolynx-cli/)
 
-Command-line client for the Monolynx platform: manage projects, tickets, sprints and wiki pages, and read the code dependency graph, from your terminal.
+Command-line client for the Monolynx platform: manage projects, tickets, sprints, wiki pages and blog post metadata, and read the code dependency graph, from your terminal.
 
 ## Installation
 
@@ -125,7 +125,7 @@ monolynx auth login --endpoint https://monolynx.example.com --profile work
 - `--token` stores an API token without a browser (`auth_type = "token"`).
 - `--endpoint` and `--profile` work with both flows.
 
-The OAuth access token is valid for 30 days. Every command that calls the API keeps the session alive. `project`, `member`, `ticket`, `sprint`, `wiki` and `graph` commands do it in two ways, `auth whoami` only reactively:
+The OAuth access token is valid for 30 days. Every command that calls the API keeps the session alive. `project`, `member`, `ticket`, `sprint`, `wiki`, `blog` and `graph` commands do it in two ways, `auth whoami` only reactively:
 
 - Proactively (not in `auth whoami`): when the profile's `expires_at` is less than 24 hours away (or already past), the CLI refreshes the tokens once before the first request of the command and sends the request with the new access token. The server rotates the refresh token and both new tokens are saved in the profile, so regular use extends the session. If this refresh fails, the command goes on with the current token.
 - Reactively: when the server answers 401, the CLI refreshes the tokens once and repeats the request. A failed refresh ends with a message asking you to run `monolynx auth login` and exit code 3.
@@ -269,6 +269,37 @@ git log -1 --format=%B | monolynx --project my-project ticket comment add MP-11 
 | `wiki config set` | `--enabled`/`--disabled` | Turn the LLM Wiki method on or off (requires the `settings:write` permission). |
 
 `--public` publishes the page at `/blog/{slug}`, visible to anyone without signing in. `wiki delete` has no `-y` short form. `--content -` with an empty standard input, an unreadable or non-UTF-8 `--file`, and a missing project are usage errors (exit code 2, no request sent).
+
+### `blog`
+
+Metadata of blog posts. A blog post is a wiki page that has a blog metadata row; the page content and publishing stay in `monolynx wiki`. All `blog` commands work on the project resolved from `--project`, `MONOLYNX_PROJECT` or the profile. `blog list` and `blog get` need the `wiki:read` permission, `blog meta` needs `wiki:write`.
+
+| Command | Arguments and options | Description |
+|---|---|---|
+| `blog list` | `--status` (`published` or `draft`) | List the blog posts of the project, published ones and drafts, with their metadata and without the content (all pages, flat list). Without `--status` every post is listed. |
+| `blog get` | `<page_id>` | Show a blog post: metadata, public URLs and the markdown content. |
+| `blog meta` | `<page_id>`, `--slug`, `--description`, `--author`, `--tag`, `--no-tags`, `--lang`, `--translation-of`, `--cover`, `--verified` | Change the metadata of a blog post; only the given options are sent. `--tag` can be repeated. |
+
+Notes:
+
+- `<page_id>` is the UUID of the wiki page that is the blog post: the `page_id` field from `blog list`, the same id `wiki get` takes.
+- `blog list` with `-o table` prints six columns: `title`, `slug`, `is_public`, `lang`, `published_at` and `tags` (the tags joined with `, `). With `-o json`, `-o yaml` and `-o csv` every post carries all its fields, so read `page_id` from one of those formats, for example `-o json`.
+- A draft is a page that has a metadata row and `is_public` set to `false`; `--status draft` lists those, `--status published` the public ones. A wiki page without a metadata row is not a blog post: it is not on the list, and `blog get` ends with a 404 (exit code 1). The row is created when the page is published (`wiki create --public`, `wiki update --public`) or by the first `blog meta` on that page. The server rejects any other `--status` value with a 422 (exit code 1).
+- Outside the `blog list` table, every post carries `page_id`, `title`, `slug`, `previous_slugs`, `description`, `published_at`, `author_name`, `tags`, `lang`, `translation_of_id`, `cover_attachment_id`, `last_verified_at`, `is_public`, `public_url` and `markdown_url`; `blog get` adds `content`. `public_url` (the server's public address followed by `/blog/<slug>`) and `markdown_url` (`public_url` followed by `.md`) are `null` for a page that is not public. `markdown_url` is the address of the markdown twin of the post; the route that serves it is not part of this change, so the address may not respond yet.
+- `blog meta` options: `--slug` sets a new slug (the old one goes to `previous_slugs` and redirects), `--description` the post description (meta description), `--author` the author name, `--lang` the post language (`pl` or `en`), `--translation-of` the UUID of the wiki page holding the original of a translation, `--cover` the UUID of an attachment of the same page used as the cover, `--verified` the date the content was last verified (`YYYY-MM-DD`).
+- `--tag` replaces the current tags with the given ones; `--no-tags` removes all tags. Giving both is a usage error.
+- An empty string clears `--translation-of`, `--cover` and `--verified` (the CLI sends `null`), for example `--cover ""`.
+- `blog meta` without any option, or with `--tag` and `--no-tags` together, is a usage error: exit code 2, no request sent.
+- `blog get` reads the post content from object storage. When the storage is unavailable the server answers 503 and the command ends with exit code 1 after the retries; `blog list` and `blog meta` do not read the content.
+- `blog meta` does not change the title, the content, `is_public` or `published_at`. Use `wiki update` for the title, the content and publishing.
+- Every command checks the server response before rendering. A missing required field or a wrong type ends with the error `Nieprawidłowa odpowiedź serwera` and exit code 1, never with an empty result and exit code 0. After `blog meta` the write may already have reached the server, so check the post with `blog get` before repeating the command.
+
+```bash
+monolynx --project my-project blog list --status draft
+monolynx -o json --project my-project blog get "<page_id>" | jq -r '.public_url'
+monolynx --project my-project blog meta "<page_id>" --description "How we ship releases" --tag release --tag cli
+monolynx --project my-project blog meta "<page_id>" --no-tags --cover ""
+```
 
 ### `graph`
 
@@ -426,7 +457,7 @@ monolynx -o json --project my-project ticket list | jq -r '.items[] | .key'
 monolynx -o json --project my-project ticket list --page 2 | jq '.total_pages'
 ```
 
-`project list`, `member list`, `wiki list`, `sprint list`, `ticket comment list`, `ticket label list` and `ticket ac list` fetch all pages themselves and return a flat list, so there is no `.items`:
+`project list`, `member list`, `wiki list`, `blog list`, `sprint list`, `ticket comment list`, `ticket label list` and `ticket ac list` fetch all pages themselves and return a flat list, so there is no `.items`:
 
 ```bash
 monolynx -o json project list | jq -r '.[].slug'

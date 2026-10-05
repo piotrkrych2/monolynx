@@ -62,6 +62,7 @@ from monolynx.models.work_plan import WorkPlanEntry
 from monolynx.schemas.pipelines import build_list_item, build_pipeline_response
 from monolynx.schemas.time_tracking import TimeTrackingEntryResponse, TimeTrackingFilter
 from monolynx.schemas.work_plan import WorkPlanEntryResponse
+from monolynx.services import blog as blog_service
 from monolynx.services import graph as graph_service
 from monolynx.services import pipelines as pipelines_service
 from monolynx.services import projects as projects_service
@@ -2891,6 +2892,124 @@ async def delete_wiki_page(
         await svc_delete_wiki_page(page, db)
 
     return {"message": f"Strona wiki '{title}' usunieta"}
+
+
+# --- Blog (metadane wpisow bloga na stronach wiki, MON-261) ---
+
+
+def _blog_view_dict(view: blog_service.BlogPostView) -> dict[str, Any]:
+    return {
+        "page_id": str(view.page_id),
+        "title": view.title,
+        "slug": view.slug,
+        "previous_slugs": view.previous_slugs,
+        "description": view.description,
+        "published_at": view.published_at.isoformat() if view.published_at else None,
+        "author_name": view.author_name,
+        "tags": view.tags,
+        "lang": view.lang,
+        "translation_of_id": str(view.translation_of_id) if view.translation_of_id else None,
+        "cover_attachment_id": str(view.cover_attachment_id) if view.cover_attachment_id else None,
+        "last_verified_at": view.last_verified_at.isoformat() if view.last_verified_at else None,
+        "is_public": view.is_public,
+        "public_url": view.public_url,
+        "markdown_url": view.markdown_url,
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def list_blog_posts(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """Lista wpisow bloga projektu (strony wiki z metadanymi bloga), takze szkice.
+
+    status -- published (tylko publiczne) lub draft (tylko niepubliczne); brak = wszystkie.
+    public_url i markdown_url sa wypelnione tylko dla wpisu publicznego. Wymaga wiki:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        posts = await blog_service.list_posts(db, user, project, status=status)
+
+    return [_blog_view_dict(p) for p in posts]
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_blog_post(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Wpis bloga z metadanymi i pelna trescia markdown. Wymaga wiki:read."""
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "read")
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+        detail = await blog_service.get_post(db, user, project, parsed_page_id, content_fn=get_page_content)
+
+    return {**_blog_view_dict(detail), "content": detail.content}
+
+
+@mcp.tool(annotations=WRITE)
+async def set_blog_post_meta(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+    slug: str | None = None,
+    description: str | None = None,
+    author_name: str | None = None,
+    tags: list[str] | None = None,
+    lang: str | None = None,
+    translation_of_id: str | None = None,
+    cover_attachment_id: str | None = None,
+    last_verified_at: str | None = None,
+) -> dict[str, Any]:
+    """Ustaw metadane wpisu bloga. Parametr nie podany (None) = bez zmian.
+
+    tags -- lista tagow (male litery, cyfry, myslniki); pusta lista czyści tagi.
+    translation_of_id, cover_attachment_id (UUID) i last_verified_at (YYYY-MM-DD) --
+    pusty tekst czysci pole. lang: pl lub en. Zmiana sluga zachowuje stary adres jako
+    przekierowanie. Nie zmienia is_public ani daty publikacji. Wymaga wiki:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "write")
+
+        fields: dict[str, Any] = {
+            name: value
+            for name, value in (("slug", slug), ("description", description), ("author_name", author_name), ("tags", tags), ("lang", lang))
+            if value is not None
+        }
+        for name, raw in (("translation_of_id", translation_of_id), ("cover_attachment_id", cover_attachment_id)):
+            if raw is None:
+                continue
+            try:
+                fields[name] = uuid.UUID(raw) if raw else None
+            except ValueError:
+                raise ValueError(f"Nieprawidlowy {name} (oczekiwany UUID)") from None
+        if last_verified_at is not None:
+            try:
+                fields["last_verified_at"] = date.fromisoformat(last_verified_at) if last_verified_at else None
+            except ValueError:
+                raise ValueError("Nieprawidlowy last_verified_at (oczekiwany format YYYY-MM-DD)") from None
+
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+
+        post = await blog_service.set_post_meta(db, user, project, parsed_page_id, **fields)
+        page = await db.get(WikiPage, post.page_id)
+        if page is None:
+            raise ValueError("Strona wiki nie istnieje")
+        return _blog_view_dict(blog_service.build_post_view(post, page))
 
 
 # --- Wiki LLM (gating: project.wiki_llm_enabled) ---

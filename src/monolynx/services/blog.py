@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monolynx.config import settings
 from monolynx.models.blog_post import BlogPost
 from monolynx.models.project import Project
 from monolynx.models.user import User
@@ -57,6 +59,107 @@ class PublicPostList:
     page: int
     per_page: int
     total_pages: int
+
+
+@dataclass
+class BlogPostView:
+    page_id: uuid.UUID
+    title: str
+    slug: str
+    previous_slugs: list[str]
+    description: str
+    published_at: datetime | None
+    author_name: str
+    tags: list[str]
+    lang: str
+    translation_of_id: uuid.UUID | None
+    cover_attachment_id: uuid.UUID | None
+    last_verified_at: date | None
+    is_public: bool
+    public_url: str | None
+    markdown_url: str | None
+
+
+@dataclass
+class BlogPostDetail(BlogPostView):
+    content: str
+
+
+def build_post_view(post: BlogPost, page: WikiPage) -> BlogPostView:
+    """Widok wpisu z metadanych i strony; adresy publiczne tylko dla strony publicznej."""
+    public_url: str | None = None
+    markdown_url: str | None = None
+    if page.is_public:
+        public_url = f"{settings.APP_URL.rstrip('/')}/blog/{post.slug}"
+        markdown_url = f"{public_url}.md"
+    return BlogPostView(
+        page_id=page.id,
+        title=page.title,
+        slug=post.slug,
+        previous_slugs=list(post.previous_slugs),
+        description=post.description,
+        published_at=post.published_at,
+        author_name=post.author_name,
+        tags=list(post.tags),
+        lang=post.lang,
+        translation_of_id=post.translation_of_id,
+        cover_attachment_id=post.cover_attachment_id,
+        last_verified_at=post.last_verified_at,
+        is_public=page.is_public,
+        public_url=public_url,
+        markdown_url=markdown_url,
+    )
+
+
+async def list_posts(db: AsyncSession, user: User, project: Project, status: str | None = None) -> list[BlogPostView]:
+    """Wpisy bloga projektu (także szkice). Wymaga `wiki:read`, sprawdzane przed walidacją `status`."""
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
+
+    conditions: list[Any] = [WikiPage.project_id == project.id]
+    if status is not None:
+        if status == "published":
+            conditions.append(WikiPage.is_public.is_(True))
+        elif status == "draft":
+            conditions.append(WikiPage.is_public.is_(False))
+        else:
+            raise ValueError("Nieprawidłowy status: dozwolone published, draft")
+
+    result = await db.execute(
+        select(BlogPost, WikiPage)
+        .join(WikiPage, WikiPage.id == BlogPost.page_id)
+        .where(*conditions)
+        .order_by(BlogPost.published_at.desc().nulls_last(), BlogPost.slug.asc())
+    )
+    return [build_post_view(row[0], row[1]) for row in result.all()]
+
+
+async def get_post(
+    db: AsyncSession,
+    user: User,
+    project: Project,
+    page_id: uuid.UUID,
+    *,
+    content_fn: Callable[[WikiPage], str] | None = None,
+) -> BlogPostDetail:
+    """Wpis z treścią. Czysty odczyt: brak wiersza `BlogPost` to błąd, nie zakładanie go."""
+    await ensure_permission(db, user.id, project.id, "wiki", "read")
+
+    page = (await db.execute(select(WikiPage).where(WikiPage.id == page_id, WikiPage.project_id == project.id))).scalar_one_or_none()
+    if page is None:
+        raise ValueError("Strona wiki nie istnieje")
+
+    post = (await db.execute(select(BlogPost).where(BlogPost.page_id == page.id))).scalar_one_or_none()
+    if post is None:
+        raise ValueError("Wpis bloga nie istnieje")
+
+    if content_fn is None:
+        # Import w czasie wywołania: services/wiki.py importuje ensure_post stąd (cykl).
+        from monolynx.services.wiki import get_page_content
+
+        content_fn = get_page_content
+
+    view = build_post_view(post, page)
+    return BlogPostDetail(**vars(view), content=content_fn(page))
 
 
 async def _slug_holder(db: AsyncSession, slug: str, exclude_page_id: uuid.UUID) -> uuid.UUID | None:
