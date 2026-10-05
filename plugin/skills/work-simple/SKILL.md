@@ -394,6 +394,24 @@ i zapamietaj OBA komplety komend: z sekcji `## Lint` i `## Test` oraz z sekcji
 TDD. Brak strony -> zapamietaj `toolchain_missing = true` (obsluzone w FAZA 3).
 Strona bez sekcji `## Worktree` -> zapamietaj `worktree_commands_missing = true`.
 
+**Tryb pelnego przebiegu testow.** Z tej samej strony ustal `PELNY_PRZEBIEG`
+wg sekcji "Pelny przebieg: lokalnie albo w CI" pliku `lint-test.md` z katalogu
+tego skilla: pole `pełny przebieg:` w sekcji `## Test`, wartosc normalizuje
+`scripts/toolchain_fields.py` z katalogu tego skilla. Zapamietaj tez, czy
+`## Test` ma `izolacja testów: tak`.
+
+- **Brak strony, brak pola albo `lokalnie`** - nic sie nie zmienia: pelny
+  zestaw idzie lokalnie w FAZA 3 i 3.5.3, a dalsze fragmenty tego skilla
+  o trybie `ci` pomijasz.
+- **`ci`** - od razu sprawdz, czy merge request jest mozliwy (podsekcja "Tryb
+  `ci`: czy merge request jest mozliwy" pliku wspolnego): flagi `AUTOCOMMIT`,
+  `AUTOPUSH` i `AUTOMR` z linii konfiguracji oraz `glab --version`. Warunek
+  niespelniony -> przy `MONOLYNX_SPRINT_RUN=1` koniec tury wg reguly 21
+  (`SPRINT-RUN STOP: pełny przebieg ci bez MR`), interaktywnie pytanie z pliku
+  wspolnego; odpowiedz (a) przestawia tryb na `lokalnie` do konca sesji.
+- **Ostrzezenie skryptu** (wartosc nieznana, duplikat pola) przepisz userowi
+  i pracuj w trybie, ktory skrypt zwrocil.
+
 Sprawdz NA HOSCIE, gdzie pracujesz (kontener nie ma binarki `git`, a `.git`
 w worktree to plik ze sciezka hosta). Uruchom DWIE zwykle komendy i porownaj
 wyniki sam - jednolinijkowiec z `[ "$(...)" != "$(...)" ]` zostanie odrzucony
@@ -620,7 +638,7 @@ usera" zostaje puste.
 mcp__monolynx__add_comment(
   project_slug="<PROJECT_SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager Lite - Plan**\n\nTryb: [zmiana | defekt]\nDev: [wybrany-agent] - pliki: [lista z ticketu/mini-researchu]\nKrytyk: [wybrany-krytyk]\nZakres: [1-2 zdania]\n[Kontrakt | KONTRAKT (auto)]: stop przed [pelna lista]; zdjete przez usera [lista lub brak; przy auto brak - kontrakt zaakceptowany automatycznie (MONOLYNX_CONTRACT=auto), bez potwierdzenia uzytkownika]\nBaseline: SHA [BASELINE_SHA]; brudne przed startem: [PLIKI_SPRZED_STARTU lub brak]\nZaleznosci niezmergowane (0.25): [KEY -> (b) bez kodu zaleznosci | (c) MR poniesie commity niezmergowanej zaleznosci KEY; lub brak]\nPipeline: [pipeline_id lub brak]\nScope guard: eskalacja do full gdy >5 plikow / cross-module / migracja / nowa zaleznosc."
+  content="**Team Manager Lite - Plan**\n\nTryb: [zmiana | defekt]\nDev: [wybrany-agent] - pliki: [lista z ticketu/mini-researchu]\nKrytyk: [wybrany-krytyk]\nZakres: [1-2 zdania]\n[Kontrakt | KONTRAKT (auto)]: stop przed [pelna lista]; zdjete przez usera [lista lub brak; przy auto brak - kontrakt zaakceptowany automatycznie (MONOLYNX_CONTRACT=auto), bez potwierdzenia uzytkownika]\nBaseline: SHA [BASELINE_SHA]; brudne przed startem: [PLIKI_SPRZED_STARTU lub brak]\nPełny przebieg: [lokalnie | ci - pełny zestaw weryfikuje pipeline MR]\nZaleznosci niezmergowane (0.25): [KEY -> (b) bez kodu zaleznosci | (c) MR poniesie commity niezmergowanej zaleznosci KEY; lub brak]\nPipeline: [pipeline_id lub brak]\nScope guard: eskalacja do full gdy >5 plikow / cross-module / migracja / nowa zaleznosc."
 )
 ```
 
@@ -841,9 +859,10 @@ tani gate przed drogim review.
 
 Przeczytaj `lint-test.md` z katalogu tego skilla (ten sam katalog co SKILL.md)
 i wykonaj opisana tam procedure: skad brac komendy, wybor wariantu worktree albo
-glowny checkout, podstawienia w komendzie worktree, wykonanie, tryb defektu
-i decyzja po wyniku. Plik nieosiagalny (niepelna instalacja)? Powiedz to userowi
-i zatrzymaj sie - bez lintu i testow nie zmieniaj statusu ticketu.
+glowny checkout, podstawienia w komendzie worktree, tryb pelnego przebiegu,
+wykonanie, tryb defektu i decyzja po wyniku. Plik nieosiagalny (niepelna
+instalacja)? Powiedz to userowi i zatrzymaj sie - bez lintu i testow nie
+zmieniaj statusu ticketu.
 
 Kazda komenda testow idzie przez `scripts/test_lock.py` z katalogu tego skilla
 wg `lint-test.md` (kolejka testow miedzy worktree), chyba ze strona `toolchain`
@@ -851,10 +870,19 @@ ma w sekcji `## Test` pole `izolacja testów: tak`. Timeout blokady (kod 75)
 i kolizje srodowiska testow obsluguja sekcje pliku wspolnego - zadna z nich nie
 zuzywa limitu poprawek.
 
-Cztery rzeczy, ktorych plik wspolny nie rozstrzyga, bo naleza do tego flow:
+Piec rzeczy, ktorych plik wspolny nie rozstrzyga, bo naleza do tego flow:
 
 - **Srodowisko** - detekcji NIE powtarzasz: masz `srodowisko` (`main` albo
   `worktree`) z 0.45, razem z oboma kompletami komend.
+- **Tryb pelnego przebiegu** - `PELNY_PRZEBIEG` z 0.45; tu go nie ustalasz
+  ponownie. `lokalnie` -> pelny zestaw, jak dotad. `ci` -> lint w calosci
+  i testy ZAWEZONE wg podsekcji "Tryb `ci`: testy zawezone do zmienionego
+  obszaru", z `BASELINE_SHA` z 0.45; komendy z pelnym zestawem nie
+  uruchamiasz. Komenda nie daje sie zawezic -> przy `MONOLYNX_SPRINT_RUN=1`
+  koniec tury wg reguly 21
+  (`SPRINT-RUN STOP: pełny przebieg ci - testów nie da się zawęzić`),
+  interaktywnie pytanie z pliku wspolnego. Brak pasujacych testow to nie blad:
+  idzie sam lint, a fakt zapisujesz w 4.3 i 4.8.
 - **Zrodlo komend** - strona `toolchain` pobrana w 0.45; `toolchain_missing = true`
   obsluguj jak "brak strony" w pliku wspolnym, a `srodowisko = worktree` przy
   `worktree_commands_missing = true` jak "brak sekcji `## Worktree`".
@@ -927,8 +955,9 @@ zamkniecia: jedna linia i dalej do FAZA 3.5.
 Kryteria dopisane przez `mutation-check` to NOWA praca, nie zakres tego
 ticketu: w 4.0 ich nie odhaczasz i nie liczysz jako niezrealizowane, tylko
 wymieniasz osobno w 4.8. `mutation-check` nie modyfikuje kodu, wiec regula 20
-(ostatni przebieg lint+test jest pelny) pozostaje spelniona - gdyby jednak ktos
-zmienil tu plik w repo, pelny przebieg powtarzasz.
+(ostatni przebieg lint+test jest pelny, a przy `PELNY_PRZEBIEG` = `ci`
+zawezony) pozostaje spelniona - gdyby jednak ktos zmienil tu plik w repo, ten
+przebieg powtarzasz.
 
 ---
 
@@ -1105,7 +1134,9 @@ watpliwa albo bez powodu -> traktujesz ja jak zwykle odjecie.
    ```
 3. Po poprawce POWTORZ lint i testy (FAZA 3 - w iteracji tylko dotkniety
    obszar, jesli komendy toolchain na to pozwalaja). **Przed FAZA 4 i tak
-   obowiazuje pelny przebieg** (3.5.3).
+   obowiazuje pelny przebieg** (3.5.3); w trybie `PELNY_PRZEBIEG` = `ci` jest
+   nim przebieg zawezony po ostatniej zmianie, a pelny zestaw weryfikuje
+   pipeline merge requesta.
 4. Nastepnie spawnuj nowego critica (ten sam prompt co 3.5.1, ze zaktualizowana
    lista plikow i poprzednim score jako kontekstem - nowy subagent nic nie
    pamieta) ograniczonego merytorycznie do plikow poprawki.
@@ -1136,7 +1167,17 @@ FAZY 4; czerwony -> jak kazda poprawka (limit obowiazuje); brak iteracji i pelny
 przebieg z FAZA 3 jest ostatnim zdarzeniem -> krok spelniony. Zapisz w logu joba
 `lint-test` i w 4.8, ktory przebieg byl ostatni i czy pelny. Testy tego
 przebiegu tez ida przez `scripts/test_lock.py`, a timeout blokady (kod 75)
-i kolizje srodowiska obsluguje `lint-test.md`, jak w FAZA 3.
+i kolizje srodowiska obsluguje `lint-test.md`, jak w FAZA 3. Ten akapit
+opisuje `PELNY_PRZEBIEG` = `lokalnie`; wariant `ci` jest nizej.
+
+**`PELNY_PRZEBIEG` = `ci`**: obowiazuje akapit "Tryb `ci`" tej samej sekcji
+pliku wspolnego. Czerwony przebieg zawezony -> jak kazda poprawka (limit
+obowiazuje); zielony lint i zielony przebieg zawezony, po ktorych nikt niczego
+nie zmienil, otwieraja FAZE 4. Po kazdej zmianie liste sciezek wyprowadzasz od
+nowa. W logu joba `lint-test` i w 4.8 zapisz: "ostatni przebieg: zawezony
+lokalnie ([sciezki albo brak pasujacych testow]); pelny zestaw: pipeline MR".
+Pelnego zestawu NIE uruchamiasz tu lokalnie - weryfikuje go pipeline merge
+requesta odczytany w 4.5.
 
 ---
 
@@ -1185,7 +1226,7 @@ pomiaru -> przyjmij wall-clock i dopisz `(wall-clock)` w opisie `log_time` (4.4)
 mcp__monolynx__add_comment(
   project_slug="<PROJECT_SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager Lite - Podsumowanie**\n\nZrealizowane: [1-2 zdania]\n[TRYB = defekt: Mechanizm: [przyczyna, plik:linia fixu, test regresyjny]]\n\nDev: [nazwa]: [X]/100\nKrytyk: [werdykt]\nRekoncyliacja: [akceptowane / odrzucone -> re-run: powod]\nLint i testy: ostatni przebieg [pelny]\nMutacje: [linia z kroku mutacji - TYLKO jesli krok sie pojawil; bez SCOPE GREW pomijasz ta linie calkowicie]\nMerge request: [MR_URL lub brak: powod]\nReguly do pamieci agenta: [lista lub brak; powtorzone oznacz]\n\nCzas TM: [Y] min\nStatus: simple flow zakonczony w [N] iteracjach."
+  content="**Team Manager Lite - Podsumowanie**\n\nZrealizowane: [1-2 zdania]\n[TRYB = defekt: Mechanizm: [przyczyna, plik:linia fixu, test regresyjny]]\n\nDev: [nazwa]: [X]/100\nKrytyk: [werdykt]\nRekoncyliacja: [akceptowane / odrzucone -> re-run: powod]\nLint i testy: ostatni przebieg [pelny | tryb ci: zawezony lokalnie ([sciezki albo brak pasujacych testow]); pełny zestaw: pipeline MR - id w komentarzu **Pełny przebieg (CI)** po wystawieniu MR]\nMutacje: [linia z kroku mutacji - TYLKO jesli krok sie pojawil; bez SCOPE GREW pomijasz ta linie calkowicie]\nMerge request: [MR_URL lub brak: powod]\nReguly do pamieci agenta: [lista lub brak; powtorzone oznacz]\n\nCzas TM: [Y] min\nStatus: simple flow zakonczony w [N] iteracjach."
 )
 ```
 
@@ -1218,7 +1259,43 @@ Trzy rzeczy z tego flow, ktore podstawiasz do procedury:
 - **Gdzie zapisac MR** - ustalony branch docelowy i `MR_URL` trafiaja do
   komentarza podsumowujacego (4.3) oraz do podsumowania dla usera (4.8).
 
+**`PELNY_PRZEBIEG` = `ci`** - po `glab mr create` wykonaj tez sekcje "Pipeline
+merge requesta (tryb `ci`)" pliku `commit-mr.md`: odczyt `head_pipeline`
+komenda `glab mr view <iid> -F json`, jeden ponowny odczyt przy braku pola,
+bez petli czekania. Komentarz 4.3 powstal PRZED merge requestem, wiec dowod
+pelnego przebiegu dopisujesz osobnym, krotkim komentarzem:
+
+```
+mcp__monolynx__add_comment(
+  project_slug="<PROJECT_SLUG>",
+  ticket_id="<ID>",
+  content="**Pełny przebieg (CI)**\n\nMerge request: [MR_URL]\nPipeline MR: [PIPELINE_ID | pipeline w tworzeniu | pipeline nieodczytany: powod]\nStatus pipeline'u w chwili raportu: [PIPELINE_STATUS lub brak]\nLokalnie: lint + testy zawezone ([sciezki albo brak pasujacych testow])\n\nPełny zestaw testów weryfikuje ten pipeline. Sesja ticketu na niego nie czeka i go nie naprawia - czerwony pipeline MR naprawia /monolynx:mr-queue (KROK 5)."
+)
+```
+
+Komentarz dodajesz TYLKO przy wystawionym merge requescie. Wznowienie
+przerwanego zamkniecia (komentarz podsumowania jest, status nadal
+`in_progress`) w trybie `ci` powtarza wykrycie merge requesta i odczyt
+pipeline'u: brak komentarza `**Pełny przebieg (CI)**` znaczy, ze 4.5 nie
+zostalo dokonczone.
+
 ### 4.6. Status → in_review
+
+**Bramka trybu `ci`**: przy `PELNY_PRZEBIEG` = `ci` status `in_review`
+ustawiasz TYLKO po faktycznie wystawionym merge requescie (`MR_URL` z 4.5).
+Brak merge requesta ("MR nieutworzony: [powod]", commit albo push sie nie
+odbyl, zamkniecie ponizej progu bez auto-commita) znaczy, ze pelnego zestawu
+nikt nie uruchomil:
+
+- `MONOLYNX_SPRINT_RUN=1` -> koniec tury wg reguly 21, powod
+  `pełny przebieg ci bez MR`; status zostaje `in_progress`.
+- interaktywnie -> pytanie z `lint-test.md` (podsekcja "Tryb `ci`: czy merge
+  request jest mozliwy"): (a) lokalny pelny przebieg teraz, wg 3.5.3 w trybie
+  `lokalnie` - zielony otwiera `in_review`, czerwony to poprawka jak kazda
+  inna; (b) zatrzymanie bez zmiany statusu.
+
+Nigdy `in_review` w trybie `ci` bez merge requesta albo bez lokalnego pelnego
+przebiegu. Tryb `lokalnie` tej bramki nie ma - zachowanie jak dotad.
 
 ```
 mcp__monolynx__update_ticket(project_slug="<PROJECT_SLUG>", ticket_id="<ID>", status="in_review")
@@ -1254,7 +1331,18 @@ Wyswietl zwiezle:
   potwierdzenia aktywnego hooka. Stan inny niz potwierdzony -> dopisz, ze zgody
   byly egzekwowane rozmowa z uzytkownikiem, nie hookiem
 - Wynik lintu i testow (lub informacja, ze pominiete / zamkniete ponizej progu
-  na zadanie uzytkownika) - i czy ostatni przebieg byl pelny (3.5.3)
+  na zadanie uzytkownika) - i czy ostatni przebieg byl pelny (3.5.3; w trybie
+  `ci` zawezony lokalnie, patrz nastepny punkt)
+- Pelny przebieg: tryb `lokalnie` albo `ci`. Przy `ci`: lokalnie poszedl lint
+  i testy zawezone ([sciezki albo brak pasujacych testow]), a DOWODEM pelnego
+  przebiegu jest pipeline merge requesta - podaj `MR_URL`, `PIPELINE_ID`
+  i `PIPELINE_STATUS` z chwili raportu (albo "pipeline w tworzeniu"). Dopisz
+  wprost: sesja nie czeka na pipeline i go nie naprawia; czerwony pipeline MR
+  naprawia `/monolynx:mr-queue` (KROK 5 tamtego skilla, max 2 rundy poprawek,
+  potem decyzja czlowieka). User zleca poprawke czerwonego CI w tej sesji
+  (tylko tryb interaktywny) -> robisz ja tutaj i mowisz, zeby dla tego MR nie
+  uruchamial `mr-queue`, dopoki poprawka nie jest wypchnieta. Ostrzezenie
+  o nieznanej wartosci pola powtorz tutaj
 - Mutacje: linia z kroku mutacji na koncu FAZA 3 - TYLKO jesli krok sie
   pojawil (czyli po `SCOPE GREW`); dopisane przez `mutation-check` kryteria
   wymien OSOBNO jako nowa prace, nie jako niezrealizowany zakres ticketu
@@ -1320,7 +1408,7 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
 4. **Scope guard w dev prompcie** - dev sam sygnalizuje "to za duze na simple".
 5. **Research opt-in, ale krytyk ma obowiazek** przeczytac diff przed review.
 6. **Agent-memory MEMORY.md** po NEEDS WORK - zostaje jak w full (nauka agenta).
-7. **Lint i testy sa gate'em PRZED krytykiem** - FAZA 3, komendy ze strony wiki `toolchain`; tani gate przed drogim review i przed `in_review`. Domyslnie uruchamia je user (skill wypisuje komendy); `MONOLYNX_AUTOTEST=true` zmienia to swiadomie. Pominiecie tylko za jawna zgoda, odnotowane w podsumowaniu.
+7. **Lint i testy sa gate'em PRZED krytykiem** - FAZA 3, komendy ze strony wiki `toolchain`; tani gate przed drogim review i przed `in_review`. Domyslnie uruchamia je user (skill wypisuje komendy); `MONOLYNX_AUTOTEST=true` zmienia to swiadomie. Pominiecie tylko za jawna zgoda, odnotowane w podsumowaniu. Pole `pełny przebieg: ci` strony `toolchain` (0.45) zaweza lokalne testy do zmienionego obszaru i przenosi pelny zestaw do pipeline'u merge requesta; brak pola albo `lokalnie` niczego nie zmienia.
 8. **Commit i push tylko za zgoda** - domyslnie skill wypisuje komendy, nie wykonuje. Flagi `MONOLYNX_AUTOCOMMIT` / `MONOLYNX_AUTOPUSH` zmieniaja to swiadomie (AUTOPUSH tylko z AUTOCOMMIT). Twardy gate na `main`/`master` przy starcie (0.45).
 9. **Jezyk komentarzy**: polski, z PELNYMI diakrytykami (ą, ć, ę, ł, ń, ó, ś, ź, ż) - szablony w tym pliku sa technicznie ASCII, generowane tresci maja miec poprawna ortografie.
 10. **Gdy dev sygnalizuje SCOPE GREW** - NIE ignoruj, eskaluj. Celem simple jest szybkie dowozenie malych zmian, nie rozkladanie sie dla duzych. Na sciezce (c) ("kontynuuj simple mimo to") praca leci dalej z flaga `SCOPE_GREW=1` i to jedyny przypadek, w ktorym na koncu FAZA 3 proponujesz przebieg mutacyjny - propozycja, nie automat, i nigdy bramka.
@@ -1342,7 +1430,7 @@ Gdy dev agent zwroci `SCOPE GREW: <powod>`:
     Stan sprawdzasz markerem `~/.cache/monolynx/hook-active/<session_id>` (0.45 i 2.4) i raportujesz w 4.8; brak potwierdzenia -> zgody egzekwuje rozmowa z uzytkownikiem. Opcja uzytkownika `MONOLYNX_HOOK_ASK_UNSUPPORTED=true` zamienia `ask` na `deny` dla klientow ignorujacych `ask` - nie ustawiasz jej sam.
 18. **Prawa decyzyjne ustalane RAZ, na starcie** (2.2) - kontrakt autonomii i STOP CONDITIONS zastepuja sterowanie przez przerywanie. Przerwanie usera w trakcie = kontrakt byl niekompletny; brakujaca pozycje odnotuj w 4.8. Przy `SPRINT_RUN=1` patrz regula 21.
 19. **Tryb defektu** (0.2) - research kodu obowiazkowy, test regresyjny przed fixem, krytyk ocenia nazwany mechanizm, nie znikniecie symptomu.
-20. **Ostatni przebieg lint+test jest pelny** (3.5.3) - iteracja moze testowac obszar, zamkniecie testuje calosc.
-21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, niezamkniety bloker ticketu (0.25, powod `czeka na merge <KEY>`, bez zmiany statusu), praca na `main`/`master`, odrzucony fast-forward do brancha bazowego (0.45, powod `fast-forward do origin/<branch_bazowy> odrzucony`), brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, timeout blokady testow (kod 75 z linia `TEST-LOCK: timeout`) oraz kolizja srodowiska testow po jednej powtorce (FAZA 3 i 3.5.3, sekcje `lint-test.md`, powod `kolizja testów`), wyczerpany limit poprawek, same odjecia `BLOKADA-ZEWNĘTRZNA` po review krytyka (3.5.2, blok `blokada-zewnetrzna`, powod `blokada zewnetrzna - <krotki powod>`), `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. **Sam rozjazd z branchem bazowym nie jest blokada** (0.45): branch za baza przewijasz sam przez `git merge --ff-only`, a przy wlasnych commitach albo brudnym drzewie pracujesz dalej i odnotowujesz rozjazd w komentarzu planu; blokada jest dopiero odrzucony fast-forward. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
+20. **Ostatni przebieg lint+test jest pelny** (3.5.3) - iteracja moze testowac obszar, zamkniecie testuje calosc. W trybie `pełny przebieg: ci` ostatni przebieg lokalny jest zawezony, calosc testuje pipeline merge requesta, a `in_review` wymaga wystawionego merge requesta (4.6).
+21. **Tryb sesji w tle** (`MONOLYNX_SPRINT_RUN=1`) - nikt nie odpowie. Kazde miejsce tego skilla, w ktorym normalnie czekasz na odpowiedz usera POZA akceptacja kontraktu (wybor ticketu, wznowienie, przejecie cudzego ticketu, niezamkniety bloker ticketu (0.25, powod `czeka na merge <KEY>`, bez zmiany statusu), praca na `main`/`master`, odrzucony fast-forward do brancha bazowego (0.45, powod `fast-forward do origin/<branch_bazowy> odrzucony`), brudne drzewo, wybor simple/full, opt-in na research, defekt bez reprodukcji, brak strony `toolchain`, brak sekcji `## Worktree` na stronie `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony wynik, timeout blokady testow (kod 75 z linia `TEST-LOCK: timeout`) oraz kolizja srodowiska testow po jednej powtorce (FAZA 3 i 3.5.3, sekcje `lint-test.md`, powod `kolizja testów`), tryb `pełny przebieg: ci` bez mozliwosci merge requesta albo bez wystawionego merge requesta (0.45 i 4.6, powod `pełny przebieg ci bez MR`) oraz komenda testow, ktorej w tym trybie nie da sie zawezic (FAZA 3, powod `pełny przebieg ci - testów nie da się zawęzić`), wyczerpany limit poprawek, same odjecia `BLOKADA-ZEWNĘTRZNA` po review krytyka (3.5.2, blok `blokada-zewnetrzna`, powod `blokada zewnetrzna - <krotki powod>`), `SCOPE GREW`, `STOP:` od deva, ktorego nie rozstrzygasz sam z kontraktu) obsluz tak: (1) dodaj komentarz do ticketu `**SPRINT-RUN STOP**\n\nPowod: [powod]\nEtap: [faza skilla]\nCo odblokuje: [jedno zdanie]`; (2) domknij instrumentacje wg reguly 14 (`running` -> `failed`, `pending` -> `skipped`, `finish_pipeline(status="failed")`, best-effort); (3) wypisz `SPRINT-RUN STOP: [powod]` jako OSTATNIA linie odpowiedzi i zakoncz ture. Nie zgaduj odpowiedzi za usera ani nie wybieraj za niego wariantu domyslnego; statusu ticketu nie przestawiaj na `in_review`. **Sam rozjazd z branchem bazowym nie jest blokada** (0.45): branch za baza przewijasz sam przez `git merge --ff-only`, a przy wlasnych commitach albo brudnym drzewie pracujesz dalej i odnotowujesz rozjazd w komentarzu planu; blokada jest dopiero odrzucony fast-forward. `SPRINT_RUN=0` (domyslnie) nie zmienia niczego.
 22. **Trwale reguly projektowe zyja w repozytorium**, nie w prywatnej pamieci klienta. Dwie lokalizacje, obie liczone od KORZENIA REPOZYTORIUM: `.claude/rules/*.md` (reguly projektu; krytyk czyta je na starcie review, naruszenie to -25) i `.claude/agent-memory/<typ-agenta>/MEMORY.md` (reguly z review per rola, zapisywane w 3.5.2). To zwykle pliki Markdown w repo: czyta je KAZDY klient wykonujacy te instrukcje, wersjonuje je git i widzi je kolejny przebieg niezaleznie od tego, w czym go uruchomiono. Nie zakladaj prywatnego formatu pamieci zadnego klienta i nie migruj tych plikow do niego. Nazwa katalogu `.claude/` jest HISTORYCZNA - katalog jest wspolny dla klientow, nie zastrzezony dla jednego. Kazdy zapis jest ADDYTYWNY: dopisujesz do sekcji, nigdy nie nadpisujesz pliku.
 23. **Fallback solo nie jest niezaleznym review** (2.1) - stosujesz go wylacznie przy faktycznym braku delegacji stwierdzonym po dostepnych narzedziach, nigdy po nazwie klienta, i zawsze z jawna adnotacja o ograniczeniu niezaleznosci w komentarzu planu, komentarzu podsumowujacym i w 4.8.

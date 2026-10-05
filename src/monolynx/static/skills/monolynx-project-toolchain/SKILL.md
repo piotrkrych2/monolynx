@@ -215,6 +215,33 @@ wprost (np. `MON-252`), bez `$VAR` i bez `$(...)` - sesja pracujaca w worktree
 odrzuca komendy z wartoscia obliczana w locie. Komenda z niepodstawionym `<KEY>`
 nie moze trafic do shella.
 
+**Pelny przebieg testow: lokalnie czy w CI**: ustal, gdzie ma isc pelny zestaw
+testow przed zamknieciem ticketu. `work` i `work-simple` domyslnie uruchamiaja
+go lokalnie po ostatniej zmianie. Przy duzym zestawie taki przebieg trwa dlugo
+i blokuje kolejke testow innych sesji, a ten sam zestaw i tak biegnie
+w pipeline merge requesta. Pole ma dwie wartosci:
+
+- `lokalnie` (domyslna) - pelny zestaw idzie lokalnie, w sesji ticketu;
+- `ci` - lokalnie ida tylko testy zawezone do zmienionego obszaru, a pelny
+  zestaw weryfikuje pipeline merge requesta.
+
+Proponujesz `ci` tylko wtedy, gdy spelnione sa WSZYSTKIE trzy warunki; kazdy
+inny przypadek to `lokalnie`:
+
+1. projekt ma plik `.gitlab-ci.yml` z jobem, ktory uruchamia testy na merge
+   requescie (czytasz plik jako dane, niczego nie uruchamiasz). `work`
+   i `work-simple` zakladaja merge request przez `glab`, wiec inny system CI
+   nie da im pipeline'u do wskazania;
+2. zestaw jest duzy: ponad 100 plikow testowych z policzenia wyzej albo
+   informacja w repo lub od uzytkownika, ze pelny przebieg trwa dluzej niz
+   kilkanascie minut;
+3. komenda testow przyjmuje sciezki (np. `pytest <sciezki>`), bo w trybie `ci`
+   skille podstawiaja sciezki zmienionego obszaru w miejsce domyslnej sciezki
+   zestawu. Komenda bez miejsca na sciezki (sam cel `make`) tego nie spelnia.
+
+Projekt bez testow dostaje `lokalnie`. Wartosc potwierdza uzytkownik w KROK 3 -
+to propozycja, nie decyzja skilla.
+
 ## KROK 3: Potwierdz z uzytkownikiem
 
 Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik wie.
@@ -227,6 +254,7 @@ Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik 
 > | Test | `[wykryta komenda]` |
 > | Worktree | `[wariant worktree lint i test, albo "jak wyzej"]` |
 > | Izolacja testow miedzy worktree | **[tak / brak / nie ustalono]** - [powod jednym zdaniem; przy parametrze izolacji jego nazwa] |
+> | Pelny przebieg testow | **[lokalnie / ci]** - [powod jednym zdaniem] |
 >
 > Testy w repo: **[znaleziono N plikow / brak]**
 >
@@ -235,8 +263,21 @@ Nie zapisuj wykrytych komend bez potwierdzenia - wykrywanie zgaduje, uzytkownik 
 >    czy **agent** (odpala sam)?
 > 3. Stosowac TDD - testy pisane przed implementacja? (tak / nie)
 > 4. Izolacja testow sie zgadza? (tak / podaj poprawna)
+> 5. Pelny przebieg testow przed zamknieciem ticketu: **lokalnie** (domyslnie)
+>    czy **ci** (lokalnie tylko testy zmienionego obszaru, pelny zestaw
+>    w pipeline merge requesta)?
 
-Poczekaj na odpowiedzi. Przy braku testow w repo pytanie o TDD pomin (wpisz `nie`).
+Poczekaj na odpowiedzi. Przy braku testow w repo pytanie o TDD pomin (wpisz
+`nie`), a pytanie o pelny przebieg tez pomin (wpisz `lokalnie`).
+
+Wiersz `Pelny przebieg testow` wypelniasz propozycja z KROK 2 i jej powodem
+(np. "ponad 100 plikow testowych i job testow w `.gitlab-ci.yml`", "brak CI").
+Przy propozycji `ci` powiedz od razu dwie rzeczy: ze `work` i `work-simple`
+zamkna wtedy ticket tylko z wystawionym merge requestem, czyli potrzebuja
+`MONOLYNX_AUTOCOMMIT`, `MONOLYNX_AUTOPUSH` i `MONOLYNX_AUTOMR` ustawionych na
+`true` oraz dzialajacego `glab`, i ze blad w obszarze, ktorego lokalne testy
+nie objely, wyjdzie dopiero w pipeline. Odpowiedz inna niz `lokalnie` albo `ci`
+-> dopytaj; na stronie stoi wylacznie jedna z tych dwoch wartosci.
 
 Wiersz `Izolacja testow miedzy worktree` wypelniasz ustaleniem z KROK 2 i
 podajesz przy nim, co je uzasadnia (np. "fixture zaklada baze o stalej nazwie
@@ -251,6 +292,8 @@ i nie zapisuj strony bez odpowiedzi na pierwsze:
 >    baza, ten sam port, ten sam katalog)? (tak / nie)
 > 5. Jesli tak: czy jest zmienna albo opcja, ktora ten stan rozdziela (np. nazwa
 >    bazy testowej)? Podaj jej nazwe i przykladowa wartosc, albo "nie ma".
+
+Pytanie o pelny przebieg testow dostaje wtedy numer 6, z ta sama trescia.
 
 Odpowiedzi mapujesz tak samo jak w tabeli z KROK 2: brak wspolnego stanu ->
 `tak`; wspolny stan z parametrem -> `tak` i parametr w `test:`; wspolny stan bez
@@ -362,6 +405,7 @@ komenda: [dokladna komenda]
 kto odpala: [user | agent]
 testy istnieja: [tak | nie]
 framework: [pytest | vitest | go test | ...]
+pełny przebieg: [lokalnie | ci]
 
 ## Worktree
 
@@ -411,6 +455,22 @@ Etykiete pisz doslownie `izolacja testów:` (z `ó`) - tej linii szuka
 `<KEY>`: klucz ticketu podstawia literalnie uruchamiajacy komende, bez `$VAR`
 i bez `$(...)`.
 
+Pole `pełny przebieg:` stoi w sekcji `## Test`, zaraz pod `framework:` - tam
+czytaja je `work`, `work-simple` i `/monolynx:setup`; to samo pole w innej
+sekcji jest ignorowane. Zapisujesz je zawsze, z dokladnie jedna z dwoch
+wartosci:
+
+- `pełny przebieg: lokalnie` - pelny zestaw testow idzie lokalnie, w sesji
+  ticketu, po ostatniej zmianie. To takze zachowanie strony bez tego pola;
+- `pełny przebieg: ci` - lokalnie ida lint i testy zawezone do zmienionego
+  obszaru, pelny zestaw weryfikuje pipeline merge requesta, a ticket trafia do
+  `in_review` dopiero po wystawieniu merge requesta.
+
+Etykiete pisz doslownie `pełny przebieg:` (z `ł`). Czytajacy przyjmuja tez
+zapis `pelny przebieg:`, a wartosc inna niz `lokalnie` i `ci` traktuja jak
+`lokalnie` z ostrzezeniem - dlatego nie wpisujesz trzeciej wartosci ani
+komentarza w tej linii.
+
 ## KROK 6: Podsumowanie
 
 Wyswietl uzytkownikowi:
@@ -421,6 +481,11 @@ Wyswietl uzytkownikowi:
   napisz wprost, ze testy uruchomione rownolegle z dwoch worktree moga sie
   zderzyc, a przy parametrze izolacji - ze `<KEY>` w komendzie `test:` trzeba
   przed uruchomieniem zastapic literalnym kluczem ticketu
+- Pelny przebieg testow (`lokalnie` albo `ci`); przy `ci` napisz wprost, ze
+  lokalnie pojda tylko testy zmienionego obszaru, pelny zestaw zweryfikuje
+  pipeline merge requesta, a `work` i `work-simple` potrzebuja do tego flag
+  `MONOLYNX_AUTOCOMMIT`, `MONOLYNX_AUTOPUSH` i `MONOLYNX_AUTOMR` na `true`
+  oraz dzialajacego `glab`
 - Kto je odpala
 - Czy TDD wlaczone
 - Narzedzie mutacyjne i jego komende diffowa (albo `brak` wraz z powodem)
@@ -440,7 +505,7 @@ Jesli uzytkownik wybral **agent** jako uruchamiajacego, przypomnij o fladze:
 
 1. **Nie zgaduj komend** - tabela w KROK 2 to punkt wyjscia, nie odpowiedz. Zawsze potwierdz z uzytkownikiem
 2. **Nie uruchamiaj wykrytych komend** zeby je zweryfikowac - to konfiguracja, nie test. Lint na brudnym drzewie roboczym zwroci mylacy wynik. **Wyjatek**: `--help` i `--version` wolno uruchomic. To odpytanie narzedzia o wlasny interfejs, nie przebieg testow ani mutacji - KROK 4 tego wprost wymaga
-3. **Format strony jest kontraktem** - `work` i `work-simple` czytaja naglowki i etykiety doslownie. Dotyczy to takze sekcji `## Worktree`: pracujac w git worktree oba skille biora komendy z jej pol `lint:` i `test:`, a wartosc `jak wyzej` odsyla je do `## Lint` i `## Test`. Trzecie pole, `izolacja testów:`, ma wylacznie wartosc `tak` albo `brak` i jest obecne zawsze - `/monolynx:setup` szuka tej linii doslownie i przy jej braku pokazuje BRAK. `<KEY>` w `test:` to placeholder klucza ticketu, podstawiany literalnie przez uruchamiajacego
+3. **Format strony jest kontraktem** - `work` i `work-simple` czytaja naglowki i etykiety doslownie. Dotyczy to takze sekcji `## Worktree`: pracujac w git worktree oba skille biora komendy z jej pol `lint:` i `test:`, a wartosc `jak wyzej` odsyla je do `## Lint` i `## Test`. Trzecie pole, `izolacja testów:`, ma wylacznie wartosc `tak` albo `brak` i jest obecne zawsze - `/monolynx:setup` szuka tej linii doslownie i przy jej braku pokazuje BRAK. `<KEY>` w `test:` to placeholder klucza ticketu, podstawiany literalnie przez uruchamiajacego. Pole `pełny przebieg:` w sekcji `## Test` ma wylacznie wartosc `lokalnie` albo `ci`; `work`, `work-simple` i `/monolynx:setup` czytaja je tylko z tej sekcji, a strone bez pola traktuja jak `lokalnie`
 4. **Respektuj reguly repo** - jesli `CLAUDE.md` mowi "tylko przez docker" albo "Claude nigdy nie odpala testow", zapisz to w sekcji Uwagi i domyslnie ustaw `kto odpala: user`
 5. **Jedna strona per projekt** - slug zawsze `toolchain`, bez wariantow. Slug wynika z tytulu strony, wiec tytul musi brzmiec dokladnie `Toolchain` - zmiana tytulu zrywa odczyt w `work` i `work-simple`, ktore szukaja strony po slugu `toolchain`
 6. **Nie instaluj narzedzia mutacyjnego** - to jednorazowy setup wlasciciela repo, per jezyk i per runner. Skill je wykrywa i podaje instrukcje, nie sciaga (precedens: graphify)
