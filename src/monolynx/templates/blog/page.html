@@ -17,6 +17,8 @@
 
 {% block head %}
 <meta property="article:published_time" content="{{ (published_at or created_at).isoformat() }}">
+<link rel="stylesheet" href="/static/blog/blocks.css">
+<script src="/static/blog/blocks.js" defer></script>
 <style>
     .blog-content {
         color: #374151; /* text-gray-700 */
