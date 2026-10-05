@@ -359,7 +359,7 @@ Three separate packages in one repo: the backend (`src/monolynx/`), the Django S
 - **Docker**: Multi-stage Dockerfile (builder → dev → runtime). Dev target has hot reload, runtime uses non-root user with 2 workers
 - **Docker Compose (dev)**: `dev` profile with PostgreSQL 16 (pgvector/pgvector:pg16) + Neo4j 5 (neo4j:5-community) + MinIO + app (monitor loop runs in-process by default). Optional `worker` profile runs monitor loop as separate service (`make worker`)
 - **Docker Compose (prod)**: `app` service with `ENABLE_MONITOR_LOOP=false` + separate `worker` service running `python -m monolynx.worker`. Worker has no ports/Traefik — only DB access. Advisory lock ensures only one worker runs checks at a time
-- **CI**: `.gitlab-ci.yml` — lint → test (coverage goal 50%) → build (main only) → deploy (manual)
+- **CI**: `.gitlab-ci.yml` — lint → test (coverage goal 50%) → build (main only) → deploy (manual). Job `dockle-scan` (dockle 0.4.14, obraz `:test`, `--exit-code 1`) biegnie na MR zmieniającym `Dockerfile` albo `.gitlab-ci.yml`; wyjątki: `-af settings.py` (CIS-DI-0010, fałszywy alarm po nazwie pliku, dopasowanie po nazwie bazowej, więc nowy `settings.py` sprawdzić ręcznie) i `-i DKL-DI-0005` (warstwa obrazu bazowego `python:3.12-slim` z `apt-get dist-clean`, którego dockle 0.4.14 i 0.4.15 nie rozpoznają); powody w komentarzu nad jobem
 - **Pre-commit**: ruff (check + format) and mypy with pydantic plugin
 
 ## Merge requests: pipeline must be green
