@@ -4,12 +4,17 @@ Konwencja jak `services/projects.py`: funkcje z użytkownikiem biorą `(db, user
 błąd biznesowy to `ValueError`, commit robi serwis. Wyjątek: `ensure_post` nie commituje, bo
 działa w transakcji `create_wiki_page` / `update_wiki_page`. Ten moduł NIE importuje
 `services/wiki.py` (wiki importuje stąd `ensure_post`).
+
+MON-258: czyste buildery JSON-LD (`build_post_jsonld`, `build_blog_jsonld`, `dump_jsonld`) i odczyt
+publicznych wersji językowych wpisu (`list_public_translations`) dla warstwy AI (`blog_ai.py`).
 """
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -147,6 +152,92 @@ async def list_public_posts(db: AsyncSession, page: int, per_page: int, tag: str
     return PublicPostList(items=items, total=total, page=page, per_page=per_page, total_pages=total_pages)
 
 
+async def list_public_translations(db: AsyncSession, post: BlogPost) -> list[BlogPost]:
+    """Publiczne wersje językowe wpisu (root grupy i rodzeństwo po `translation_of_id`), bez samego wpisu.
+
+    Filtr `WikiPage.is_public` jest w SQL, więc prywatne tłumaczenie nie wycieka do frontmatter.
+    Tylko odczyt.
+    """
+    root_id = post.translation_of_id or post.page_id
+    result = await db.execute(
+        select(BlogPost)
+        .join(WikiPage, WikiPage.id == BlogPost.page_id)
+        .where(
+            WikiPage.is_public.is_(True),
+            or_(BlogPost.page_id == root_id, BlogPost.translation_of_id == root_id),
+            BlogPost.page_id != post.page_id,
+        )
+        .order_by(BlogPost.lang.asc(), BlogPost.slug.asc())
+    )
+    return list(result.scalars().all())
+
+
+def build_post_jsonld(
+    post: BlogPost,
+    page: WikiPage,
+    *,
+    base_url: str,
+    description: str,
+    word_count: int | None = None,
+    image_url: str | None = None,
+) -> dict[str, Any]:
+    """`BlogPosting` + `BreadcrumbList` (schema.org) wpisu; czysta funkcja, bez IO."""
+    base = base_url.rstrip("/")
+    url = f"{base}/blog/{post.slug}"
+    posting: dict[str, Any] = {
+        "@type": "BlogPosting",
+        "headline": page.title,
+        "description": description,
+        "datePublished": (post.published_at or page.created_at).isoformat(),
+        "dateModified": page.updated_at.isoformat(),
+        "author": {"@type": "Person", "name": post.author_name or DEFAULT_AUTHOR_NAME},
+        "inLanguage": post.lang,
+        "mainEntityOfPage": {"@type": "WebPage", "@id": url},
+        "url": url,
+    }
+    if post.tags:
+        posting["keywords"] = list(post.tags)
+    if word_count is not None:
+        posting["wordCount"] = word_count
+    if image_url is not None:
+        posting["image"] = image_url
+    breadcrumbs = {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "Blog", "item": f"{base}/blog/"},
+            {"@type": "ListItem", "position": 2, "name": page.title, "item": url},
+        ],
+    }
+    return {"@context": "https://schema.org", "@graph": [posting, breadcrumbs]}
+
+
+def build_blog_jsonld(posts: Sequence[PublicPost], *, base_url: str) -> dict[str, Any]:
+    """`Blog` z `blogPost[]` dla listy wpisów; czysta funkcja, bez IO."""
+    base = base_url.rstrip("/")
+    entries: list[dict[str, Any]] = []
+    for item in posts:
+        entry: dict[str, Any] = {
+            "@type": "BlogPosting",
+            "headline": item.page.title,
+            "url": f"{base}/blog/{item.post.slug}",
+            "datePublished": (item.post.published_at or item.page.created_at).isoformat(),
+            "inLanguage": item.post.lang,
+        }
+        if item.post.description:
+            entry["description"] = item.post.description
+        entries.append(entry)
+    return {"@context": "https://schema.org", "@type": "Blog", "url": f"{base}/blog/", "blogPost": entries}
+
+
+def dump_jsonld(data: dict[str, Any]) -> str:
+    """JSON bezpieczny w `<script type="application/ld+json">`.
+
+    Każde `<` -> `\\u003c` (usuwa `</script>` i `<!--`), a U+2028/U+2029 (surowe łamią literały JS
+    w starszych parserach) -> escape; wynik nadal parsuje się `json.loads` do tych samych danych.
+    """
+    return json.dumps(data, ensure_ascii=False).replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
 def _validate_description(value: Any) -> str:
     if not isinstance(value, str):
         raise ValueError("Opis musi być tekstem")
@@ -171,6 +262,11 @@ def _validate_author_name(value: Any) -> str:
     return stripped
 
 
+def is_valid_tag(value: str) -> bool:
+    """Kształt tagu: małe litery, cyfry i myślniki, maksymalnie `TAG_MAX_LENGTH` znaków (fullmatch, bez `\\n` na końcu)."""
+    return len(value) <= TAG_MAX_LENGTH and _SLUG_PATTERN.fullmatch(value) is not None
+
+
 def _validate_tags(value: Any) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(t, str) for t in value):
         raise ValueError("Tagi muszą być listą tekstów")
@@ -178,7 +274,7 @@ def _validate_tags(value: Any) -> list[str]:
     if len(unique) > MAX_TAGS:
         raise ValueError(f"Wpis może mieć maksymalnie {MAX_TAGS} tagów")
     for tag in unique:
-        if len(tag) > TAG_MAX_LENGTH or not _SLUG_PATTERN.match(tag):
+        if not is_valid_tag(tag):
             raise ValueError(f"Tag '{tag}' jest nieprawidłowy: małe litery, cyfry i myślniki, maksymalnie {TAG_MAX_LENGTH} znaków")
     return unique
 

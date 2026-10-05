@@ -8,9 +8,11 @@ robi spy na `commit` (wzorzec tests/integration/test_projects_service.py), a tes
 
 from __future__ import annotations
 
+import json
 import secrets
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -454,6 +456,30 @@ class TestSetPostMetaValidation:
             await svc.set_post_meta(db_session, user, project, page.id, slug="a" * 256)
 
 
+class TestIsValidTag:
+    @pytest.mark.parametrize("value", ["a", "tag", "dwa-slowa", "a1-b2", "0", "a" * 50])
+    def test_accepts_slug_shaped_tags_up_to_the_limit(self, value):
+        assert svc.is_valid_tag(value) is True
+
+    @pytest.mark.parametrize(
+        "value",
+        ["a" * 51, "Abc", "Zly Tag", "tag\n", "\ntag", "", "a\x00b", "\x00", "-tag", "tag-", "dwa--myslniki", "pod_kreska", "żółw"],
+    )
+    def test_rejects_everything_else(self, value):
+        assert svc.is_valid_tag(value) is False
+
+
+class TestSetPostMetaTagTrailingNewline:
+    async def test_tag_with_trailing_newline_is_rejected_and_nothing_is_written(self, db_session):
+        user, project = await _setup(db_session, "val-tagnl")
+        page = await _make_page(db_session, project, user)
+
+        with pytest.raises(ValueError, match="nieprawidłowy"):
+            await svc.set_post_meta(db_session, user, project, page.id, tags=["dobry", "zly\n"])
+
+        assert await _post_row(db_session, page.id) is None
+
+
 class TestSetPostMetaPermissionAndScope:
     async def test_role_without_wiki_write_gets_exact_message_and_no_write(self, db_session):
         user = await _make_user(db_session, "perm")
@@ -880,3 +906,297 @@ class TestListPublicPosts:
         assert result.total == 0
         assert result.total_pages == 1
         assert result.page == 1
+
+
+_LS = chr(0x2028)
+_PS = chr(0x2029)
+_LD_BASE = "https://example.com"
+_LD_PUBLISHED = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+_LD_CREATED = datetime(2026, 1, 5, 9, 15, tzinfo=UTC)
+_LD_UPDATED = datetime(2026, 3, 2, 8, 30, tzinfo=UTC)
+
+
+def _ld_objects(*, title: str = "Tytul LD", slug: str = "stabilny-slug", **post_fields) -> tuple[BlogPost, WikiPage]:
+    """Obiekty w pamieci (bez sesji): domyslne wartosci kolumn ustawiamy jawnie, bo nie ma INSERT-a."""
+    page = WikiPage(title=title, slug="slug-strony-wiki", created_at=_LD_CREATED, updated_at=_LD_UPDATED)
+    values = {
+        "description": "",
+        "tags": [],
+        "lang": "pl",
+        "author_name": svc.DEFAULT_AUTHOR_NAME,
+        "published_at": _LD_PUBLISHED,
+        **post_fields,
+    }
+    post = BlogPost(page_id=uuid.uuid4(), slug=slug, **values)
+    return post, page
+
+
+class TestBuildPostJsonld:
+    _BASE_KEYS: ClassVar[set[str]] = {
+        "@type",
+        "headline",
+        "description",
+        "datePublished",
+        "dateModified",
+        "author",
+        "inLanguage",
+        "mainEntityOfPage",
+        "url",
+    }
+
+    @staticmethod
+    def _graph(data: dict) -> dict:
+        return {node["@type"]: node for node in data["@graph"]}
+
+    def test_wraps_blogposting_and_breadcrumb_in_a_schema_org_graph(self):
+        post, page = _ld_objects()
+
+        data = svc.build_post_jsonld(post, page, base_url=_LD_BASE, description="Opis.")
+
+        assert set(data) == {"@context", "@graph"}
+        assert data["@context"] == "https://schema.org"
+        assert [node["@type"] for node in data["@graph"]] == ["BlogPosting", "BreadcrumbList"]
+
+    def test_blogposting_has_the_spec_fields_and_nothing_optional(self):
+        post, page = _ld_objects(title="Wpis o JSON-LD", slug="wpis-ld", lang="en", author_name="Jan Kowalski")
+
+        posting = self._graph(svc.build_post_jsonld(post, page, base_url=_LD_BASE, description="Opis wpisu."))["BlogPosting"]
+
+        assert set(posting) == self._BASE_KEYS
+        assert posting["headline"] == "Wpis o JSON-LD"
+        assert posting["description"] == "Opis wpisu."
+        assert posting["datePublished"] == "2026-03-01T12:00:00+00:00"
+        assert posting["dateModified"] == "2026-03-02T08:30:00+00:00"
+        assert posting["author"] == {"@type": "Person", "name": "Jan Kowalski"}
+        assert posting["inLanguage"] == "en"
+        assert posting["url"] == "https://example.com/blog/wpis-ld"
+        assert posting["mainEntityOfPage"] == {"@type": "WebPage", "@id": "https://example.com/blog/wpis-ld"}
+
+    def test_url_uses_the_stable_post_slug_not_the_wiki_page_slug(self):
+        post, page = _ld_objects(slug="stabilny-adres")
+
+        posting = self._graph(svc.build_post_jsonld(post, page, base_url=_LD_BASE, description=""))["BlogPosting"]
+
+        assert posting["url"].endswith("/blog/stabilny-adres")
+        assert "slug-strony-wiki" not in json.dumps(posting)
+
+    def test_keywords_follow_tags_and_are_omitted_without_tags(self):
+        with_tags, page = _ld_objects(tags=["alfa", "beta"])
+        without_tags, _page = _ld_objects(tags=[])
+
+        tagged = self._graph(svc.build_post_jsonld(with_tags, page, base_url=_LD_BASE, description=""))["BlogPosting"]
+        untagged = self._graph(svc.build_post_jsonld(without_tags, page, base_url=_LD_BASE, description=""))["BlogPosting"]
+
+        assert tagged["keywords"] == ["alfa", "beta"]
+        assert "keywords" not in untagged
+
+    def test_word_count_and_image_only_when_given(self):
+        post, page = _ld_objects()
+
+        given = self._graph(
+            svc.build_post_jsonld(post, page, base_url=_LD_BASE, description="", word_count=321, image_url="https://example.com/okladka.png")
+        )["BlogPosting"]
+        omitted = self._graph(svc.build_post_jsonld(post, page, base_url=_LD_BASE, description=""))["BlogPosting"]
+
+        assert given["wordCount"] == 321
+        assert given["image"] == "https://example.com/okladka.png"
+        assert "wordCount" not in omitted
+        assert "image" not in omitted
+
+    def test_date_published_falls_back_to_page_created_at(self):
+        post, page = _ld_objects(published_at=None)
+
+        posting = self._graph(svc.build_post_jsonld(post, page, base_url=_LD_BASE, description=""))["BlogPosting"]
+
+        assert posting["datePublished"] == "2026-01-05T09:15:00+00:00"
+
+    def test_author_falls_back_to_default_name(self):
+        post, page = _ld_objects(author_name=None)
+
+        posting = self._graph(svc.build_post_jsonld(post, page, base_url=_LD_BASE, description=""))["BlogPosting"]
+
+        assert posting["author"] == {"@type": "Person", "name": svc.DEFAULT_AUTHOR_NAME}
+
+    def test_breadcrumb_has_two_items_with_blog_and_post_addresses(self):
+        post, page = _ld_objects(title="Tytul okruszka", slug="okruszek")
+
+        crumbs = self._graph(svc.build_post_jsonld(post, page, base_url=_LD_BASE, description=""))["BreadcrumbList"]["itemListElement"]
+
+        assert len(crumbs) == 2
+        assert [c["@type"] for c in crumbs] == ["ListItem", "ListItem"]
+        assert [c["position"] for c in crumbs] == [1, 2]
+        assert [c["name"] for c in crumbs] == ["Blog", "Tytul okruszka"]
+        assert [c["item"] for c in crumbs] == ["https://example.com/blog/", "https://example.com/blog/okruszek"]
+
+    def test_result_is_json_serializable(self):
+        post, page = _ld_objects()
+
+        data = svc.build_post_jsonld(post, page, base_url=_LD_BASE, description="x", word_count=1)
+
+        assert json.loads(json.dumps(data)) == data
+
+
+class TestBuildBlogJsonld:
+    @staticmethod
+    def _item(slug: str, title: str, **post_fields) -> svc.PublicPost:
+        post, page = _ld_objects(title=title, slug=slug, **post_fields)
+        return svc.PublicPost(post=post, page=page)
+
+    def test_blog_node_lists_posts_in_input_order(self):
+        items = [self._item("drugi", "Drugi"), self._item("pierwszy", "Pierwszy"), self._item("trzeci", "Trzeci")]
+
+        data = svc.build_blog_jsonld(items, base_url=_LD_BASE)
+
+        assert data["@context"] == "https://schema.org"
+        assert data["@type"] == "Blog"
+        assert data["url"] == "https://example.com/blog/"
+        assert [p["url"] for p in data["blogPost"]] == [
+            "https://example.com/blog/drugi",
+            "https://example.com/blog/pierwszy",
+            "https://example.com/blog/trzeci",
+        ]
+        assert [p["headline"] for p in data["blogPost"]] == ["Drugi", "Pierwszy", "Trzeci"]
+
+    def test_post_entry_fields_and_optional_description(self):
+        with_desc = self._item("a", "A", description="Opis A.", lang="en")
+        without_desc = self._item("b", "B", description="")
+
+        entries = svc.build_blog_jsonld([with_desc, without_desc], base_url=_LD_BASE)["blogPost"]
+
+        assert entries[0] == {
+            "@type": "BlogPosting",
+            "headline": "A",
+            "url": "https://example.com/blog/a",
+            "datePublished": "2026-03-01T12:00:00+00:00",
+            "inLanguage": "en",
+            "description": "Opis A.",
+        }
+        assert set(entries[1]) == {"@type", "headline", "url", "datePublished", "inLanguage"}
+
+    def test_date_published_falls_back_to_page_created_at(self):
+        entries = svc.build_blog_jsonld([self._item("c", "C", published_at=None)], base_url=_LD_BASE)["blogPost"]
+
+        assert entries[0]["datePublished"] == "2026-01-05T09:15:00+00:00"
+
+    def test_empty_list_gives_empty_blog_post_array(self):
+        data = svc.build_blog_jsonld([], base_url=_LD_BASE)
+
+        assert data["blogPost"] == []
+        assert data["@type"] == "Blog"
+
+
+class TestDumpJsonld:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "</script><script>alert(1)</script>",
+            "<!-- komentarz -->",
+            f"linia{_LS}oddzielona{_PS}akapitem",
+            "zażółć gęślą jaźń",
+            "a < b && c > d",
+            "<\\/script>",
+        ],
+    )
+    def test_output_is_safe_inside_a_script_block_and_round_trips(self, value):
+        data = {"@type": "BlogPosting", "headline": value, "nested": [{"name": value}]}
+
+        result = svc.dump_jsonld(data)
+
+        assert "</" not in result
+        assert "<!--" not in result
+        assert _LS not in result
+        assert _PS not in result
+        assert json.loads(result) == data
+
+    def test_non_ascii_text_is_not_escaped(self):
+        result = svc.dump_jsonld({"headline": "zażółć"})
+
+        assert "zażółć" in result
+
+
+class TestListPublicTranslations:
+    async def _group(self, db, tag: str):
+        """Root (pl, wstawiony pierwszy) + dwa tłumaczenia en wstawione w kolejności odwrotnej do sluga."""
+        user, project = await _setup(db, tag)
+        uid = _uid()
+        root_page = await _make_page(db, project, user, slug=f"mm-root-{uid}", is_public=True)
+        root = await _make_post(db, root_page, lang="pl")
+        zz_page = await _make_page(db, project, user, slug=f"zz-tr-{uid}", is_public=True)
+        zz = await _make_post(db, zz_page, lang="en", translation_of_id=root_page.id)
+        aa_page = await _make_page(db, project, user, slug=f"aa-tr-{uid}", is_public=True)
+        aa = await _make_post(db, aa_page, lang="en", translation_of_id=root_page.id)
+        return user, project, root, zz, aa
+
+    async def test_root_lists_its_translations_sorted_by_slug_without_itself(self, db_session):
+        _user, _project, root, zz, aa = await self._group(db_session, "tr-root")
+
+        result = await svc.list_public_translations(db_session, root)
+
+        assert [p.slug for p in result] == [aa.slug, zz.slug]
+
+    async def test_translation_lists_root_and_siblings_sorted_by_lang_then_slug(self, db_session):
+        _user, _project, root, zz, aa = await self._group(db_session, "tr-sib")
+
+        result = await svc.list_public_translations(db_session, zz)
+
+        assert [p.slug for p in result] == [aa.slug, root.slug]
+
+    async def test_private_translation_is_omitted(self, db_session):
+        _user, _project, root, zz, aa = await self._group(db_session, "tr-priv")
+        aa_page = await db_session.get(WikiPage, aa.page_id)
+        aa_page.is_public = False
+        await db_session.flush()
+
+        result = await svc.list_public_translations(db_session, root)
+
+        assert [p.slug for p in result] == [zz.slug]
+
+    async def test_private_root_is_omitted_from_a_translation_list(self, db_session):
+        _user, _project, root, zz, aa = await self._group(db_session, "tr-privroot")
+        root_page = await db_session.get(WikiPage, root.page_id)
+        root_page.is_public = False
+        await db_session.flush()
+
+        result = await svc.list_public_translations(db_session, zz)
+
+        assert [p.slug for p in result] == [aa.slug]
+
+    async def test_sort_uses_lang_first_then_slug(self, db_session):
+        user, project = await _setup(db_session, "tr-sort")
+        uid = _uid()
+        # DB dopuszcza tylko pl/en (CHECK), wiec widok z tlumaczenia en: root pl ze slugiem alfabetycznie
+        # PRZED dwoma tlumaczeniami en. (lang, slug) daje bb, zz, aa; sam slug dalby aa, bb, zz; sam lang bez
+        # slugu zostawilby zz przed bb (kolejnosc wstawiania).
+        root_page = await _make_page(db_session, project, user, slug=f"aa-root-{uid}", is_public=True)
+        root = await _make_post(db_session, root_page, lang="pl")
+        zz_page = await _make_page(db_session, project, user, slug=f"zz-en-{uid}", is_public=True)
+        zz = await _make_post(db_session, zz_page, lang="en", translation_of_id=root_page.id)
+        bb_page = await _make_page(db_session, project, user, slug=f"bb-en-{uid}", is_public=True)
+        bb = await _make_post(db_session, bb_page, lang="en", translation_of_id=root_page.id)
+        viewer_page = await _make_page(db_session, project, user, slug=f"mm-en-{uid}", is_public=True)
+        viewer = await _make_post(db_session, viewer_page, lang="en", translation_of_id=root_page.id)
+
+        result = await svc.list_public_translations(db_session, viewer)
+
+        assert [p.slug for p in result] == [bb.slug, zz.slug, root.slug]
+
+    async def test_post_without_translations_gets_empty_list(self, db_session):
+        user, project = await _setup(db_session, "tr-none")
+        page = await _make_page(db_session, project, user, is_public=True)
+        post = await _make_post(db_session, page)
+
+        assert await svc.list_public_translations(db_session, post) == []
+
+    async def test_unrelated_group_is_not_mixed_in(self, db_session):
+        user, project, root, _zz, _aa = await self._group(db_session, "tr-iso")
+        other_page = await _make_page(db_session, project, user, is_public=True)
+        other_root = await _make_post(db_session, other_page, lang="pl")
+        stranger_page = await _make_page(db_session, project, user, is_public=True)
+        stranger = await _make_post(db_session, stranger_page, lang="en", translation_of_id=other_page.id)
+
+        result = await svc.list_public_translations(db_session, root)
+
+        slugs = [p.slug for p in result]
+        assert other_root.slug not in slugs
+        assert stranger.slug not in slugs
+        assert len(slugs) == 2

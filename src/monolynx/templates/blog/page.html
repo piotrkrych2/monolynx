@@ -17,6 +17,8 @@
 
 {% block head %}
 <meta property="article:published_time" content="{{ (published_at or created_at).isoformat() }}">
+{% if md_url %}<link rel="alternate" type="text/markdown" href="{{ md_url }}">{% endif %}
+{% if json_ld %}<script type="application/ld+json">{{ json_ld|safe }}</script>{% endif %}
 <link rel="stylesheet" href="/static/blog/blocks.css">
 <script src="/static/blog/blocks.js" defer></script>
 <style>
