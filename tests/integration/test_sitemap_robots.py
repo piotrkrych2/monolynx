@@ -1,21 +1,20 @@
-"""Testy integracyjne MON-202 -- sitemap.xml z bazy (wpisy publiczne) i robots.txt
-(jawne Allow: /blog/).
+"""Testy integracyjne sitemap.xml z bazy (wpisy bloga) i robots.txt (jawne Allow: /blog/).
 
-Zanim implementacja MON-202 powstanie, testy asercji publicznych wpisow w sitemap i
-jawnego "Allow: /blog/" w robots.txt MUSZA zawodzic (sitemap.xml dzis nie zna bazy --
-`async def sitemap_xml() -> Response` bez `Depends(get_db)` -- i robots.txt nie ma
-jawnej linii "Allow: /blog/") -- to jest zamierzone, TDD.
+MON-254: adresy wpisów pochodzą z `BlogPost.slug` (nie ze sluga strony wiki), a `lastmod`
+z `BlogPost.last_verified_at`, potem `BlogPost.published_at`, potem `WikiPage.updated_at`.
+Sitemap zawiera też stronę listy `{base}/blog/`.
 """
 
 import secrets
 import uuid
 import xml.etree.ElementTree as ET
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
 from monolynx.config import settings
 from monolynx.features import feature_slugs
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
@@ -53,11 +52,25 @@ async def _create_user(db_session, email):
     return user
 
 
-async def _create_wiki_page(db_session, project, user, title, is_public=False, updated_at=None):
-    """Helper: tworzy strone wiki bezposrednio w DB (bez realnego MinIO).
+async def _create_wiki_page(
+    db_session,
+    project,
+    user,
+    title,
+    is_public=False,
+    updated_at=None,
+    *,
+    with_post=None,
+    post_slug=None,
+    published_at=None,
+    last_verified_at=None,
+):
+    """Helper: tworzy strone wiki (bez realnego MinIO) i jej BlogPost.
 
     updated_at: jawne przypisanie PRZED pierwszym flush (INSERT) nadpisuje
     server_default -- potrzebne do deterministycznego lastmod w testach sitemap.
+    with_post: domyslnie BlogPost powstaje dla stron publicznych; True wymusza go tez dla
+    prywatnej (wpis cofniety z publikacji).
     """
     page = WikiPage(
         project_id=project.id,
@@ -74,6 +87,15 @@ async def _create_wiki_page(db_session, project, user, title, is_public=False, u
         page.updated_at = updated_at
     db_session.add(page)
     await db_session.flush()
+    if with_post if with_post is not None else is_public:
+        post = BlogPost(
+            page_id=page.id,
+            slug=post_slug or page.slug,
+            published_at=published_at,
+            last_verified_at=last_verified_at,
+        )
+        db_session.add(post)
+        await db_session.flush()
     return page
 
 
@@ -107,20 +129,92 @@ class TestSitemapPublicWikiPages:
         assert resp.status_code == 200
         ET.fromstring(resp.text)
 
-    async def test_sitemap_includes_public_page_with_lastmod(self, client, db_session):
+    async def test_sitemap_includes_blog_index(self, client):
+        resp = await client.get("/sitemap.xml")
+
+        assert resp.status_code == 200
+        base = settings.APP_URL.rstrip("/")
+        assert f"{base}/blog/" in _sitemap_entries(resp.text)
+
+    async def test_sitemap_includes_public_page_under_post_slug_not_page_slug(self, client, db_session):
         project = await _create_project(db_session, "sitemap-pub")
         user = await _create_user(db_session, "sitemap-pub@test.com")
-        updated = datetime(2026, 2, 1, 8, 0, tzinfo=UTC)
-        page = await _create_wiki_page(db_session, project, user, "Wpis Sitemap Publiczny MON202", is_public=True, updated_at=updated)
+        page = await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Sitemap Publiczny MON254",
+            is_public=True,
+            post_slug="adres-wpisu-w-sitemap-mon254",
+            published_at=datetime(2026, 2, 1, 8, 0, tzinfo=UTC),
+        )
 
         resp = await client.get("/sitemap.xml")
 
         assert resp.status_code == 200
         base = settings.APP_URL.rstrip("/")
-        expected_loc = f"{base}/blog/{page.slug}"
         entries = _sitemap_entries(resp.text)
-        assert expected_loc in entries
-        assert entries[expected_loc] == updated.isoformat()
+        assert f"{base}/blog/adres-wpisu-w-sitemap-mon254" in entries
+        assert f"{base}/blog/{page.slug}" not in entries
+
+    async def test_sitemap_lastmod_is_published_at_when_no_last_verified_at(self, client, db_session):
+        project = await _create_project(db_session, "sitemap-lm-pub")
+        user = await _create_user(db_session, "sitemap-lm-pub@test.com")
+        published = datetime(2026, 2, 1, 8, 0, tzinfo=UTC)
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Lastmod Published MON254",
+            is_public=True,
+            post_slug="lastmod-published-mon254",
+            published_at=published,
+            updated_at=datetime(2026, 5, 5, 5, 0, tzinfo=UTC),
+        )
+
+        resp = await client.get("/sitemap.xml")
+
+        base = settings.APP_URL.rstrip("/")
+        assert _sitemap_entries(resp.text)[f"{base}/blog/lastmod-published-mon254"] == published.isoformat()
+
+    async def test_sitemap_lastmod_prefers_last_verified_at(self, client, db_session):
+        project = await _create_project(db_session, "sitemap-lm-ver")
+        user = await _create_user(db_session, "sitemap-lm-ver@test.com")
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Lastmod Verified MON254",
+            is_public=True,
+            post_slug="lastmod-verified-mon254",
+            published_at=datetime(2026, 2, 1, 8, 0, tzinfo=UTC),
+            last_verified_at=date(2026, 3, 9),
+            updated_at=datetime(2026, 5, 5, 5, 0, tzinfo=UTC),
+        )
+
+        resp = await client.get("/sitemap.xml")
+
+        base = settings.APP_URL.rstrip("/")
+        assert _sitemap_entries(resp.text)[f"{base}/blog/lastmod-verified-mon254"] == date(2026, 3, 9).isoformat()
+
+    async def test_sitemap_lastmod_falls_back_to_page_updated_at(self, client, db_session):
+        project = await _create_project(db_session, "sitemap-lm-upd")
+        user = await _create_user(db_session, "sitemap-lm-upd@test.com")
+        updated = datetime(2026, 5, 5, 5, 0, tzinfo=UTC)
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Lastmod Updated MON254",
+            is_public=True,
+            post_slug="lastmod-updated-mon254",
+            updated_at=updated,
+        )
+
+        resp = await client.get("/sitemap.xml")
+
+        base = settings.APP_URL.rstrip("/")
+        assert _sitemap_entries(resp.text)[f"{base}/blog/lastmod-updated-mon254"] == updated.isoformat()
 
     async def test_sitemap_excludes_private_page(self, client, db_session):
         """Kryterium 5: strona nieoznaczona is_public nie pojawia sie w sitemap.xml."""
@@ -135,6 +229,26 @@ class TestSitemapPublicWikiPages:
         entries = _sitemap_entries(resp.text)
         assert f"{base}/blog/{page.slug}" not in entries
         assert "Wpis Sitemap Prywatny MON202" not in resp.text
+
+    async def test_sitemap_excludes_private_page_that_has_blog_post(self, client, db_session):
+        """Wpis cofniety z publikacji zachowuje BlogPost, ale nie moze trafic do sitemapy (ani pod slugiem, ani starym)."""
+        project = await _create_project(db_session, "sitemap-priv-post")
+        user = await _create_user(db_session, "sitemap-priv-post@test.com")
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Cofniety MON254",
+            is_public=False,
+            with_post=True,
+            post_slug="wpis-cofniety-adres-mon254",
+            published_at=datetime(2026, 2, 1, 8, 0, tzinfo=UTC),
+        )
+
+        resp = await client.get("/sitemap.xml")
+
+        assert resp.status_code == 200
+        assert "wpis-cofniety-adres-mon254" not in resp.text
 
 
 # ---------------------------------------------------------------------------

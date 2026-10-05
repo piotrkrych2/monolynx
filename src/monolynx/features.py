@@ -777,6 +777,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "reszta jako attachment z nagłówkiem X-Content-Type-Options: nosniff."
                     ),
                 },
+                {
+                    "title": "Stabilne adresy i daty wpisów bloga",
+                    "desc": (
+                        "Adres wpisu nie zmienia się po zmianie tytułu strony, a poprzedni adres przekierowuje (301) na aktualny. "
+                        "Lista /blog/ sortuje wpisy po dacie publikacji, więc edycja starszego wpisu nie przestawia kolejności. "
+                        "Zajawka na liście i opis w meta pochodzą z opisu wpisu, a gdy go brak - ze streszczenia treści."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -868,6 +876,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     'A "public page" checkbox on the wiki form exposes content without login at /blog/{slug}. '
                     "Page attachments (images, PDFs) are served safely — MIME allow-list for inline (PNG/JPEG/GIF/WebP), "
                     "everything else as attachment with an X-Content-Type-Options: nosniff header."
+                ),
+            },
+            {
+                "title": "Stable blog post URLs and dates",
+                "desc": (
+                    "A post's URL does not change when the page title changes, and a previous URL redirects (301) to the current one. "
+                    "The /blog/ list orders posts by publication date, so editing an older post does not reshuffle it. "
+                    "The list teaser and the meta description come from the post description, or from a content summary when there is none."
                 ),
             },
         ],

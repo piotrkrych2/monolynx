@@ -1,34 +1,50 @@
-"""Testy integracyjne MON-201 -- publiczny endpoint GET /blog/{slug}.
+"""Testy integracyjne publicznego bloga -- GET /blog/, GET /blog/{slug} (MON-201, MON-202, MON-203, MON-254).
 
-WAZNE: endpoint /blog/{slug} dziala BEZ sesji i BEZ project_slug w URL. Zaden test
-w tym pliku nie uzywa login_session -- goly `client` bez logowania potwierdza dostep
-anonimowy. To jest sedno kryteriow akceptacji tego ticketu.
+WAZNE: endpointy /blog/* dzialaja BEZ sesji i BEZ project_slug w URL. Testy tras nie
+uzywaja login_session -- goly `client` bez logowania potwierdza dostep anonimowy. Wyjatek:
+testy wejscia dashboardu (TestPublishCreatesBlogPost) loguja sie, bo sprawdzaja zapis
+przez formularz.
 
-Zanim implementacja powstanie (src/monolynx/blog.py, kolumna is_public, migracja),
-wszystkie testy w tym pliku musza zawodzic (brak routera /blog, brak kolumny is_public
-na WikiPage) -- to jest zamierzone, TDD.
+MON-254: adres wpisu to stabilny `BlogPost.slug` (nie slug strony wiki), lista sortuje po
+`published_at`, a strona publiczna bez wiersza BlogPost daje 404. Helper `_create_wiki_page`
+tworzy wiec dla stron publicznych tez BlogPost.
 """
 
 import secrets
 import uuid
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 
 import pytest
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from monolynx import mcp_server
 from monolynx.config import settings
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.project import Project
+from monolynx.models.project_member import ProjectMember
 from monolynx.models.user import User
+from monolynx.models.user_api_token import UserApiToken
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
+from monolynx.services import blog as blog_service
 from monolynx.services.auth import hash_password
+from monolynx.services.mcp_auth import generate_api_token
 from monolynx.services.wiki import create_wiki_page, update_wiki_page
+from tests.conftest import login_session
+from tests.integration.api_v2.conftest import make_owner_project
 
 # ---------------------------------------------------------------------------
 # Helpers lokalne (konwencja z tests/integration/test_wiki_dashboard.py,
 # ale bez importu login_session -- endpoint publiczny nie wymaga sesji)
 # ---------------------------------------------------------------------------
+
+
+_NOW: object = object()  # sentinel: published_at "teraz" (None oznacza wpis bez daty publikacji)
 
 
 async def _create_project(db_session, slug, code=None):
@@ -83,12 +99,23 @@ async def _create_wiki_page(
     parent_id=None,
     is_public=False,
     updated_at=None,
+    *,
+    with_post=None,
+    post_slug=None,
+    published_at=_NOW,
+    created_at=None,
+    **post_fields,
 ):
-    """Helper: tworzy strone wiki bezposrednio w DB (bez realnego MinIO).
+    """Helper: tworzy strone wiki bezposrednio w DB (bez realnego MinIO) i jej BlogPost.
 
     updated_at: jawne przypisanie PRZED pierwszym flush (INSERT) nadpisuje
     server_default -- potrzebne do deterministycznego sortowania w testach listy
     /blog/ (wzorzec MON-87, patrz .claude/agent-memory/qa-tester/MEMORY.md).
+    with_post: domyslnie BlogPost powstaje dla stron publicznych; True wymusza go tez dla
+    prywatnej (wpis cofniety z publikacji). post_slug / published_at / post_fields
+    (description, tags, cover_attachment_id, previous_slugs, ...) trafiaja do BlogPost;
+    published_at domyslnie "teraz", a jawne None daje wpis bez daty publikacji (fallback na
+    created_at strony). created_at nadpisuje czas utworzenia strony PRZED pierwszym flush.
     """
     page = WikiPage(
         project_id=project.id,
@@ -104,8 +131,20 @@ async def _create_wiki_page(
     )
     if updated_at is not None:
         page.updated_at = updated_at
+    if created_at is not None:
+        page.created_at = created_at
     db_session.add(page)
     await db_session.flush()
+    if with_post if with_post is not None else is_public:
+        db_session.add(
+            BlogPost(
+                page_id=page.id,
+                slug=post_slug or page.slug,
+                published_at=datetime.now(UTC) if published_at is _NOW else published_at,
+                **post_fields,
+            )
+        )
+        await db_session.flush()
     return page
 
 
@@ -396,19 +435,57 @@ class TestPublicSlugConflict:
                 db=db_session,
             )
 
+    async def test_create_public_page_with_slug_of_unpublished_post_raises_and_rolls_back(self, db_session):
+        """Slug nalezy do wpisu strony cofnietej z publikacji (BlogPost zostaje, strona prywatna).
+        create_wiki_page(is_public=True) w innym projekcie rzuca ValueError z ensure_post (nie
+        IntegrityError), a rollback usuwa strone, ktora autoflush zdazyl wstawic."""
+        project_a = await _create_project(db_session, "blog-conflict-e")
+        project_b = await _create_project(db_session, "blog-conflict-f")
+        user = await _create_user(db_session, "blog-conflict-3@test.com")
+        title = "Slug Cofniety Create"
+        await _create_wiki_page(db_session, project_a, user, title, is_public=False, with_post=True)
+        project_b_id, project_b_slug, user_id = project_b.id, project_b.slug, user.id
+
+        with _wiki_side_effects(), pytest.raises(ValueError, match="zajęty przez inny wpis"):
+            await create_wiki_page(
+                project_id=project_b_id,
+                project_slug=project_b_slug,
+                title=title,
+                content="# B",
+                user_id=user_id,
+                is_public=True,
+                db=db_session,
+            )
+
+        leftover = (await db_session.execute(select(WikiPage.id).where(WikiPage.project_id == project_b_id))).all()
+        assert leftover == []
+
+    async def test_update_page_to_public_with_slug_of_unpublished_post_raises_and_rolls_back(self, db_session):
+        """Jak wyzej dla update_wiki_page: ValueError z ensure_post, po nim sesja jest uzywalna,
+        a strona nie zostaje publiczna (rollback cofa UPDATE wstawiony przez autoflush)."""
+        project_a = await _create_project(db_session, "blog-conflict-g")
+        project_b = await _create_project(db_session, "blog-conflict-h")
+        user = await _create_user(db_session, "blog-conflict-4@test.com")
+        title = "Slug Cofniety Update"
+        await _create_wiki_page(db_session, project_a, user, title, is_public=False, with_post=True)
+        private_page = await _create_wiki_page(db_session, project_b, user, title, is_public=False)
+        page_id, project_b_slug, user_id = private_page.id, project_b.slug, user.id
+
+        with _wiki_side_effects(), pytest.raises(ValueError, match="zajęty przez inny wpis"):
+            await update_wiki_page(page=private_page, project_slug=project_b_slug, is_public=True, user_id=user_id, db=db_session)
+
+        public_rows = (await db_session.execute(select(WikiPage.id).where(WikiPage.id == page_id, WikiPage.is_public.is_(True)))).all()
+        assert public_rows == []
+
 
 # ---------------------------------------------------------------------------
 # 5. Publiczne zalaczniki wpisu -- GET /blog/{slug}/attachments/{attachment_id}/{filename}
 # (MON-203, kryteria 4, 5, 6)
 #
-# Zalozenie interfejsu: blog.py importuje get_attachment z services/minio_client.py
-# pod aliasem "minio_get_attachment", tak jak juz robi to dashboard/wiki.py (identyczny
-# wzorzec projektowy w tym repo) -- stad patch celuje w "monolynx.blog.minio_get_attachment".
-# Jesli backend-developer wybierze inny alias/import, testy trzeba przemapowac na
-# faktyczna nazwe w blog.py (zgloszone w raporcie koncowym jako punkt koordynacji).
-#
-# Endpoint jeszcze nie istnieje -- wszystkie testy w tej klasie musza dawac 404 z
-# powodu braku routingu (a nie z powodu logiki biznesowej) -- to jest zamierzone, TDD.
+# blog.py importuje get_attachment z services/minio_client.py pod aliasem
+# "minio_get_attachment" (jak dashboard/wiki.py) -- stad patch celuje w
+# "monolynx.blog.minio_get_attachment". Od MON-254 trasa szuka wpisu po aktualnym
+# BlogPost.slug (stary slug -> 404 bez 301, patrz TestBlogSlugRedirect).
 # ---------------------------------------------------------------------------
 
 
@@ -536,9 +613,6 @@ class TestBlogPublicAttachmentServe:
 
 # ---------------------------------------------------------------------------
 # MON-202: GET /blog/ -- lista publicznych wpisow z paginacja (kryterium 1)
-#
-# Endpoint /blog/ jeszcze nie istnieje -- ponizsze testy dzis dostaja 404, wiec sa
-# RED przed implementacja. To jest zamierzone, TDD.
 # ---------------------------------------------------------------------------
 
 
@@ -587,16 +661,15 @@ class TestBlogIndexList:
 @pytest.mark.integration
 class TestBlogIndexPagination:
     """GET /blog/ -- paginacja wzorcem projektu (kryterium 1): sortowanie po
-    updated_at malejaco, `page` z clampingiem do <1, total_pages>, bez 500 na zly input.
+    published_at malejaco, `page` z clampingiem do <1, total_pages>, bez 500 na zly input.
 
     Kolejnosc wstawiania (i=0..24) jest CELOWO odwrotna wzgledem oczekiwanej
-    kolejnosci malejacej: i=0 ma NAJSTARSZY updated_at, i=24 NAJNOWSZY. Gdyby
+    kolejnosci malejacej: i=0 ma NAJSTARSZY published_at, i=24 NAJNOWSZY. Gdyby
     implementacja nie sortowala wcale albo sortowala rosnaco, Postgres zwrocilby
     wiersze w kolejnosci fizycznej = kolejnosci wstawiania (00, 01, 02, ...) i
-    strona 1 zawieralaby "00" zamiast "24" -- ponizsze asercje wtedy PADAJA (w
-    odroznieniu od wczesniejszej wersji tego seeda, gdzie kolejnosc wstawiania
-    pokrywala sie z oczekiwana kolejnoscia malejaca i test przechodzil nawet bez
-    ORDER BY -- MON-202 code review, regula z MON-191/MON-197).
+    strona 1 zawieralaby "00" zamiast "24" -- ponizsze asercje wtedy PADAJA.
+    `updated_at` stron idzie w PRZECIWNA strone (i=0 najswiezszy), wiec sortowanie po
+    updated_at (stare zachowanie sprzed MON-254) tez zmienia wynik.
 
     per_page jest ustalone w blog.py na 20 (wzorcem scrum.py) -- 25 seedowanych
     stron gwarantuje druga strone.
@@ -612,11 +685,12 @@ class TestBlogIndexPagination:
                 user,
                 f"Wpis Paginacja MON202 {i:02d}",
                 is_public=True,
-                updated_at=base + timedelta(minutes=i),
+                updated_at=base - timedelta(minutes=i),
+                published_at=base + timedelta(minutes=i),
             )
 
     @patch("monolynx.services.wiki.get_markdown")
-    async def test_first_page_has_most_recently_updated_not_oldest(self, mock_get_markdown, client, db_session):
+    async def test_first_page_has_most_recently_published_not_oldest(self, mock_get_markdown, client, db_session):
         project = await _create_project(db_session, "blog-page-1")
         user = await _create_user(db_session, "blog-page-1@test.com")
         await self._seed_pages(db_session, project, user, mock_get_markdown)
@@ -693,18 +767,34 @@ class TestBlogPageMetaFromContent:
         assert "Monolynx project wiki" not in resp.text
 
     @patch("monolynx.services.wiki.get_markdown")
-    async def test_og_type_is_article_and_published_time_matches_created_at(self, mock_get_markdown, client, db_session):
+    async def test_og_type_is_article_and_published_time_matches_published_at(self, mock_get_markdown, client, db_session):
+        """article:published_time bierze sie z BlogPost.published_at (MON-254), nie z created_at strony."""
         mock_get_markdown.return_value = "Tresc artykulu MON202."
 
         project = await _create_project(db_session, "blog-meta-ogtype")
         user = await _create_user(db_session, "blog-meta-ogtype@test.com")
-        page = await _create_wiki_page(db_session, project, user, "Wpis Og Type MON202", is_public=True)
+        published = datetime(2026, 1, 7, 6, 5, tzinfo=UTC)
+        page = await _create_wiki_page(db_session, project, user, "Wpis Og Type MON202", is_public=True, published_at=published)
 
         resp = await client.get(f"/blog/{page.slug}")
 
         assert resp.status_code == 200
         assert 'property="og:type" content="article"' in resp.text
-        assert f'property="article:published_time" content="{page.created_at.isoformat()}"' in resp.text
+        assert f'property="article:published_time" content="{published.isoformat()}"' in resp.text
+        assert page.created_at.isoformat() != published.isoformat()
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc artykulu MON254.")
+    async def test_published_time_falls_back_to_page_created_at_when_published_at_is_null(self, mock_get_markdown, client, db_session):
+        """Wpis bez published_at: article:published_time to created_at strony (szablon page.html)."""
+        project = await _create_project(db_session, "blog-meta-nodate")
+        user = await _create_user(db_session, "blog-meta-nodate@test.com")
+        created = datetime(2025, 6, 15, 12, 0, tzinfo=UTC)
+        page = await _create_wiki_page(db_session, project, user, "Wpis Meta Bez Daty MON254", is_public=True, published_at=None, created_at=created)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert f'property="article:published_time" content="{created.isoformat()}"' in resp.text
 
 
 @pytest.mark.integration
@@ -719,3 +809,599 @@ class TestLandingOgTypeStillWebsite:
 
         assert resp.status_code == 200
         assert 'property="og:type" content="website"' in resp.text
+
+
+# ---------------------------------------------------------------------------
+# MON-254: stabilny slug wpisu, 301 ze starego adresu, sortowanie po published_at,
+# zajawka z description, meta / OG z metadanych, wejscia ustawiajace is_public.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _wiki_side_effects():
+    """Odcina MinIO, embeddingi i backlinki dla create/update_wiki_page wolanych wprost w tescie."""
+    with (
+        patch("monolynx.services.wiki.upload_markdown", return_value="blog-mon254/x.md"),
+        patch("monolynx.services.embeddings.update_page_embeddings"),
+        patch("monolynx.services.wiki.sync_backlinks"),
+    ):
+        yield
+
+
+async def _add_owner(db_session, project, user):
+    """Helper: czlonek 'owner' projektu (set_post_meta wymaga wiki:write)."""
+    db_session.add(ProjectMember(project_id=project.id, user_id=user.id, role="owner"))
+    await db_session.flush()
+
+
+async def _blog_post_of(db, page_id):
+    return (await db.execute(select(BlogPost).where(BlogPost.page_id == page_id))).scalar_one_or_none()
+
+
+@pytest.mark.integration
+class TestBlogRequiresPost:
+    """Brak fallbacku po slugu wiki: strona publiczna bez wiersza BlogPost nie jest wpisem."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc.")
+    async def test_public_page_without_blog_post_returns_404(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-nopost")
+        user = await _create_user(db_session, "blog-nopost@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Publiczna Bez Wpisu MON254", is_public=True, with_post=False)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 404
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc.")
+    async def test_public_page_without_blog_post_is_not_listed(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-nopost-list")
+        user = await _create_user(db_session, "blog-nopost-list@test.com")
+        await _create_wiki_page(db_session, project, user, "Publiczna Bez Wpisu Lista MON254", is_public=True, with_post=False)
+
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert "Publiczna Bez Wpisu Lista MON254" not in resp.text
+
+
+@pytest.mark.integration
+class TestBlogStableSlug:
+    """Kryterium 67123d01 (pierwsza polowa): zmiana tytulu strony nie zmienia adresu wpisu."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON254 stabilny adres.")
+    async def test_title_change_via_update_wiki_page_keeps_old_address_working(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-stable")
+        user = await _create_user(db_session, "blog-stable@test.com")
+        with _wiki_side_effects():
+            page = await create_wiki_page(
+                project_id=project.id,
+                project_slug=project.slug,
+                title="Stabilny Adres MON254",
+                content="# T",
+                user_id=user.id,
+                is_public=True,
+                db=db_session,
+            )
+            old_slug = page.slug
+            await update_wiki_page(page=page, project_slug=project.slug, title="Zupelnie Nowy Tytul MON254", user_id=user.id, db=db_session)
+        assert page.slug != old_slug
+
+        resp = await client.get(f"/blog/{old_slug}")
+
+        assert resp.status_code == 200
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON254.")
+    async def test_new_wiki_slug_after_title_change_is_not_an_address(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-stable-new")
+        user = await _create_user(db_session, "blog-stable-new@test.com")
+        with _wiki_side_effects():
+            page = await create_wiki_page(
+                project_id=project.id,
+                project_slug=project.slug,
+                title="Stary Tytul Adres MON254",
+                content="# T",
+                user_id=user.id,
+                is_public=True,
+                db=db_session,
+            )
+            await update_wiki_page(page=page, project_slug=project.slug, title="Inny Tytul Adres MON254", user_id=user.id, db=db_session)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 404
+
+
+@pytest.mark.integration
+class TestBlogSlugRedirect:
+    """Kryterium 67123d01 (druga polowa): jawna zmiana sluga przez set_post_meta -> 301 ze starego adresu."""
+
+    async def _published_post_with_new_slug(self, db_session, tag):
+        project = await _create_project(db_session, f"blog-redir-{tag}")
+        user = await _create_user(db_session, f"blog-redir-{tag}@test.com")
+        await _add_owner(db_session, project, user)
+        page = await _create_wiki_page(db_session, project, user, f"Wpis Redirect {tag} MON254", is_public=True)
+        old_slug = page.slug
+        new_slug = f"nowy-adres-{tag}-mon254"
+        await blog_service.set_post_meta(db_session, user, project, page.id, slug=new_slug)
+        return project, user, page, old_slug, new_slug
+
+    async def test_old_slug_redirects_301_to_new_address(self, client, db_session):
+        _project, _user, _page, old_slug, new_slug = await self._published_post_with_new_slug(db_session, "a")
+
+        resp = await client.get(f"/blog/{old_slug}")
+
+        assert resp.status_code == 301
+        assert urlsplit(resp.headers["location"]).path == f"/blog/{new_slug}"
+
+    async def test_redirect_keeps_query_string(self, client, db_session):
+        _project, _user, _page, old_slug, _new_slug = await self._published_post_with_new_slug(db_session, "b")
+
+        resp = await client.get(f"/blog/{old_slug}?lang=pl")
+
+        assert resp.status_code == 301
+        assert urlsplit(resp.headers["location"]).query == "lang=pl"
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc pod nowym adresem MON254.")
+    async def test_new_slug_returns_200(self, mock_get_markdown, client, db_session):
+        _project, _user, _page, _old_slug, new_slug = await self._published_post_with_new_slug(db_session, "c")
+
+        resp = await client.get(f"/blog/{new_slug}")
+
+        assert resp.status_code == 200
+        assert "Tresc pod nowym adresem MON254." in resp.text
+
+    async def test_old_slug_of_unpublished_post_returns_404_not_redirect(self, client, db_session):
+        _project, _user, page, old_slug, new_slug = await self._published_post_with_new_slug(db_session, "d")
+        page.is_public = False
+        await db_session.flush()
+
+        old_resp = await client.get(f"/blog/{old_slug}")
+        new_resp = await client.get(f"/blog/{new_slug}")
+
+        assert old_resp.status_code == 404
+        assert new_resp.status_code == 404
+
+    async def test_attachment_under_old_slug_returns_404_with_nosniff_not_redirect(self, client, db_session):
+        _project, _user, page, old_slug, _new_slug = await self._published_post_with_new_slug(db_session, "e")
+        att = await _create_attachment(db_session, page, filename="stary.png", mime_type="image/png")
+
+        resp = await client.get(f"/blog/{old_slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 404
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    @patch("monolynx.blog.minio_get_attachment", return_value=(b"\x89PNG\r\n\x1a\n", "image/png"))
+    async def test_attachment_under_new_slug_is_served(self, mock_get_att, client, db_session):
+        _project, _user, page, _old_slug, new_slug = await self._published_post_with_new_slug(db_session, "f")
+        att = await _create_attachment(db_session, page, filename="nowy.png", mime_type="image/png")
+
+        resp = await client.get(f"/blog/{new_slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 200
+        assert resp.content == b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.integration
+class TestBlogIndexOrderAndSummary:
+    """Kryterium de5b0078 i 6b6abd6c: kolejnosc po published_at, zajawka z description, degradacja MinIO."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc do zajawki MON254.")
+    async def test_order_follows_published_at_not_updated_at(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-order")
+        user = await _create_user(db_session, "blog-order@test.com")
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        # Wstawiane: srodkowy, najnowszy wg published_at, najstarszy; updated_at odwrotnie niz published_at.
+        for title, published_day, updated_day in [
+            ("Wpis Srodkowy Order MON254", 5, 5),
+            ("Wpis Najnowszy Order MON254", 9, 1),
+            ("Wpis Najstarszy Order MON254", 1, 9),
+        ]:
+            await _create_wiki_page(
+                db_session,
+                project,
+                user,
+                title,
+                is_public=True,
+                published_at=base + timedelta(days=published_day),
+                updated_at=base + timedelta(days=updated_day),
+            )
+
+        resp = await client.get("/blog/")
+
+        text = resp.text
+        assert text.index("Wpis Najnowszy Order MON254") < text.index("Wpis Srodkowy Order MON254") < text.index("Wpis Najstarszy Order MON254")
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc do zajawki MON254.")
+    async def test_editing_older_post_content_does_not_reorder_list(self, mock_get_markdown, client, db_session):
+        """Kryterium de5b0078: edycja tresci starszego wpisu nie przesuwa go na gore listy."""
+        project = await _create_project(db_session, "blog-edit-order")
+        user = await _create_user(db_session, "blog-edit-order@test.com")
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        older = await _create_wiki_page(db_session, project, user, "Starszy Wpis Edycja MON254", is_public=True, published_at=base)
+        await _create_wiki_page(db_session, project, user, "Nowszy Wpis Edycja MON254", is_public=True, published_at=base + timedelta(days=30))
+        with _wiki_side_effects():
+            await update_wiki_page(page=older, project_slug=project.slug, content="Nowa tresc starszego wpisu.", user_id=user.id, db=db_session)
+        # now() w transakcji testu jest stale, wiec czas edycji ustawiamy jawnie na najswiezszy.
+        older.updated_at = base + timedelta(days=365)
+        await db_session.flush()
+
+        resp = await client.get("/blog/")
+
+        assert resp.text.index("Nowszy Wpis Edycja MON254") < resp.text.index("Starszy Wpis Edycja MON254")
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc do zajawki MON254.")
+    async def test_list_shows_published_at_date_not_updated_at(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-date")
+        user = await _create_user(db_session, "blog-date@test.com")
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Data MON254",
+            is_public=True,
+            published_at=datetime(2026, 3, 14, 10, 0, tzinfo=UTC),
+            updated_at=datetime(2027, 7, 7, 10, 0, tzinfo=UTC),
+        )
+
+        resp = await client.get("/blog/")
+
+        assert "2026-03-14" in resp.text
+        assert "2027-07-07" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc do zajawki MON254.")
+    async def test_list_shows_page_created_at_date_when_published_at_is_null(self, mock_get_markdown, client, db_session):
+        """Wpis bez published_at pokazuje na liscie date utworzenia strony (fallback w blog.py)."""
+        project = await _create_project(db_session, "blog-date-null")
+        user = await _create_user(db_session, "blog-date-null@test.com")
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Bez Daty Publikacji MON254",
+            is_public=True,
+            published_at=None,
+            created_at=datetime(2025, 6, 15, 12, 0, tzinfo=UTC),
+        )
+
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert "Wpis Bez Daty Publikacji MON254" in resp.text
+        assert "2025-06-15" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc zastepcza MON254-FALLBACK.")
+    async def test_summary_comes_from_description_and_minio_is_not_read(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-desc")
+        user = await _create_user(db_session, "blog-desc@test.com")
+        await _create_wiki_page(db_session, project, user, "Wpis Z Opisem MON254", is_public=True, description="Opis z metadanych MON254-DESC.")
+
+        resp = await client.get("/blog/")
+
+        assert "Opis z metadanych MON254-DESC." in resp.text
+        assert "MON254-FALLBACK" not in resp.text
+        mock_get_markdown.assert_not_called()
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Naglowek\n\nZajawka z tresci MON254-FALLBACK.")
+    async def test_empty_description_falls_back_to_content_summary(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-desc-empty")
+        user = await _create_user(db_session, "blog-desc-empty@test.com")
+        await _create_wiki_page(db_session, project, user, "Wpis Bez Opisu MON254", is_public=True, description="")
+
+        resp = await client.get("/blog/")
+
+        assert "Zajawka z tresci MON254-FALLBACK." in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_minio_error_for_one_post_degrades_only_that_summary(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-minio-one")
+        user = await _create_user(db_session, "blog-minio-one@test.com")
+        broken_path = f"{project.slug}/broken-{uuid.uuid4()}.md"
+
+        def fake_get_markdown(path):
+            if path == broken_path:
+                raise Exception("MinIO niedostepne")
+            return "Zajawka sprawnego wpisu MON254-OK."
+
+        mock_get_markdown.side_effect = fake_get_markdown
+        await _create_wiki_page(db_session, project, user, "Wpis Zepsuty MinIO MON254", minio_path=broken_path, is_public=True)
+        await _create_wiki_page(db_session, project, user, "Wpis Sprawny MinIO MON254", is_public=True)
+
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert "Wpis Zepsuty MinIO MON254" in resp.text
+        assert "Wpis Sprawny MinIO MON254" in resp.text
+        assert "Zajawka sprawnego wpisu MON254-OK." in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", side_effect=Exception("MinIO niedostepne"))
+    async def test_minio_error_for_all_posts_still_returns_200_with_titles(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-minio-all")
+        user = await _create_user(db_session, "blog-minio-all@test.com")
+        await _create_wiki_page(db_session, project, user, "Wpis Jeden MinIO MON254", is_public=True)
+        await _create_wiki_page(db_session, project, user, "Wpis Dwa MinIO MON254", is_public=True)
+
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert "Wpis Jeden MinIO MON254" in resp.text
+        assert "Wpis Dwa MinIO MON254" in resp.text
+
+
+@pytest.mark.integration
+class TestBlogPageMetaFromBlogPost:
+    """Strona wpisu: meta description / OG z description, og:image z okladki."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc zastepcza MON254-FALLBACK.")
+    async def test_meta_and_og_description_come_from_post_description(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-meta-desc")
+        user = await _create_user(db_session, "blog-meta-desc@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Meta Opis MON254", is_public=True, description="Opis metadanych MON254 ZXC")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert '<meta name="description" content="Opis metadanych MON254 ZXC">' in resp.text
+        assert 'property="og:description" content="Opis metadanych MON254 ZXC"' in resp.text
+        assert "MON254-FALLBACK" not in resp.text.split("<body", 1)[0]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Pierwsza-linia-MON254-FALLBACK.")
+    async def test_empty_description_falls_back_to_content_in_meta(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-meta-fallback")
+        user = await _create_user(db_session, "blog-meta-fallback@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Meta Fallback MON254", is_public=True, description="")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert 'property="og:description" content="Pierwsza-linia-MON254-FALLBACK."' in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON254.")
+    async def test_og_and_twitter_image_use_cover_attachment_absolute_url(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-meta-cover")
+        user = await _create_user(db_session, "blog-meta-cover@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Meta Okladka MON254", is_public=True)
+        att = await _create_attachment(db_session, page, filename="okladka.png", mime_type="image/png")
+        post = await db_session.get(BlogPost, page.id)
+        post.cover_attachment_id = att.id
+        await db_session.flush()
+        expected = f"{settings.APP_URL.rstrip('/')}/blog/{page.slug}/attachments/{att.id}/okladka.png"
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert f'property="og:image" content="{expected}"' in resp.text
+        assert f'name="twitter:image" content="{expected}"' in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON254.")
+    async def test_og_image_stays_layout_default_without_cover(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-meta-nocover")
+        user = await _create_user(db_session, "blog-meta-nocover@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Meta Bez Okladki MON254", is_public=True)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert f'property="og:image" content="{settings.APP_URL}/static/img/screenshots/social-media.png"' in resp.text
+
+
+@pytest.mark.integration
+class TestBlogPageLinksUseBlogPostSlug:
+    """Okruszki, podstrony i backlinki linkuja po BlogPost.slug (nie po slugu strony wiki)."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON254.")
+    async def test_children_link_by_post_slug(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-links-child")
+        user = await _create_user(db_session, "blog-links-child@test.com")
+        parent = await _create_wiki_page(db_session, project, user, "Rodzic Linki MON254", is_public=True)
+        child = await _create_wiki_page(
+            db_session, project, user, "Podstrona Linki MON254", parent_id=parent.id, is_public=True, post_slug="adres-podstrony-mon254"
+        )
+
+        resp = await client.get(f"/blog/{parent.slug}")
+
+        assert "/blog/adres-podstrony-mon254" in resp.text
+        assert f"/blog/{child.slug}" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON254.")
+    async def test_breadcrumbs_link_by_post_slug(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-links-crumb")
+        user = await _create_user(db_session, "blog-links-crumb@test.com")
+        parent = await _create_wiki_page(db_session, project, user, "Rodzic Okruszki MON254", is_public=True, post_slug="adres-rodzica-mon254")
+        child = await _create_wiki_page(db_session, project, user, "Dziecko Okruszki MON254", parent_id=parent.id, is_public=True)
+
+        resp = await client.get(f"/blog/{child.slug}")
+
+        assert "/blog/adres-rodzica-mon254" in resp.text
+        assert f"/blog/{parent.slug}" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON254.")
+    async def test_backlinks_link_by_post_slug(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-links-back")
+        user = await _create_user(db_session, "blog-links-back@test.com")
+        target = await _create_wiki_page(db_session, project, user, "Cel Backlink MON254", is_public=True)
+        linker = await _create_wiki_page(db_session, project, user, "Linker Backlink MON254", is_public=True, post_slug="adres-linkera-mon254")
+        db_session.add(WikiBacklink(source_page_id=linker.id, target_page_id=target.id, anchor_text="Linker Backlink MON254"))
+        await db_session.flush()
+
+        resp = await client.get(f"/blog/{target.slug}")
+
+        assert "/blog/adres-linkera-mon254" in resp.text
+        assert f"/blog/{linker.slug}" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Kryterium bcc8491b: is_public=true na stronie bez metadanych tworzy BlogPost
+# z wartosciami domyslnymi przez KAZDE z trzech wejsc (dashboard, MCP, API v2).
+# ---------------------------------------------------------------------------
+
+
+def _assert_default_blog_post(post, expected_slug):
+    assert post is not None
+    assert post.slug == expected_slug
+    assert post.lang == "pl"
+    assert post.author_name == "Zespół Monolynx"
+    assert post.description == ""
+    assert post.tags == []
+    assert post.previous_slugs == []
+    assert post.published_at is not None
+
+
+@asynccontextmanager
+async def _mcp_env(engine, monkeypatch, *, private_page_title=None):
+    """Prawdziwe zapisy na osobnych sesjach (jak MON-203): wynik czytany w NOWEJ sesji dowodzi commita.
+
+    Sprzata wszystko w finally (BlogPost znika kaskada razem ze strona).
+    """
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(mcp_server, "async_session_factory", factory)
+    uid = uuid.uuid4().hex[:8]
+    raw_token, token_hash = generate_api_token()
+    page_id = None
+
+    async with factory() as setup_db:
+        user = User(email=f"blog-mcp-{uid}@test.com", is_superuser=False)
+        setup_db.add(user)
+        await setup_db.flush()
+        setup_db.add(UserApiToken(user_id=user.id, token_hash=token_hash, token_prefix=raw_token[:8], name="mon254-mcp"))
+        project = Project(
+            name=f"Blog MCP {uid}",
+            slug=f"blog-mcp-{uid}",
+            code=f"BM{uid[:4].upper()}",
+            api_key=f"key-{uuid.uuid4().hex}",
+            is_active=True,
+        )
+        setup_db.add(project)
+        await setup_db.flush()
+        setup_db.add(ProjectMember(project_id=project.id, user_id=user.id, role="owner"))
+        if private_page_title is not None:
+            page = WikiPage(
+                project_id=project.id,
+                title=private_page_title,
+                slug=f"blog-mcp-prywatna-{uid}",
+                position=0,
+                minio_path=f"{project.slug}/{uid}.md",
+                is_public=False,
+                created_by_id=user.id,
+                last_edited_by_id=user.id,
+            )
+            setup_db.add(page)
+            await setup_db.flush()
+            page_id = page.id
+        await setup_db.commit()
+        user_id, project_id, project_slug = user.id, project.id, project.slug
+
+    ctx = MagicMock()
+    ctx.request_context.request.headers = {"authorization": f"Bearer {raw_token}"}
+    try:
+        yield factory, ctx, project_slug, page_id
+    finally:
+        async with factory() as cleanup_db:
+            await cleanup_db.execute(delete(WikiPage).where(WikiPage.project_id == project_id))
+            await cleanup_db.execute(delete(ProjectMember).where(ProjectMember.project_id == project_id))
+            await cleanup_db.execute(delete(UserApiToken).where(UserApiToken.user_id == user_id))
+            await cleanup_db.execute(delete(Project).where(Project.id == project_id))
+            await cleanup_db.execute(delete(User).where(User.id == user_id))
+            await cleanup_db.commit()
+
+
+@pytest.mark.integration
+class TestPublishCreatesBlogPost:
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="mon254-dash-edit/fake.md")
+    async def test_dashboard_edit_form_with_is_public_creates_default_blog_post(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "mon254-dash-edit")
+        await login_session(client, db_session, email="mon254-dash-edit@test.com")
+        user = (await db_session.execute(select(User).where(User.email == "mon254-dash-edit@test.com"))).scalar_one()
+        await _add_owner(db_session, project, user)
+        page = await _create_wiki_page(db_session, project, user, "Dashboard Edycja MON254", is_public=False)
+        assert await _blog_post_of(db_session, page.id) is None
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data={"title": "Dashboard Edycja MON254", "content": "Tresc", "position": "0", "is_public": "on"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        _assert_default_blog_post(await _blog_post_of(db_session, page.id), page.slug)
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="mon254-dash-create/fake.md")
+    async def test_dashboard_create_form_with_is_public_creates_default_blog_post(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "mon254-dash-create")
+        await login_session(client, db_session, email="mon254-dash-create@test.com")
+        user = (await db_session.execute(select(User).where(User.email == "mon254-dash-create@test.com"))).scalar_one()
+        await _add_owner(db_session, project, user)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/create",
+            data={"title": "Dashboard Nowa MON254", "content": "Tresc", "position": "0", "is_public": "on"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        page = (
+            await db_session.execute(select(WikiPage).where(WikiPage.project_id == project.id, WikiPage.title == "Dashboard Nowa MON254"))
+        ).scalar_one()
+        _assert_default_blog_post(await _blog_post_of(db_session, page.id), page.slug)
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="mon254-dash-private/fake.md")
+    async def test_dashboard_create_form_without_is_public_creates_no_blog_post(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "mon254-dash-private")
+        await login_session(client, db_session, email="mon254-dash-private@test.com")
+        user = (await db_session.execute(select(User).where(User.email == "mon254-dash-private@test.com"))).scalar_one()
+        await _add_owner(db_session, project, user)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/create",
+            data={"title": "Dashboard Prywatna MON254", "content": "Tresc", "position": "0"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        page = (
+            await db_session.execute(select(WikiPage).where(WikiPage.project_id == project.id, WikiPage.title == "Dashboard Prywatna MON254"))
+        ).scalar_one()
+        assert await _blog_post_of(db_session, page.id) is None
+
+    async def test_mcp_update_wiki_page_with_is_public_creates_default_blog_post(self, engine, monkeypatch):
+        async with _mcp_env(engine, monkeypatch, private_page_title="MCP Edycja MON254") as (factory, ctx, project_slug, page_id):
+            with _wiki_side_effects():
+                await mcp_server.update_wiki_page(ctx, project_slug, str(page_id), is_public=True)
+
+            async with factory() as check_db:
+                page = await check_db.get(WikiPage, page_id)
+                _assert_default_blog_post(await _blog_post_of(check_db, page_id), page.slug)
+
+    async def test_mcp_create_wiki_page_with_is_public_creates_default_blog_post(self, engine, monkeypatch):
+        async with _mcp_env(engine, monkeypatch) as (factory, ctx, project_slug, _page_id):
+            with _wiki_side_effects():
+                created = await mcp_server.create_wiki_page(ctx, project_slug, "MCP Nowa MON254", "# Tresc", is_public=True)
+
+            async with factory() as check_db:
+                page = await check_db.get(WikiPage, uuid.UUID(created["id"]))
+                _assert_default_blog_post(await _blog_post_of(check_db, page.id), page.slug)
+
+    async def test_api_v2_patch_with_is_public_creates_default_blog_post(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blogpub-patch")
+        page = await _create_wiki_page(db_session, project, actor.user, "API Edycja MON254", is_public=False)
+        assert await _blog_post_of(db_session, page.id) is None
+
+        with _wiki_side_effects():
+            resp = await client.patch(f"/api/v2/projects/{project.slug}/wiki/pages/{page.id}", json={"is_public": True}, headers=actor.headers)
+
+        assert resp.status_code == 200
+        _assert_default_blog_post(await _blog_post_of(db_session, page.id), page.slug)
+
+    async def test_api_v2_post_with_is_public_creates_default_blog_post(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blogpub-post")
+
+        with _wiki_side_effects():
+            resp = await client.post(
+                f"/api/v2/projects/{project.slug}/wiki/pages",
+                json={"title": "API Nowa MON254", "content": "# Tresc", "is_public": True},
+                headers=actor.headers,
+            )
+
+        assert resp.status_code == 201
+        page_id = uuid.UUID(resp.json()["id"])
+        page = await db_session.get(WikiPage, page_id)
+        _assert_default_blog_post(await _blog_post_of(db_session, page_id), page.slug)
