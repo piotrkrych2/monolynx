@@ -40,9 +40,6 @@ COPY sdk/ sdk/
 COPY plugin/ plugin/
 COPY scripts/ scripts/
 COPY cli/ cli/
-# Testy migracji (tests/integration/test_blog_migration.py) ładują plik migracji po ścieżce.
-COPY alembic.ini .
-COPY alembic/ alembic/
 RUN pip install --no-cache-dir -e ".[dev]"
 
 # ============================================================
