@@ -1091,6 +1091,18 @@ class TestBlogIndexOrderAndSummary:
 
         assert "Zajawka z tresci MON254-FALLBACK." in resp.text
 
+    @patch("monolynx.services.wiki.get_markdown", return_value="> [!TLDR]\n> Zajawka z alertu MON255-TLDR.\n\nReszta wpisu.")
+    async def test_list_summary_skips_alert_marker_of_leading_alert(self, mock_get_markdown, client, db_session):
+        project = await _create_project(db_session, "blog-list-tldr")
+        user = await _create_user(db_session, "blog-list-tldr@test.com")
+        await _create_wiki_page(db_session, project, user, "Wpis Z Alertem Lista MON255", is_public=True)
+
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert "Zajawka z alertu MON255-TLDR." in resp.text
+        assert "[!TLDR]" not in resp.text
+
     @patch("monolynx.services.wiki.get_markdown")
     async def test_minio_error_for_one_post_degrades_only_that_summary(self, mock_get_markdown, client, db_session):
         project = await _create_project(db_session, "blog-minio-one")
@@ -1405,3 +1417,101 @@ class TestPublishCreatesBlogPost:
         page_id = uuid.UUID(resp.json()["id"])
         page = await db_session.get(WikiPage, page_id)
         _assert_default_blog_post(await _blog_post_of(db_session, page_id), page.slug)
+
+
+# ---------------------------------------------------------------------------
+# MON-255: bloki wpisu na realnej trasie /blog/{slug}
+# ---------------------------------------------------------------------------
+
+
+async def _published_post(db_session, tag):
+    project = await _create_project(db_session, f"blog-blocks-{tag}")
+    user = await _create_user(db_session, f"blog-blocks-{tag}@test.com")
+    return await _create_wiki_page(db_session, project, user, f"Wpis Blokowy {tag} MON255", is_public=True)
+
+
+@pytest.mark.integration
+class TestBlogPostBlocks:
+    """Strona wpisu renderuje bloki przez render_post_html, nie przez samo nh3."""
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_alert_renders_callout_aside_without_marker(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "> [!NOTE]\n> Tresc MON255 alertu."
+        page = await _published_post(db_session, "alert")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert '<aside class="blog-callout blog-callout-note">' in resp.text
+        assert "Tresc MON255 alertu." in resp.text
+        assert "[!NOTE]" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_headings_get_anchor_ids(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "## Wstęp MON255\n\ntekst\n\n## Wstęp MON255\n\ntekst"
+        page = await _published_post(db_session, "ids")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert 'id="wstep-mon255"' in resp.text
+        assert 'id="wstep-mon255-2"' in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_titled_code_block_and_captioned_figure_are_rendered(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = '```python title="app/mon255.py"\nprint(1)\n```\n\n![Opis](https://example.com/mon255.png "Podpis MON255")'
+        page = await _published_post(db_session, "code")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert '<span class="blog-code-title">app/mon255.py</span>' in resp.text
+        assert 'class="language-python"' in resp.text
+        assert "<figcaption>Podpis MON255</figcaption>" in resp.text
+        assert 'loading="lazy"' in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_page_links_block_styles_and_script(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Tresc MON255."
+        page = await _published_post(db_session, "assets")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "/static/blog/blocks.css" in resp.text
+        assert "/static/blog/blocks.js" in resp.text
+
+    @pytest.mark.parametrize(
+        ("path", "content_type_part"),
+        [("/static/blog/blocks.css", "css"), ("/static/blog/blocks.js", "javascript")],
+    )
+    async def test_block_assets_are_served(self, path, content_type_part, client):
+        resp = await client.get(path)
+
+        assert resp.status_code == 200
+        assert content_type_part in resp.headers["content-type"]
+        assert len(resp.content) > 0
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_xss_and_hand_written_block_classes_do_not_reach_the_page(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = (
+            "Artykul MON255.\n\n"
+            "<script>alert('mon255-xss')</script>\n\n"
+            '<div class="blog-callout-note">mon255-reczny</div>\n\n'
+            '<h2 id="hack255">Reczny naglowek</h2>\n\n'
+            "[Link](javascript:alert(2))\n\n"
+            "> [!NOTE]\n> <script>alert('mon255-alert-xss')</script> Tresc."
+        )
+        page = await _published_post(db_session, "xss")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "mon255-xss" not in resp.text
+        assert "mon255-alert-xss" not in resp.text
+        assert 'class="blog-callout-note"' not in resp.text
+        assert 'id="hack255"' not in resp.text
+        assert "javascript:" not in resp.text
+        # Pozytyw obok negatywu: prawdziwy alert z tego samego wpisu nadal ma klase z renderera.
+        assert '<aside class="blog-callout blog-callout-note">' in resp.text
+        assert "mon255-reczny" in resp.text

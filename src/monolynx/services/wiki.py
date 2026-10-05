@@ -73,9 +73,10 @@ def render_markdown_html(raw: str) -> str:
     return result
 
 
-# Biala lista tagow/atrybutow dla publicznego wyjscia (/blog/{slug}) -- w odroznieniu od
-# render_markdown_html() (dashboard, chroniony sesja + RBAC), treść trafia do nieautoryzowanego
-# czytelnika, wiec sanityzacja jest jedyna linia obrony przed XSS.
+# Biala lista tagow/atrybutow dla publicznego wyjscia -- w odroznieniu od render_markdown_html()
+# (dashboard, chroniony sesja + RBAC), treść trafia do nieautoryzowanego czytelnika, wiec
+# sanityzacja jest jedyna linia obrony przed XSS. Uzywa jej `render_markdown_public` oraz
+# (tagi i schematy URL) `services/blog_blocks.py`, ktory renderuje wpisy /blog/{slug}.
 _PUBLIC_ALLOWED_TAGS = {
     "h1",
     "h2",
@@ -119,7 +120,9 @@ _PUBLIC_URL_SCHEMES = {"http", "https", "mailto"}
 
 
 def render_markdown_public(raw: str) -> str:
-    """Renderuj markdown do bezpiecznego HTML dla publicznego /blog/{slug}.
+    """Renderuj markdown do bezpiecznego HTML (bez blokow wpisu bloga).
+
+    Strona /blog/{slug} renderuje przez `blog_blocks.render_post_html`, nie przez te funkcje.
 
     Markdown -> HTML (te same rozszerzenia co render_markdown_html) -> nh3.clean().
     Usuwa <script> (wraz z zawartoscia), atrybuty zdarzen (onerror/onclick/onload/...)
