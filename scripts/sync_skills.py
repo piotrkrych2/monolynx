@@ -21,8 +21,9 @@ SOURCE_DIR = ROOT / "plugin" / "skills"
 TARGET_DIR = ROOT / "src" / "monolynx" / "static" / "skills"
 TARGET_PREFIX = "monolynx-"
 SCRIPT_RESOURCES = {
-    "work": ("test_lock.py",),
-    "work-simple": ("test_lock.py",),
+    "work": ("test_lock.py", "toolchain_fields.py"),
+    "work-simple": ("test_lock.py", "toolchain_fields.py"),
+    "setup": ("toolchain_fields.py",),
     "next": ("sprint_run_state.py", "mr_queue_state.py"),
     "sprint-run": ("sprint_run_state.py", "sprint_run.sh", "sprint_run_tick.py", "sprint_run_backend.py"),
     "mr-queue": ("mr_queue_state.py",),

@@ -75,10 +75,11 @@ def test_sync_check_detects_nested_drift_and_sync_removes_stale_resource(source_
 
 
 def _write_test_lock_stub(skills_dir: Path) -> None:
-    """`work` i `work-simple` pakuja `scripts/test_lock.py` (MON-251) - sztuczne drzewo musi go miec obok `references/`."""
+    """`work` i `work-simple` pakuja `scripts/test_lock.py` (MON-251) i `toolchain_fields.py` (MON-269) - drzewo musi je miec obok `references/`."""
     scripts = skills_dir.parent / "scripts"
     scripts.mkdir(exist_ok=True)
     (scripts / "test_lock.py").write_text("# test_lock stub\n", encoding="utf-8")
+    (scripts / "toolchain_fields.py").write_text("# toolchain_fields stub\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize("check_only", [False, True])
@@ -540,3 +541,45 @@ def test_skill_ships_byte_identical_test_lock_copies(skill):
 
     assert (ROOT / "plugin" / "skills" / skill / "scripts" / "test_lock.py").read_bytes() == source
     assert (ROOT / "src" / "monolynx" / "static" / "skills" / f"monolynx-{skill}" / "scripts" / "test_lock.py").read_bytes() == source
+
+
+# MON-269: `toolchain_fields.py` jedzie tylko z `work`, `work-simple` i `setup` (normalizacja pola `pełny przebieg`).
+TOOLCHAIN_FIELDS_SKILLS = ("work", "work-simple", "setup")
+NON_TOOLCHAIN_FIELDS_SKILLS = sorted(
+    path.parent.name for path in (ROOT / "plugin" / "skills").glob("*/SKILL.md") if path.parent.name not in TOOLCHAIN_FIELDS_SKILLS
+)
+TOOLCHAIN_FIELDS_SOURCE = ROOT / "plugin" / "scripts" / "toolchain_fields.py"
+
+
+@pytest.mark.parametrize("skill", TOOLCHAIN_FIELDS_SKILLS)
+def test_skills_bundle_toolchain_fields_script(skill):
+    resources = sync_skills.bundled_resources(skill)
+
+    assert resources["scripts/toolchain_fields.py"] == TOOLCHAIN_FIELDS_SOURCE.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("skill", NON_TOOLCHAIN_FIELDS_SKILLS)
+def test_other_skills_do_not_bundle_toolchain_fields_script(skill):
+    assert "scripts/toolchain_fields.py" not in sync_skills.bundled_resources(skill)
+
+
+@pytest.mark.parametrize("skill", TOOLCHAIN_FIELDS_SKILLS)
+def test_skill_ships_byte_identical_toolchain_fields_copies(skill):
+    source = TOOLCHAIN_FIELDS_SOURCE.read_bytes()
+
+    assert (ROOT / "plugin" / "skills" / skill / "scripts" / "toolchain_fields.py").read_bytes() == source
+    assert (ROOT / "src" / "monolynx" / "static" / "skills" / f"monolynx-{skill}" / "scripts" / "toolchain_fields.py").read_bytes() == source
+
+
+@pytest.mark.parametrize("skill", TEST_LOCK_SKILLS)
+def test_work_skills_keep_test_lock_next_to_toolchain_fields(skill):
+    resources = sync_skills.bundled_resources(skill)
+
+    assert {"scripts/test_lock.py", "scripts/toolchain_fields.py"} <= set(resources)
+
+
+def test_setup_skill_gets_toolchain_fields_but_not_test_lock():
+    resources = sync_skills.bundled_resources("setup")
+
+    assert "scripts/toolchain_fields.py" in resources
+    assert "scripts/test_lock.py" not in resources

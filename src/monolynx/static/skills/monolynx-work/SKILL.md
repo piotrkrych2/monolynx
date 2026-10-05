@@ -772,6 +772,30 @@ Odmowa -> PRZYDZIAL wygrywa nad wykluczeniem: taki plik NIE trafia do listy
 intencji) - krytyk ocenia caly jego diff, a Ty dopisz w sygnale startu adnotacje,
 ze plik moze zawierac wczesniejsza prace.
 
+### Tryb pelnego przebiegu testow
+
+Ustal go TERAZ, przed komentarzem planu i przed startem zespolu, wg sekcji
+"Pelny przebieg: lokalnie albo w CI" pliku `lint-test.md` z katalogu tego
+skilla. Zrodlem jest pole `pełny przebieg:` w sekcji `## Test` strony
+`toolchain` z sekcji "Toolchain" raportu Researchera (KROK 3); wartosc
+normalizuje `scripts/toolchain_fields.py` z katalogu tego skilla.
+
+- **Brak pola albo `lokalnie`** - nic sie nie zmienia: pelny zestaw idzie
+  lokalnie w KROK 6.5 i 6.6c, a dalsze fragmenty tego skilla o trybie `ci`
+  pomijasz.
+- **`ci`** - od razu sprawdz, czy merge request jest mozliwy (podsekcja "Tryb
+  `ci`: czy merge request jest mozliwy" pliku wspolnego): flagi `AUTOCOMMIT`,
+  `AUTOPUSH` i `AUTOMR` z linii konfiguracji oraz `glab --version`. Warunek
+  niespelniony -> przy `MONOLYNX_SPRINT_RUN=1` koniec tury wg zasady 10
+  (`SPRINT-RUN STOP: pełny przebieg ci bez MR`), interaktywnie pytanie z pliku
+  wspolnego; odpowiedz (a) przestawia tryb na `lokalnie` do konca sesji. Robisz
+  to tutaj, zeby zespol nie pracowal nad ticketem, ktorego nie da sie zamknac.
+- **Ostrzezenie skryptu** (wartosc nieznana, duplikat pola) przepisz
+  uzytkownikowi i pracuj w trybie, ktory skrypt zwrocil.
+
+Zapamietaj tryb jako `PELNY_PRZEBIEG` - trafia do komentarza planu i steruje
+KROK 6.5, 6.6c i 7.
+
 ### Dodaj komentarz z planem
 
 Jesli instrumentacja aktywna - NAJPIERW zarejestruj job `team-plan` i joby
@@ -782,12 +806,13 @@ Potem, ZANIM zaczniesz prace, dodaj komentarz do ticketa:
 mcp__monolynx__add_comment(
   project_slug="<PROJECT-SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager - Plan pracy**\n\n**Tryb:** [zmiana | defekt]\n\n**Raport Researchera (streszczenie):**\n- [krotkie podsumowanie raportu - zakres zmian, ryzyka, podejscie]\n- Granice: [Nie ruszac / nieodwracalne - z raportu]\n\n**Dobrani agenci:**\n- [agent 1] - [uzasadnienie] - pliki: [lista]\n- [agent 2] - [uzasadnienie] - pliki: [lista]\n- [wybrany-krytyk] - obowiazkowy quality gate\n\n**[Kontrakt autonomii (zaakceptowany) | KONTRAKT (auto)]:**\n- Stop przed: [pelna lista]\n- Zdjete przez uzytkownika: [lista lub brak; przy auto zawsze brak]\n- [tylko przy auto: zaakceptowany automatycznie (MONOLYNX_CONTRACT=auto), bez potwierdzenia uzytkownika]\n\n**Baseline:** SHA [BASELINE_SHA]; brudne przed startem: [PLIKI_SPRZED_STARTU lub brak]\n**Zaleznosci niezmergowane (1d):** [KEY -> (b) bez kodu zaleznosci | (c) MR poniesie commity niezmergowanej zaleznosci KEY; lub brak]\n**Pipeline:** [pipeline_id lub brak]; joby: [agent -> job_id, ... lub brak]\n\n**Plan realizacji:**\n1. [krok 1 - ktory agent, co robi]\n2. [krok 2 - ktory agent, co robi]\n..."
+  content="**Team Manager - Plan pracy**\n\n**Tryb:** [zmiana | defekt]\n\n**Raport Researchera (streszczenie):**\n- [krotkie podsumowanie raportu - zakres zmian, ryzyka, podejscie]\n- Granice: [Nie ruszac / nieodwracalne - z raportu]\n\n**Dobrani agenci:**\n- [agent 1] - [uzasadnienie] - pliki: [lista]\n- [agent 2] - [uzasadnienie] - pliki: [lista]\n- [wybrany-krytyk] - obowiazkowy quality gate\n\n**[Kontrakt autonomii (zaakceptowany) | KONTRAKT (auto)]:**\n- Stop przed: [pelna lista]\n- Zdjete przez uzytkownika: [lista lub brak; przy auto zawsze brak]\n- [tylko przy auto: zaakceptowany automatycznie (MONOLYNX_CONTRACT=auto), bez potwierdzenia uzytkownika]\n\n**Baseline:** SHA [BASELINE_SHA]; brudne przed startem: [PLIKI_SPRZED_STARTU lub brak]\n**Pełny przebieg:** [lokalnie | ci - pełny zestaw weryfikuje pipeline MR]\n**Zaleznosci niezmergowane (1d):** [KEY -> (b) bez kodu zaleznosci | (c) MR poniesie commity niezmergowanej zaleznosci KEY; lub brak]\n**Pipeline:** [pipeline_id lub brak]; joby: [agent -> job_id, ... lub brak]\n\n**Plan realizacji:**\n1. [krok 1 - ktory agent, co robi]\n2. [krok 2 - ktory agent, co robi]\n..."
 )
 ```
 
 Ten komentarz jest zrodlem wznowienia (1b i `resume`) - musi zawierac przydzial
-plikow, kontrakt, baseline i identyfikatory pipeline w calosci, nie skrot.
+plikow, kontrakt, baseline, tryb pelnego przebiegu i identyfikatory pipeline
+w calosci, nie skrot.
 
 ## KROK 6: Agents Team - developerzy rownolegle
 
@@ -1262,9 +1287,10 @@ przed drogim review. Ticket nie trafia do `in_review` z czerwonymi testami.
 
 Przeczytaj `lint-test.md` z katalogu tego skilla (ten sam katalog co SKILL.md)
 i wykonaj opisana tam procedure: skad brac komendy, wybor wariantu worktree albo
-glowny checkout, podstawienia w komendzie worktree, wykonanie, tryb defektu
-i decyzja po wyniku. Plik nieosiagalny (niepelna instalacja)? Powiedz to
-uzytkownikowi i zatrzymaj sie - bez lintu i testow nie zmieniaj statusu ticketu.
+glowny checkout, podstawienia w komendzie worktree, tryb pelnego przebiegu,
+wykonanie, tryb defektu i decyzja po wyniku. Plik nieosiagalny (niepelna
+instalacja)? Powiedz to uzytkownikowi i zatrzymaj sie - bez lintu i testow nie
+zmieniaj statusu ticketu.
 
 Kazda komenda testow idzie przez `scripts/test_lock.py` z katalogu tego skilla
 wg `lint-test.md` (kolejka testow miedzy worktree), chyba ze strona `toolchain`
@@ -1272,11 +1298,21 @@ ma w sekcji `## Test` pole `izolacja testów: tak`. Timeout blokady (kod 75)
 i kolizje srodowiska testow obsluguja sekcje pliku wspolnego - zadna z nich nie
 zuzywa limitu poprawek.
 
-Cztery rzeczy, ktorych plik wspolny nie rozstrzyga, bo naleza do tego flow:
+Piec rzeczy, ktorych plik wspolny nie rozstrzyga, bo naleza do tego flow:
 
 - **Detekcja srodowiska** - wykonujesz ja TUTAJ, dwiema osobnymi komendami
   `git rev-parse` wg pliku wspolnego; wczesniejsze kroki jej nie robily.
 - **Zrodlo komend** - sekcja "Toolchain" raportu Researchera z KROK 3.
+- **Tryb pelnego przebiegu** - `PELNY_PRZEBIEG` z KROK 5; tu go nie ustalasz
+  ponownie (po wznowieniu bez tej wartosci ustal go wg pliku wspolnego, razem
+  z warunkiem mozliwosci merge requesta). `lokalnie` -> pelny zestaw, jak
+  dotad. `ci` -> lint w calosci i testy ZAWEZONE wg podsekcji "Tryb `ci`:
+  testy zawezone do zmienionego obszaru", z `BASELINE_SHA` z KROK 5; komendy
+  z pelnym zestawem nie uruchamiasz. Komenda nie daje sie zawezic -> przy
+  `MONOLYNX_SPRINT_RUN=1` koniec tury wg zasady 10
+  (`SPRINT-RUN STOP: pełny przebieg ci - testów nie da się zawęzić`),
+  interaktywnie pytanie z pliku wspolnego. Brak pasujacych testow to nie blad:
+  idzie sam lint, a fakt zapisujesz w 7b i 7f.
 - **Limit poprawek** - WSPOLNY limit 3 poprawek na agenta (jeden licznik
   z KROK 6.6b); mechanika re-run jak w 6.6b. Po wyczerpaniu zapytaj uzytkownika.
 - **Gdzie idzie wynik** - zielone otwiera KROK 6.6 (review krytyka); swiadome
@@ -1360,9 +1396,10 @@ czesciowy/nieudany - <powod podany przez mutation-check>`. Zadna z tych
 sytuacji NIE jest porazka ticketu i nie uruchamia iteracji poprawkowej: jedna
 linia i idziesz do KROK 6.6.
 
-`mutation-check` nie modyfikuje kodu, wiec 6.6c (pelny przebieg lint+test po
-ostatniej zmianie) pozostaje spelniony. Gdyby jednak ktokolwiek zmienil w tym
-kroku plik w repo, 6.6c obowiazuje normalnie i pelny przebieg trzeba powtorzyc.
+`mutation-check` nie modyfikuje kodu, wiec 6.6c (przebieg lint+test po
+ostatniej zmianie: pelny, a przy `PELNY_PRZEBIEG` = `ci` zawezony) pozostaje
+spelniony. Gdyby jednak ktokolwiek zmienil w tym kroku plik w repo, 6.6c
+obowiazuje normalnie i ten przebieg trzeba powtorzyc.
 
 Kryteria dopisane przez `mutation-check` to NOWA praca, nie zakres tego
 ticketu - patrz 6.7b i 7f.
@@ -1465,7 +1502,10 @@ ticketu - patrz 6.7b i 7f.
      zamyka swoj job
    - Po poprawce POWTORZ lint i testy (KROK 6.5; w iteracji wolno ograniczyc
      do dotknietego obszaru, jesli komendy toolchain na to pozwalaja - ale
-     patrz 6.6c: przed zamknieciem i tak idzie pelny zestaw)
+     patrz 6.6c: przy `PELNY_PRZEBIEG` = `lokalnie` przed zamknieciem i tak
+     idzie pelny zestaw; przy `ci` ostatnim przebiegiem lokalnym jest przebieg
+     zawezony po ostatniej zmianie, a pelny zestaw weryfikuje pipeline merge
+     requesta)
    - **Ponowna ocena**: Agent Teams -> `SendMessage` do krytyka z nowym wynikiem
      lintu i JAWNA lista plikow do ponownej oceny. Bez Teams -> NOWE wywolanie
      krytyka z PELNYM szablonem promptu z 6c (rubryka, ticket, kryteria,
@@ -1493,8 +1533,18 @@ W tym flow: czerwony -> wracasz do 6.6b jak przy kazdej poprawce (limit
 obowiazuje); zielony pelny przebieg, po ktorym nikt niczego nie zmienil, otwiera
 KROK 6.7. Bez iteracji krok jest spelniony przez pelny przebieg z 6.5. W logu
 joba `lint-test` i w 7f zapisz, ktory przebieg byl ostatni i czy byl pelny.
+Ten akapit opisuje `PELNY_PRZEBIEG` = `lokalnie`; wariant `ci` jest nizej.
 Testy tego przebiegu tez ida przez `scripts/test_lock.py`, a timeout blokady
 (kod 75) i kolizje srodowiska obsluguje `lint-test.md`, jak w 6.5.
+
+**`PELNY_PRZEBIEG` = `ci`**: obowiazuje akapit "Tryb `ci`" tej samej sekcji
+pliku wspolnego. Czerwony przebieg zawezony -> wracasz do 6.6b (limit
+obowiazuje); zielony lint i zielony przebieg zawezony, po ktorych nikt niczego
+nie zmienil, otwieraja KROK 6.7. Po kazdej zmianie liste sciezek wyprowadzasz
+od nowa. W logu joba `lint-test` i w 7f zapisz: "ostatni przebieg: zawezony
+lokalnie ([sciezki albo brak pasujacych testow]); pelny zestaw: pipeline MR".
+Pelnego zestawu NIE uruchamiasz tu lokalnie - weryfikuje go pipeline merge
+requesta odczytany w 7d.
 
 ## KROK 6.7: Komentarze, czas i kryteria akceptacji
 
@@ -1587,7 +1637,7 @@ wpis Researchera. Brakuje ktoregos pomiaru -> przyjmij wall-clock i dopisz
 mcp__monolynx__add_comment(
   project_slug="<PROJECT-SLUG>",
   ticket_id="<ID>",
-  content="**Team Manager - Podsumowanie zadania**\n\nZrealizowane:\n- [podsumowanie co zostalo zrobione]\n\nRaport Researchera: [1-2 zdania podsumowania] ([X] min)\n[TRYB = defekt: Mechanizm: [jedno zdanie - przyczyna, plik:linia fixu, test regresyjny]]\n\nZespol i oceny:\n- [agent 1]: [score]/100 - [1 zdanie] ([X] min)\n- [agent 2]: [score]/100 - [1 zdanie] ([X] min)\n\nRekoncyliacja raportow: [akceptowane N / odrzucone M -> re-run / rozstrzygniete przez TM: ktore czytanie przyjeto i dlaczego]\n\nLint i testy: [zielone / czerwone -> ile iteracji / pominiete]; ostatni przebieg: [pelny / czesciowy - nie powinno sie zdarzyc]\n\nMutacje: [linia z kroku mutacji (KROK 6.5) - TYLKO jesli krok sie pojawil; ponizej progu pomijasz ta linie calkowicie]\n\nMerge request: [MR_URL lub brak: powod]\n\nReguly krytyka zapisane do pamieci agentow: [lista lub brak; powtorzone -> zaznacz]\n\nLaczny czas pracy zespolu: [suma minut wszystkich agentow + Researcher + TM] min\n\nCzas pracy Team Managera: [X] min\n[Jedno zdanie podsumowujace calosc zadania]"
+  content="**Team Manager - Podsumowanie zadania**\n\nZrealizowane:\n- [podsumowanie co zostalo zrobione]\n\nRaport Researchera: [1-2 zdania podsumowania] ([X] min)\n[TRYB = defekt: Mechanizm: [jedno zdanie - przyczyna, plik:linia fixu, test regresyjny]]\n\nZespol i oceny:\n- [agent 1]: [score]/100 - [1 zdanie] ([X] min)\n- [agent 2]: [score]/100 - [1 zdanie] ([X] min)\n\nRekoncyliacja raportow: [akceptowane N / odrzucone M -> re-run / rozstrzygniete przez TM: ktore czytanie przyjeto i dlaczego]\n\nLint i testy: [zielone / czerwone -> ile iteracji / pominiete]; ostatni przebieg: [pelny / czesciowy - nie powinno sie zdarzyc | tryb ci: zawezony lokalnie ([sciezki albo brak pasujacych testow]); pełny zestaw: pipeline MR - id w komentarzu **Pełny przebieg (CI)** po wystawieniu MR]\n\nMutacje: [linia z kroku mutacji (KROK 6.5) - TYLKO jesli krok sie pojawil; ponizej progu pomijasz ta linie calkowicie]\n\nMerge request: [MR_URL lub brak: powod]\n\nReguly krytyka zapisane do pamieci agentow: [lista lub brak; powtorzone -> zaznacz]\n\nLaczny czas pracy zespolu: [suma minut wszystkich agentow + Researcher + TM] min\n\nCzas pracy Team Managera: [X] min\n[Jedno zdanie podsumowujace calosc zadania]"
 )
 ```
 
@@ -1621,7 +1671,43 @@ Trzy rzeczy z tego flow, ktore podstawiasz do procedury:
 - **Gdzie zapisac MR** - ustalony branch docelowy i `MR_URL` trafiaja do
   komentarza podsumowujacego (7b) oraz do podsumowania dla uzytkownika (7f).
 
+**`PELNY_PRZEBIEG` = `ci`** - po `glab mr create` wykonaj tez sekcje "Pipeline
+merge requesta (tryb `ci`)" pliku `commit-mr.md`: odczyt `head_pipeline`
+komenda `glab mr view <iid> -F json`, jeden ponowny odczyt przy braku pola,
+bez petli czekania. Komentarz 7b powstal PRZED merge requestem, wiec dowod
+pelnego przebiegu dopisujesz osobnym, krotkim komentarzem:
+
+```
+mcp__monolynx__add_comment(
+  project_slug="<PROJECT-SLUG>",
+  ticket_id="<ID>",
+  content="**Pełny przebieg (CI)**\n\nMerge request: [MR_URL]\nPipeline MR: [PIPELINE_ID | pipeline w tworzeniu | pipeline nieodczytany: powod]\nStatus pipeline'u w chwili raportu: [PIPELINE_STATUS lub brak]\nLokalnie: lint + testy zawezone ([sciezki albo brak pasujacych testow])\n\nPełny zestaw testów weryfikuje ten pipeline. Sesja ticketu na niego nie czeka i go nie naprawia - czerwony pipeline MR naprawia /monolynx:mr-queue (KROK 5)."
+)
+```
+
+Komentarz dodajesz TYLKO przy wystawionym merge requescie. Wznowienie
+przerwanego zamkniecia (1b, `resume`: komentarz podsumowania jest, status
+nadal `in_progress`) w trybie `ci` powtarza wykrycie merge requesta i odczyt
+pipeline'u: brak komentarza `**Pełny przebieg (CI)**` znaczy, ze 7d nie
+zostalo dokonczone.
+
 ### 7e. Zmien status i zamknij pipeline
+
+**Bramka trybu `ci`**: przy `PELNY_PRZEBIEG` = `ci` status `in_review`
+ustawiasz TYLKO po faktycznie wystawionym merge requescie (`MR_URL` z 7d).
+Brak merge requesta ("MR nieutworzony: [powod]", commit albo push sie nie
+odbyl, zamkniecie ponizej progu bez auto-commita) znaczy, ze pelnego zestawu
+nikt nie uruchomil:
+
+- `MONOLYNX_SPRINT_RUN=1` -> koniec tury wg zasady 10, powod
+  `pełny przebieg ci bez MR`; status zostaje `in_progress`.
+- interaktywnie -> pytanie z `lint-test.md` (podsekcja "Tryb `ci`: czy merge
+  request jest mozliwy"): (a) lokalny pelny przebieg teraz, wg 6.6c w trybie
+  `lokalnie` - zielony otwiera `in_review`, czerwony wraca do 6.6b;
+  (b) zatrzymanie bez zmiany statusu.
+
+Nigdy `in_review` w trybie `ci` bez merge requesta albo bez lokalnego pelnego
+przebiegu. Tryb `lokalnie` tej bramki nie ma - zachowanie jak dotad.
 
 Najpierw status ticketu:
 
@@ -1651,7 +1737,18 @@ pipeline `finish_pipeline` - nie zostawiaj go w `running`.
   (klient nie przekazuje identyfikacji subagenta i moze nie egzekwowac zgod) /
   brak potwierdzenia aktywnego hooka. Stan inny niz potwierdzony -> dopisz, ze
   zgody byly egzekwowane rozmowa z uzytkownikiem, nie hookiem
-- **Wynik lintu i testow** - i czy ostatni przebieg byl pelny (6.6c)
+- **Wynik lintu i testow** - i czy ostatni przebieg byl pelny (6.6c; w trybie
+  `ci` zawezony lokalnie, patrz nastepny punkt)
+- **Pelny przebieg** - tryb: `lokalnie` albo `ci`. Przy `ci`: lokalnie poszedl
+  lint i testy zawezone ([sciezki albo brak pasujacych testow]), a DOWODEM
+  pelnego przebiegu jest pipeline merge requesta - podaj `MR_URL`,
+  `PIPELINE_ID` i `PIPELINE_STATUS` z chwili raportu (albo "pipeline
+  w tworzeniu"). Dopisz wprost: sesja nie czeka na pipeline i go nie naprawia;
+  czerwony pipeline MR naprawia `/monolynx:mr-queue` (KROK 5 tamtego skilla,
+  max 2 rundy poprawek, potem decyzja czlowieka). Uzytkownik zleca poprawke
+  czerwonego CI w tej sesji (tylko tryb interaktywny) -> robisz ja tutaj
+  i mowisz, zeby dla tego MR nie uruchamial `mr-queue`, dopoki poprawka nie
+  jest wypchnieta. Ostrzezenie o nieznanej wartosci pola powtorz tutaj
 - **Mutacje** - linia z kroku mutacji (KROK 6.5); ponizej progu krok sie nie
   pojawia i tej linii nie ma w ogole
 - Rekoncyliacja: ile raportow odrzucono / rozstrzygnieto przez TM
@@ -1747,7 +1844,11 @@ ich tutaj. Dodatkowo:
     `toolchain` przy pracy w git worktree, `AUTOTEST=false` czekajacy na wklejony
     wynik, timeout blokady testow (kod 75 z linia `TEST-LOCK: timeout`) oraz
     kolizja srodowiska testow po jednej powtorce (6.5 i 6.6c, sekcje
-    `lint-test.md`, powod `kolizja testów`), wyczerpany limit poprawek, same
+    `lint-test.md`, powod `kolizja testów`), tryb `pełny przebieg: ci` bez
+    mozliwosci merge requesta albo bez wystawionego merge requesta (KROK 5
+    i 7e, powod `pełny przebieg ci bez MR`) oraz komenda testow, ktorej w tym
+    trybie nie da sie zawezic (6.5, powod
+    `pełny przebieg ci - testów nie da się zawęzić`), wyczerpany limit poprawek, same
     odjecia `BLOKADA-ZEWNĘTRZNA` po
     review krytyka (6.6b, blok `blokada-zewnetrzna`, powod
     `blokada zewnetrzna - <krotki powod>`), `STOP:` od developera, ktorego nie

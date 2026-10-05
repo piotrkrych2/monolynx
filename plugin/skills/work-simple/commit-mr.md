@@ -3,6 +3,8 @@
 Procedura wspolna dla flow pracy nad ticketem. Wykonujesz ja po zamknieciu
 pracy zespolu, w miejscu wskazanym przez skill. Kazda zgoda jest jawna:
 domyslnie NIC nie commitujesz, nie pushujesz i nie zakladasz merge requesta.
+Ostatnia sekcja (odczyt pipeline'u merge requesta) dotyczy tylko trybu
+`pełny przebieg: ci`.
 
 ---
 
@@ -88,3 +90,53 @@ docelowym w komentarzu podsumowujacym oraz w podsumowaniu dla uzytkownika.
 powtarzaj: wypisz gotowa komende uzytkownikowi i odnotuj
 "MR nieutworzony: [powod]". Przy `AUTOMR=false` (domyslnie) nigdy nie zakladaj
 merge requesta.
+
+---
+
+## Pipeline merge requesta (tryb `ci`)
+
+Tylko gdy skill pracuje w trybie `pełny przebieg: ci` (ustalenie trybu:
+`lint-test.md`). W trybie `lokalnie` te sekcje pomijasz w calosci.
+
+W trybie `ci` pelnego zestawu testow nie uruchomiono lokalnie - weryfikuje go
+pipeline merge requesta. Dlatego:
+
+- **Merge request nie powstal** ("MR nieutworzony: [powod]", brak pusha,
+  `AUTOMR=false`) -> nie ma dowodu pelnego przebiegu. NIE przechodz dalej
+  z tej sekcji; o tym, co wtedy, decyduje skill (ticket nie trafia do
+  `in_review`).
+- **Merge request powstal** (`MR_URL` zapisany) -> odczytaj jego pipeline.
+
+Numer merge requesta (`<iid>`) to liczba na koncu `MR_URL`
+(`.../-/merge_requests/<iid>`). Wpisz go doslownie:
+
+```bash
+glab mr view <iid> -F json
+```
+
+Wynik to jeden obiekt JSON. Czytasz z niego pole `head_pipeline`: obiekt
+z polami `id` (liczba) i `status` (napis, np. `running`, `success`, `failed`).
+Zapisz je jako `PIPELINE_ID` i `PIPELINE_STATUS`. Statusu nie interpretujesz
+i nie tlumaczysz - przepisujesz go doslownie, takze wartosc, ktorej nie znasz.
+
+Pipeline powstaje asynchronicznie po pushu:
+
+- `head_pipeline` puste (`null`) albo nie ma go w wyniku -> JEDEN ponowny
+  odczyt ta sama komenda.
+- Dalej puste -> zapisz `PIPELINE_ID` = "pipeline w tworzeniu" i idz dalej.
+  NIGDY petla czekania na pipeline.
+- `glab mr view` zwrocil blad -> zapisz "pipeline nieodczytany: [powod]"
+  i idz dalej. Merge request istnieje, `MR_URL` pozostaje wazny.
+
+**Nie czekasz na wynik pipeline'u i go nie naprawiasz.** Czerwony pipeline
+merge requesta ma jednego wlasciciela: `/monolynx:mr-queue`, ktory poprawia CI
+na branchu merge requesta. Dwie poprawki tego samego bledu z dwoch sesji to
+konflikt na branchu, dlatego sesja ticketu konczy sie na wystawieniu merge
+requesta i raporcie. Wyjatek, tylko w trybie interaktywnym: uzytkownik zleca
+poprawke czerwonego CI w TEJ sesji -> robisz ja tutaj i mowisz mu wprost, zeby
+dla tego merge requesta nie uruchamial `/monolynx:mr-queue`, dopoki poprawka
+nie jest wypchnieta.
+
+`MR_URL`, `PIPELINE_ID` i `PIPELINE_STATUS` podajesz w miejscach wskazanych
+przez skill: jako dowod pelnego przebiegu, razem ze zdaniem, ze czerwony
+pipeline naprawia `/monolynx:mr-queue`.
