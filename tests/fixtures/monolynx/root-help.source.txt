@@ -1,0 +1,46 @@
+# command: monolynx --help
+# tool_version: monolynx 0.3.0 (drzewo zrodel, MON-261, niewydane)
+# captured: 2026-10-05
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                                                                                                                                        
+ Usage: monolynx [OPTIONS] COMMAND [ARGS]...                                                                                                                                                            
+                                                                                                                                                                                                        
+ CLI do zarządzania platformą Monolynx.                                                                                                                                                                 
+                                                                                                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --version                                            Wypisz wersję monolynx-cli i zakończ.                                                                                                           │
+│ --output              -o      <table|json|yaml|csv>  Format wyjścia: table/json/yaml/csv. Bez podania: table w terminalu, json poza nim.                                                             │
+│ --no-color                                           Wyłącz kolorowanie tabel (patrz też zmienna środowiskowa NO_COLOR).                                                                             │
+│ --quiet               -q                             Wycisz komunikaty progresu na stderr. Dane na stdout i błędy komend bez zmian.                                                                  │
+│ --profile                     <str>                  Nazwa profilu konfiguracji (wygrywa z MONOLYNX_PROFILE i aktywnym profilem).                                                                    │
+│ --project                     <str>                  Slug projektu Monolynx (wygrywa z MONOLYNX_PROJECT).                                                                                            │
+│ --debug                                              Loguj żądania i odpowiedzi HTTP na stderr (token zawsze zamaskowany).                                                                           │
+│ --timeout                     <float>                Limit czasu żądania HTTP w sekundach (większy od zera). [default: 30.0]                                                                         │
+│ --install-completion                                 Install completion for the current shell.                                                                                                       │
+│ --show-completion                                    Show completion for the current shell, to copy it or customize the installation.                                                                │
+│ --help                                               Show this message and exit.                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ completion   Wypisz skrypt uzupełniania poleceń (bash, zsh, fish) na stdout.                                                                                                                         │
+│ version      Pokaż wersję zainstalowanego CLI.                                                                                                                                                       │
+│ auth         Logowanie i zarządzanie tokenem dostępu do Monolynx.                                                                                                                                    │
+│ config       Konfiguracja lokalna CLI (profile, adres API).                                                                                                                                          │
+│ project      Zarządzanie projektami Monolynx.                                                                                                                                                        │
+│ member       Zarządzanie członkami projektu.                                                                                                                                                         │
+│ ticket       Zarządzanie ticketami: backlog, szczegóły, komentarze.                                                                                                                                  │
+│ sprint       Zarządzanie sprintami.                                                                                                                                                                  │
+│ wiki         Strony wiki projektu.                                                                                                                                                                   │
+│ blog         Wpisy bloga projektu: lista, treść i metadane.                                                                                                                                          │
+│ monitoring   Monitorowanie adresów URL (uptime).                                                                                                                                                     │
+│ issues       Śledzenie błędów modułu 500ki.                                                                                                                                                          │
+│ time         Ewidencja czasu pracy (log_time, raporty).                                                                                                                                              │
+│ plan         Plan pracy użytkownika (Work Plan / Gantt).                                                                                                                                             │
+│ rozliczenia  Rozliczenia i powiązane tickety.                                                                                                                                                        │
+│ graph        Graf zależności kodu (moduł Połączenia).                                                                                                                                                │
+│ pipeline     Obserwowalność pracy agentów AI (pipeline'y).                                                                                                                                           │
+│ heartbeat    Sygnały życia (heartbeaty) procesów.                                                                                                                                                    │
+│ role         Role i uprawnienia w projekcie.                                                                                                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+# exit: 0

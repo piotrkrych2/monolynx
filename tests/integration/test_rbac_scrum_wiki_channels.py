@@ -2,7 +2,8 @@
 
 Kontrakt: samo członkostwo w projekcie nie wystarcza. Operacje na ticketach, sprintach, komentarzach,
 kryteriach akceptacji, etykietach, czasie pracy, załącznikach i stronach wiki sprawdzają uprawnienia roli
-(`scrum:read|write|delete`, `wiki:read|write|delete`) tak samo jak dashboard:
+(`scrum:read|write|delete`, `wiki:read|write|delete`; metadane wpisów bloga MON-261: `list_blog_posts` i `get_blog_post` -> `wiki:read`,
+`set_blog_post_meta` -> `wiki:write`) tak samo jak dashboard:
 
 - odmowa to `ValueError("Brak uprawnienia <moduł>:<akcja>")` w MCP i 403 `application/problem+json` z tym samym
   `detail` w API v2,
@@ -42,6 +43,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx import mcp_server
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.label import Label
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
@@ -233,6 +235,8 @@ CASES: list[Case] = [
     Case("list_wiki_page_attachments", "wiki:read", lambda s: _a(str(s.page_id))),
     Case("get_wiki_attachment", "wiki:read", lambda s: _a(str(s.page_id), "brak.txt"), positive=False),
     Case("get_wiki_file", "wiki:read", lambda s: _a(str(uuid.uuid4())), positive=False),
+    Case("list_blog_posts", "wiki:read", lambda s: _a(), lambda s: V2Req()),
+    Case("get_blog_post", "wiki:read", lambda s: _a(str(s.page_id)), lambda s: V2Req(path={"page_id": s.page_id})),
     # --- wiki:write ---
     Case(
         "create_wiki_page",
@@ -251,6 +255,12 @@ CASES: list[Case] = [
     Case("add_wiki_file", "wiki:write", lambda s: _a(_B64_HELLO, "plik.txt"), positive=False),
     Case("add_wiki_page_attachment", "wiki:write", lambda s: _a(str(s.page_id), _B64_HELLO, "plik.txt"), positive=False),
     Case("update_wiki_file", "wiki:write", lambda s: _a(str(uuid.uuid4()), description="opis"), positive=False),
+    Case(
+        "set_blog_post_meta",
+        "wiki:write",
+        lambda s: _a(str(s.page_id), description="Nowy opis wpisu"),
+        lambda s: V2Req(json={"description": "Nowy opis wpisu"}, path={"page_id": s.page_id}),
+    ),
     # --- wiki:delete ---
     Case("delete_wiki_page", "wiki:delete", lambda s: _a(str(s.page_id)), lambda s: V2Req(path={"page_id": s.page_id})),
 ]
@@ -357,6 +367,8 @@ async def env(db_session, client, monkeypatch) -> RbacEnv:
     )
     db_session.add_all([criterion, comment, sprint, label, page])
     await db_session.flush()
+    db_session.add(BlogPost(page_id=page.id, slug="strona-startowa", description="Opis startowy", tags=["startowy"]))
+    await db_session.flush()
 
     seed = Seed(
         ticket_id=ticket.id,
@@ -401,6 +413,13 @@ async def snapshot(env: RbacEnv) -> dict[str, Any]:
         "sprints": _rows(await db.execute(select(Sprint.name, Sprint.status, Sprint.goal).where(Sprint.project_id == pid))),
         "labels": _rows(await db.execute(select(Label.name, Label.color).where(Label.project_id == pid))),
         "pages": _rows(await db.execute(select(WikiPage.title, WikiPage.slug, WikiPage.is_public).where(WikiPage.project_id == pid))),
+        "blog_posts": _rows(
+            await db.execute(
+                select(BlogPost.slug, BlogPost.description, BlogPost.tags, BlogPost.lang, BlogPost.author_name)
+                .join(WikiPage, WikiPage.id == BlogPost.page_id)
+                .where(WikiPage.project_id == pid)
+            )
+        ),
         "minio": dict(env.minio),
         "time_entries": await count(TimeTrackingEntry, TimeTrackingEntry.project_id == pid),
         "ticket_attachments": await count(TicketAttachment, TicketAttachment.ticket_id.in_(select(Ticket.id).where(Ticket.project_id == pid))),
@@ -1131,11 +1150,49 @@ ORDER_CASES: list[OrderCase] = [
     OrderCase("add_wiki_file-empty-content", "add_wiki_file", "wiki:write", lambda s: _a("", "plik.txt")),
     OrderCase("add_wiki_file-bad-mime-type", "add_wiki_file", "wiki:write", lambda s: _a(_B64_HELLO, "plik.txt", mime_type="zly mime")),
     OrderCase("update_wiki_file-malformed-id", "update_wiki_file", "wiki:write", lambda s: _a(_MALFORMED, description="opis")),
+    OrderCase("set_blog_post_meta-malformed-id", "set_blog_post_meta", "wiki:write", lambda s: _a(_MALFORMED, description="Zmiana")),
+    OrderCase(
+        "set_blog_post_meta-malformed-translation-of-id",
+        "set_blog_post_meta",
+        "wiki:write",
+        lambda s: _a(str(s.page_id), description="Zmiana", translation_of_id=_MALFORMED),
+    ),
+    OrderCase(
+        "set_blog_post_meta-malformed-date",
+        "set_blog_post_meta",
+        "wiki:write",
+        lambda s: _a(str(s.page_id), description="Zmiana", last_verified_at="31/12/2026"),
+    ),
+    OrderCase(
+        "set_blog_post_meta-invalid-lang",
+        "set_blog_post_meta",
+        "wiki:write",
+        lambda s: _a(str(s.page_id), lang="de"),
+        lambda s: V2Req(json={"lang": "de"}, path={"page_id": s.page_id}),
+    ),
+    OrderCase(
+        "set_blog_post_meta-missing-page",
+        "set_blog_post_meta",
+        "wiki:write",
+        lambda s: _a(_MISSING_UUID, description="Zmiana"),
+        lambda s: V2Req(json={"description": "Zmiana"}, path={"page_id": _MISSING_UUID}),
+    ),
     # --- wiki:read ---
     OrderCase("get_wiki_page-malformed-id", "get_wiki_page", "wiki:read", lambda s: _a(_MALFORMED)),
     OrderCase("list_wiki_page_attachments-malformed-page-id", "list_wiki_page_attachments", "wiki:read", lambda s: _a(_MALFORMED)),
     OrderCase("get_wiki_attachment-malformed-page-id", "get_wiki_attachment", "wiki:read", lambda s: _a(_MALFORMED, "plik.txt")),
     OrderCase("get_wiki_file-malformed-id", "get_wiki_file", "wiki:read", lambda s: _a(_MALFORMED)),
+    OrderCase("get_blog_post-malformed-id", "get_blog_post", "wiki:read", lambda s: _a(_MALFORMED)),
+    OrderCase(
+        "get_blog_post-missing-page", "get_blog_post", "wiki:read", lambda s: _a(_MISSING_UUID), lambda s: V2Req(path={"page_id": _MISSING_UUID})
+    ),
+    OrderCase(
+        "list_blog_posts-invalid-status",
+        "list_blog_posts",
+        "wiki:read",
+        lambda s: _a(status="archived"),
+        lambda s: V2Req(params={"status": "archived"}),
+    ),
     # --- wiki:delete ---
     OrderCase("delete_wiki_page-malformed-id", "delete_wiki_page", "wiki:delete", lambda s: _a(_MALFORMED)),
 ]

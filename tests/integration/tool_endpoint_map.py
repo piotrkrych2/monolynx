@@ -1,7 +1,7 @@
 """Mapa kontraktu MCP <-> API v2 (MON-131).
 
-`TOOL_TO_ENDPOINT` wiąże 45 narzędzi MCP z endpointami `/api/v2`, które wystawiają
-tę samą operację (Projects, Scrum, Wiki oraz 5 odczytów grafu Połączeń, MON-248).
+`TOOL_TO_ENDPOINT` wiąże 48 narzędzi MCP z endpointami `/api/v2`, które wystawiają
+tę samą operację (Projects, Scrum, Wiki, 5 odczytów grafu Połączeń, MON-248, oraz 3 narzędzia Bloga, MON-261).
 `INTENTIONALLY_UNMAPPED` opisuje powód,
 dla którego pozostałe narzędzia nie mają odpowiednika w v2. Każde narzędzie
 zarejestrowane w `mcp_server.mcp` musi wystąpić dokładnie w jednym z tych słowników;
@@ -43,6 +43,8 @@ _SPRINT = "/api/v2/projects/{project_slug}/sprints/{sprint_id}"
 _WIKI_PAGES = "/api/v2/projects/{project_slug}/wiki/pages"
 _WIKI_PAGE = "/api/v2/projects/{project_slug}/wiki/pages/{page_id}"
 _GRAPH = "/api/v2/projects/{project_slug}/graph"
+_BLOG_POSTS = "/api/v2/projects/{project_slug}/blog/posts"
+_BLOG_POST = "/api/v2/projects/{project_slug}/blog/posts/{page_id}"
 
 
 TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
@@ -289,6 +291,23 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         "/api/v2/projects/{project_slug}/wiki/config",
         is_write=True,
         known_differences="MCP zwraca wiki_llm_enabled i message; v2 zwraca tylko wiki_llm_enabled.",
+    ),
+    # --- Blog (3) ---
+    "list_blog_posts": ToolEndpointSpec(
+        "GET",
+        _BLOG_POSTS,
+        is_write=False,
+        known_differences="MCP zwraca goły JSON array wpisów; v2 owija go w kopertę paginacji (items, page, per_page, total, total_pages).",
+    ),
+    "get_blog_post": ToolEndpointSpec("GET", _BLOG_POST, is_write=False),
+    "set_blog_post_meta": ToolEndpointSpec(
+        "PATCH",
+        _BLOG_POST,
+        is_write=True,
+        known_differences=(
+            "MCP: pominięty parametr (None) = bez zmian, pusty tekst w translation_of_id, cover_attachment_id i last_verified_at "
+            "czyści pole; v2: pole nieobecne w body = bez zmian, null czyści pole."
+        ),
     ),
     # --- Graph (5) ---
     "list_graph_nodes": ToolEndpointSpec(

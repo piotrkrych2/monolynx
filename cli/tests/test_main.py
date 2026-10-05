@@ -71,6 +71,7 @@ EXPECTED_GROUPS = frozenset(
         "ticket",
         "sprint",
         "wiki",
+        "blog",
         "monitoring",
         "issues",
         "time",
@@ -125,6 +126,15 @@ def test_registered_top_level_commands_match_expected_groups_exactly():
     click_app = typer.main.get_command(app)
 
     assert set(click_app.commands) == EXPECTED_ROOT_COMMANDS
+
+
+def test_blog_group_is_registered_with_its_three_commands():
+    click_app = typer.main.get_command(app)
+
+    blog = click_app.commands["blog"]
+    assert set(blog.commands) == {"list", "get", "meta"}
+    # 17 grup (MON-261: dochodzi `blog`) plus samodzielne `completion` i `version`.
+    assert len(click_app.commands) == 19
 
 
 def test_forbidden_top_level_commands_are_not_registered():

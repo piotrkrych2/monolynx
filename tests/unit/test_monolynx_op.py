@@ -30,6 +30,11 @@ Kontrakt wrappera (stdlib, Python 3.10+):
   `node_types` -> powtarzane `--node-type`, `query_graph` -> `graph query` z `node_type` -> `--node-type`,
   `find_graph_path` -> `graph path` z `source_id|target_id` -> `--source-id|--target-id`, `get_graph_stats` -> `graph stats`;
   narzedzia zapisu grafu (w tym `replace_graph`) nie maja komendy CLI i zawsze daja fallback.
+  Blog (MON-261): `list_blog_posts` -> `blog list` z `status` -> `--status`, `get_blog_post` -> `blog get <page_id>`,
+  `set_blog_post_meta` -> `blog meta <page_id>` z `slug|description|lang` -> `--slug|--description|--lang`,
+  `author_name` -> `--author`, `translation_of_id` -> `--translation-of`, `cover_attachment_id` -> `--cover`,
+  `last_verified_at` -> `--verified`, `tags` -> powtarzane `--tag` (pusta lista -> `--no-tags`); pusty tekst w
+  `translation_of_id`, `cover_attachment_id` i `last_verified_at` wrapper przekazuje dalej (CLI zamienia go na null).
   Listy w jednej wartosci jako tablica JSON.
 - Wartosc parametru `-` = czytaj ze stdin wrappera, `@<sciezka>` = czytaj z pliku (UTF-8).
 - Kody: 0 (stdout = stdout CLI bez zmian); 3 + ostatnia linia stdout `OP-FALLBACK: mcp tool=<op>`
@@ -216,6 +221,19 @@ _RAW_SCENARIOS: list[tuple[str, str, str, str]] = [
     ("query_graph", "", "graph query", ""),
     ("find_graph_path", "--source_id a --target_id b", "graph path --source-id a --target-id b", ""),
     ("get_graph_stats", "", "graph stats", ""),
+    ("list_blog_posts", "", "blog list", ""),
+    ("list_blog_posts", "--status draft", "blog list --status draft", ""),
+    ("get_blog_post", "--page_id P1", "blog get P1", ""),
+    (
+        "set_blog_post_meta",
+        "--page_id P1 --slug nowy --description 'Nowy opis' --author_name 'Ada A' --lang en"
+        " --translation_of_id T1 --cover_attachment_id C1 --last_verified_at 2026-08-09",
+        "blog meta P1 --slug nowy --description 'Nowy opis' --author 'Ada A' --lang en --translation-of T1 --cover C1 --verified 2026-08-09",
+        "",
+    ),
+    ("set_blog_post_meta", "--page_id P1 --tags TAGS_ALFA_BETA", "blog meta P1 --tag alfa --tag beta", ""),
+    ("set_blog_post_meta", "--page_id P1 --tags EMPTY_LIST", "blog meta P1 --no-tags", ""),
+    ("set_blog_post_meta", "--page_id P1 --translation_of_id '' --last_verified_at ''", "blog meta P1 --translation-of '' --verified ''", ""),
 ]
 
 
@@ -229,6 +247,7 @@ _TOKEN_VALUES = {
     "IDS_U1_U2": '["u1", "u2"]',
     "IDS_U1": '["u1"]',
     "EMPTY_LIST": "[]",
+    "TAGS_ALFA_BETA": '["alfa", "beta"]',
     "CRITERIA_TWO": '["kryterium 1", "kryterium 2"]',
 }
 
@@ -253,6 +272,8 @@ NO_CLI_OPS = shlex.split(
 )
 
 GRAPH_READ_OPS = frozenset({"list_graph_nodes", "get_graph_node", "query_graph", "find_graph_path", "get_graph_stats"})
+BLOG_READ_OPS = frozenset({"list_blog_posts", "get_blog_post"})
+BLOG_OPS = BLOG_READ_OPS | {"set_blog_post_meta"}
 
 # Prefiks nazwy op -> czy odczyt (kontrakt READ_OPS).
 READ_PREFIXES = ("get_", "list_", "search_", "query_", "find_")
@@ -374,6 +395,13 @@ class TestModuleContract:
 
         assert set(module.OPS) >= GRAPH_READ_OPS, sorted(GRAPH_READ_OPS - set(module.OPS))
         assert set(module.READ_OPS) >= GRAPH_READ_OPS, sorted(GRAPH_READ_OPS - set(module.READ_OPS))
+
+    def test_blog_ops_are_mapped_and_only_the_two_reads_are_read_only(self):
+        module = load_module()
+
+        assert set(module.OPS) >= BLOG_OPS, sorted(BLOG_OPS - set(module.OPS))
+        assert set(module.READ_OPS) >= BLOG_READ_OPS, sorted(BLOG_READ_OPS - set(module.READ_OPS))
+        assert "set_blog_post_meta" not in module.READ_OPS
 
     def test_graph_write_ops_are_not_mapped_nor_read_only(self):
         module = load_module()
@@ -688,6 +716,9 @@ USAGE_ERROR_CASES = {
     "update-sprint-missing-sprint-id": "update_sprint --project_slug monolynx --name Nowy",
     "create-sprint-missing-name": "create_sprint --project_slug monolynx --start_date 2026-10-05 --end_date 2026-10-19",
     "create-sprint-missing-start-date": "create_sprint --project_slug monolynx --name 'Sprint 1' --end_date 2026-10-19",
+    "get-blog-post-missing-page-id": "get_blog_post --project_slug monolynx",
+    "set-blog-post-meta-missing-page-id": "set_blog_post_meta --project_slug monolynx --description Opis",
+    "set-blog-post-meta-tags-not-a-list": "set_blog_post_meta --project_slug monolynx --page_id P1 --tags '\"alfa\"'",
 }
 
 

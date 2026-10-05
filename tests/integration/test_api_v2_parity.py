@@ -8,7 +8,7 @@ w testach, nie u użytkownika. Plik zawiera pięć grup testów:
 1. kompletność mapy `tool_endpoint_map.py` względem narzędzi zarejestrowanych w MCP oraz
    względem tras v2 (`find_coverage_problems`, `find_missing_routes` są sprawdzane także na
    syntetycznych zbiorach, co dowodzi, że test pada przy nowym narzędziu bez wpisu),
-2. parytet 45 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
+2. parytet 48 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
 3. jawne pinowanie znanych różnic kontraktu (`known_differences` w mapie),
 4. odrzucenie pustego tytułu strony wiki przez oba kanały (rozjazd wykryty w MON-131,
    naprawiony guardem w `api/v2/wiki.py`),
@@ -58,6 +58,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx import mcp_server
 from monolynx.constants import LABEL_COLOR_PALETTE
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.issue import Issue
 from monolynx.models.label import Label, TicketLabel
 from monolynx.models.project import Project
@@ -109,6 +110,7 @@ _WRITE_TOOLS = frozenset(
         "update_wiki_page",
         "delete_wiki_page",
         "set_wiki_config",
+        "set_blog_post_meta",
     }
 )
 
@@ -168,7 +170,7 @@ class TestMapCompleteness:
         problems = find_coverage_problems([t.name for t in tools], TOOL_TO_ENDPOINT, INTENTIONALLY_UNMAPPED)
 
         assert problems == []
-        assert len(TOOL_TO_ENDPOINT) == 45
+        assert len(TOOL_TO_ENDPOINT) == 48
         assert len(INTENTIONALLY_UNMAPPED) == 74
         assert all(reason.strip() for reason in INTENTIONALLY_UNMAPPED.values())
 
@@ -2073,6 +2075,184 @@ async def scenario_set_wiki_config(env: ParityEnv) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Blog (MON-261): lista wpisów, szczegóły i częściowy zapis metadanych
+# ---------------------------------------------------------------------------
+
+_BLOG_VIEW_KEYS = (
+    "page_id",
+    "title",
+    "slug",
+    "previous_slugs",
+    "description",
+    "published_at",
+    "author_name",
+    "tags",
+    "lang",
+    "translation_of_id",
+    "cover_attachment_id",
+    "last_verified_at",
+    "is_public",
+    "public_url",
+    "markdown_url",
+)
+
+
+async def _blog_post(
+    env: ParityEnv, title: str, slug: str, *, is_public: bool = False, with_post: bool = True, content: str = "# Tresc wpisu", **fields: Any
+) -> WikiPage:
+    page = await _wiki_page(env, title, slug, content)
+    if is_public:
+        page.is_public = True
+    if with_post:
+        env.db.add(BlogPost(page_id=page.id, slug=slug, **fields))
+    await env.db.flush()
+    return page
+
+
+async def _blog_state(env: ParityEnv, page_id: uuid.UUID | str) -> dict[str, Any]:
+    row = (
+        await env.db.execute(
+            select(
+                BlogPost.slug,
+                BlogPost.previous_slugs,
+                BlogPost.description,
+                BlogPost.published_at,
+                BlogPost.author_name,
+                BlogPost.tags,
+                BlogPost.lang,
+                BlogPost.translation_of_id,
+                BlogPost.cover_attachment_id,
+                BlogPost.last_verified_at,
+            ).where(BlogPost.page_id == uuid.UUID(str(page_id)))
+        )
+    ).one()
+    return dict(row._mapping)
+
+
+def _assert_blog_view_equal(mcp_item: dict[str, Any], v2_item: dict[str, Any], *, skip: tuple[str, ...] = ()) -> None:
+    """Pola widoku wpisu są identyczne w obu kanałach; data publikacji porównywana jako moment (inny zapis offsetu)."""
+    assert set(mcp_item) >= set(_BLOG_VIEW_KEYS)
+    assert set(v2_item) >= set(_BLOG_VIEW_KEYS)
+    for key in _BLOG_VIEW_KEYS:
+        if key in skip:
+            continue
+        if key == "published_at" and mcp_item[key] is not None:
+            assert _dt(mcp_item[key]) == _dt(v2_item[key]), key
+        else:
+            assert mcp_item[key] == v2_item[key], key
+
+
+async def scenario_list_blog_posts(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    published = await _blog_post(
+        env, "Wpis publiczny", f"pub-{tag}", is_public=True, published_at=_ts(10), tags=["a"], description="Opis", last_verified_at=date(2026, 8, 1)
+    )
+    draft = await _blog_post(env, "Szkic wpisu", f"draft-{tag}", is_public=False)
+    await _blog_post(env, "Strona bez wpisu", f"norow-{tag}", with_post=False)
+
+    mcp_out = await env.mcp("list_blog_posts", env.slug)
+    response = await env.v2("list_blog_posts")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["total"], body["page"]) == (2, 1)
+    assert [i["page_id"] for i in mcp_out] == [i["page_id"] for i in body["items"]] == [str(published.id), str(draft.id)]
+    for mcp_item, v2_item in zip(mcp_out, body["items"], strict=True):
+        _assert_blog_view_equal(mcp_item, v2_item)
+    assert mcp_out[0]["public_url"] is not None
+    assert mcp_out[1]["public_url"] is None
+
+    mcp_draft = await env.mcp("list_blog_posts", env.slug, status="draft")
+    v2_draft = await env.v2("list_blog_posts", params={"status": "draft"})
+    assert [i["page_id"] for i in mcp_draft] == [i["page_id"] for i in v2_draft.json()["items"]] == [str(draft.id)]
+
+    message = await env.mcp_error("list_blog_posts", env.slug, status="archived")
+    _assert_problem(await env.v2("list_blog_posts", params={"status": "archived"}), 422, message)
+
+
+async def scenario_get_blog_post(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    page = await _blog_post(
+        env,
+        "Wpis ze szczegółami",
+        f"detail-{tag}",
+        is_public=True,
+        content="# Treść szczegółów",
+        published_at=_ts(5),
+        tags=["x", "y"],
+        lang="en",
+        last_verified_at=date(2026, 8, 2),
+    )
+
+    mcp_out = await env.mcp("get_blog_post", env.slug, str(page.id))
+    response = await env.v2("get_blog_post", page_id=page.id)
+
+    assert response.status_code == 200
+    body = response.json()
+    _assert_blog_view_equal(mcp_out, body)
+    assert (mcp_out["content"], body["content"]) == ("# Treść szczegółów", "# Treść szczegółów")
+    assert (body["lang"], body["tags"], body["is_public"]) == ("en", ["x", "y"], True)
+
+    unknown = uuid.uuid4()
+    message = await env.mcp_error("get_blog_post", env.slug, str(unknown))
+    _assert_problem(await env.v2("get_blog_post", page_id=unknown), 404, message)
+
+    no_row = await _blog_post(env, "Strona bez wpisu", f"norow-{tag}", with_post=False)
+    no_row_message = await env.mcp_error("get_blog_post", env.slug, str(no_row.id))
+    assert no_row_message == "Wpis bloga nie istnieje"
+    _assert_problem(await env.v2("get_blog_post", page_id=no_row.id), 404, no_row_message)
+
+
+async def scenario_set_blog_post_meta(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    original = await _blog_post(env, "Oryginał", f"orig-{tag}")
+    page_a = await _blog_post(env, "Wpis MCP", f"a-{tag}", description="Stary", tags=["x"], last_verified_at=date(2026, 7, 1))
+    page_b = await _blog_post(env, "Wpis v2", f"b-{tag}", description="Stary", tags=["x"], last_verified_at=date(2026, 7, 1))
+    original_id, a_id, b_id = original.id, page_a.id, page_b.id
+    payload = {
+        "description": "Nowy opis",
+        "author_name": "Ada",
+        "tags": ["t1", "t2"],
+        "lang": "en",
+        "translation_of_id": str(original_id),
+        "last_verified_at": "2026-08-09",
+    }
+
+    mcp_out = await env.mcp("set_blog_post_meta", env.slug, str(a_id), slug=f"mcp-{tag}", **payload)
+    response = await env.v2("set_blog_post_meta", page_id=b_id, json={"slug": f"v2-{tag}", **payload})
+
+    assert response.status_code == 200
+    body = response.json()
+    _assert_blog_view_equal(mcp_out, body, skip=("page_id", "title", "slug", "previous_slugs", "public_url", "markdown_url"))
+    assert (mcp_out["slug"], body["slug"]) == (f"mcp-{tag}", f"v2-{tag}")
+    assert (mcp_out["previous_slugs"], body["previous_slugs"]) == ([f"a-{tag}"], [f"b-{tag}"])
+    state_a, state_b = await _blog_state(env, a_id), await _blog_state(env, b_id)
+    assert _without(state_a, "slug", "previous_slugs") == _without(state_b, "slug", "previous_slugs")
+    assert (state_a["description"], state_a["tags"], state_a["lang"], state_a["translation_of_id"]) == ("Nowy opis", ["t1", "t2"], "en", original_id)
+    assert state_a["last_verified_at"] == date(2026, 8, 9)
+
+    # Czyszczenie: MCP pustym tekstem, v2 wartością null; tags=[] czyści w obu kanałach.
+    mcp_clear = await env.mcp("set_blog_post_meta", env.slug, str(a_id), translation_of_id="", last_verified_at="", tags=[])
+    v2_clear = await env.v2("set_blog_post_meta", page_id=b_id, json={"translation_of_id": None, "last_verified_at": None, "tags": []})
+
+    assert v2_clear.status_code == 200
+    for key in ("translation_of_id", "last_verified_at"):
+        assert (mcp_clear[key], v2_clear.json()[key]) == (None, None)
+    assert (mcp_clear["tags"], v2_clear.json()["tags"]) == ([], [])
+    cleared_a, cleared_b = await _blog_state(env, a_id), await _blog_state(env, b_id)
+    assert _without(cleared_a, "slug", "previous_slugs") == _without(cleared_b, "slug", "previous_slugs")
+    assert (cleared_a["translation_of_id"], cleared_a["last_verified_at"], cleared_a["tags"]) == (None, None, [])
+    assert cleared_a["description"] == "Nowy opis"
+
+    # Błędy: ta sama treść komunikatu, w v2 jako problem+json z właściwym kodem.
+    bad_lang = await env.mcp_error("set_blog_post_meta", env.slug, str(a_id), lang="de")
+    _assert_problem(await env.v2("set_blog_post_meta", page_id=b_id, json={"lang": "de"}), 422, bad_lang)
+    unknown = uuid.uuid4()
+    not_found = await env.mcp_error("set_blog_post_meta", env.slug, str(unknown), description="x")
+    _assert_problem(await env.v2("set_blog_post_meta", page_id=unknown, json={"description": "x"}), 404, not_found)
+
+
+# ---------------------------------------------------------------------------
 # Graf Połączeń (MON-248): Neo4j nie działa w testach, oba kanały wołą te same funkcje
 # `monolynx.services.graph`, więc jeden zestaw mocków obsługuje MCP i v2.
 # ---------------------------------------------------------------------------
@@ -2345,6 +2525,9 @@ SCENARIOS: dict[str, Scenario] = {
     "search_wiki": scenario_search_wiki,
     "get_wiki_config": scenario_get_wiki_config,
     "set_wiki_config": scenario_set_wiki_config,
+    "list_blog_posts": scenario_list_blog_posts,
+    "get_blog_post": scenario_get_blog_post,
+    "set_blog_post_meta": scenario_set_blog_post_meta,
     "list_graph_nodes": scenario_list_graph_nodes,
     "get_graph_node": scenario_get_graph_node,
     "query_graph": scenario_query_graph,
@@ -2385,6 +2568,8 @@ class TestKnownDifferences:
             "get_sprint",
             "create_wiki_page",
             "update_wiki_page",
+            "list_blog_posts",
+            "set_blog_post_meta",
             "list_graph_nodes",
             "get_graph_node",
             "query_graph",

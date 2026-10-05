@@ -466,7 +466,7 @@ Wynik z CLI to JSON z API v2, a nie tekst toola MCP. Kopertę `items`, `page`, `
 
 ### Operacje przez CLI i operacje zawsze przez MCP
 
-| Przez wrapper przy `mode=cli` (30) | Zawsze toolem MCP |
+| Przez wrapper przy `mode=cli` (33) | Zawsze toolem MCP |
 |---|---|
 | tickety: `get_ticket`, `list_tickets`, `search_tickets`, `create_ticket`, `update_ticket` | Pipelines (`create_pipeline`, `create_pipeline_job`, `update_pipeline_job`, `append_job_log`, `finish_pipeline`, ...) |
 | komentarze: `add_comment`, `list_comments` | czas pracy: `log_time`, `get_work_report` |
@@ -475,8 +475,11 @@ Wynik z CLI to JSON z API v2, a nie tekst toola MCP. Kopertę `items`, `page`, `
 | etykiety: `list_labels` | każdy inny tool spoza lewej kolumny |
 | wiki: `search_wiki`, `get_wiki_page`, `list_wiki_pages`, `create_wiki_page`, `update_wiki_page`, `get_wiki_config` | |
 | odczyt grafu kodu: `list_graph_nodes`, `get_graph_node`, `query_graph`, `find_graph_path`, `get_graph_stats` | |
+| blog: `list_blog_posts`, `get_blog_post`, `set_blog_post_meta` | |
 
 Graf kodu jest przez CLI wyłącznie do odczytu (MON-248). Zapis grafu nie ma endpointu API v2 ani komendy CLI: robi go tylko synchronizacja `cicd/sync_graph.py` przez MCP (`replace_graph`), więc wrapper kończy narzędzia zapisu kodem 3. `find_graph_path` bez `source_id` albo `target_id` kończy się kodem 64 przed wywołaniem CLI.
+
+Blog (MON-261): `list_blog_posts` i `get_blog_post` to odczyty, `set_blog_post_meta` to zapis metadanych wpisu. Wrapper mapuje je na `blog list`, `blog get` i `blog meta`; `page_id` jest argumentem pozycyjnym, `author_name` idzie jako `--author`, `translation_of_id` jako `--translation-of`, `cover_attachment_id` jako `--cover`, `last_verified_at` jako `--verified`. `tags` podajesz jako tablicę JSON: wrapper zamienia ją na powtarzane `--tag`, a pustą tablicę `[]` na `--no-tags`. Pusty tekst w `translation_of_id`, `cover_attachment_id` i `last_verified_at` czyści pole. `list_blog_posts` daje płaską tablicę JSON wpisów (CLI samo zbiera wszystkie strony), `get_blog_post` obiekt wpisu z polem `content`, a `set_blog_post_meta` obiekt wpisu po zmianie. Treść wpisu i jego publikację zmieniasz dalej operacjami wiki (`update_wiki_page`).
 
 Subagenci (`work`, `work-simple`) pracują przez MCP, chyba że Team Manager wklei im do promptu literalną ścieżkę wrappera.
 
@@ -1007,6 +1010,8 @@ W obu trybach błędem jest `### Unreleased` na innej pozycji niż pierwsza, pus
 - MON-269: **nowy skrypt `plugin/scripts/toolchain_fields.py`**. `python3 <katalog skilla>/scripts/toolchain_fields.py --value <wartość pola>` albo `--file <plik z treścią strony>` (dokładnie jedna opcja) wypisuje jedną linię JSON z kluczami `pelny_przebieg`, `zrodlo` (`pole`, `domyslna`, `nieznana`) i `ostrzezenia`; ostrzeżenia idą też na stderr jako `toolchain_fields: ostrzezenie: <treść>`. Kody wyjścia: 0 wynik policzony, 2 błąd wejścia `--file`, 64 błąd użycia. Wyłącznie biblioteka standardowa. `scripts/sync_skills.py` kopiuje go do `scripts/` skilli `work`, `work-simple` i `setup` (także w dystrybucji `src/monolynx/static/skills/`).
 - MON-269: **`/monolynx:project-toolchain` pyta o pełny przebieg i zapisuje pole w `## Test`**, zaraz pod `framework:`. Proponuje `ci` tylko przy `.gitlab-ci.yml` z jobem testów na merge requeście, dużym zestawie testów i komendzie przyjmującej ścieżki; w pozostałych przypadkach `lokalnie`.
 - MON-269: **`/monolynx:setup` pokazuje wartość pola `pełny przebieg`** w punkcie 2 jako informację. Brak pola to stan OK z wartością domyślną `lokalnie`, nie BRAK; wartość nieznana to ostrzeżenie, które nie zmienia stanu punktu.
+- MON-261: **wrapper `monolynx_op.py` obsługuje trzy operacje bloga**: `list_blog_posts`, `get_blog_post` i `set_blog_post_meta`. Mapowanie: `blog list`, `blog get`, `blog meta`; wrapper przekazuje przez CLI już 33 operacje, a flagi są sprawdzone wobec fixture `tests/fixtures/monolynx/blog-*-help.source.txt` (CLI z drzewa źródeł, grupa `blog` nie jest jeszcze wydana). `page_id` jest argumentem pozycyjnym; `author_name` idzie jako `--author`, `translation_of_id` jako `--translation-of`, `cover_attachment_id` jako `--cover`, `last_verified_at` jako `--verified`, `tags` (tablica JSON) jako powtarzane `--tag`, a pusta tablica jako `--no-tags`. Pusty tekst w `translation_of_id`, `cover_attachment_id` i `last_verified_at` czyści pole.
+- MON-261: `list_blog_posts` i `get_blog_post` są odczytami: trafiły do `READ_OPS` wrappera i do `MONOLYNX_READ_OPS` w `hooks/bash_guard.py` (równość obu zbiorów pilnuje `tests/unit/test_bash_guard.py`). `set_blog_post_meta` jest zapisem. Wobec wydanego CLI bez grupy `blog` wrapper kończy te operacje kodem 3 (`OP-FALLBACK`), a skill wykonuje je toolem MCP.
 
 ### 1.24.0
 

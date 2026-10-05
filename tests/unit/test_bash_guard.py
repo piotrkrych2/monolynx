@@ -1851,6 +1851,15 @@ class TestMonolynxHookMarkerAndReadOps:
 
         assert graph_writes.isdisjoint(hook_read_ops_literal())
 
+    def test_blog_read_ops_are_listed_in_hook_and_wrapper_but_blog_write_op_is_not(self):
+        blog_read_ops = {"list_blog_posts", "get_blog_post"}
+        wrapper = load_op_module()
+
+        assert blog_read_ops <= set(hook_read_ops_literal()), sorted(blog_read_ops - set(hook_read_ops_literal()))
+        assert blog_read_ops <= set(wrapper.READ_OPS), sorted(blog_read_ops - set(wrapper.READ_OPS))
+        assert "set_blog_post_meta" not in hook_read_ops_literal()
+        assert "set_blog_post_meta" not in wrapper.READ_OPS
+
     def test_hook_read_ops_literal_is_a_non_empty_set_of_strings(self):
         literal = hook_read_ops_literal()
 
