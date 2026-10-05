@@ -590,6 +590,7 @@ def _register_routers() -> None:
     from monolynx.api.v2 import register_api_v2
     from monolynx.api.v2 import router as api_v2_router
     from monolynx.blog import router as blog_router
+    from monolynx.blog_ai import router as blog_ai_router
     from monolynx.dashboard import router as dashboard_router
 
     app.include_router(oauth_router)
@@ -598,6 +599,8 @@ def _register_routers() -> None:
     app.include_router(heartbeat_router)
     # /blog/{slug} jest niezależny od SKIP_LANDING_PAGE -- ta flaga bramkuje tylko
     # marketingową stronę landing, blog to treść linkowana z zewnątrz (MON-201).
+    # Trasy .md PRZED blog_router: /blog/{slug} pasuje do "x.md" i zasłoniłoby bliźniaki (MON-258).
+    app.include_router(blog_ai_router)
     app.include_router(blog_router)
     app.include_router(dashboard_router)
     # api_v2_router PRZED mountem "/" (MCP) -- inaczej mount empty-prefix

@@ -1,5 +1,7 @@
 """Publiczny blog -- GET /blog/ (lista), GET /blog/{slug} (wpis), GET /blog/{slug}/attachments/....
 
+Bliźniaki markdown (`/blog/index.md`, `/blog/{slug}.md`) obsługuje `blog_ai.py` (MON-258).
+
 MON-201: router działa BEZ sesji i BEZ RBAC (w odróżnieniu od dashboard/wiki.py).
 Renderuje wyłącznie strony wiki z is_public=True; wszystko inne (strona prywatna,
 nieistniejący slug) mapuje na 404 -- nigdy 403, żeby nie potwierdzać istnienia zasobu.
@@ -12,6 +14,10 @@ treści.
 
 MON-255: treść wpisu renderuje `services/blog_blocks.render_post_html` (bloki + sanityzacja nh3);
 streszczenie (zajawka, meta description) liczy się ze źródła bez znaczników bloków (`strip_block_markers`).
+
+MON-258: `/blog/{slug}` z `Accept: text/markdown` zwraca ten sam dokument co `/blog/{slug}.md`
+(`blog_ai.markdown_twin_response`); odpowiedź HTML niesie `Vary: Accept` i `Link` do bliźniaka,
+a strony dostają JSON-LD (`services/blog.build_post_jsonld` / `build_blog_jsonld`).
 
 Rejestrowany bezwarunkowo w main.py, niezależnie od flagi SKIP_LANDING_PAGE -- ta flaga
 bramkuje marketingową stronę landing, a blog to treść linkowana z zewnątrz (podobnie jak
@@ -28,19 +34,20 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monolynx.blog_ai import markdown_twin_response, wants_markdown
 from monolynx.config import settings
 from monolynx.database import get_db
 from monolynx.models.blog_post import BlogPost
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
-from monolynx.services.blog import PublicPost, get_public_post_by_slug, list_public_posts
-from monolynx.services.blog_blocks import render_post_html, strip_block_markers
+from monolynx.services.blog import PublicPost, build_blog_jsonld, build_post_jsonld, dump_jsonld, get_public_post_by_slug, list_public_posts
+from monolynx.services.blog_blocks import render_post_html, render_post_markdown, strip_block_markers
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.wiki import extract_summary, get_page_content
 
@@ -169,15 +176,18 @@ async def public_index(request: Request, lang: str = "en", db: AsyncSession = De
             "total_pages": listing.total_pages,
             "has_prev": listing.page > 1,
             "has_next": listing.page < listing.total_pages,
+            "json_ld": dump_jsonld(build_blog_jsonld(listing.items, base_url=settings.APP_URL)),
         },
     )
 
 
 @router.get("/{slug}", response_class=HTMLResponse, response_model=None)
-async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> HTMLResponse | RedirectResponse:
+async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> Response:
     """Publiczny render wpisu po `BlogPost.slug` -- bez sesji, bez RBAC, tylko is_public=True.
 
     Stary slug (`previous_slugs`) -> 301 na aktualny adres z zachowanym query stringiem.
+    `Accept: text/markdown` -> bliźniak markdown (200/304). `Vary: Accept` niosą odpowiedzi 200, 304 i 301; 404
+    (`HTTPException`) jest bez nagłówków.
     """
     if lang not in ("en", "pl"):
         lang = "en"
@@ -189,10 +199,13 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
         target = f"/blog/{lookup.redirect_slug}"
         if request.url.query:
             target = f"{target}?{request.url.query}"
-        return RedirectResponse(url=target, status_code=301)
+        return RedirectResponse(url=target, status_code=301, headers={"Vary": "Accept"})
     post, page = lookup.post, lookup.page
     if post is None or page is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono strony")
+
+    if wants_markdown(request.headers.get("accept")):
+        return await markdown_twin_response(request, db, post, page, headers={"Vary": "Accept"})
 
     # get_page_content() woła get_markdown() rozwiązywane w globalsach monolynx.services.wiki
     # -- treść MUSI przechodzić przez tę ścieżkę (nie wolać minio_client.get_markdown wprost tutaj),
@@ -226,7 +239,19 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
     children = await _public_children(page, db)
     backlinks = await _public_backlinks(page, db)
 
-    return templates.TemplateResponse(
+    md_url = f"{settings.APP_URL.rstrip('/')}/blog/{post.slug}.md"
+    json_ld = dump_jsonld(
+        build_post_jsonld(
+            post,
+            page,
+            base_url=settings.APP_URL,
+            description=meta_description,
+            word_count=len(render_post_markdown(content).split()),
+            image_url=cover_image_url,
+        )
+    )
+
+    response = templates.TemplateResponse(
         request,
         "blog/page.html",
         {
@@ -243,8 +268,13 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
             "published_at": post.published_at,
             "cover_image_url": cover_image_url,
             "meta_description": meta_description,
+            "md_url": md_url,
+            "json_ld": json_ld,
         },
     )
+    response.headers["Vary"] = "Accept"
+    response.headers["Link"] = f'<{md_url}>; rel="alternate"; type="text/markdown"'
+    return response
 
 
 @router.get("/{slug}/attachments/{attachment_id}/{filename}", response_model=None)
