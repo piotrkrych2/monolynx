@@ -8,6 +8,7 @@ robi spy na `commit` (wzorzec tests/integration/test_projects_service.py), a tes
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import secrets
 import uuid
@@ -27,6 +28,7 @@ from monolynx.models.user import User
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services import blog as svc
+from monolynx.services.blog_blocks import render_post_html
 
 pytestmark = pytest.mark.unit
 
@@ -1200,3 +1202,107 @@ class TestListPublicTranslations:
         assert other_root.slug not in slugs
         assert stranger.slug not in slugs
         assert len(slugs) == 2
+
+
+class TestExtractToc:
+    """`extract_toc` (MON-260): spis treści z H2 i H3 wyrenderowanego HTML wpisu; czysta funkcja, bez bazy.
+
+    Kotwice (`id`) dopisuje silnik bloków; spis czyta je z HTML i nie liczy slugów drugi raz.
+    Poniżej 3 pozycji spis jest pusty.
+    """
+
+    def test_returns_h2_and_h3_in_document_order_with_levels(self):
+        html_in = '<h2 id="a">A</h2><p>x</p><h3 id="b">B</h3><p>y</p><h2 id="c">C</h2>'
+
+        result = svc.extract_toc(html_in)
+
+        assert result == [svc.TocEntry(2, "a", "A"), svc.TocEntry(3, "b", "B"), svc.TocEntry(2, "c", "C")]
+
+    def test_skips_h1_and_h4_headings(self):
+        html_in = '<h1 id="t">T</h1><h2 id="a">A</h2><h3 id="b">B</h3><h4 id="d">D</h4><h2 id="c">C</h2>'
+
+        result = svc.extract_toc(html_in)
+
+        assert [entry.id for entry in result] == ["a", "b", "c"]
+
+    def test_skips_headings_without_id(self):
+        html_in = '<h2>Bez kotwicy</h2><h2 id="a">A</h2><h2 id="b">B</h2><h3 id="c">C</h3>'
+
+        result = svc.extract_toc(html_in)
+
+        assert [entry.id for entry in result] == ["a", "b", "c"]
+        assert all(entry.text != "Bez kotwicy" for entry in result)
+
+    def test_text_has_inner_tags_removed_and_entities_unescaped(self):
+        html_in = '<h2 id="a">Użyj <code>x</code> &amp; <a href="/y">linku</a></h2><h2 id="b">B</h2><h3 id="c">C</h3>'
+
+        result = svc.extract_toc(html_in)
+
+        assert result[0].text == "Użyj x & linku"
+
+    def test_exactly_three_headings_give_three_entries(self):
+        html_in = '<h2 id="a">A</h2><h3 id="b">B</h3><h2 id="c">C</h2>'
+
+        assert len(svc.extract_toc(html_in)) == 3
+
+    def test_two_headings_give_empty_list(self):
+        html_in = '<h2 id="a">A</h2><h3 id="b">B</h3>'
+
+        assert svc.extract_toc(html_in) == []
+
+    def test_h4_does_not_count_towards_the_threshold(self):
+        html_in = '<h2 id="a">A</h2><h3 id="b">B</h3><h4 id="c">C</h4>'
+
+        assert svc.extract_toc(html_in) == []
+
+    def test_empty_html_gives_empty_list(self):
+        assert svc.extract_toc("") == []
+
+    def test_html_without_headings_gives_empty_list(self):
+        assert svc.extract_toc("<p>Sam akapit.</p><ul><li>punkt</li></ul>") == []
+
+    def test_ids_match_ids_of_rendered_post_html_including_duplicate_suffix(self):
+        rendered = render_post_html("## Alfa\n\ntekst\n\n### Beta\n\ntekst\n\n## Alfa\n\ntekst")
+
+        result = svc.extract_toc(rendered)
+
+        assert [entry.id for entry in result] == ["alfa", "beta", "alfa-2"]
+        assert [entry.level for entry in result] == [2, 3, 2]
+        for entry in result:
+            assert f'id="{entry.id}"' in rendered
+
+    def test_toc_entry_is_frozen(self):
+        entry = svc.TocEntry(2, "a", "A")
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            entry.text = "B"  # type: ignore[misc]
+
+
+class TestReadingTimeMinutes:
+    """`reading_time_minutes` (MON-260): `max(1, ceil(słowa / 200))`, słowa rozdzielane dowolnym białym znakiem."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("", 1),
+            ("   \n\t ", 1),
+            ("jedno", 1),
+            ("słowo " * 200, 1),
+            ("słowo " * 201, 2),
+            ("słowo " * 400, 2),
+            ("słowo " * 401, 3),
+            ("słowo " * 1000, 5),
+        ],
+    )
+    def test_minutes_for_word_count(self, text, expected):
+        assert svc.reading_time_minutes(text) == expected
+
+    def test_words_separated_by_newlines_are_counted_separately(self):
+        text = "\n".join(["słowo"] * 201)
+
+        assert svc.reading_time_minutes(text) == 2
+
+    def test_repeated_spaces_do_not_inflate_the_count(self):
+        text = "słowo  " * 201
+
+        assert svc.reading_time_minutes(text) == 2

@@ -793,6 +793,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "HTML bloków generuje serwer, a treść autora jest sanityzowana, więc własne skrypty, klasy i identyfikatory nie trafią na stronę."
                     ),
                 },
+                {
+                    "title": "Strona wpisu i lista bloga dla czytelnika",
+                    "desc": (
+                        "Wpis ma nagłówek z tagami, autorem, datami, czasem czytania i okładką oraz spis treści z nagłówków H2-H3, "
+                        "który podświetla bieżącą sekcję (od 3 nagłówków). Pod treścią są linki do wersji językowych i do 3 powiązanych wpisów "
+                        "w tym samym języku. Listę /blog/ filtrujesz po tagu i języku (?tag=, ?lang=), a paginacja zachowuje filtry."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -900,6 +908,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "You write a post in plain markdown and the page gets ready-made blocks: callouts (note, tip, warning) and TL;DR, "
                     "a quote with its author, an image with a caption, code with a file name and a copy button, heading anchors and footnotes. "
                     "The server generates the block HTML and sanitizes the author's content, so custom scripts, classes and ids never reach the page."
+                ),
+            },
+            {
+                "title": "Post page and blog list for readers",
+                "desc": (
+                    "A post has a header with tags, author, dates, reading time and cover, plus a table of contents built from H2-H3 headings "
+                    "that highlights the current section (from 3 headings up). Below the content are links to the other language versions and "
+                    "up to 3 related posts in the same language. The /blog/ list filters by tag and language (?tag=, ?lang=), and pagination keeps the filters."
                 ),
             },
         ],
