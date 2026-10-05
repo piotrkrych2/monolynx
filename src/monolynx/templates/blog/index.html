@@ -9,6 +9,10 @@
 {% block og_description %}{% if lang == "pl" %}Publiczne wpisy z wiki projektu Monolynx.{% else %}Public posts from the Monolynx project wiki.{% endif %}{% endblock %}
 {% block og_url %}{{ app_url }}/blog/{% endblock %}
 
+{% block head %}
+{% if json_ld %}<script type="application/ld+json">{{ json_ld|safe }}</script>{% endif %}
+{% endblock %}
+
 {% block content %}
 <section class="pt-32 pb-20">
     <div class="max-w-3xl mx-auto px-6">
