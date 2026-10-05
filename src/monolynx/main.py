@@ -289,6 +289,7 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
     from sqlalchemy import select
 
     from monolynx.features import feature_slugs
+    from monolynx.models.blog_post import BlogPost
     from monolynx.models.wiki_page import WikiPage
 
     base = settings.APP_URL.rstrip("/")
@@ -306,11 +307,18 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
     ]
     entries = [f"  <url><loc>{url.replace('&', '&amp;')}</loc></url>" for url in urls]
 
-    # Wpisy bloga z bazy (is_public=True) -- filtr w SQL, nigdy w petli Pythona (MON-202).
-    result = await db.execute(select(WikiPage.slug, WikiPage.updated_at).where(WikiPage.is_public.is_(True)))
-    for slug, updated_at in result.all():
+    # Lista bloga bez lastmod, potem wpisy z bazy (is_public=True) pod BlogPost.slug -- filtr w SQL,
+    # nigdy w petli Pythona (MON-202, MON-254). lastmod: last_verified_at, potem published_at, potem updated_at strony.
+    entries.append(f"  <url><loc>{base}/blog/</loc></url>")
+    result = await db.execute(
+        select(BlogPost.slug, BlogPost.last_verified_at, BlogPost.published_at, WikiPage.updated_at)
+        .join(WikiPage, WikiPage.id == BlogPost.page_id)
+        .where(WikiPage.is_public.is_(True))
+    )
+    for slug, last_verified_at, published_at, updated_at in result.all():
         loc = f"{base}/blog/{slug}".replace("&", "&amp;")
-        entries.append(f"  <url><loc>{loc}</loc><lastmod>{updated_at.isoformat()}</lastmod></url>")
+        lastmod = (last_verified_at or published_at or updated_at).isoformat()
+        entries.append(f"  <url><loc>{loc}</loc><lastmod>{lastmod}</lastmod></url>")
 
     body = "\n".join(entries)
     content = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{body}\n</urlset>\n'

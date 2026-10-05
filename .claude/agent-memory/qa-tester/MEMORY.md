@@ -2,6 +2,7 @@
 
 ## Key memory files
 - [patterns.md](patterns.md) — testing patterns, fixtures, common gotchas
+- [blog-tdd-patterns.md](blog-tdd-patterns.md) — MON-254: test migracji Alembic, commit w nowej sesji, haczyki hooka Bash
 
 ## Quick reference
 - Test DB: `open_sentry_test`
@@ -89,3 +90,4 @@
 - MON-244: Każda gałąź dopisana w ramach ticketu ma test, który ją wykonuje, także druga strona symetrycznej pary (slug/kod), gdy pierwsza już ma test (korekta wraca: reguła MON-140 wyżej; gałąź POST "zajęty kod bez wolnego wariantu" bez testu, gdy symetryczna gałąź sluga miała test).
 - MON-252: Każdy znacznik końca albo warunek wyliczony w kontrakcie jako osobna pozycja listy ma własne wejście testowe, w którym jest JEDYNYM powodem wyniku - fixture, w którym wcześniejszy znacznik zawsze wygrywa, nie chroni pozostałych (mutant `_ends_utterance` zredukowany do recapu i mutant "fraza oczekiwania bez kotwicy" przeżyły; ta sama klasa co MON-140/MON-244, korekta WRACA).
 - MON-250: Test gałęzi błędu operacji z raportem dla operatora asertuje komunikat i licznik tej gałęzi, nie tylko to, że pętla idzie dalej (mutant: usunięty `continue` w `except DBAPIError` w `prune_test_dbs_cmd` przeżył - nieudany DROP liczony jako "usunieto"; ta sama klasa co MON-233, korekta WRACA).
+- MON-254 (reguła powtórzona, ta sama klasa co MON-248/MON-251): Dla każdej walidacji i każdego fallbacku wypisanego w kontrakcie (limit długości, strip, "X, a gdy brak - Y") istnieje test z wejściem, które trafia dokładnie w tę gałąź; helper seedujący nie może domyślną wartością uniemożliwiać stanu, który fallback obsługuje (mutanty: usunięty limit 255 `author_name`, `published_at or created_at` -> samo `published_at` na liście i w `page.html`).

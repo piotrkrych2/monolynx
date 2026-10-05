@@ -25,8 +25,8 @@
             <a href="/blog/{{ post.slug }}"
                class="block px-5 py-4 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-lg hover:border-indigo-500/50 transition-colors">
                 <h2 class="text-lg font-bold text-gray-900 dark:text-white">{{ post.title }}</h2>
-                {% if post.updated_at %}
-                <p class="mt-1 text-xs text-gray-500">{{ post.updated_at.strftime('%Y-%m-%d') }}</p>
+                {% if post.published_at %}
+                <p class="mt-1 text-xs text-gray-500">{{ post.published_at.strftime('%Y-%m-%d') }}</p>
                 {% endif %}
                 {% if post.summary %}
                 <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{{ post.summary }}</p>

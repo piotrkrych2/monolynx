@@ -387,10 +387,11 @@ class TestCreateWikiPage:
 
         assert result.position == 5
 
+    @patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock)
     @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
-    async def test_creates_page_with_is_public_true(self, mock_upload, mock_embeddings):
-        """Tworzy strone z flaga is_public=True (MON-201)."""
+    async def test_creates_page_with_is_public_true(self, mock_upload, mock_embeddings, mock_ensure_post):
+        """Tworzy strone z flaga is_public=True (MON-201) i zaklada jej BlogPost (MON-254)."""
         mock_upload.return_value = "proj/id.md"
 
         mock_db = AsyncMock()
@@ -410,11 +411,13 @@ class TestCreateWikiPage:
         )
 
         assert result.is_public is True
+        mock_ensure_post.assert_awaited_once_with(mock_db, result)
 
+    @patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock)
     @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
-    async def test_creates_page_with_is_public_default_false(self, mock_upload, mock_embeddings):
-        """Domyslnie (bez podania is_public) strona jest prywatna (MON-201)."""
+    async def test_creates_page_with_is_public_default_false(self, mock_upload, mock_embeddings, mock_ensure_post):
+        """Domyslnie (bez podania is_public) strona jest prywatna i nie dostaje BlogPost (MON-201, MON-254)."""
         mock_upload.return_value = "proj/id.md"
 
         mock_db = AsyncMock()
@@ -433,11 +436,19 @@ class TestCreateWikiPage:
         )
 
         assert result.is_public is False
+        mock_ensure_post.assert_not_awaited()
 
 
 @pytest.mark.unit
 class TestUpdateWikiPage:
     """Testy aktualizacji strony wiki."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_ensure_post(self):
+        """MagicMock-owa strona ma is_public typu MagicMock (prawdziwe), wiec update_wiki_page (MON-254)
+        wolalby ensure_post na atrapie sesji; testy BlogPost maja wlasny patch i asercje ponizej."""
+        with patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock):
+            yield
 
     @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
@@ -584,9 +595,10 @@ class TestUpdateWikiPage:
         # Slug nie powinien byc zmieniony
         assert page.slug == "title"
 
+    @patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
-    async def test_update_sets_is_public_true(self, mock_upload):
-        """update_wiki_page(is_public=True) ustawia flage na stronie (MON-201)."""
+    async def test_update_sets_is_public_true(self, mock_upload, mock_ensure_post):
+        """update_wiki_page(is_public=True) ustawia flage na stronie i zaklada BlogPost (MON-201, MON-254)."""
         page = MagicMock()
         page.title = "Title"
         page.id = uuid.uuid4()
@@ -605,10 +617,15 @@ class TestUpdateWikiPage:
         )
 
         assert page.is_public is True
+        mock_ensure_post.assert_awaited_once_with(mock_db, page)
 
+    @patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
-    async def test_update_is_public_none_does_not_change_flag(self, mock_upload):
-        """update_wiki_page(is_public=None) -- partial update, flaga zostaje niezmieniona (MON-201)."""
+    async def test_update_is_public_none_does_not_change_flag(self, mock_upload, mock_ensure_post):
+        """update_wiki_page(is_public=None) -- partial update, flaga zostaje niezmieniona (MON-201).
+
+        Strona zostaje publiczna, wiec BlogPost jest dopilnowany (ensure_post idempotentne, MON-254).
+        """
         page = MagicMock()
         page.title = "Title"
         page.id = uuid.uuid4()
@@ -627,6 +644,29 @@ class TestUpdateWikiPage:
 
         # is_public nie podane -> pozostaje wartosc z przed wywolania
         assert page.is_public is True
+        mock_ensure_post.assert_awaited_once_with(mock_db, page)
+
+    @patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_update_private_page_does_not_ensure_post(self, mock_upload, mock_ensure_post):
+        """Strona, ktora po aktualizacji jest prywatna, nie dostaje BlogPost (MON-254)."""
+        page = MagicMock()
+        page.title = "Title"
+        page.id = uuid.uuid4()
+        page.is_public = False
+
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        await update_wiki_page(
+            page=page,
+            project_slug="proj",
+            user_id=uuid.uuid4(),
+            db=mock_db,
+        )
+
+        mock_ensure_post.assert_not_awaited()
 
 
 @pytest.mark.unit

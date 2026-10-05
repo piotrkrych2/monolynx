@@ -21,6 +21,7 @@ from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
+from monolynx.services.blog import ensure_post
 from monolynx.services.minio_client import delete_object, get_markdown, upload_markdown
 from monolynx.services.permissions import check_permission, ensure_permission
 
@@ -513,12 +514,18 @@ async def create_wiki_page(
     db.add(page)
     # uq_wiki_public_slug jest partial unique index GLOBALNY (bez project_id) -- per-projektowe
     # dedupowanie slugów w _ensure_unique_slug go nie łapie. Kolizja slugu publicznego z innym
-    # projektem musi się skończyć czytelnym błędem, nie 500 (MON-201).
+    # projektem musi się skończyć czytelnym błędem, nie 500 (MON-201). ensure_post (MON-254) stoi
+    # w tym samym try: jego zapytania autoflushują stronę, więc IntegrityError może wyjść już stąd.
     try:
+        if is_public:
+            await ensure_post(db, page)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
         raise ValueError(f"Strona publiczna o slugu '{slug}' już istnieje w innym projekcie. Zmień tytuł strony.") from exc
+    except ValueError:
+        await db.rollback()
+        raise
     await db.refresh(page)
 
     # Best-effort embedding generation
@@ -573,10 +580,15 @@ async def update_wiki_page(
     # globalny, oznaczenie strony jako is_public=True może kolidować ze slugiem z innego
     # projektu -- czytelny błąd zamiast 500 (MON-201).
     try:
+        if page.is_public:
+            await ensure_post(db, page)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
         raise ValueError(f"Strona publiczna o slugu '{page.slug}' już istnieje w innym projekcie. Zmień tytuł strony przed publikacją.") from exc
+    except ValueError:
+        await db.rollback()
+        raise
     await db.refresh(page)
 
     # Best-effort embedding update
@@ -676,9 +688,9 @@ async def get_public_page_by_slug(slug: str, db: AsyncSession) -> WikiPage | Non
     """Pobierz publiczną stronę wiki po slugu, niezależnie od projektu.
 
     Filtruje WikiPage.is_public.is_(True) na poziomie SQL -- prywatna strona nigdy
-    nie trafia do wyniku SELECT. Używane przez GET /blog/{slug} (brak sesji, brak
-    project_slug w URL); nigdy nie rzuca, zwraca None dla strony prywatnej i
-    nieistniejącego sluga (endpoint mapuje None na 404).
+    nie trafia do wyniku SELECT. Szuka po slugu STRONY wiki; publiczny blog adresuje wpisy po
+    `BlogPost.slug` (`services/blog.py::get_public_post_by_slug`, MON-254) i tej funkcji już nie woła.
+    Nigdy nie rzuca, zwraca None dla strony prywatnej i nieistniejącego sluga.
     """
     result = await db.execute(select(WikiPage).where(WikiPage.slug == slug, WikiPage.is_public.is_(True)))
     return result.scalar_one_or_none()

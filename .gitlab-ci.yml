@@ -62,7 +62,11 @@ clean-code:
         pgvector/pgvector:pg16
     - sleep 5
     - TEST_EXIT=0
+    # Obraz dev nie zawiera alembic/, a testy migracji laduja plik migracji po
+    # sciezce. Montowanie tylko do odczytu: root w kontenerze nie zostawi
+    # __pycache__ w build dirze, na ktorym padlby `git clean` runnera.
     - docker run --name "$TEST_RUNNER" --network "$TEST_NET"
+        -v "$CI_PROJECT_DIR/alembic:/app/alembic:ro"
         -e DATABASE_URL="postgresql+asyncpg://sentry:sentry_ci@db:5432/open_sentry"
         "$CI_REGISTRY_IMAGE:dev"
         pytest tests/ --cov=src/monolynx --cov-report=term --cov-report=xml:coverage.xml
