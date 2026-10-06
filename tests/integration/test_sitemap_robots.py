@@ -290,6 +290,16 @@ class TestSitemapStillContainsFeatureUrls:
             assert f"{base}/features/{slug}?lang=en" in entries
             assert f"{base}/features/{slug}?lang=pl" in entries
 
+    async def test_blog_feature_module_present_in_both_languages(self, client):
+        """MON-266: moduł Blog ma własny adres /features/blog w sitemapie (kryterium 76b76968)."""
+        resp = await client.get("/sitemap.xml")
+
+        assert resp.status_code == 200
+        base = settings.APP_URL.rstrip("/")
+        entries = _sitemap_entries(resp.text)
+        assert f"{base}/features/blog?lang=en" in entries
+        assert f"{base}/features/blog?lang=pl" in entries
+
 
 # ---------------------------------------------------------------------------
 # 3. robots.txt -- jawny Allow: /blog/, dotychczasowe Disallow zostaja (kryterium 6)

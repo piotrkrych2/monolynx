@@ -10,7 +10,7 @@ Przeczytaj plik `/how-to-use-monolynx.md` z tej instancji (pelny przewodnik po p
 
 Wytlumacz uzytkownikowi zwiezle i konkretnie:
 
-**Czym jest Monolynx.** Platforma projektowa AI-first. Kazdy modul (Scrum: tickety, sprinty, tablica Kanban; Wiki z wyszukiwaniem semantycznym RAG; error tracking 500ki; monitoring URL; graf zaleznosci kodu; pipelines) jest wystawiony po Model Context Protocol (MCP). Dzieki temu asystent AI operuje platforma jezykiem naturalnym jako pelnoprawny czlonek zespolu. Sedno Monolynx to nie dashboard dla czlowieka - to wspolna, trwala pamiec i system zadan, ktore czlowiek i AI redaguja razem.
+**Czym jest Monolynx.** Platforma projektowa AI-first. Kazdy modul (Scrum: tickety, sprinty, tablica Kanban; Wiki z wyszukiwaniem semantycznym RAG; error tracking 500ki; monitoring URL; graf zaleznosci kodu; pipelines; publiczny blog) jest wystawiony po Model Context Protocol (MCP). Dzieki temu asystent AI operuje platforma jezykiem naturalnym jako pelnoprawny czlonek zespolu. Sedno Monolynx to nie dashboard dla czlowieka - to wspolna, trwala pamiec i system zadan, ktore czlowiek i AI redaguja razem.
 
 **Co daje uzytkownikowi.**
 - Wiki jako jedno zrodlo prawdy: architektura, konwencje i wczesniejsze decyzje sa zapisane i wyszukiwalne semantycznie, wiec dowolny asystent podejmuje dowolne zadanie bez prowadzenia za reke.

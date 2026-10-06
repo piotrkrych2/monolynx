@@ -166,9 +166,41 @@
                     <p class="text-sm text-gray-600 dark:text-gray-400">{{ t.m_cli }}</p>
                 </a>
 
+                <!-- Blog -->
+                <a href="/features/blog?lang={{ lang }}" class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-6 hover:border-rose-500/50 transition-colors group">
+                    <div class="w-10 h-10 bg-rose-500/10 rounded-lg flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5 text-rose-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2 group-hover:text-gray-900 dark:hover:text-white transition-colors">Blog</h3>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">{{ t.m_blog }}</p>
+                </a>
+
             </div>
         </div>
     </section>
+
+    {% if latest_posts %}
+    <!-- Latest blog posts -->
+    <section id="latest-posts" class="py-20 border-t border-gray-100 dark:border-gray-800/50">
+        <div class="max-w-6xl mx-auto px-6">
+            <h2 class="text-3xl font-bold text-center mb-10">{{ t.blog_latest_title }}</h2>
+            <div class="grid md:grid-cols-3 gap-6">
+                {% for post in latest_posts %}
+                <a href="/blog/{{ post.slug }}?lang={{ lang }}" class="bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl p-6 hover:border-rose-500/50 transition-colors group">
+                    {% if post.published %}<time datetime="{{ post.published.isoformat() }}" class="block text-xs text-gray-500 mb-2">{{ post.published.strftime('%Y-%m-%d') }}</time>{% endif %}
+                    <h3 class="text-lg font-semibold mb-2 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">{{ post.title }}</h3>
+                    {% if post.description %}<p class="text-sm text-gray-600 dark:text-gray-400">{{ post.description }}</p>{% endif %}
+                </a>
+                {% endfor %}
+            </div>
+            <div class="text-center mt-8">
+                <a href="/blog/?lang={{ lang }}" class="text-sm font-medium text-rose-400 hover:text-rose-300 transition-colors">{{ t.blog_latest_all }} &rarr;</a>
+            </div>
+        </div>
+    </section>
+    {% endif %}
 
     <!-- MCP / AI -->
     <section class="py-20 border-t border-gray-100 dark:border-gray-800/50">

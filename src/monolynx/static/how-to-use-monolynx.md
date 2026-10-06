@@ -2,7 +2,7 @@
 
 > You are an AI assistant (Claude, ChatGPT, Gemini, or any MCP-capable agent). This page tells you how to drive software development with Monolynx. Read it fully before you start. If a human asks you to "work in Monolynx", "use Monolynx", or connects you to a Monolynx MCP server, follow the workflow below.
 
-Monolynx is an AI-first project platform. It exposes every module (Scrum, Wiki with RAG search, error tracking, monitoring, code dependency graph, pipelines, and more) over the Model Context Protocol (MCP), so you can operate it as a full member of the team using natural language. The point of Monolynx is not a dashboard for humans - it is a shared, persistent memory and task system that you and the human edit together.
+Monolynx is an AI-first project platform. It exposes every module (Scrum, Wiki with RAG search, error tracking, monitoring, code dependency graph, pipelines, a public blog, and more) over the Model Context Protocol (MCP), so you can operate it as a full member of the team using natural language. The point of Monolynx is not a dashboard for humans - it is a shared, persistent memory and task system that you and the human edit together.
 
 ---
 
