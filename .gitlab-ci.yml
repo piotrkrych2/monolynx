@@ -55,6 +55,11 @@ clean-code:
     - docker run --rm "$CI_REGISTRY_IMAGE:dev" mypy src/
     - docker rm -f "$TEST_DB" "$TEST_RUNNER" 2>/dev/null || true
     - docker network rm "$TEST_NET" 2>/dev/null || true
+    # Sieci test-net-* po jobach przerwanych przed sprzataniem wyczerpuja pule
+    # adresow Dockera ("could not find an available, non-overlapping IPv4
+    # address pool"). Sieci z podpietym kontenerem Docker nie usunie, wiec
+    # trwajacy job nie ucierpi.
+    - docker network ls --filter "name=test-net-" -q | xargs -r docker network rm 2>/dev/null || true
     - docker network create "$TEST_NET"
     - docker run -d --name "$TEST_DB" --network "$TEST_NET" --network-alias db
         -e POSTGRES_USER=sentry
@@ -72,9 +77,12 @@ clean-code:
         pytest tests/ --cov=src/monolynx --cov-report=term --cov-report=xml:coverage.xml
         || TEST_EXIT=$?
     - docker cp "$TEST_RUNNER:/app/coverage.xml" coverage.xml || true
+    - exit $TEST_EXIT
+  # after_script, nie koniec script: wykonuje sie takze po bledzie i po
+  # anulowaniu joba, wiec kontenery i siec nie zostaja na runnerze.
+  after_script:
     - docker rm -f "$TEST_DB" "$TEST_RUNNER" 2>/dev/null || true
     - docker network rm "$TEST_NET" 2>/dev/null || true
-    - exit $TEST_EXIT
   coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
     reports:

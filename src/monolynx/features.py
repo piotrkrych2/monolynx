@@ -793,6 +793,15 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "HTML bloków generuje serwer, a treść autora jest sanityzowana, więc własne skrypty, klasy i identyfikatory nie trafią na stronę."
                     ),
                 },
+                {
+                    "title": "Bloki strukturalne wpisu bloga",
+                    "desc": (
+                        "Kilka linii markdownu wystarczy, żeby wpis dostał FAQ w formie akordeonu, kroki, statystyki, tabelę porównawczą "
+                        "z wyróżnioną kolumną, sekcję zwijaną, galerię, przycisk CTA i słownik pojęć. "
+                        "Wideo z YouTube i Vimeo ładuje się dopiero po kliknięciu, więc wcześniej strona nie wysyła żadnych żądań do serwisu wideo. "
+                        "Z FAQ, kroków i wideo serwer przygotowuje dane strukturalne dla wyszukiwarek i modeli AI."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -903,6 +912,15 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "You write a post in plain markdown and the page gets ready-made blocks: callouts (note, tip, warning) and TL;DR, "
                     "a quote with its author, an image with a caption, code with a file name and a copy button, heading anchors and footnotes. "
                     "The server generates the block HTML and sanitizes the author's content, so custom scripts, classes and ids never reach the page."
+                ),
+            },
+            {
+                "title": "Structural blog post blocks",
+                "desc": (
+                    "A few lines of markdown give a post an accordion FAQ, steps, statistics, a comparison table with a highlighted column, "
+                    "a collapsible section, a gallery, a CTA button and a glossary. "
+                    "YouTube and Vimeo videos load only after a click, so the page sends no request to the video service before that. "
+                    "From the FAQ, steps and videos the server prepares structured data for search engines and AI models."
                 ),
             },
         ],

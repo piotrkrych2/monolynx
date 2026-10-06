@@ -1,7 +1,8 @@
-"""Testy jednostkowe MON-255 -- silnik blokow wpisu bloga (services/blog_blocks.py).
+"""Testy jednostkowe MON-255, MON-256 -- silnik blokow wpisu bloga (services/blog_blocks.py).
 
-Kontrakt: `render_post_html` (strona), `render_post_markdown` (bliźniak .md) i rejestry
-blokow `TEXT_BLOCKS` / `CONTAINER_BLOCKS`.
+Kontrakt: `render_post_html` (strona), `render_post_markdown` (bliźniak .md), rejestry
+blokow `TEXT_BLOCKS` / `CONTAINER_BLOCKS` (9 kontenerow strukturalnych: faq, steps, stats,
+compare, details, gallery, video, cta, glossary) i `extract_structured_data` (dane do JSON-LD).
 
 Sygnatury `to_html` / `to_markdown` pojedynczych blokow sa sprawa wewnetrzna backendu --
 testy sprawdzaja tylko `callable` i zachowanie obu funkcji renderujacych.
@@ -10,10 +11,12 @@ testy sprawdzaja tylko `callable` i zachowanie obu funkcji renderujacych.
 import dataclasses
 import re
 from html.parser import HTMLParser
+from typing import NamedTuple
 from unittest.mock import patch
 
 import pytest
 
+from monolynx.services import blog_blocks
 from monolynx.services.blog_blocks import (
     CONTAINER_BLOCKS,
     TEXT_BLOCKS,
@@ -446,8 +449,8 @@ class TestRegistry:
     def test_text_blocks_contains_required_blocks(self):
         assert {"callout", "quote", "figure", "code", "heading", "footnotes"} <= set(TEXT_BLOCKS)
 
-    def test_container_blocks_is_empty_in_this_ticket(self):
-        assert CONTAINER_BLOCKS == {}
+    def test_container_blocks_has_exactly_the_nine_structural_types(self):
+        assert set(CONTAINER_BLOCKS) == {"faq", "steps", "stats", "compare", "details", "gallery", "video", "cta", "glossary"}
 
     def test_every_registered_block_has_callable_renderers_and_matching_key(self):
         registered = [*TEXT_BLOCKS.items(), *CONTAINER_BLOCKS.items()]
@@ -694,20 +697,20 @@ class TestInjections:
 @pytest.mark.unit
 class TestContainers:
     def test_unknown_container_renders_inner_markdown_without_markers(self):
-        html = render_post_html(":::faq\n**pogrubione** w kontenerze\n:::")
+        html = render_post_html(":::foo\n**pogrubione** w kontenerze\n:::")
 
         assert "<strong>pogrubione</strong>" in html
         assert "w kontenerze" in html
         assert ":::" not in html
-        assert "faq" not in html
+        assert "foo" not in html
 
     def test_unknown_container_markdown_twin_drops_marker_lines_and_keeps_inner(self):
-        result = render_post_markdown(":::faq\n**pogrubione** w kontenerze\n:::")
+        result = render_post_markdown(":::foo\n**pogrubione** w kontenerze\n:::")
 
         assert _non_empty_lines(result) == ["**pogrubione** w kontenerze"]
 
     def test_container_attributes_do_not_leak_into_output(self):
-        md = ':::faq title="Pytania" open="true"\nwnętrze kontenera\n:::'
+        md = ':::foo title="Pytania" open="true"\nwnętrze kontenera\n:::'
 
         html = render_post_html(md)
         markdown = render_post_markdown(md)
@@ -719,7 +722,7 @@ class TestContainers:
         assert _non_empty_lines(markdown) == ["wnętrze kontenera"]
 
     def test_container_between_paragraphs_keeps_surrounding_text(self):
-        html = render_post_html("przed\n\n:::faq\nśrodek\n:::\n\npo")
+        html = render_post_html("przed\n\n:::foo\nśrodek\n:::\n\npo")
 
         assert "przed" in html
         assert "środek" in html
@@ -728,31 +731,31 @@ class TestContainers:
         assert ":::" not in html
 
     def test_unclosed_container_renders_as_plain_text_in_html(self):
-        html = render_post_html(":::faq\nTekst bez zamknięcia.")
+        html = render_post_html(":::foo\nTekst bez zamknięcia.")
 
-        assert ":::faq" in html
+        assert ":::foo" in html
         assert "Tekst bez zamknięcia." in html
 
     def test_unclosed_container_markdown_twin_is_unchanged(self):
-        md = ":::faq\nTekst bez zamknięcia."
+        md = ":::foo\nTekst bez zamknięcia."
 
         assert render_post_markdown(md).strip() == md
 
     def test_nested_container_marker_is_plain_text(self):
-        md = ":::faq\nzewnątrz\n:::note\nwewnątrz\n:::"
+        md = ":::foo\nzewnątrz\n:::bar\nwewnątrz\n:::"
 
         html = render_post_html(md)
         markdown = render_post_markdown(md)
 
-        assert ":::note" in html
-        assert ":::faq" not in html
+        assert ":::bar" in html
+        assert ":::foo" not in html
         assert "zewnątrz" in html
         assert "wewnątrz" in html
-        assert _non_empty_lines(markdown) == ["zewnątrz", ":::note", "wewnątrz"]
+        assert _non_empty_lines(markdown) == ["zewnątrz", ":::bar", "wewnątrz"]
 
     def test_empty_container_renders_without_markers(self):
-        html = render_post_html(":::faq\n:::")
-        markdown = render_post_markdown(":::faq\n:::")
+        html = render_post_html(":::foo\n:::")
+        markdown = render_post_markdown(":::foo\n:::")
 
         assert ":::" not in html
         assert markdown.strip() == ""
@@ -767,7 +770,9 @@ class TestContainers:
         [
             pytest.param(":::", id="lone-marker"),
             pytest.param(":::\n:::", id="two-markers-no-type"),
-            pytest.param(':::faq title="niezamknięty\n:::', id="broken-attribute"),
+            pytest.param(':::foo title="niezamknięty\n:::', id="broken-attribute"),
+            pytest.param(':::faq title="niezamknięty\n:::', id="broken-attribute-known-type"),
+            pytest.param(':::compare highlight="2\n| a | b |\n|---|---|\n| 1 | 2 |\n:::', id="broken-attribute-compare"),
             pytest.param("> [!NOTE]", id="alert-without-body"),
             pytest.param("> [!NOTE]\n", id="alert-trailing-newline"),
             pytest.param("```", id="lone-fence"),
@@ -795,9 +800,9 @@ class TestContainers:
         assert "script" not in _tags(html)
 
     def test_unclosed_fence_with_container_marker_inside_does_not_raise(self):
-        html = render_post_html("```\n:::faq\nw kodzie bez zamknięcia")
+        html = render_post_html("```\n:::foo\nw kodzie bez zamknięcia")
 
-        assert ":::faq" in html
+        assert ":::foo" in html
         assert "w kodzie bez zamknięcia" in html
 
 
@@ -826,23 +831,23 @@ class TestStripBlockMarkers:
         assert strip_block_markers(source) == source
 
     def test_closed_container_markers_are_removed_and_inner_stays(self):
-        result = strip_block_markers("przed\n:::faq\nwnętrze\n:::\npo")
+        result = strip_block_markers("przed\n:::foo\nwnętrze\n:::\npo")
 
         assert _non_empty_lines(result) == ["przed", "wnętrze", "po"]
 
     def test_container_attributes_are_removed_with_the_marker_line(self):
-        result = strip_block_markers(':::faq title="Pytania"\nwnętrze\n:::')
+        result = strip_block_markers(':::foo title="Pytania"\nwnętrze\n:::')
 
         assert "Pytania" not in result
         assert _non_empty_lines(result) == ["wnętrze"]
 
     def test_unclosed_container_is_unchanged(self):
-        source = ":::faq\nTekst bez zamknięcia."
+        source = ":::foo\nTekst bez zamknięcia."
 
         assert strip_block_markers(source) == source
 
     def test_markers_inside_code_fence_stay(self):
-        source = "```\n> [!NOTE]\n:::faq\nkod\n:::\n```"
+        source = "```\n> [!NOTE]\n:::foo\nkod\n:::\n```"
 
         assert strip_block_markers(source) == source
 
@@ -891,7 +896,7 @@ class TestRenderFailureFallbacks:
         assert "&lt;script&gt;" in html
 
     def test_markdown_twin_failure_returns_source_unchanged(self):
-        source = ":::faq\nwnętrze\n:::"
+        source = ":::foo\nwnętrze\n:::"
 
         with patch("monolynx.services.blog_blocks._resolve_containers", side_effect=RuntimeError("boom")):
             result = render_post_markdown(source)
@@ -899,7 +904,7 @@ class TestRenderFailureFallbacks:
         assert result.strip() == source
 
     def test_strip_block_markers_failure_returns_source_unchanged(self):
-        source = ":::faq\nwnętrze\n:::"
+        source = ":::foo\nwnętrze\n:::"
 
         with patch("monolynx.services.blog_blocks._resolve_containers", side_effect=RuntimeError("boom")):
             result = strip_block_markers(source)
@@ -977,3 +982,1093 @@ class TestLongInputs:
 
         assert "<figcaption>Jan Kowalski</figcaption>" in html
         assert "<figure" in html
+
+
+# ---------------------------------------------------------------------------
+# MON-256: kontenery strukturalne. Drzewo DOM do asercji na strukturze (np. "druga kolumna",
+# "trzy elementy details"), bo samo szukanie podciagow tego nie rozroznia.
+# ---------------------------------------------------------------------------
+
+_VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"})
+
+
+class _Node:
+    def __init__(self, tag: str, attrs: dict[str, str]) -> None:
+        self.tag = tag
+        self.attrs = attrs
+        self.children: list[_Node | str] = []
+
+    @property
+    def classes(self) -> list[str]:
+        return self.attrs.get("class", "").split()
+
+    def elements(self) -> list["_Node"]:
+        return [child for child in self.children if isinstance(child, _Node)]
+
+    def descendants(self) -> list["_Node"]:
+        found: list[_Node] = []
+        for child in self.elements():
+            found.append(child)
+            found.extend(child.descendants())
+        return found
+
+    def text(self) -> str:
+        parts = [child if isinstance(child, str) else child.text() for child in self.children]
+        return " ".join("".join(parts).split())
+
+
+class _Tree(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root = _Node("root", {})
+        self._stack = [self.root]
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        node = _Node(tag, {name: value or "" for name, value in attrs})
+        self._stack[-1].children.append(node)
+        if tag not in _VOID_TAGS:
+            self._stack.append(node)
+
+    def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self._stack) - 1, 0, -1):
+            if self._stack[index].tag == tag:
+                del self._stack[index:]
+                return
+
+    def handle_data(self, data: str) -> None:
+        self._stack[-1].children.append(data)
+
+
+def _dom(html: str) -> _Node:
+    tree = _Tree()
+    tree.feed(html)
+    tree.close()
+    return tree.root
+
+
+def _find(root: _Node, tag: str | None = None, cls: str | None = None) -> list[_Node]:
+    return [node for node in root.descendants() if (tag is None or node.tag == tag) and (cls is None or cls in node.classes)]
+
+
+def _one(root: _Node, tag: str, cls: str | None = None) -> _Node:
+    found = _find(root, tag, cls)
+    assert len(found) == 1, f"oczekiwano jednego <{tag} class={cls}>, jest {len(found)}"
+    return found[0]
+
+
+def _block_classes(html: str, prefix: str) -> list[str]:
+    return sorted({token for _, attrs in _parse(html) for token in attrs.get("class", "").split() if token.startswith(prefix)})
+
+
+def _inner_lines(source: str) -> list[str]:
+    return [line for line in source.splitlines()[1:-1] if line.strip()]
+
+
+def _marker_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.startswith(":::")]
+
+
+def _extract(markdown_text: str) -> dict:
+    return blog_blocks.extract_structured_data(markdown_text)
+
+
+class _Sample(NamedTuple):
+    wrapper: str
+    source: str
+    label: str
+
+
+_FAQ = (
+    ":::faq\n"
+    "### Jak zacząć?\nZałóż konto i utwórz **projekt**.\n\n"
+    "### Co z danymi?\nDane są szyfrowane.\n\n"
+    "### Ile to kosztuje?\nPierwszy projekt jest darmowy.\n"
+    ":::"
+)
+_STEPS = (
+    ":::steps\n"
+    "1. **Zarejestruj konto** Wejdź na stronę i załóż konto.\n"
+    "2. **Utwórz projekt** Nadaj mu nazwę.\n"
+    "3. **Zaproś zespół** Wyślij zaproszenia.\n"
+    "4. **Zacznij pracę** Dodaj pierwszy ticket.\n"
+    ":::"
+)
+_STATS = ":::stats\n- **99,9%** - dostępność usługi\n- **120** - gotowych integracji\n- **3 min** - czas wdrożenia\n:::"
+_TABLE = "| Funkcja | Monolynx | Konkurent |\n|---|---|---|\n| Wiki | tak | nie |\n| Scrum | tak | tak |"
+_COMPARE = f':::compare highlight="2"\n{_TABLE}\n:::'
+_DETAILS = ":::details Czy dane są bezpieczne?\nDane są **szyfrowane** w spoczynku.\n\nDrugi akapit odpowiedzi.\n:::"
+_GALLERY = ":::gallery\n![Wieczór](https://example.com/a.png)\n![Ranek](https://example.com/b.png)\n![Południe](https://example.com/c.png)\n:::"
+_VIDEO_DESCRIPTION = "Opis wideo o **Monolynx**."
+_VIDEO = f":::video\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n{_VIDEO_DESCRIPTION}\n:::"
+_CTA = ":::cta\nGotowy na zmianę? [Załóż konto](https://monolynx.com/register)\n:::"
+_GLOSSARY = (
+    ":::glossary\n- **Sprint** - iteracja pracy zespołu\n- **Ticket** - jednostka pracy w backlogu\n- **Burndown** - wykres postępu sprintu\n:::"
+)
+
+_SAMPLES = {
+    "faq": _Sample("blog-faq", _FAQ, "**FAQ**"),
+    "steps": _Sample("blog-steps", _STEPS, "**Kroki**"),
+    "stats": _Sample("blog-stats", _STATS, "**Statystyki**"),
+    "compare": _Sample("blog-compare", _COMPARE, "**Porównanie**"),
+    "details": _Sample("blog-details", _DETAILS, "**Czy dane są bezpieczne?**"),
+    "gallery": _Sample("blog-gallery", _GALLERY, "**Galeria**"),
+    "video": _Sample("blog-video", _VIDEO, "**Wideo**"),
+    "cta": _Sample("blog-cta", _CTA, "**Wezwanie do działania**"),
+    "glossary": _Sample("blog-glossary", _GLOSSARY, "**Słownik**"),
+}
+_EVERY_SAMPLE = [pytest.param(sample, id=name) for name, sample in _SAMPLES.items()]
+_BLOCK_NAMES = list(_SAMPLES)
+
+# Zla struktura wnetrza: kontener degraduje do zwyklego markdownu (decyzja 6).
+_BROKEN_STRUCTURE = {
+    "faq": "Tylko akapit bez pytań.",
+    "steps": "- punkt bez numeru\n- drugi punkt",
+    "stats": "Akapit zamiast listy statystyk.",
+    "compare": "Akapit bez tabeli.",
+    "gallery": "Tekst bez obrazków.",
+    "glossary": "Akapit zamiast listy pojęć.",
+    "video": "Sam opis bez adresu.",
+    "cta": "Tekst bez linku.",
+}
+
+
+# ---------------------------------------------------------------------------
+# Wspolne wlasciwosci wszystkich 9 kontenerow
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestEveryContainerType:
+    @pytest.mark.parametrize("sample", _EVERY_SAMPLE)
+    def test_html_block_is_a_single_top_level_element_between_surrounding_paragraphs(self, sample):
+        html = render_post_html(f"przed\n\n{sample.source}\n\npo")
+
+        top = _dom(html).elements()
+        assert len(top) == 3
+        assert (top[0].tag, top[0].text()) == ("p", "przed")
+        assert (top[2].tag, top[2].text()) == ("p", "po")
+        assert sample.wrapper in top[1].classes
+        assert ":::" not in html
+        assert "blogblock" not in html
+
+    @pytest.mark.parametrize("sample", _EVERY_SAMPLE)
+    def test_markdown_twin_has_label_then_inner_and_no_marker_lines(self, sample):
+        result = render_post_markdown(f"przed\n\n{sample.source}\n\npo")
+
+        assert _non_empty_lines(result) == ["przed", sample.label, *_inner_lines(sample.source), "po"]
+        assert _marker_lines(result) == []
+
+    @pytest.mark.parametrize("sample", _EVERY_SAMPLE)
+    def test_opener_attributes_never_become_classes_ids_or_handlers(self, sample):
+        opener, _, rest = sample.source.partition("\n")
+        source = f'{opener} class="evil" id="evil" onclick="alert(1)"\n{rest}'
+
+        html = render_post_html(source)
+
+        assert "evil" not in [token for _, attrs in _parse(html) for token in attrs.get("class", "").split()]
+        assert "evil" not in _all_ids(html)
+        assert _event_attrs(html) == []
+
+    @pytest.mark.parametrize("sample", _EVERY_SAMPLE)
+    def test_unclosed_container_stays_plain_text(self, sample):
+        source = sample.source.removesuffix("\n:::")
+
+        html = render_post_html(source)
+
+        assert _block_classes(html, sample.wrapper) == []
+        assert render_post_markdown(source).strip() == source
+
+    @pytest.mark.parametrize("sample", _EVERY_SAMPLE)
+    def test_container_inside_code_fence_is_not_rendered(self, sample):
+        source = f"```\n{sample.source}\n```"
+
+        html = render_post_html(source)
+
+        assert _block_classes(html, sample.wrapper) == []
+        assert _block_classes(html, "blog-code") == ["blog-code", "blog-code-copy", "blog-code-header"]
+        assert render_post_markdown(source).strip() == source
+
+    @pytest.mark.parametrize("name", _BLOCK_NAMES)
+    def test_empty_container_degrades_without_wrapper_label_or_markers(self, name):
+        source = f":::{name}\n:::"
+
+        html = render_post_html(source)
+        markdown = render_post_markdown(source)
+
+        assert _block_classes(html, _SAMPLES[name].wrapper) == []
+        assert ":::" not in html
+        assert markdown.strip() == ""
+
+    @pytest.mark.parametrize("name", list(_BROKEN_STRUCTURE))
+    def test_wrong_structure_degrades_to_plain_markdown_and_keeps_inner_text(self, name):
+        inner = _BROKEN_STRUCTURE[name]
+        source = f":::{name}\n{inner}\n:::"
+
+        html = render_post_html(source)
+        markdown = render_post_markdown(source)
+
+        assert _block_classes(html, _SAMPLES[name].wrapper) == []
+        assert ":::" not in html
+        for fragment in (line.removeprefix("- ") for line in inner.splitlines()):
+            assert fragment in _dom(html).text()
+            assert fragment in markdown
+        assert _marker_lines(markdown) == []
+
+    @pytest.mark.parametrize(
+        "inner",
+        [
+            pytest.param("Tekst obok.\n![Ranek](https://example.com/a.png)", id="text-before-image"),
+            pytest.param("![Ranek](https://example.com/a.png)\n\nTekst obok.", id="text-after-image"),
+        ],
+    )
+    def test_gallery_with_text_next_to_images_degrades_and_keeps_both(self, inner):
+        html = render_post_html(f":::gallery\n{inner}\n:::")
+        root = _dom(html)
+
+        assert _block_classes(html, "blog-gallery") == []
+        assert "Tekst obok." in root.text()
+        assert [img.attrs["src"] for img in _find(root, "img")] == ["https://example.com/a.png"]
+
+    @pytest.mark.parametrize(
+        ("name", "inner", "needles"),
+        [
+            pytest.param(
+                "faq", "Wstęp przed pytaniami.\n### Pytanie?\nOdpowiedź.", ["Wstęp przed pytaniami.", "Pytanie?", "Odpowiedź."], id="faq-preamble"
+            ),
+            pytest.param("faq", "###\nOdpowiedź bez pytania.", ["Odpowiedź bez pytania."], id="faq-empty-heading"),
+            pytest.param("steps", "Wstęp przed listą.\n1. **A** opis", ["Wstęp przed listą.", "opis"], id="steps-preamble"),
+            pytest.param("stats", "- **1** - opis\nZwykły tekst obok.", ["opis", "Zwykły tekst obok."], id="stats-stray-line"),
+            pytest.param("glossary", "- **Termin** - definicja\nZwykły tekst obok.", ["definicja", "Zwykły tekst obok."], id="glossary-stray-line"),
+        ],
+    )
+    def test_stray_text_next_to_structure_degrades_and_keeps_everything(self, name, inner, needles):
+        html = render_post_html(f":::{name}\n{inner}\n:::")
+
+        assert _block_classes(html, _SAMPLES[name].wrapper) == []
+        for needle in needles:
+            assert needle in _dom(html).text()
+
+    def test_heading_line_inside_answer_code_fence_is_not_a_question(self):
+        source = ":::faq\n### Jak?\n```\n### Komentarz\n```\nDalej.\n:::"
+
+        items = _find(_dom(render_post_html(source)), "details", "blog-faq-item")
+
+        assert len(items) == 1
+        assert _one(items[0], "summary", "blog-faq-question").text() == "Jak?"
+
+    def test_compare_with_highlight_but_no_table_degrades(self):
+        source = ':::compare highlight="2"\nAkapit bez tabeli.\n:::'
+
+        html = render_post_html(source)
+
+        assert _block_classes(html, "blog-compare") == []
+        assert "Akapit bez tabeli." in html
+
+    @pytest.mark.parametrize("sample", _EVERY_SAMPLE)
+    def test_raw_iframe_inside_and_outside_the_container_is_removed(self, sample):
+        lines = sample.source.splitlines()
+        outside = '<iframe src="https://evil.example/a"></iframe>'
+        inside = '<iframe src="https://evil.example/b"></iframe>'
+        source = "\n".join([outside, "", *lines[:-1], "", inside, lines[-1]])
+
+        html = render_post_html(source)
+
+        assert "iframe" not in _tags(html)
+        assert [value for _, _, value in _attr_pairs(html) if "evil.example" in value] == []
+
+    def test_block_coexists_with_callout_and_titled_code(self):
+        source = f'> [!NOTE]\n> Treść alertu.\n\n{_FAQ}\n\n```python title="a.py"\nprint(1)\n```'
+
+        root = _dom(render_post_html(source))
+
+        assert len(_find(root, "aside", "blog-callout")) == 1
+        assert len(_find(root, "details", "blog-faq-item")) == 3
+        assert _one(root, "span", "blog-code-title").text() == "a.py"
+
+    def test_faq_questions_do_not_consume_heading_slugs(self):
+        html = render_post_html(f"{_FAQ}\n\n## Jak zacząć?")
+
+        assert _heading_ids(html) == [("h2", "jak-zaczac")]
+
+    def test_marker_line_inside_fence_does_not_close_the_container_early(self):
+        source = ":::faq\n### Jak?\n```\n:::\n```\nDalej.\n:::"
+
+        root = _dom(render_post_html(source))
+
+        items = _find(root, "details", "blog-faq-item")
+        assert len(items) == 1
+        assert "Dalej." in items[0].text()
+
+
+# ---------------------------------------------------------------------------
+# faq
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestFaqBlock:
+    def test_three_questions_render_three_details_in_source_order(self):
+        root = _dom(render_post_html(_FAQ))
+
+        items = _find(_one(root, "div", "blog-faq"), "details", "blog-faq-item")
+        assert len(items) == 3
+        assert [_one(item, "summary", "blog-faq-question").text() for item in items] == ["Jak zacząć?", "Co z danymi?", "Ile to kosztuje?"]
+        assert [_one(item, "div", "blog-faq-answer").text() for item in items] == [
+            "Załóż konto i utwórz projekt.",
+            "Dane są szyfrowane.",
+            "Pierwszy projekt jest darmowy.",
+        ]
+
+    def test_answer_is_rendered_as_markdown_and_question_heading_is_consumed(self):
+        root = _dom(render_post_html(_FAQ))
+
+        faq = _one(root, "div", "blog-faq")
+        assert [node.text() for node in _find(faq, "strong")] == ["projekt"]
+        assert _find(faq, "h3") == []
+
+    def test_multi_paragraph_answer_stays_in_its_own_item(self):
+        source = ":::faq\n### Pierwsze?\nAkapit 1.\n\nAkapit 2.\n\n- punkt\n\n### Drugie?\nKrótko.\n:::"
+
+        root = _dom(render_post_html(source))
+
+        items = _find(root, "details", "blog-faq-item")
+        assert len(items) == 2
+        first = _one(items[0], "div", "blog-faq-answer")
+        assert [node.text() for node in _find(first, "p")] == ["Akapit 1.", "Akapit 2."]
+        assert [node.text() for node in _find(first, "li")] == ["punkt"]
+        assert _one(items[1], "div", "blog-faq-answer").text() == "Krótko."
+
+
+# ---------------------------------------------------------------------------
+# steps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestStepsBlock:
+    def test_four_points_render_four_steps_with_names_in_source_order(self):
+        root = _dom(render_post_html(_STEPS))
+
+        steps = _find(_one(root, "ol", "blog-steps"), "li", "blog-step")
+        assert len(steps) == 4
+        assert [_one(step, "span", "blog-step-name").text() for step in steps] == [
+            "Zarejestruj konto",
+            "Utwórz projekt",
+            "Zaproś zespół",
+            "Zacznij pracę",
+        ]
+        bodies = [_one(step, "div", "blog-step-body").text() for step in steps]
+        assert "Wejdź na stronę i załóż konto." in bodies[0]
+        assert "Dodaj pierwszy ticket." in bodies[3]
+
+    def test_point_without_bold_start_has_no_step_name(self):
+        source = ":::steps\n1. **Pierwszy** opis a\n2. Drugi bez pogrubienia\n3. **Trzeci** opis c\n:::"
+
+        steps = _find(_dom(render_post_html(source)), "li", "blog-step")
+
+        assert len(steps) == 3
+        assert [len(_find(step, "span", "blog-step-name")) for step in steps] == [1, 0, 1]
+        assert "Drugi bez pogrubienia" in _one(steps[1], "div", "blog-step-body").text()
+
+    def test_bold_in_the_middle_of_a_point_is_not_a_step_name(self):
+        source = ":::steps\n1. Zwykły krok z **pogrubieniem** w środku\n2. **Nazwa** opis\n:::"
+
+        steps = _find(_dom(render_post_html(source)), "li", "blog-step")
+
+        assert [len(_find(step, "span", "blog-step-name")) for step in steps] == [0, 1]
+
+
+# ---------------------------------------------------------------------------
+# stats
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestStatsBlock:
+    def test_each_list_item_is_a_stat_with_value_and_label_in_source_order(self):
+        root = _dom(render_post_html(_STATS))
+
+        stats = _find(_one(root, "div", "blog-stats"), "div", "blog-stat")
+        assert len(stats) == 3
+        assert [_one(stat, "span", "blog-stat-value").text() for stat in stats] == ["99,9%", "120", "3 min"]
+        assert [_one(stat, "span", "blog-stat-label").text() for stat in stats] == ["dostępność usługi", "gotowych integracji", "czas wdrożenia"]
+
+
+# ---------------------------------------------------------------------------
+# compare
+# ---------------------------------------------------------------------------
+
+
+def _compare(highlight: str | None) -> str:
+    attribute = "" if highlight is None else f' highlight="{highlight}"'
+    return f":::compare{attribute}\n{_TABLE}\n:::"
+
+
+def _compare_rows(html: str) -> list[list[_Node]]:
+    table = _one(_dom(html), "table")
+    return [[cell for cell in row.elements() if cell.tag in {"th", "td"}] for row in _find(table, "tr")]
+
+
+def _highlighted_columns(html: str) -> list[int]:
+    rows = _compare_rows(html)
+    return sorted({index for row in rows for index, cell in enumerate(row) if "blog-compare-highlight" in cell.classes})
+
+
+@pytest.mark.unit
+class TestCompareBlock:
+    def test_table_is_wrapped_and_keeps_its_cells(self):
+        html = render_post_html(_compare(None))
+
+        _one(_dom(html), "div", "blog-compare")
+        rows = _compare_rows(html)
+        assert [cell.text() for cell in rows[0]] == ["Funkcja", "Monolynx", "Konkurent"]
+        assert [[cell.tag for cell in row] for row in rows] == [["th"] * 3, ["td"] * 3, ["td"] * 3]
+        assert [cell.text() for cell in rows[1]] == ["Wiki", "tak", "nie"]
+
+    def test_highlight_two_marks_second_column_in_header_and_body_cells(self):
+        html = render_post_html(_COMPARE)
+
+        rows = _compare_rows(html)
+        assert len(rows) == 3
+        assert _highlighted_columns(html) == [1]
+        assert all("blog-compare-highlight" in row[1].classes for row in rows)
+        assert all("blog-compare-highlight" not in row[index].classes for row in rows for index in (0, 2))
+
+    @pytest.mark.parametrize(("highlight", "column"), [("1", 0), ("2", 1), ("3", 2)])
+    def test_highlight_is_one_indexed_up_to_the_last_column(self, highlight, column):
+        assert _highlighted_columns(render_post_html(_compare(highlight))) == [column]
+
+    @pytest.mark.parametrize("highlight", [None, "abc", "0", "-1", "4", "99", ""])
+    def test_invalid_or_out_of_range_highlight_marks_no_cell_but_renders_the_table(self, highlight):
+        html = render_post_html(_compare(highlight))
+
+        _one(_dom(html), "div", "blog-compare")
+        assert len(_compare_rows(html)) == 3
+        assert _highlighted_columns(html) == []
+
+
+# ---------------------------------------------------------------------------
+# details
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestDetailsBlock:
+    def test_title_goes_to_summary_and_body_is_rendered_markdown(self):
+        root = _dom(render_post_html(_DETAILS))
+
+        details = _one(root, "details", "blog-details")
+        assert _one(details, "summary", "blog-details-summary").text() == "Czy dane są bezpieczne?"
+        body = _one(details, "div", "blog-details-body")
+        assert [node.text() for node in _find(body, "p")] == ["Dane są szyfrowane w spoczynku.", "Drugi akapit odpowiedzi."]
+        assert [node.text() for node in _find(body, "strong")] == ["szyfrowane"]
+        assert "Czy dane" not in body.text()
+
+    def test_title_without_text_falls_back_to_szczegoly(self):
+        html = render_post_html(":::details\nTreść ukryta.\n:::")
+
+        details = _one(_dom(html), "details", "blog-details")
+        assert _one(details, "summary", "blog-details-summary").text() == "Szczegóły"
+        assert "Treść ukryta." in _one(details, "div", "blog-details-body").text()
+
+    def test_markdown_twin_without_title_uses_szczegoly_label(self):
+        result = render_post_markdown(":::details\nTreść ukryta.\n:::")
+
+        assert _non_empty_lines(result) == ["**Szczegóły**", "Treść ukryta."]
+
+    def test_title_with_special_characters_is_escaped_exactly_once(self):
+        html = render_post_html(":::details Tom & Jerry <3\nTreść.\n:::")
+
+        summary = _one(_dom(html), "summary", "blog-details-summary")
+        assert summary.text() == "Tom & Jerry <3"
+
+    def test_title_with_markup_does_not_create_elements_or_handlers(self):
+        html = render_post_html(':::details x"><img src=x onerror=alert(1)>\nTreść.\n:::')
+
+        assert _event_attrs(html) == []
+        assert _tags(html).count("details") == 1
+        assert _tags(html).count("summary") == 1
+
+
+# ---------------------------------------------------------------------------
+# gallery
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGalleryBlock:
+    @pytest.mark.parametrize("separator", ["\n", "\n\n"], ids=["same-paragraph", "separate-paragraphs"])
+    def test_each_image_is_a_figure_with_src_alt_and_lazy_loading_in_source_order(self, separator):
+        images = ["![Wieczór](https://example.com/a.png)", "![Ranek](https://example.com/b.png)", "![Południe](https://example.com/c.png)"]
+        source = ":::gallery\n" + separator.join(images) + "\n:::"
+
+        gallery = _one(_dom(render_post_html(source)), "div", "blog-gallery")
+
+        figures = _find(gallery, "figure", "blog-gallery-item")
+        assert len(figures) == 3
+        imgs = [_one(figure, "img") for figure in figures]
+        assert [img.attrs["alt"] for img in imgs] == ["Wieczór", "Ranek", "Południe"]
+        assert [img.attrs["src"] for img in imgs] == ["https://example.com/a.png", "https://example.com/b.png", "https://example.com/c.png"]
+        assert [img.attrs.get("loading") for img in imgs] == ["lazy"] * 3
+
+    def test_image_with_empty_alt_still_has_an_alt_attribute(self):
+        html = render_post_html(":::gallery\n![](https://example.com/a.png)\n:::")
+
+        imgs = _find(_dom(html), "img")
+        assert len(imgs) == 1
+        assert "alt" in imgs[0].attrs
+
+    def test_alt_cannot_break_out_of_the_attribute(self):
+        html = render_post_html(':::gallery\n![x" onerror="alert(1)](https://example.com/a.png)\n:::')
+
+        assert _event_attrs(html) == []
+        assert len(_find(_dom(html), "img")) == 1
+
+    @pytest.mark.parametrize("src", ["javascript:alert(1)", "data:image/png;base64,AAAA"])
+    def test_unsafe_image_source_never_reaches_the_result(self, src):
+        html = render_post_html(f":::gallery\n![x]({src})\n:::")
+
+        assert _unsafe_urls(html) == []
+        assert _block_classes(html, "blog-gallery") == []
+
+    def test_image_with_rejected_source_is_skipped_while_valid_one_stays(self):
+        html = render_post_html(":::gallery\n![zły](javascript:alert(1))\n![dobry](https://example.com/ok.png)\n:::")
+
+        gallery = _one(_dom(html), "div", "blog-gallery")
+        figures = _find(gallery, "figure", "blog-gallery-item")
+        assert len(figures) == 1
+        assert _one(figures[0], "img").attrs["src"] == "https://example.com/ok.png"
+        assert _unsafe_urls(html) == []
+
+
+# ---------------------------------------------------------------------------
+# video
+# ---------------------------------------------------------------------------
+
+_VIDEO_TEXT = "Opis wideo o Monolynx."
+_VIDEO_ACCEPTED = [
+    pytest.param("https://youtube.com/watch?v=dQw4w9WgXcQ", "youtube", "dQw4w9WgXcQ", id="youtube.com"),
+    pytest.param("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube", "dQw4w9WgXcQ", id="www.youtube.com"),
+    pytest.param("https://m.youtube.com/watch?v=dQw4w9WgXcQ", "youtube", "dQw4w9WgXcQ", id="m.youtube.com"),
+    pytest.param("https://youtu.be/dQw4w9WgXcQ", "youtube", "dQw4w9WgXcQ", id="youtu.be"),
+    pytest.param("https://vimeo.com/123456789", "vimeo", "123456789", id="vimeo.com"),
+    pytest.param("https://www.vimeo.com/123456789", "vimeo", "123456789", id="www.vimeo.com"),
+    pytest.param("https://player.vimeo.com/video/123456789", "vimeo", "123456789", id="player.vimeo.com"),
+    # Granice identyfikatora: YouTube 6..20 znakow [A-Za-z0-9_-], Vimeo cyfry.
+    pytest.param("https://www.youtube.com/watch?v=abcdef", "youtube", "abcdef", id="youtube-id-min-6"),
+    pytest.param(f"https://www.youtube.com/watch?v={'a' * 20}", "youtube", "a" * 20, id="youtube-id-max-20"),
+    pytest.param("https://www.youtube.com/watch?v=abc_-DEF12", "youtube", "abc_-DEF12", id="youtube-id-charset"),
+    pytest.param("https://vimeo.com/1", "vimeo", "1", id="vimeo-id-single-digit"),
+]
+# Poprawny schemat https, ale host spoza dokladnej listy albo zly id: renderuje sie opis + zwykly link.
+_VIDEO_LINKED_REJECTS = [
+    pytest.param("https://evil.com/watch?v=dQw4w9WgXcQ", id="foreign-host"),
+    pytest.param("https://youtube.com.evil.com/watch?v=dQw4w9WgXcQ", id="youtube-as-subdomain-prefix"),
+    pytest.param("https://www.youtube.com.evil.com/watch?v=dQw4w9WgXcQ", id="www-youtube-as-subdomain-prefix"),
+    pytest.param("https://vimeo.com.evil.com/123456789", id="vimeo-as-subdomain-prefix"),
+    pytest.param("https://evil.com/youtube.com/watch?v=dQw4w9WgXcQ", id="whitelisted-host-in-path"),
+    pytest.param("https://notyoutube.com/watch?v=dQw4w9WgXcQ", id="host-suffix-match"),
+    pytest.param("https://evilvimeo.com/123456789", id="vimeo-suffix-match"),
+    pytest.param("https://youtube.com@evil.com/watch?v=dQw4w9WgXcQ", id="userinfo-trick"),
+    pytest.param("https://music.youtube.com/watch?v=dQw4w9WgXcQ", id="subdomain-not-on-list"),
+    pytest.param("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", id="nocookie-not-on-list"),
+    pytest.param("http://www.youtube.com/watch?v=dQw4w9WgXcQ", id="http-youtube"),
+    pytest.param("http://youtu.be/dQw4w9WgXcQ", id="http-youtu.be"),
+    pytest.param("http://vimeo.com/123456789", id="http-vimeo"),
+    pytest.param("https://www.youtube.com/watch?v=abcde", id="youtube-id-too-short-5"),
+    pytest.param(f"https://www.youtube.com/watch?v={'a' * 21}", id="youtube-id-too-long-21"),
+    pytest.param("https://user@www.youtube.com/watch?v=dQw4w9WgXcQ", id="userinfo-on-whitelisted-host"),
+    pytest.param("https://www.youtube.com:8443/watch?v=dQw4w9WgXcQ", id="port-on-whitelisted-host"),
+    pytest.param("https://www.youtube.com/embed/x?v=dQw4w9WgXcQ", id="youtube-path-not-watch"),
+    pytest.param("https://www.youtube.com/watch?v=dQw4w9WgXcQ&v=abcdefgh", id="youtube-double-v"),
+    pytest.param("https://www.youtube.com/watch", id="youtube-no-v"),
+    pytest.param("https://www.youtube.com/watch?v=", id="youtube-empty-v"),
+    pytest.param("https://www.youtube.com/watch?v=abc.defghi", id="youtube-id-bad-char"),
+    pytest.param("https://youtu.be/abcde", id="youtu.be-id-too-short"),
+    pytest.param("https://vimeo.com/12a45", id="vimeo-id-not-digits"),
+    pytest.param("https://player.vimeo.com/video/abc", id="player-vimeo-id-not-digits"),
+]
+# Schemat inny niz http/https: ani blok, ani link.
+_VIDEO_UNLINKED_REJECTS = [
+    pytest.param("javascript:alert(1)", id="javascript"),
+    pytest.param("ftp://www.youtube.com/watch?v=dQw4w9WgXcQ", id="ftp"),
+    pytest.param("data:text/html;base64,AAAA", id="data"),
+    pytest.param("vbscript:msgbox(1)", id="vbscript"),
+]
+
+
+def _video(url: str, description: str = _VIDEO_DESCRIPTION) -> str:
+    return f":::video\n{url}\n\n{description}\n:::"
+
+
+@pytest.mark.unit
+class TestVideoBlock:
+    @pytest.mark.parametrize(("url", "provider", "video_id"), _VIDEO_ACCEPTED)
+    def test_whitelisted_host_renders_click_to_play_placeholder(self, url, provider, video_id):
+        root = _dom(render_post_html(_video(url)))
+
+        block = _one(root, "div", "blog-video")
+        assert block.attrs["data-provider"] == provider
+        assert block.attrs["data-video-id"] == video_id
+        play = _one(block, "a", "blog-video-play")
+        assert play.attrs["href"] == url
+        assert play.attrs["target"] == "_blank"
+        assert {"noopener", "noreferrer", "nofollow"} <= set(play.attrs["rel"].split())
+        caption = _one(block, "div", "blog-video-caption")
+        assert caption.text() == _VIDEO_TEXT
+        assert [node.text() for node in _find(caption, "strong")] == ["Monolynx"]
+
+    @pytest.mark.parametrize(("url", "provider", "video_id"), _VIDEO_ACCEPTED[:7])
+    def test_whitelisted_video_makes_no_external_request_before_click(self, url, provider, video_id):
+        html = render_post_html(_video(url))
+
+        assert {"iframe", "img", "video", "embed", "object", "source", "script"}.isdisjoint(_tags(html))
+        assert [name for _, name, _ in _attr_pairs(html) if name in {"src", "srcset", "data-src", "poster"}] == []
+        assert "ytimg" not in html
+        assert "vimeocdn" not in html
+
+    @pytest.mark.parametrize("url", _VIDEO_LINKED_REJECTS)
+    def test_rejected_address_renders_description_and_plain_link_without_video_markup(self, url):
+        html = render_post_html(_video(url))
+        root = _dom(html)
+
+        assert _block_classes(html, "blog-video") == []
+        assert "data-video-id" not in html
+        assert "data-provider" not in html
+        assert {"iframe", "img"}.isdisjoint(_tags(html))
+        assert _VIDEO_TEXT in root.text()
+        links = _find(root, "a")
+        assert [link.attrs["href"] for link in links] == [url]
+        assert "nofollow" in links[0].attrs["rel"].split()
+
+    @pytest.mark.parametrize("url", _VIDEO_UNLINKED_REJECTS)
+    def test_non_http_scheme_renders_description_only_without_link(self, url):
+        html = render_post_html(_video(url))
+        root = _dom(html)
+
+        assert _block_classes(html, "blog-video") == []
+        assert "data-video-id" not in html
+        assert _find(root, "a") == []
+        assert _unsafe_urls(html) == []
+        assert _VIDEO_TEXT in root.text()
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            pytest.param('https://evil.example.com/"onmouseover="alert(1)', id="foreign-host"),
+            pytest.param('https://www.youtube.com/watch?v=abcdef"onmouseover="alert(1)', id="whitelisted-host-bad-id"),
+        ],
+    )
+    def test_quote_breakout_in_address_never_adds_an_attribute(self, url):
+        html = render_post_html(_video(url))
+
+        assert _event_attrs(html) == []
+        assert _block_classes(html, "blog-video") == []
+
+    def test_unparsable_address_renders_description_only_without_address_or_link(self):
+        html = render_post_html(_video("https://[bad/watch?v=dQw4w9WgXcQ", "Opis."))
+        root = _dom(html)
+
+        assert _block_classes(html, "blog-video") == []
+        assert _find(root, "a") == []
+        assert root.text() == "Opis."
+        assert "bad" not in html
+
+    def test_video_without_address_keeps_only_the_description(self):
+        html = render_post_html(":::video\nSam opis bez adresu.\n:::")
+
+        assert _block_classes(html, "blog-video") == []
+        assert "Sam opis bez adresu." in _dom(html).text()
+        assert _find(_dom(html), "a") == []
+
+
+# ---------------------------------------------------------------------------
+# cta
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCtaBlock:
+    @pytest.mark.parametrize(
+        "inner",
+        [
+            pytest.param("Gotowy na zmianę? [Załóż konto](https://monolynx.com/register)", id="link-inside-paragraph"),
+            pytest.param("Gotowy na zmianę?\n\n[Załóż konto](https://monolynx.com/register)", id="link-in-own-paragraph"),
+        ],
+    )
+    def test_paragraph_and_exactly_one_link_render_a_button(self, inner):
+        root = _dom(render_post_html(f":::cta\n{inner}\n:::"))
+
+        cta = _one(root, "div", "blog-cta")
+        button = _one(cta, "a", "blog-cta-button")
+        assert button.attrs["href"] == "https://monolynx.com/register"
+        assert button.text() == "Załóż konto"
+        assert "Gotowy na zmianę?" in _one(cta, "p", "blog-cta-text").text()
+
+    def test_no_link_renders_inner_as_plain_markdown(self):
+        html = render_post_html(":::cta\nTekst bez **linku**.\n:::")
+        root = _dom(html)
+
+        assert _block_classes(html, "blog-cta") == []
+        assert _find(root, "a") == []
+        assert [node.text() for node in _find(root, "strong")] == ["linku"]
+        assert "Tekst bez linku." in root.text()
+
+    def test_link_with_empty_label_renders_inner_as_plain_markdown(self):
+        html = render_post_html(":::cta\nZachęta [](https://example.com/start)\n:::")
+
+        assert _block_classes(html, "blog-cta") == []
+        assert "Zachęta" in _dom(html).text()
+
+    def test_sole_link_without_paragraph_renders_inner_as_plain_markdown(self):
+        html = render_post_html(":::cta\n[Załóż konto](https://example.com/start)\n:::")
+        root = _dom(html)
+
+        assert _block_classes(html, "blog-cta") == []
+        links = _find(root, "a")
+        assert [(link.attrs["href"], link.text()) for link in links] == [("https://example.com/start", "Załóż konto")]
+
+    def test_paragraph_with_link_plus_list_renders_inner_as_plain_markdown(self):
+        html = render_post_html(":::cta\nZachęta [Załóż konto](https://example.com/start)\n\n- punkt pierwszy\n- punkt drugi\n:::")
+        root = _dom(html)
+
+        assert _block_classes(html, "blog-cta") == []
+        assert [node.text() for node in _find(root, "li")] == ["punkt pierwszy", "punkt drugi"]
+        assert [link.attrs["href"] for link in _find(root, "a")] == ["https://example.com/start"]
+
+    def test_two_links_render_inner_as_plain_markdown_with_both_links(self):
+        html = render_post_html(":::cta\nZobacz [pierwszy](https://example.com/1) albo [drugi](https://example.com/2).\n:::")
+        root = _dom(html)
+
+        assert _block_classes(html, "blog-cta") == []
+        assert [link.attrs["href"] for link in _find(root, "a")] == ["https://example.com/1", "https://example.com/2"]
+        assert [link.text() for link in _find(root, "a")] == ["pierwszy", "drugi"]
+
+    @pytest.mark.parametrize("url", ["javascript:alert(1)", "data:text/html,aaa"])
+    def test_single_link_with_unsafe_scheme_never_yields_an_unsafe_href(self, url):
+        html = render_post_html(f":::cta\nKliknij [tutaj]({url})\n:::")
+
+        assert _unsafe_urls(html) == []
+        assert "javascript:" not in html.lower()
+
+    def test_href_with_quotes_stays_inside_the_attribute(self):
+        html = render_post_html(':::cta\nKliknij [tutaj](https://example.com/?a="onclick="alert(1))\n:::')
+
+        assert _event_attrs(html) == []
+        for node in _find(_dom(html), "a"):
+            assert set(node.attrs) <= {"class", "href", "rel", "target", "title"}
+
+
+# ---------------------------------------------------------------------------
+# glossary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGlossaryBlock:
+    def test_each_list_item_is_a_dt_dd_pair_in_source_order(self):
+        glossary = _one(_dom(render_post_html(_GLOSSARY)), "dl", "blog-glossary")
+
+        elements = glossary.elements()
+        assert [node.tag for node in elements] == ["dt", "dd"] * 3
+        assert [node.text() for node in elements[0::2]] == ["Sprint", "Ticket", "Burndown"]
+        assert [node.text() for node in elements[1::2]] == ["iteracja pracy zespołu", "jednostka pracy w backlogu", "wykres postępu sprintu"]
+
+
+# ---------------------------------------------------------------------------
+# Wstrzykniecia przez kazde ujscie tresci autora w kontenerach
+# ---------------------------------------------------------------------------
+
+_PAYLOADS = [
+    pytest.param("<script>alert(1)</script>", id="script"),
+    pytest.param("<img src=x onerror=alert(1)>", id="img-onerror"),
+    pytest.param('"><img src=x onerror=alert(1)>', id="quote-breakout"),
+    pytest.param('<iframe src="https://evil.example/x"></iframe>', id="iframe"),
+]
+_INJECTION_SITES = [
+    pytest.param(":::details {p}\nTreść.\n:::", id="details-title"),
+    pytest.param(":::details Tytuł\n{p}\n:::", id="details-body"),
+    pytest.param(":::faq\n### {p}\nOdpowiedź.\n:::", id="faq-question"),
+    pytest.param(":::faq\n### Pytanie?\n{p}\n:::", id="faq-answer"),
+    pytest.param(":::steps\n1. **{p}** opis kroku\n2. **Drugi** opis\n:::", id="step-name"),
+    pytest.param(":::steps\n1. **Nazwa** {p}\n2. **Drugi** opis\n:::", id="step-body"),
+    pytest.param(":::stats\n- **{p}** - opis\n:::", id="stat-value"),
+    pytest.param(":::stats\n- **100** - {p}\n:::", id="stat-label"),
+    pytest.param(':::compare highlight="{p}"\n| a | b |\n|---|---|\n| 1 | 2 |\n:::', id="compare-highlight"),
+    pytest.param(':::compare highlight="2"\n| a | b |\n|---|---|\n| {p} | 2 |\n:::', id="compare-cell"),
+    pytest.param(":::gallery\n![{p}](https://example.com/a.png)\n:::", id="gallery-alt"),
+    pytest.param(":::glossary\n- **{p}** - definicja\n:::", id="glossary-term"),
+    pytest.param(":::glossary\n- **Termin** - {p}\n:::", id="glossary-definition"),
+    pytest.param(":::video\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n{p}\n:::", id="video-description"),
+    pytest.param(":::video\nhttps://www.youtube.com/watch?v={p}\n\nOpis.\n:::", id="video-id"),
+    pytest.param(":::video\nhttps://evil.example.com/{p}\n\nOpis.\n:::", id="video-foreign-url"),
+    pytest.param(":::cta\nZachęta {p} [Kliknij](https://example.com)\n:::", id="cta-text"),
+    pytest.param(":::cta\nZachęta [{p}](https://example.com)\n:::", id="cta-label"),
+]
+
+
+@pytest.mark.unit
+class TestInjectionsInContainers:
+    @pytest.mark.parametrize("payload", _PAYLOADS)
+    @pytest.mark.parametrize("template", _INJECTION_SITES)
+    def test_payload_never_becomes_script_iframe_handler_or_unsafe_url(self, template, payload):
+        source = template.replace("{p}", payload)
+
+        html = render_post_html(source)
+        markdown = render_post_markdown(source)
+
+        assert {"script", "iframe"}.isdisjoint(_tags(html))
+        assert _event_attrs(html) == []
+        assert _unsafe_urls(html) == []
+        assert "blogblock" not in html
+        assert isinstance(markdown, str)
+
+
+# ---------------------------------------------------------------------------
+# Zagniezdzenie, awarie rendererow
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestNestedContainers:
+    def test_container_inside_container_is_plain_text_of_the_outer_one(self):
+        source = ":::faq\n### Pytanie?\nOdpowiedź.\n:::cta\n[Załóż konto](https://example.com)\n:::"
+
+        html = render_post_html(source)
+        markdown = render_post_markdown(source)
+
+        root = _dom(html)
+        assert len(_find(root, "details", "blog-faq-item")) == 1
+        assert _block_classes(html, "blog-cta") == []
+        assert ":::cta" in root.text()
+        assert _non_empty_lines(markdown) == [
+            "**FAQ**",
+            "### Pytanie?",
+            "Odpowiedź.",
+            ":::cta",
+            "[Załóż konto](https://example.com)",
+        ]
+
+    @pytest.mark.parametrize("sample", _EVERY_SAMPLE)
+    def test_container_inside_attribute_value_does_not_become_a_block(self, sample):
+        source = f'<div>\n<img src="https://x/a.png" title="\n\n{sample.source}\n\n">\n</div>'
+
+        html = render_post_html(source)
+
+        assert "blogblock" not in html
+        assert _block_classes(html, "blog-") == []
+        assert {"details", "summary"}.isdisjoint(_tags(html))
+
+    def test_extra_closing_marker_after_container_does_not_raise(self):
+        source = f"{_FAQ}\n:::\n"
+
+        root = _dom(render_post_html(source))
+
+        assert len(_find(root, "details", "blog-faq-item")) == 3
+
+
+@pytest.mark.unit
+class TestContainerRendererFailures:
+    @staticmethod
+    def _definition(name: str, to_html, to_markdown) -> BlockDefinition:
+        return BlockDefinition(name=name, to_html=to_html, to_markdown=to_markdown)
+
+    @staticmethod
+    def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    def test_registered_html_renderer_output_is_used_for_that_type(self):
+        probe = self._definition("faq", lambda *a, **k: '<div class="probe-block">x</div>', lambda *a, **k: "")
+
+        with patch.dict(CONTAINER_BLOCKS, {"faq": probe}):
+            html = render_post_html(_FAQ)
+
+        assert len(_find(_dom(html), "div", "probe-block")) == 1
+        assert _block_classes(html, "blog-faq") == []
+
+    def test_registered_markdown_renderer_output_is_used_for_that_type(self):
+        probe = self._definition("faq", lambda *a, **k: '<div class="probe-block">x</div>', lambda *a, **k: "ZAMIENNIK-MD")
+
+        with patch.dict(CONTAINER_BLOCKS, {"faq": probe}):
+            result = render_post_markdown(_FAQ)
+
+        assert _non_empty_lines(result) == ["ZAMIENNIK-MD"]
+
+    def test_html_renderer_exception_degrades_only_that_container(self):
+        broken = self._definition("faq", self._boom, self._boom)
+
+        with patch.dict(CONTAINER_BLOCKS, {"faq": broken}):
+            html = render_post_html(f"przed\n\n{_FAQ}\n\npo")
+
+        top = _dom(html).elements()
+        assert (top[0].tag, top[0].text()) == ("p", "przed")
+        assert (top[-1].tag, top[-1].text()) == ("p", "po")
+        assert "Jak zacząć?" in _dom(html).text()
+        assert ":::" not in html
+        assert _block_classes(html, "blog-faq") == []
+
+    def test_markdown_renderer_exception_degrades_only_that_container(self):
+        broken = self._definition("faq", self._boom, self._boom)
+
+        with patch.dict(CONTAINER_BLOCKS, {"faq": broken}):
+            result = render_post_markdown(f"przed\n\n{_FAQ}\n\npo")
+
+        assert _marker_lines(result) == []
+        assert _non_empty_lines(result) == ["przed", *_inner_lines(_FAQ), "po"]
+
+
+# ---------------------------------------------------------------------------
+# strip_block_markers dla znanych kontenerow
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestStripMarkersOfStructuralContainers:
+    @pytest.mark.parametrize("sample", _EVERY_SAMPLE)
+    def test_marker_lines_are_removed_and_inner_text_stays(self, sample):
+        result = strip_block_markers(f"przed\n\n{sample.source}\n\npo")
+
+        assert _marker_lines(result) == []
+        lines = _non_empty_lines(result)
+        assert lines[0] == "przed"
+        assert lines[-1] == "po"
+        for inner in _inner_lines(sample.source):
+            assert inner in result
+
+
+# ---------------------------------------------------------------------------
+# extract_structured_data
+# ---------------------------------------------------------------------------
+
+_EMPTY_DATA = {"faq": [], "steps": [], "videos": []}
+
+
+@pytest.mark.unit
+class TestExtractStructuredData:
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("Zwykły tekst bez bloków.", id="plain-text"),
+            pytest.param("# Nagłówek\n\n> [!NOTE]\n> Alert.\n\n> Cytat.\n> -- Autor", id="text-blocks-only"),
+            pytest.param(":::foo\nnieznany typ\n:::", id="unknown-container"),
+            pytest.param(_GLOSSARY, id="glossary-is-not-extracted"),
+            pytest.param(_STATS, id="stats-are-not-extracted"),
+            pytest.param(_COMPARE, id="compare-is-not-extracted"),
+        ],
+    )
+    def test_always_returns_three_keys_with_empty_lists_when_nothing_to_extract(self, source):
+        assert _extract(source) == _EMPTY_DATA
+
+    def test_faq_with_three_questions_gives_three_plain_text_pairs_in_source_order(self):
+        data = _extract(_FAQ)
+
+        assert data["faq"] == [
+            {"question": "Jak zacząć?", "answer": "Załóż konto i utwórz projekt."},
+            {"question": "Co z danymi?", "answer": "Dane są szyfrowane."},
+            {"question": "Ile to kosztuje?", "answer": "Pierwszy projekt jest darmowy."},
+        ]
+        assert data["steps"] == []
+        assert data["videos"] == []
+
+    def test_faq_answer_has_no_html_even_when_author_wrote_some(self):
+        data = _extract(":::faq\n### Pytanie?\nOdpowiedź <script>alert(1)</script> z kodem.\n:::")
+
+        assert len(data["faq"]) == 1
+        assert "<script" not in data["faq"][0]["answer"]
+        assert "Odpowiedź" in data["faq"][0]["answer"]
+
+    def test_steps_with_four_points_gives_four_entries_with_name_and_text(self):
+        data = _extract(_STEPS)
+
+        assert data["steps"] == [
+            {"name": "Zarejestruj konto", "text": "Wejdź na stronę i załóż konto."},
+            {"name": "Utwórz projekt", "text": "Nadaj mu nazwę."},
+            {"name": "Zaproś zespół", "text": "Wyślij zaproszenia."},
+            {"name": "Zacznij pracę", "text": "Dodaj pierwszy ticket."},
+        ]
+
+    def test_step_without_bold_start_has_empty_name_and_whole_point_as_text(self):
+        data = _extract(":::steps\n1. **Pierwszy** opis a\n2. Drugi bez pogrubienia\n3. Zwykły krok z **pogrubieniem** w środku\n:::")
+
+        assert [step["name"] for step in data["steps"]] == ["Pierwszy", "", ""]
+        assert data["steps"][1]["text"] == "Drugi bez pogrubienia"
+        assert data["steps"][2]["text"] == "Zwykły krok z pogrubieniem w środku"
+
+    @pytest.mark.parametrize(("url", "provider", "video_id"), _VIDEO_ACCEPTED)
+    def test_whitelisted_video_is_listed_with_url_and_plain_description(self, url, provider, video_id):
+        assert _extract(_video(url))["videos"] == [{"url": url, "description": _VIDEO_TEXT}]
+
+    @pytest.mark.parametrize("url", [*_VIDEO_LINKED_REJECTS, *_VIDEO_UNLINKED_REJECTS])
+    def test_video_outside_whitelist_is_not_listed(self, url):
+        assert _extract(_video(url))["videos"] == []
+
+    def test_videos_keep_source_order(self):
+        source = f"{_video('https://vimeo.com/123456789', 'Drugi.')}\n\n{_video('https://youtu.be/dQw4w9WgXcQ', 'Pierwszy.')}"
+
+        assert _extract(source)["videos"] == [
+            {"url": "https://vimeo.com/123456789", "description": "Drugi."},
+            {"url": "https://youtu.be/dQw4w9WgXcQ", "description": "Pierwszy."},
+        ]
+
+    def test_all_three_kinds_are_collected_from_one_post(self):
+        data = _extract(f"{_FAQ}\n\n{_STEPS}\n\n{_VIDEO}\n\n{_GLOSSARY}")
+
+        assert len(data["faq"]) == 3
+        assert len(data["steps"]) == 4
+        assert len(data["videos"]) == 1
+        assert set(data) == {"faq", "steps", "videos"}
+
+    @pytest.mark.parametrize("source", [_FAQ, _STEPS, _VIDEO], ids=["faq", "steps", "video"])
+    def test_container_inside_code_fence_is_skipped(self, source):
+        assert _extract(f"```\n{source}\n```") == _EMPTY_DATA
+
+    def test_container_after_a_code_fence_is_still_extracted(self):
+        inside = ":::faq\n### Wewnątrz?\nKod.\n:::"
+
+        data = _extract(f"```\n{inside}\n```\n\n{_FAQ}")
+
+        assert [item["question"] for item in data["faq"]] == ["Jak zacząć?", "Co z danymi?", "Ile to kosztuje?"]
+
+    @pytest.mark.parametrize("source", [_FAQ, _STEPS, _VIDEO], ids=["faq", "steps", "video"])
+    def test_unclosed_container_is_not_extracted(self, source):
+        assert _extract(source.removesuffix("\n:::")) == _EMPTY_DATA
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param("\x00", id="nul"),
+            pytest.param(":::", id="lone-marker"),
+            pytest.param(":::faq", id="lone-opener"),
+            pytest.param(":::faq\n:::", id="empty-faq"),
+            pytest.param(":::faq\n###\n:::", id="empty-question"),
+            pytest.param(":::steps\n1.\n:::", id="empty-step"),
+            pytest.param(":::steps\n1. **\n:::", id="broken-bold"),
+            pytest.param(":::video\nhttps://\n:::", id="url-without-host"),
+            pytest.param(":::video\n:::\n:::video\n:::", id="empty-videos"),
+            pytest.param("```", id="lone-fence"),
+            pytest.param("<<<>>>", id="angles"),
+            pytest.param(f":::faq\n### {'x' * 10000}\n{'y' * 10000}\n:::", id="very-long"),
+        ],
+    )
+    def test_garbage_input_never_raises_and_keeps_the_three_keys(self, source):
+        data = _extract(source)
+
+        assert set(data) == {"faq", "steps", "videos"}
+        assert all(isinstance(value, list) for value in data.values())
+        assert isinstance(render_post_html(source), str)
+        assert isinstance(render_post_markdown(source), str)
+
+    def test_unparsable_video_address_does_not_discard_other_data_of_the_post(self):
+        source = f":::faq\n### Pytanie?\nOdpowiedź.\n:::\n\n{_video('https://[bad/watch?v=dQw4w9WgXcQ', 'Opis.')}"
+
+        data = _extract(source)
+
+        assert data["faq"] == [{"question": "Pytanie?", "answer": "Odpowiedź."}]
+        assert data["videos"] == []
+
+    def test_internal_failure_returns_three_empty_lists_instead_of_raising(self):
+        with patch("monolynx.services.blog_blocks._split_containers", side_effect=RuntimeError("boom")):
+            data = _extract(_FAQ)
+
+        assert data == _EMPTY_DATA
