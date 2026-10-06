@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -20,6 +21,7 @@ from starlette.responses import Response
 
 from monolynx.config import settings
 from monolynx.database import get_db
+from monolynx.services.blog import list_public_posts
 
 logger = logging.getLogger("monolynx")
 
@@ -119,7 +121,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
         "modules_title": "Everything you need",
-        "modules_sub": "Eleven integrated modules that cover the full project lifecycle.",
+        "modules_sub": "Twelve integrated modules that cover the full project lifecycle.",
         "m_500ki": "Error tracking with smart fingerprinting. Catch exceptions from your apps with a lightweight SDK.",
         "m_scrum": "Backlog, Kanban board, sprints, and story points. Everything for agile project management.",
         "m_monitoring": "URL health checks with uptime tracking, response time history, and instant alerts.",
@@ -131,6 +133,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_work_plan": "Personal cross-project scheduling on a Gantt chart and monthly calendar, independent of sprint assignment.",
         "m_pipelines": "Observability for AI agent work - pipeline, step and job hierarchy with logs, durations and upward status propagation.",
         "m_cli": "Command-line client (monolynx, alias mnx) with the same operations as MCP and pipeline-ready JSON output.",
+        "m_blog": "Public blog with ready-made blocks, a markdown twin for AI models, structured data, feeds and a lint before publication.",
+        "blog_latest_title": "Latest from the blog",
+        "blog_latest_all": "All posts",
         "mcp_title": "Connect to Claude",
         "mcp_desc": (
             "Give your AI assistant direct access to Monolynx: add it to Claude.ai as a custom"
@@ -189,7 +194,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
         "modules_title": "Wszystko, czego potrzebujesz",
-        "modules_sub": "Jedenaście zintegrowanych modułów obejmujących cały cykl życia projektu.",
+        "modules_sub": "Dwanaście zintegrowanych modułów obejmujących cały cykl życia projektu.",
         "m_500ki": "Śledzenie błędów z inteligentnym fingerprintingiem. Przechwytuj wyjątki z aplikacji za pomocą lekkiego SDK.",
         "m_scrum": "Backlog, tablica Kanban, sprinty i story pointy. Wszystko do zwinnego zarządzania projektami.",
         "m_monitoring": "Monitorowanie URL z historią uptimeu, czasami odpowiedzi i natychmiastowymi alertami.",
@@ -203,6 +208,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_work_plan": "Osobiste planowanie cross-project na wykresie Gantta i kalendarzu, niezależne od przypisania do sprintu.",
         "m_pipelines": "Obserwowalność pracy agentów AI - hierarchia pipeline, step i job z logami, czasami i propagacją statusu w górę.",
         "m_cli": "Klient wiersza poleceń (monolynx, alias mnx) z tymi samymi operacjami co MCP i wyjściem JSON gotowym do potoku.",
+        "m_blog": "Publiczny blog z gotowymi blokami, wersją markdown dla modeli AI, danymi strukturalnymi, feedami i lintem przed publikacją.",
+        "blog_latest_title": "Najnowsze na blogu",
+        "blog_latest_all": "Wszystkie wpisy",
         "mcp_title": "Połącz z Claude",
         "mcp_desc": (
             "Daj swojemu asystentowi AI bezpośredni dostęp do Monolynx: dodaj go do Claude.ai"
@@ -417,7 +425,27 @@ def _markdown_response(content: str) -> Response:
     return Response(content=content, media_type="text/markdown; charset=utf-8")
 
 
-def _landing_markdown(lang: str) -> str:
+async def _latest_blog_posts(db: AsyncSession, lang: str) -> list[dict[str, Any]]:
+    """Trzy najnowsze publiczne wpisy w języku strony; błąd bazy daje pustą listę, bo landing nie może od niego zależeć."""
+    try:
+        items = (await list_public_posts(db, 1, 3, lang=lang)).items
+        return [
+            {
+                "title": item.page.title,
+                "slug": item.post.slug,
+                "description": item.post.description,
+                "published": item.post.published_at or item.page.created_at,
+            }
+            for item in items
+        ]
+    except Exception:
+        logger.exception("Nie udalo sie pobrac najnowszych wpisow bloga dla landingu")
+        return []
+
+
+def _landing_markdown(lang: str, latest_posts: list[dict[str, Any]]) -> str:
+    from monolynx.blog_ai import _escape_link_text
+
     t = _LANDING_I18N[lang]
     base = "https://monolynx.com"
     modules = [
@@ -432,12 +460,16 @@ def _landing_markdown(lang: str) -> str:
         ("work_plan", "Work Plan / Gantt" if lang == "en" else "Plan pracy / Gantt", t["m_work_plan"]),
         ("pipelines", "Pipelines", t["m_pipelines"]),
         ("cli", "CLI", t["m_cli"]),
+        ("blog", "Blog", t["m_blog"]),
     ]
     mcp_desc = t["mcp_desc"].replace("<mcp_link>", "").replace("</mcp_link>", "")
     is_pl = lang == "pl"
     lines = ["# Monolynx", "", f"> {t['hero_sub']}", "", f"## {t['modules_title']}", "", t["modules_sub"], ""]
     for slug, name, desc in modules:
         lines.append(f"- [{name}]({base}/features/{slug}.md?lang={lang}): {desc}")
+    if latest_posts:
+        lines += ["", "## Najnowsze wpisy" if lang == "pl" else "## Latest posts", ""]
+        lines += [f"- [{_escape_link_text(post['title'])}]({base}/blog/{post['slug']}.md)" for post in latest_posts]
     lines += ["", f"## {t['mcp_title']}", "", mcp_desc, ""]
 
     lines.append("### Custom Connector")
@@ -557,10 +589,10 @@ def _landing_markdown(lang: str) -> str:
 
 
 @app.get("/index.md", include_in_schema=False)
-async def landing_markdown(lang: str = "en") -> Response:
+async def landing_markdown(lang: str = "en", db: AsyncSession = Depends(get_db)) -> Response:
     if lang not in _LANDING_I18N:
         lang = "en"
-    return _markdown_response(_landing_markdown(lang))
+    return _markdown_response(_landing_markdown(lang, await _latest_blog_posts(db, lang)))
 
 
 @app.get("/features/{slug}.md", include_in_schema=False)
@@ -576,7 +608,7 @@ async def feature_markdown_page(slug: str, lang: str = "en") -> Response:
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def landing_page(request: Request, lang: str = "en") -> Response:
+async def landing_page(request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> Response:
     if settings.SKIP_LANDING_PAGE:
         return _landing_redirect()
     if lang not in _LANDING_I18N:
@@ -586,6 +618,7 @@ async def landing_page(request: Request, lang: str = "en") -> Response:
         "landing.html",
         {
             "t": _LANDING_I18N[lang],
+            "latest_posts": await _latest_blog_posts(db, lang),
             "lang": lang,
             "active_page": "home",
             "lang_switch_url": "/?lang=pl",

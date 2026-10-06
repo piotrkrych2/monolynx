@@ -15,6 +15,7 @@ _ICON_REPORTS = '<svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentC
 _ICON_SETTLEMENTS = '<svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V12Zm-12 0h.008v.008H6V12Z"/></svg>'
 _ICON_WORK_PLAN = '<svg class="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"/></svg>'
 _ICON_PIPELINES = '<svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg>'
+_ICON_BLOG = '<svg class="w-6 h-6 text-rose-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"/></svg>'
 _ICON_CLI = '<svg class="w-6 h-6 text-teal-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>'
 
 
@@ -71,6 +72,12 @@ def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
             "color": "teal",
             "name": "CLI",
             "short": "Work from the terminal" if lang == "en" else "Praca z terminala",
+        },
+        {
+            "slug": "blog",
+            "color": "rose",
+            "name": "Blog",
+            "short": "Public blog readable by people and AI" if lang == "en" else "Publiczny blog dla ludzi i modeli AI",
         },
     ]
     return [m for m in all_modules if m["slug"] != exclude]
@@ -896,7 +903,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "desc": "Agent AI może przeczytać dowolną stronę i wyszukać informacje semantycznie — tak jakby był członkiem zespołu.",
                 },
             ],
-            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami, plikami projektu i metadanymi wpisów bloga, sprawdza wpisy lintem oraz publikuje je i cofa publikację - 19 narzędzi MCP.",
+            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami i plikami projektu - 13 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_wiki_pages", "desc": "Pełne drzewo hierarchii z parent_id i głębokością"},
                 {"name": "get_wiki_page", "desc": "Treść strony + breadcrumby do nawigacji"},
@@ -911,12 +918,6 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 {"name": "get_wiki_file", "desc": "Pobierz zawartość globalnego pliku (base64)"},
                 {"name": "update_wiki_file", "desc": "Zaktualizuj opis lub nazwę pliku"},
                 {"name": "list_wiki_files", "desc": "Lista globalnych plików w repozytorium wiki"},
-                {"name": "list_blog_posts", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft"},
-                {"name": "get_blog_post", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown"},
-                {"name": "set_blog_post_meta", "desc": "Metadane wpisu: slug, opis, autor, tagi, język, tłumaczenie, okładka, data weryfikacji"},
-                {"name": "lint_blog_post", "desc": "Lint wpisu pod AI: lista problemów z linią i poziomem oraz ocena 0-100"},
-                {"name": "publish_blog_post", "desc": "Publikacja wpisu po lincie: odmowa przy błędach, chyba że force; zwraca adresy i ocenę lintu"},
-                {"name": "unpublish_blog_post", "desc": "Cofnięcie publikacji: adres wpisu i jego .md dają 404, data i slug zostają"},
             ],
             "tech_details": [
                 {
@@ -1098,7 +1099,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             },
             {"title": "AI searches wiki via MCP", "desc": "Your AI agent can read any page and search semantically — as if it were a team member."},
         ],
-        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments, project files and blog post metadata, lints blog posts, and publishes and unpublishes them - 19 MCP tools.",
+        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments and project files - 13 MCP tools.",
         "mcp_tools": [
             {"name": "list_wiki_pages", "desc": "Full hierarchy tree with parent_id and depth"},
             {"name": "get_wiki_page", "desc": "Page content + breadcrumbs for navigation"},
@@ -1113,12 +1114,6 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             {"name": "get_wiki_file", "desc": "Get global file content (base64)"},
             {"name": "update_wiki_file", "desc": "Update file description or name"},
             {"name": "list_wiki_files", "desc": "List global files in wiki repository"},
-            {"name": "list_blog_posts", "desc": "List blog posts with metadata, drafts included; published or draft filter"},
-            {"name": "get_blog_post", "desc": "A blog post: metadata, public URLs and markdown content"},
-            {"name": "set_blog_post_meta", "desc": "Post metadata: slug, description, author, tags, language, translation, cover, verified date"},
-            {"name": "lint_blog_post", "desc": "Lint a post for AI: a list of problems with line and level, plus a score from 0 to 100"},
-            {"name": "publish_blog_post", "desc": "Publish a post after the lint: refused on errors unless force; returns URLs and the lint score"},
-            {"name": "unpublish_blog_post", "desc": "Unpublish a post: its address and its .md answer 404, the date and the slug stay"},
         ],
         "tech_details": [
             {
@@ -2299,6 +2294,285 @@ def _feature_cli(lang: str) -> dict[str, Any]:
     }
 
 
+def _feature_blog(lang: str) -> dict[str, Any]:
+    if lang == "pl":
+        return {
+            "title": "Blog - Treści dla ludzi i modeli AI",
+            "color": "rose",
+            "icon": _ICON_BLOG,
+            "screenshot": None,
+            "screenshot_2": None,
+            "badge": "Public Blog",
+            "headline": "Blog, który czyta człowiek i cytuje model AI",
+            "description": (
+                "Wpis to strona wiki z metadanymi. Piszesz zwykły markdown, a serwer składa z niego stronę z gotowymi blokami, "
+                "wersję markdown dla modeli AI, dane strukturalne i feedy. Lint sprawdza wpis przed publikacją."
+            ),
+            "screenshot_hint": "Lista wpisów publicznego bloga",
+            "screenshot_hint_2": "Wpis z blokami, spisem treści i czasem czytania",
+            "features": [
+                {
+                    "title": "Wpis to strona wiki z metadanymi",
+                    "desc": (
+                        "Treść wpisu żyje w wiki, a osobny wiersz metadanych trzyma adres (slug), opis, autora, tagi, język, powiązanie z tłumaczeniem, "
+                        "okładkę i datę weryfikacji. Strona wiki bez tych metadanych nie jest wpisem. Opublikowany wpis jest dostępny bez logowania pod /blog/{slug}."
+                    ),
+                },
+                {
+                    "title": "Bloki wpisu",
+                    "desc": (
+                        "Zwykły markdown wystarcza na wyróżnienia, TL;DR, cytat z autorem, obrazek z podpisem, kod z przyciskiem kopiowania, FAQ, kroki, "
+                        "tabelę porównawczą, wykresy z tabeli, diagramy Mermaid i okno terminala. HTML bloków generuje serwer, a treść autora jest sanityzowana, "
+                        "więc własne skrypty, klasy i identyfikatory nie trafią na stronę."
+                    ),
+                },
+                {
+                    "title": "Bliźniak markdown dla modeli AI",
+                    "desc": (
+                        "Każdy wpis ma wersję markdown pod adresem /blog/{slug}.md, a lista bloga pod /blog/index.md. "
+                        "Ten sam dokument dostaje klient, który prosi o Accept: text/markdown. Źródłem każdej grafiki jest tekst, "
+                        "więc model widzi dane wykresu i opis diagramu, nie tylko obrazek."
+                    ),
+                },
+                {
+                    "title": "Dane strukturalne JSON-LD",
+                    "desc": (
+                        "Strona wpisu niesie BlogPosting i BreadcrumbList w formacie JSON-LD. Z bloków FAQ, kroków i wideo serwer dokłada FAQPage, HowTo i VideoObject, "
+                        "a wersje językowe wpisów są powiązane w mapie strony."
+                    ),
+                },
+                {
+                    "title": "Feedy Atom, RSS i JSON",
+                    "desc": (
+                        "Blog ma feedy /blog/feed.xml (Atom), /blog/rss.xml (RSS) i /blog/feed.json (JSON Feed) z pełną treścią 20 najnowszych wpisów, "
+                        "a czytniki znajdują je w nagłówku strony. Plik /llms.txt zawiera na żywo listę najnowszych wpisów z adresami markdown."
+                    ),
+                },
+                {
+                    "title": "Lint wpisu pod AI",
+                    "desc": (
+                        "Lint sprawdza opis, blok TL;DR, tekst alternatywny obrazków, kolejność nagłówków, opisowe teksty linków, datę weryfikacji i tłumaczenie. "
+                        "Wynik to lista problemów z numerem linii i poziomem (błąd, ostrzeżenie, informacja) oraz ocena 0-100. "
+                        "Ten sam wynik daje narzędzie MCP lint_blog_post, REST API i komenda monolynx blog lint."
+                    ),
+                },
+                {
+                    "title": "Publikacja z bramką lintu",
+                    "desc": (
+                        "Publikacja to osobna operacja: najpierw lint, potem wpis staje się publiczny. Wpis z błędami lintu zostaje prywatny, a odmowa wymienia reguły do poprawy; "
+                        "parametr force publikuje mimo błędów. Cofnięcie publikacji zdejmuje wpis i jego wersję markdown z sieci, a slug i data zostają, "
+                        "więc ponowna publikacja wraca pod ten sam adres."
+                    ),
+                },
+                {
+                    "title": "Podgląd szkicu",
+                    "desc": (
+                        "Przycisk „Podgląd wpisu” na stronie wiki otwiera szkic w wyglądzie publicznego bloga, zanim zaznaczysz „strona publiczna”. "
+                        "Podgląd widzi tylko zalogowany użytkownik z prawem odczytu wiki, a jego adres ma nagłówek noindex i nie trafia do mapy strony ani do feedów."
+                    ),
+                },
+                {
+                    "title": "Skill blog-post i przewodnik dla każdego modelu",
+                    "desc": (
+                        "Skill /monolynx:blog-post prowadzi wpis od briefu przez szkic i lint do podglądu, a publikuje dopiero po Twojej jawnej zgodzie. "
+                        "Publiczny przewodnik /blog-authoring.md opisuje składnię bloków, reguły lintu i operacje connectorów, "
+                        "więc wpis w tym formacie napisze też model bez pluginu."
+                    ),
+                },
+                {
+                    "title": "Dostęp z terminala",
+                    "desc": (
+                        "Grupa komend monolynx blog (list, get, meta, lint, publish, unpublish) działa na tych samych operacjach co narzędzia MCP, "
+                        "więc wpisy obsłużysz ze skryptu i z CI."
+                    ),
+                },
+            ],
+            "steps": [
+                {
+                    "title": "Napisz szkic w wiki",
+                    "desc": "Utwórz prywatną stronę wiki z treścią w markdownie i blokami wpisu. Podgląd szkicu pokaże ją w wyglądzie bloga.",
+                },
+                {
+                    "title": "Ustaw metadane",
+                    "desc": "Podaj opis, język, tagi i datę weryfikacji. Pierwszy zapis metadanych zamienia stronę wiki we wpis.",
+                },
+                {"title": "Uruchom lint", "desc": "Popraw błędy z listy, aż nie zostanie żaden poziomu „błąd”. Ostrzeżenia nie blokują publikacji."},
+                {"title": "Opublikuj", "desc": "Wpis trafia pod /blog/{slug} razem z wersją markdown, danymi strukturalnymi i feedami."},
+                {
+                    "title": "AI pisze i publikuje przez MCP",
+                    "desc": "Agent AI przechodzi te same kroki connectorami, a publikację wykonuje dopiero po Twojej zgodzie.",
+                },
+            ],
+            "ai_intro": "Blog jest zbudowany tak, żeby agent AI mógł go i pisać, i czytać. Agent ustawia metadane wpisu, sprawdza go lintem, publikuje i cofa publikację - 6 narzędzi MCP.",
+            "mcp_tools": [
+                {"name": "list_blog_posts", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft"},
+                {"name": "get_blog_post", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown"},
+                {"name": "set_blog_post_meta", "desc": "Metadane wpisu: slug, opis, autor, tagi, język, tłumaczenie, okładka, data weryfikacji"},
+                {"name": "lint_blog_post", "desc": "Lint wpisu pod AI: lista problemów z linią i poziomem oraz ocena 0-100"},
+                {"name": "publish_blog_post", "desc": "Publikacja wpisu po lincie: odmowa przy błędach, chyba że force; zwraca adresy i ocenę lintu"},
+                {"name": "unpublish_blog_post", "desc": "Cofnięcie publikacji: adres wpisu i jego .md dają 404, data i slug zostają"},
+            ],
+            "tech_details": [
+                {
+                    "label": "Przechowywanie",
+                    "value": "Treść wpisu to markdown strony wiki w MinIO, metadane (slug, opis, tagi, język, data publikacji) w PostgreSQL.",
+                },
+                {
+                    "label": "Renderowanie",
+                    "value": "Markdown, a potem sanityzacja nh3 bez atrybutów class i id. Wykresy rysuje serwer jako SVG, animowane schematy pochodzą z zamkniętej listy komponentów.",
+                },
+                {
+                    "label": "Publiczne adresy",
+                    "value": "/blog/, /blog/{slug}, /blog/{slug}.md, /blog/index.md oraz /blog/feed.xml, /blog/rss.xml i /blog/feed.json. Bez sesji i bez logowania.",
+                },
+                {
+                    "label": "Stabilność adresów",
+                    "value": "Zmiana tytułu nie zmienia adresu, a poprzedni adres przekierowuje (301). Lista sortuje wpisy po dacie publikacji.",
+                },
+            ],
+            "other_modules": _other_modules("blog", lang),
+        }
+    return {
+        "title": "Blog - Content for People and AI Models",
+        "color": "rose",
+        "icon": _ICON_BLOG,
+        "screenshot": None,
+        "screenshot_2": None,
+        "badge": "Public Blog",
+        "headline": "A blog people read and AI models quote",
+        "description": (
+            "A post is a wiki page with metadata. You write plain markdown, and the server builds a page with ready-made blocks, "
+            "a markdown version for AI models, structured data and feeds. A lint checks the post before publication."
+        ),
+        "screenshot_hint": "The public blog post list",
+        "screenshot_hint_2": "A post with blocks, a table of contents and reading time",
+        "features": [
+            {
+                "title": "A post is a wiki page with metadata",
+                "desc": (
+                    "The content lives in the wiki, and a separate metadata row holds the slug, description, author, tags, language, translation link, "
+                    "cover and the verification date. A wiki page without that metadata is not a post. A published post is available without signing in at /blog/{slug}."
+                ),
+            },
+            {
+                "title": "Post blocks",
+                "desc": (
+                    "Plain markdown is enough for callouts, a TL;DR, a quote with an author, a captioned image, code with a copy button, an FAQ, steps, "
+                    "a comparison table, charts from a table, Mermaid diagrams and a terminal window. The server generates the block HTML and sanitizes the author's text, "
+                    "so custom scripts, classes and identifiers never reach the page."
+                ),
+            },
+            {
+                "title": "A markdown twin for AI models",
+                "desc": (
+                    "Every post has a markdown version at /blog/{slug}.md, and the blog list is at /blog/index.md. "
+                    "A client that sends Accept: text/markdown gets the same document. Every graphic has a text source, "
+                    "so a model sees the chart data and the diagram description, not just a picture."
+                ),
+            },
+            {
+                "title": "JSON-LD structured data",
+                "desc": (
+                    "A post page carries BlogPosting and BreadcrumbList as JSON-LD. From the FAQ, steps and video blocks the server adds FAQPage, HowTo and VideoObject, "
+                    "and the language versions of a post are linked in the sitemap."
+                ),
+            },
+            {
+                "title": "Atom, RSS and JSON feeds",
+                "desc": (
+                    "The blog has /blog/feed.xml (Atom), /blog/rss.xml (RSS) and /blog/feed.json (JSON Feed) with the full text of the 20 newest posts, "
+                    "and readers find them in the page header. The /llms.txt file lists the newest posts live, with markdown addresses."
+                ),
+            },
+            {
+                "title": "A post lint for AI readers",
+                "desc": (
+                    "The lint checks the description, the TL;DR block, image alt text, heading order, descriptive link text, the verification date and the translation. "
+                    "The result is a list of problems with a line number and a level (error, warning, info) and a score from 0 to 100. "
+                    "The lint_blog_post MCP tool, the REST API and the monolynx blog lint command return the same result."
+                ),
+            },
+            {
+                "title": "Publication behind a lint gate",
+                "desc": (
+                    "Publishing is a separate operation: the lint runs first, then the post becomes public. A post with lint errors stays private, and the refusal names the rules to fix; "
+                    "the force parameter publishes anyway. Unpublishing takes the post and its markdown version off the web, while the slug and the date stay, "
+                    "so publishing again returns to the same address."
+                ),
+            },
+            {
+                "title": "Draft preview",
+                "desc": (
+                    'The "Post preview" button on a wiki page opens the draft in the look of the public blog before you tick "public page". '
+                    "Only a signed-in user with wiki read permission sees the preview, and its address carries a noindex header and stays out of the sitemap and the feeds."
+                ),
+            },
+            {
+                "title": "The blog-post skill and a guide for any model",
+                "desc": (
+                    "The /monolynx:blog-post skill leads a post from the brief through the draft and the lint to the preview, and publishes only after your explicit consent. "
+                    "The public guide /blog-authoring.md describes the block syntax, the lint rules and the connector operations, "
+                    "so a model without the plugin can write a post in this format too."
+                ),
+            },
+            {
+                "title": "Access from the terminal",
+                "desc": (
+                    "The monolynx blog command group (list, get, meta, lint, publish, unpublish) runs the same operations as the MCP tools, "
+                    "so you can handle posts from a script and from CI."
+                ),
+            },
+        ],
+        "steps": [
+            {
+                "title": "Write a draft in the wiki",
+                "desc": "Create a private wiki page with markdown content and post blocks. The draft preview shows it in the look of the blog.",
+            },
+            {
+                "title": "Set the metadata",
+                "desc": "Give a description, a language, tags and a verification date. The first metadata save turns the wiki page into a post.",
+            },
+            {
+                "title": "Run the lint",
+                "desc": "Fix the errors on the list until no problem of the level error is left. Warnings do not block publication.",
+            },
+            {"title": "Publish", "desc": "The post goes live at /blog/{slug} together with its markdown version, structured data and feeds."},
+            {
+                "title": "AI writes and publishes via MCP",
+                "desc": "Your AI agent goes through the same steps with the connectors and publishes only after you agree.",
+            },
+        ],
+        "ai_intro": "The blog is built so that an AI agent can both write and read it. The agent sets post metadata, lints a post, publishes it and unpublishes it - 6 MCP tools.",
+        "mcp_tools": [
+            {"name": "list_blog_posts", "desc": "List blog posts with metadata, drafts included; published or draft filter"},
+            {"name": "get_blog_post", "desc": "A blog post: metadata, public URLs and markdown content"},
+            {"name": "set_blog_post_meta", "desc": "Post metadata: slug, description, author, tags, language, translation, cover, verified date"},
+            {"name": "lint_blog_post", "desc": "Lint a post for AI: a list of problems with line and level, plus a score from 0 to 100"},
+            {"name": "publish_blog_post", "desc": "Publish a post after the lint: refused on errors unless force; returns URLs and the lint score"},
+            {"name": "unpublish_blog_post", "desc": "Unpublish a post: its address and its .md answer 404, the date and the slug stay"},
+        ],
+        "tech_details": [
+            {
+                "label": "Storage",
+                "value": "The post content is the markdown of a wiki page in MinIO, the metadata (slug, description, tags, language, publication date) is in PostgreSQL.",
+            },
+            {
+                "label": "Rendering",
+                "value": "Markdown, then nh3 sanitization without class and id attributes. The server draws charts as SVG, and animated diagrams come from a closed list of components.",
+            },
+            {
+                "label": "Public addresses",
+                "value": "/blog/, /blog/{slug}, /blog/{slug}.md, /blog/index.md and /blog/feed.xml, /blog/rss.xml and /blog/feed.json. No session, no sign-in.",
+            },
+            {
+                "label": "Stable addresses",
+                "value": "Renaming a post does not change its address, and the previous address redirects (301). The list sorts posts by publication date.",
+            },
+        ],
+        "other_modules": _other_modules("blog", lang),
+    }
+
+
 def feature_slugs() -> list[str]:
     """Public list of feature-page slugs (used by the sitemap)."""
     return list(_FEATURES)
@@ -2316,4 +2590,5 @@ _FEATURES: dict[str, Any] = {
     "work_plan": _feature_work_plan,
     "pipelines": _feature_pipelines,
     "cli": _feature_cli,
+    "blog": _feature_blog,
 }
