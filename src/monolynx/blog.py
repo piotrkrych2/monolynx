@@ -29,6 +29,9 @@ paginacja zachowuje filtry, a `canonical` / `prev` / `next` wskazują bieżącą
 treści, powiązane wpisy, tłumaczenia i `hreflang`; jego interfejs to `?lang=` albo `lang` wpisu. Obie
 odpowiedzi HTML idą przez `blog_ai.conditional_response` (ETag, Last-Modified, 304).
 
+MON-264: `public_page` przepisuje dashboardowe adresy załączników strony na publiczne
+(`rewrite_attachment_urls`), zanim treść trafi do renderera.
+
 Rejestrowany bezwarunkowo w main.py, niezależnie od flagi SKIP_LANDING_PAGE -- ta flaga
 bramkuje marketingową stronę landing, a blog to treść linkowana z zewnątrz (podobnie jak
 endpointy .md, które też nie są nią bramkowane).
@@ -71,6 +74,7 @@ from monolynx.services.blog import (
     list_public_translations,
     list_related_posts,
     reading_time_minutes,
+    rewrite_attachment_urls,
 )
 from monolynx.services.blog_blocks import (
     collect_block_assets,
@@ -285,6 +289,7 @@ async def public_page(slug: str, request: Request, lang: str | None = None, db: 
     except Exception:
         logger.exception("Blad pobierania tresci strony wiki z MinIO (page_id=%s)", page.id)
         raise HTTPException(status_code=404, detail="Nie znaleziono strony") from None
+    content = rewrite_attachment_urls(content, page_id=page.id, post_slug=post.slug)
     content_html = render_post_html(content)
     assets = collect_block_assets(content)
     meta_description = post.description or extract_summary(strip_block_markers(content))

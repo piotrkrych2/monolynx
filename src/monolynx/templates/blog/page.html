@@ -4,7 +4,7 @@
 
 {% block meta_description %}{{ meta_description }}{% endblock %}
 
-{% block canonical %}<link rel="canonical" href="{{ app_url }}/blog/{{ page_slug }}">{% endblock %}
+{% block canonical %}{% if not preview %}<link rel="canonical" href="{{ app_url }}/blog/{{ page_slug }}">{% endif %}{% endblock %}
 {% block og_type %}article{% endblock %}
 {% block og_title %}{{ page_title }}{% endblock %}
 {% block og_description %}{{ meta_description }}{% endblock %}
@@ -16,11 +16,14 @@
 {% block twitter_image %}{% if cover_image_url %}{{ cover_image_url }}{% else %}{{ super() }}{% endif %}{% endblock %}
 
 {% block head %}
+{% if preview %}<meta name="robots" content="noindex">{% endif %}
 <meta property="article:published_time" content="{{ (published_at or created_at).isoformat() }}">
+{% if not preview %}
 {% if md_url %}<link rel="alternate" type="text/markdown" href="{{ md_url }}">{% endif %}
 {% for link in hreflang_links %}<link rel="alternate" hreflang="{{ link.lang }}" href="{{ link.url }}">
 {% endfor %}
 {% if json_ld %}<script type="application/ld+json">{{ json_ld|safe }}</script>{% endif %}
+{% endif %}
 <link rel="stylesheet" href="/static/blog/blog.css">
 <link rel="stylesheet" href="/static/blog/blocks.css">
 <script src="/static/blog/blocks.js" defer></script>
@@ -38,6 +41,13 @@
 {% set pub = published_at or created_at %}
 <section class="pt-32 pb-20">
     <div class="blog-shell{% if toc %} blog-shell-toc{% endif %}">
+
+        {% if preview %}
+        <div class="mb-6 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 dark:border-amber-500/50 bg-amber-50 dark:bg-amber-900/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+            <span><strong>Podgląd szkicu</strong> - tak wpis będzie wyglądał po publikacji. Ta strona nie jest publiczna.</span>
+            {% if preview_back_url %}<a href="{{ preview_back_url }}" class="font-medium underline hover:no-underline">Wróć do strony</a>{% endif %}
+        </div>
+        {% endif %}
 
         <!-- Breadcrumbs -->
         {% if breadcrumbs %}
