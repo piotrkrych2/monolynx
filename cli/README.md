@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/monolynx-cli)](https://pypi.org/project/monolynx-cli/)
 
-Command-line client for the Monolynx platform: manage projects, tickets, sprints, wiki pages and blog post metadata, and read the code dependency graph, from your terminal.
+Command-line client for the Monolynx platform: manage projects, tickets, sprints, wiki pages and blog posts (metadata, lint, publishing), and read the code dependency graph, from your terminal.
 
 ## Installation
 
@@ -268,11 +268,11 @@ git log -1 --format=%B | monolynx --project my-project ticket comment add MP-11 
 | `wiki config get` | | Show the LLM Wiki method configuration of the project. |
 | `wiki config set` | `--enabled`/`--disabled` | Turn the LLM Wiki method on or off (requires the `settings:write` permission). |
 
-`--public` publishes the page at `/blog/{slug}`, visible to anyone without signing in. `wiki delete` has no `-y` short form. `--content -` with an empty standard input, an unreadable or non-UTF-8 `--file`, and a missing project are usage errors (exit code 2, no request sent).
+`--public` publishes the page at `/blog/{slug}`, visible to anyone without signing in. It is the lower level of publishing, without the lint gate: `blog publish` runs the lint first and refuses a post with lint errors, and `blog unpublish` takes a post offline. `wiki delete` has no `-y` short form. `--content -` with an empty standard input, an unreadable or non-UTF-8 `--file`, and a missing project are usage errors (exit code 2, no request sent).
 
 ### `blog`
 
-Metadata of blog posts. A blog post is a wiki page that has a blog metadata row; the page content and publishing stay in `monolynx wiki`. All `blog` commands work on the project resolved from `--project`, `MONOLYNX_PROJECT` or the profile. `blog list`, `blog get` and `blog lint` need the `wiki:read` permission, `blog meta` needs `wiki:write`.
+Blog posts: metadata, lint, publishing and unpublishing. A blog post is a wiki page that has a blog metadata row; the page content stays in `monolynx wiki`. All `blog` commands work on the project resolved from `--project`, `MONOLYNX_PROJECT` or the profile. `blog list`, `blog get` and `blog lint` need the `wiki:read` permission; `blog meta`, `blog publish` and `blog unpublish` need `wiki:write` (`blog publish` runs the lint, so it needs `wiki:read` as well). There is no separate permission for publishing.
 
 | Command | Arguments and options | Description |
 |---|---|---|
@@ -280,22 +280,31 @@ Metadata of blog posts. A blog post is a wiki page that has a blog metadata row;
 | `blog get` | `<page_id>` | Show a blog post: metadata, public URLs and the markdown content. |
 | `blog meta` | `<page_id>`, `--slug`, `--description`, `--author`, `--tag`, `--no-tags`, `--lang`, `--translation-of`, `--cover`, `--verified` | Change the metadata of a blog post; only the given options are sent. `--tag` can be repeated. |
 | `blog lint` | `<page_id>` | Lint a blog post for AI readers (description, TLDR block, headings, image alt text, graphic blocks, links): a list of problems and a score from 0 to 100. Exit code 1 when at least one problem is an error. |
+| `blog publish` | `<page_id>`, `--force` | Publish a blog post after the lint. A post with lint errors is refused (exit code 1) and stays private, unless `--force` is given. |
+| `blog unpublish` | `<page_id>` | Unpublish a blog post: its address and its `.md` version answer 404, the publication date and the slug stay. |
 
 Notes:
 
 - `<page_id>` is the UUID of the wiki page that is the blog post: the `page_id` field from `blog list`, the same id `wiki get` takes.
 - `blog list` with `-o table` prints six columns: `title`, `slug`, `is_public`, `lang`, `published_at` and `tags` (the tags joined with `, `). With `-o json`, `-o yaml` and `-o csv` every post carries all its fields, so read `page_id` from one of those formats, for example `-o json`.
-- A draft is a page that has a metadata row and `is_public` set to `false`; `--status draft` lists those, `--status published` the public ones. A wiki page without a metadata row is not a blog post: it is not on the list, and `blog get` ends with a 404 (exit code 1). The row is created when the page is published (`wiki create --public`, `wiki update --public`) or by the first `blog meta` on that page. The server rejects any other `--status` value with a 422 (exit code 1).
-- Outside the `blog list` table, every post carries `page_id`, `title`, `slug`, `previous_slugs`, `description`, `published_at`, `author_name`, `tags`, `lang`, `translation_of_id`, `cover_attachment_id`, `last_verified_at`, `is_public`, `public_url` and `markdown_url`; `blog get` adds `content`. `public_url` (the server's public address followed by `/blog/<slug>`) and `markdown_url` (`public_url` followed by `.md`) are `null` for a page that is not public. `markdown_url` is the address of the markdown twin of the post; the route that serves it is not part of this change, so the address may not respond yet.
+- A draft is a page that has a metadata row and `is_public` set to `false`; `--status draft` lists those, `--status published` the public ones. A wiki page without a metadata row is not a blog post: it is not on the list, and `blog get` ends with a 404 (exit code 1). The row is created when the page is published (`blog publish`, `wiki create --public`, `wiki update --public`) or by the first `blog meta` on that page. The server rejects any other `--status` value with a 422 (exit code 1).
+- Outside the `blog list` table, every post carries `page_id`, `title`, `slug`, `previous_slugs`, `description`, `published_at`, `author_name`, `tags`, `lang`, `translation_of_id`, `cover_attachment_id`, `last_verified_at`, `is_public`, `public_url` and `markdown_url`; `blog get` adds `content`. `public_url` (the server's public address followed by `/blog/<slug>`) and `markdown_url` (`public_url` followed by `.md`) are `null` for a page that is not public. `markdown_url` is the address of the markdown twin of the post.
 - `blog meta` options: `--slug` sets a new slug (the old one goes to `previous_slugs` and redirects), `--description` the post description (meta description), `--author` the author name, `--lang` the post language (`pl` or `en`), `--translation-of` the UUID of the wiki page holding the original of a translation, `--cover` the UUID of an attachment of the same page used as the cover, `--verified` the date the content was last verified (`YYYY-MM-DD`).
 - `--tag` replaces the current tags with the given ones; `--no-tags` removes all tags. Giving both is a usage error.
 - An empty string clears `--translation-of`, `--cover` and `--verified` (the CLI sends `null`), for example `--cover ""`.
 - `blog meta` without any option, or with `--tag` and `--no-tags` together, is a usage error: exit code 2, no request sent.
-- `blog get` and `blog lint` read the post content from object storage. When the storage is unavailable the server answers 503 and the command ends with exit code 1 after the retries; `blog list` and `blog meta` do not read the content.
+- `blog get`, `blog lint` and `blog publish` read the post content from object storage. When the storage is unavailable the server answers 503 and the command ends with exit code 1 (`blog get` and `blog lint` after the retries; `blog publish` is a POST, which is not retried on a 5xx, and the post is not published); `blog list`, `blog meta` and `blog unpublish` do not read the content.
 - `blog lint` result: `page_id`, `score` (0 to 100: 100 minus 20 for every error and 5 for every warning, never below 0; an info does not lower it), `error_count`, `warning_count`, `info_count` and `issues`, a list of objects with `rule` (the rule name, for example `tldr-missing` or `image-alt-short`), `level` (`error`, `warning` or `info`), `line` (the line of the post source, counted from 1; `0` for a problem with the metadata or with no place in the text) and `message` (in Polish). `-o json` and `-o yaml` print the whole object. `-o table` prints one row per problem with the columns `line`, `level`, `rule` and `message`, and the score as `Ocena: <score>/100` on standard error (`--quiet` hides it).
 - `blog lint` exit codes: 0 when the post has no error (warnings and infos alone are still 0), 1 when at least one problem has the level `error`. The report is printed before the command exits, so with exit code 1 check standard output first: a report there means lint errors, an empty one means an API error (for example a 404 for a page that is not a blog post) or an invalid server response. The lint never changes the post.
-- `blog meta` does not change the title, the content, `is_public` or `published_at`. Use `wiki update` for the title, the content and publishing.
-- Every command checks the server response before rendering. A missing required field or a wrong type ends with the error `Nieprawidłowa odpowiedź serwera` and exit code 1, never with an empty result and exit code 0. After `blog meta` the write may already have reached the server, so check the post with `blog get` before repeating the command.
+- `blog publish` runs the same lint as `blog lint` and then makes the page public at `/blog/<slug>`. When the lint finds at least one problem of the level `error`, the server refuses with a 422: the command ends with exit code 1, prints the reason on standard error (`Publikacja odrzucona: wpis ma błędy lintu (<count>): <rule> (linia <line>), ... Napraw je albo użyj force.`, only the rules of the level `error`) and nothing on standard output, and the post stays private. Warnings and infos do not block the publication.
+- `--force` publishes in spite of lint errors. It is a switch and takes no value.
+- `blog publish` result: the post fields listed above, now with `is_public` set to `true` and both URLs filled in, plus `lint`, the object `blog lint` returns (`page_id`, `score`, `error_count`, `warning_count`, `info_count`, `issues`). Read it with `-o json` or `-o yaml`.
+- `published_at` is set by the first publication only. Publishing an already public post, or publishing again after `blog unpublish`, keeps the date, the slug and the address.
+- `blog publish` on a wiki page without a metadata row creates the row (slug taken from the page). A public page with the same slug in another project, or a slug already used by another post, is a 422 with a readable reason (exit code 1); nothing is published.
+- `blog unpublish` sets `is_public` to `false`: `/blog/<slug>` and `/blog/<slug>.md` answer 404, and the result carries `public_url` and `markdown_url` as `null`. The slug and `published_at` stay. On a post that is already private it succeeds without a change; on a wiki page without a metadata row it ends with a 404 (exit code 1).
+- `wiki create --public`, `wiki update --public` and `wiki update --no-public` still work as the lower level, without the lint gate. Use `blog publish` and `blog unpublish` when the lint should decide.
+- `blog meta` does not change the title, the content, `is_public` or `published_at`. Use `wiki update` for the title and the content, and `blog publish` / `blog unpublish` for publishing.
+- Every command checks the server response before rendering. A missing required field or a wrong type ends with the error `Nieprawidłowa odpowiedź serwera` and exit code 1, never with an empty result and exit code 0. After `blog meta`, `blog publish` or `blog unpublish` the write may already have reached the server, so check the post with `blog get` before repeating the command.
 
 ```bash
 monolynx --project my-project blog list --status draft
@@ -304,6 +313,9 @@ monolynx --project my-project blog meta "<page_id>" --description "How we ship r
 monolynx --project my-project blog meta "<page_id>" --no-tags --cover ""
 monolynx --project my-project blog lint "<page_id>"
 monolynx -o json --project my-project blog lint "<page_id>" | jq -r '.issues[] | select(.level == "error") | "\(.line): \(.rule)"'
+monolynx -o json --project my-project blog publish "<page_id>" | jq -r '.public_url'
+monolynx --project my-project blog publish "<page_id>" --force
+monolynx --project my-project blog unpublish "<page_id>"
 ```
 
 ### `graph`
@@ -424,7 +436,7 @@ Resolution order for every setting: command-line option, then environment variab
 | Code | Meaning | Example causes |
 |---|---|---|
 | `0` | Success | |
-| `1` | API or local error | 4xx other than 401/403 (for example 404 or 422), 429 or 5xx after all retries; corrupted config file; declined confirmation; `config get` for a key without a value; `blog lint` on a post with at least one lint error (the report is printed first) |
+| `1` | API or local error | 4xx other than 401/403 (for example 404 or 422), 429 or 5xx after all retries; corrupted config file; declined confirmation; `config get` for a key without a value; `blog lint` on a post with at least one lint error (the report is printed first); `blog publish` refused because of lint errors (a 422, the reason on standard error) |
 | `2` | Usage error | Unknown option or bad argument; no project resolved; destructive command without `--yes` outside a terminal; `--timeout` not greater than zero; invalid `config` key; `update` without any field to change; empty stdin for `--content -`; a bare `.` or `..` as an identifier in a URL path |
 | `3` | Authentication error | 401 or 403; failed token refresh; no token stored; OAuth login timeout, denied consent or mismatched `state` |
 | `4` | Network error | Timeout, connection refused, DNS failure |

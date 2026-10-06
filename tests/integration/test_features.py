@@ -71,6 +71,8 @@ ALLOWED_CLI_COMMANDS = {
     "monolynx blog get",
     "monolynx blog meta",
     "monolynx blog lint",
+    "monolynx blog publish",
+    "monolynx blog unpublish",
 }
 REQUIRED_CLI_GROUPS = {"project", "member", "ticket", "sprint", "wiki", "graph", "blog"}
 GRAPH_CLI_COMMANDS = {
@@ -85,6 +87,8 @@ BLOG_CLI_COMMANDS = {
     "monolynx blog get",
     "monolynx blog meta",
     "monolynx blog lint",
+    "monolynx blog publish",
+    "monolynx blog unpublish",
 }
 TOOLS_LABEL = {"pl": "Dostępne komendy", "en": "Available commands"}
 MCP_LABEL = {"pl": "Dostępne narzędzia MCP", "en": "Available MCP tools"}
@@ -308,7 +312,8 @@ class TestFeatureHttpEndpoints:
 
 @pytest.mark.unit
 class TestWikiFeatureBlogLint:
-    """MON-262: moduł Wiki wymienia `lint_blog_post`, a licznik narzędzi w `ai_intro` zgadza się z listą."""
+    """MON-262, MON-263: moduł Wiki wymienia `lint_blog_post`, `publish_blog_post` i `unpublish_blog_post`,
+    a licznik narzędzi w `ai_intro` zgadza się z listą."""
 
     @pytest.mark.parametrize("lang", ["pl", "en"])
     def test_wiki_mcp_tools_list_lint_blog_post_once(self, lang):
@@ -325,7 +330,7 @@ class TestWikiFeatureBlogLint:
 
         assert content is not None
         count = len(content["mcp_tools"])
-        assert count == 17
+        assert count == 19
         assert f"{count} {suffix}" in content["ai_intro"]
 
     @pytest.mark.parametrize("lang", ["pl", "en"])
@@ -334,6 +339,25 @@ class TestWikiFeatureBlogLint:
 
         assert content is not None
         tool = next(t for t in content["mcp_tools"] if t["name"] == "lint_blog_post")
+        assert tool["desc"].strip()
+        assert chr(0x2014) not in tool["desc"]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_wiki_mcp_tools_list_publication_tools_once(self, lang):
+        content = get_feature_content("wiki", lang)
+
+        assert content is not None
+        names = [t["name"] for t in content["mcp_tools"]]
+        assert names.count("publish_blog_post") == 1
+        assert names.count("unpublish_blog_post") == 1
+
+    @pytest.mark.parametrize("name", ["publish_blog_post", "unpublish_blog_post"])
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_publication_tools_have_a_non_empty_description_without_em_dash(self, lang, name):
+        content = get_feature_content("wiki", lang)
+
+        assert content is not None
+        tool = next(t for t in content["mcp_tools"] if t["name"] == name)
         assert tool["desc"].strip()
         assert chr(0x2014) not in tool["desc"]
 

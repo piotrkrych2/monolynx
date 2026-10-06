@@ -839,6 +839,17 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     ),
                 },
                 {
+                    "title": "Publikacja wpisu z bramką lintu",
+                    "desc": (
+                        "Publikacja wpisu to osobna operacja: najpierw lint, potem strona staje się publiczna pod /blog/{slug}. "
+                        "Wpis z błędami lintu zostaje prywatny, a odmowa wymienia reguły do poprawy; parametr force publikuje mimo błędów. "
+                        "Cofnięcie publikacji zdejmuje wpis i jego wersję markdown z sieci (404), a data publikacji i slug zostają, "
+                        "więc ponowna publikacja wraca pod ten sam adres. "
+                        "Robią to narzędzia MCP publish_blog_post i unpublish_blog_post, REST API "
+                        "oraz komendy monolynx blog publish i monolynx blog unpublish."
+                    ),
+                },
+                {
                     "title": "Metadane wpisu w formularzu wiki",
                     "desc": (
                         "Sekcja „Wpis na blogu” w formularzu edycji strony ustawia adres (slug), opis z licznikiem znaków, autora, tagi, język, "
@@ -876,7 +887,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "desc": "Agent AI może przeczytać dowolną stronę i wyszukać informacje semantycznie — tak jakby był członkiem zespołu.",
                 },
             ],
-            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami, plikami projektu i metadanymi wpisów bloga oraz sprawdza wpisy lintem - 17 narzędzi MCP.",
+            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami, plikami projektu i metadanymi wpisów bloga, sprawdza wpisy lintem oraz publikuje je i cofa publikację - 19 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_wiki_pages", "desc": "Pełne drzewo hierarchii z parent_id i głębokością"},
                 {"name": "get_wiki_page", "desc": "Treść strony + breadcrumby do nawigacji"},
@@ -895,6 +906,8 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 {"name": "get_blog_post", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown"},
                 {"name": "set_blog_post_meta", "desc": "Metadane wpisu: slug, opis, autor, tagi, język, tłumaczenie, okładka, data weryfikacji"},
                 {"name": "lint_blog_post", "desc": "Lint wpisu pod AI: lista problemów z linią i poziomem oraz ocena 0-100"},
+                {"name": "publish_blog_post", "desc": "Publikacja wpisu po lincie: odmowa przy błędach, chyba że force; zwraca adresy i ocenę lintu"},
+                {"name": "unpublish_blog_post", "desc": "Cofnięcie publikacji: adres wpisu i jego .md dają 404, data i slug zostają"},
             ],
             "tech_details": [
                 {
@@ -1022,6 +1035,17 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 ),
             },
             {
+                "title": "Publishing a post behind the lint gate",
+                "desc": (
+                    "Publishing a post is a separate operation: the lint runs first, then the page goes public at /blog/{slug}. "
+                    "A post with lint errors stays private and the refusal names the rules to fix; the force parameter publishes anyway. "
+                    "Unpublishing takes the post and its markdown version offline (404), while the publication date and the slug stay, "
+                    "so publishing again restores the same address. "
+                    "The publish_blog_post and unpublish_blog_post MCP tools, the REST API "
+                    "and the monolynx blog publish and monolynx blog unpublish commands do it."
+                ),
+            },
+            {
                 "title": "Post metadata on the wiki form",
                 "desc": (
                     'A "Blog post" section on the page edit form sets the address (slug), a description with a character counter, the author, tags, '
@@ -1056,7 +1080,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             },
             {"title": "AI searches wiki via MCP", "desc": "Your AI agent can read any page and search semantically — as if it were a team member."},
         ],
-        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments, project files and blog post metadata, and lints blog posts - 17 MCP tools.",
+        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments, project files and blog post metadata, lints blog posts, and publishes and unpublishes them - 19 MCP tools.",
         "mcp_tools": [
             {"name": "list_wiki_pages", "desc": "Full hierarchy tree with parent_id and depth"},
             {"name": "get_wiki_page", "desc": "Page content + breadcrumbs for navigation"},
@@ -1075,6 +1099,8 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             {"name": "get_blog_post", "desc": "A blog post: metadata, public URLs and markdown content"},
             {"name": "set_blog_post_meta", "desc": "Post metadata: slug, description, author, tags, language, translation, cover, verified date"},
             {"name": "lint_blog_post", "desc": "Lint a post for AI: a list of problems with line and level, plus a score from 0 to 100"},
+            {"name": "publish_blog_post", "desc": "Publish a post after the lint: refused on errors unless force; returns URLs and the lint score"},
+            {"name": "unpublish_blog_post", "desc": "Unpublish a post: its address and its .md answer 404, the date and the slug stay"},
         ],
         "tech_details": [
             {
@@ -2084,6 +2110,8 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                     "name": "monolynx blog lint",
                     "desc": "Lint wpisu pod AI: problemy z linią i poziomem oraz ocena 0-100; kod wyjścia 1 przy błędzie.",
                 },
+                {"name": "monolynx blog publish", "desc": "Opublikuj wpis po lincie; błędy lintu to odmowa i kod wyjścia 1, chyba że --force."},
+                {"name": "monolynx blog unpublish", "desc": "Cofnij publikację wpisu: adres i wersja .md dają 404, data i slug zostają."},
             ],
             "tech_details": [
                 {
@@ -2220,6 +2248,8 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                 "name": "monolynx blog lint",
                 "desc": "Lint a post for AI: problems with line and level, plus a score from 0 to 100; exit code 1 on an error.",
             },
+            {"name": "monolynx blog publish", "desc": "Publish a post after the lint; lint errors mean a refusal and exit code 1, unless --force."},
+            {"name": "monolynx blog unpublish", "desc": "Unpublish a post: its address and its .md version answer 404, the date and the slug stay."},
         ],
         "tech_details": [
             {

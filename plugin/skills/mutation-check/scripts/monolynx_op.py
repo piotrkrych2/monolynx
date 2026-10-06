@@ -57,6 +57,9 @@ pole). Pierwsze dwa to odczyty (`READ_OPS`), trzeci to zapis.
 Blog lint (MON-262): `lint_blog_post` (`--page_id` pozycyjny) to odczyt. `monolynx blog lint` konczy sie kodem 1,
 gdy raport zawiera blad lintu; dla tej jednej operacji wrapper traktuje kod 1 ze stdout bedacym obiektem JSON
 z lista `issues` jako wynik (wypisuje stdout, kod 0), a kazdy inny kod 1 zostaje bledem operacji (kod 2).
+Blog publikacja (MON-263): `publish_blog_post` (`--page_id` pozycyjny, `--force true|false`: true -> flaga `--force`
+CLI, false -> brak flagi) i `unpublish_blog_post` (`--page_id` pozycyjny) to zapisy, wiec nie wchodza do `READ_OPS`.
+Odmowa publikacji przez lint to 422, czyli kod 1 CLI i kod 2 wrappera z powodem na stderr (brak wyjatku jak przy lint).
 `goal` sprintu trafia do argv CLI jako zwykla opcja po rozwinieciu `-` / `@plik`
 przez wrapper, bo CLI nie ma `--goal -` (literal `-` stalby sie celem sprintu).
 
@@ -267,6 +270,8 @@ OPS = {
     "list_blog_posts": (("blog", "list"), (), _STATUS),
     "get_blog_post": (("blog", "get"), (("page_id", True),), {}),
     "lint_blog_post": (("blog", "lint"), (("page_id", True),), {}),
+    "publish_blog_post": (("blog", "publish"), (("page_id", True),), {"force": (_PRESENT, "--force")}),
+    "unpublish_blog_post": (("blog", "unpublish"), (("page_id", True),), {}),
     "set_blog_post_meta": (
         ("blog", "meta"),
         (("page_id", True),),

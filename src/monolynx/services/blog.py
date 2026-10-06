@@ -14,6 +14,10 @@ czas czytania (`reading_time_minutes`), powiązane wpisy (`list_related_posts`) 
 
 MON-264: `rewrite_attachment_urls` przepisuje adresy dashboardowe załączników strony na publiczne
 (czysta funkcja, wołana przy renderze publicznym).
+
+MON-263: `publish_post` (bramka lintu, potem `is_public=True`) i `unpublish_post`. Oba wymagają
+`wiki:write` i commitują w serwisie. `blog_lint` jest importowany w czasie wywołania, bo sam
+importuje stąd `DESCRIPTION_MAX_LENGTH`.
 """
 
 from __future__ import annotations
@@ -26,10 +30,11 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx.config import settings
@@ -39,6 +44,9 @@ from monolynx.models.user import User
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.permissions import ensure_permission
+
+if TYPE_CHECKING:
+    from monolynx.services.blog_lint import LintResult
 
 DESCRIPTION_MAX_LENGTH = 300
 POST_LANGS = ("pl", "en")
@@ -103,6 +111,12 @@ class BlogPostView:
 @dataclass
 class BlogPostDetail(BlogPostView):
     content: str
+
+
+@dataclass
+class PublishResult:
+    view: BlogPostView
+    lint: LintResult
 
 
 def build_post_view(post: BlogPost, page: WikiPage) -> BlogPostView:
@@ -606,3 +620,79 @@ async def set_post_meta(
     await db.commit()
     await db.refresh(post)
     return post
+
+
+async def publish_post(
+    db: AsyncSession,
+    user: User,
+    project: Project,
+    page_id: uuid.UUID,
+    *,
+    force: bool = False,
+    content_fn: Callable[[WikiPage], str] | None = None,
+) -> PublishResult:
+    """Opublikuj wpis: lint, a przy błędach lintu odmowa (chyba że `force`), potem `is_public=True`.
+
+    Wymaga `wiki:write`, sprawdzanego przed wyszukaniem strony i przed lintem. `published_at`
+    uzupełnia się tylko gdy puste, więc ponowna publikacja nie zmienia daty ani adresu.
+    """
+    # Import w czasie wywołania: blog_lint importuje stąd DESCRIPTION_MAX_LENGTH (cykl).
+    from monolynx.services.blog_lint import lint_post_by_id
+
+    await ensure_permission(db, user.id, project.id, "wiki", "write")
+
+    page = (await db.execute(select(WikiPage).where(WikiPage.id == page_id, WikiPage.project_id == project.id))).scalar_one_or_none()
+    if page is None:
+        raise ValueError("Strona wiki nie istnieje")
+    slug = page.slug
+
+    # Wiersz musi istnieć przed lintem (lint_post_by_id go wymaga); odmowa niżej go wycofuje.
+    try:
+        await ensure_post(db, page)
+    except ValueError:
+        await db.rollback()
+        raise
+
+    result = await lint_post_by_id(db, user, project, page_id, content_fn=content_fn)
+    if result.has_errors and not force:
+        rules = ", ".join(f"{i.rule} (linia {i.line})" if i.line else i.rule for i in result.issues if i.level == "error")
+        await db.rollback()
+        raise ValueError(f"Publikacja odrzucona: wpis ma błędy lintu ({result.error_count}): {rules}. Napraw je albo użyj force.")
+
+    # uq_wiki_public_slug jest globalny (bez project_id): publikacja może kolidować ze slugiem
+    # publicznej strony z innego projektu -- czytelny błąd zamiast 500 (jak w update_wiki_page).
+    try:
+        page.is_public = True
+        post = await ensure_post(db, page)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ValueError(f"Strona publiczna o slugu '{slug}' już istnieje w innym projekcie. Zmień tytuł strony przed publikacją.") from exc
+    except ValueError:
+        await db.rollback()
+        raise
+    await db.refresh(page)
+    await db.refresh(post)
+    return PublishResult(view=build_post_view(post, page), lint=result)
+
+
+async def unpublish_post(db: AsyncSession, user: User, project: Project, page_id: uuid.UUID) -> BlogPostView:
+    """Cofnij publikację: `is_public=False`, `published_at` i slug zostają (powrót pod ten sam adres).
+
+    Wymaga `wiki:write`. Idempotentne dla strony już prywatnej; brak wiersza `BlogPost` to błąd.
+    """
+    await ensure_permission(db, user.id, project.id, "wiki", "write")
+
+    page = (await db.execute(select(WikiPage).where(WikiPage.id == page_id, WikiPage.project_id == project.id))).scalar_one_or_none()
+    if page is None:
+        raise ValueError("Strona wiki nie istnieje")
+
+    post = (await db.execute(select(BlogPost).where(BlogPost.page_id == page.id))).scalar_one_or_none()
+    if post is None:
+        raise ValueError("Wpis bloga nie istnieje")
+
+    page.is_public = False
+    await db.commit()
+    await db.refresh(page)
+    await db.refresh(post)
+    return build_post_view(post, page)

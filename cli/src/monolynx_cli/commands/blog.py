@@ -1,9 +1,11 @@
-"""Komendy monolynx_cli.commands.blog: list, get, meta, lint (wpisy bloga zapisane jako strony wiki).
+"""Komendy monolynx_cli.commands.blog: list, get, meta, lint, publish, unpublish (wpisy bloga zapisane jako strony wiki).
 
 Komendy biją w /api/v2/projects/{slug}/blog/posts*. `list`, `get` i `lint` to odczyty, `meta` to częściowy
 zapis (PATCH): do body trafiają tylko opcje podane przez użytkownika, a pusty tekst w polach
-nullowalnych (`--translation-of`, `--cover`, `--verified`) wysyła `null` i czyści pole. Publikacja
-wpisu i jej cofnięcie zostają w `monolynx wiki`. Kształt każdej odpowiedzi jest sprawdzany przed
+nullowalnych (`--translation-of`, `--cover`, `--verified`) wysyła `null` i czyści pole. `publish` i
+`unpublish` to zapisy (POST): `publish` zawsze wysyła `{"force": <bool>}` (lint przed publikacją, odmowa to
+422, czyli kod wyjścia 1 z powodem na stderr; `--force` publikuje mimo błędów), `unpublish` nie wysyła body.
+`wiki create|update --public` zostaje niższym poziomem bez bramki lintu. Kształt każdej odpowiedzi jest sprawdzany przed
 `emit()`: brak wymaganego pola albo zły typ to MonolynxAPIError (kod wyjścia 1), nigdy pusty wynik
 z kodem 0. `blog list` w trybie table pokazuje tylko tytuł, slug, status publikacji, język, datę
 publikacji i tagi; pozostałe formaty niosą pełne pola. `blog lint` wypisuje raport (JSON/YAML pełny
@@ -179,3 +181,29 @@ def lint_post(ctx: typer.Context, page_id: _POST_ARG) -> None:
         emit(ctx, report)
     if any(issue["level"] == "error" for issue in report["issues"]):
         raise typer.Exit(1)
+
+
+@app.command("publish")
+def publish_post(
+    ctx: typer.Context,
+    page_id: _POST_ARG,
+    force: Annotated[bool, typer.Option("--force", help="Opublikuj mimo błędów lintu.")] = False,
+) -> None:
+    """Opublikuj wpis bloga po lincie; przy błędach lintu odmowa (kod wyjścia 1), chyba że --force."""
+    path_id = _common.path_segment(page_id)
+    client, slug = _common.open_project(ctx)
+    with client:
+        payload = client.post(_common.project_path(slug, f"/blog/posts/{path_id}/publish"), json={"force": force})
+    data = _require_post(payload)
+    _require_lint(data.get("lint"))
+    emit(ctx, data)
+
+
+@app.command("unpublish")
+def unpublish_post(ctx: typer.Context, page_id: _POST_ARG) -> None:
+    """Cofnij publikację wpisu bloga: adres i wersja .md dają 404, data i slug zostają."""
+    path_id = _common.path_segment(page_id)
+    client, slug = _common.open_project(ctx)
+    with client:
+        payload = client.post(_common.project_path(slug, f"/blog/posts/{path_id}/unpublish"))
+    emit(ctx, _require_post(payload))

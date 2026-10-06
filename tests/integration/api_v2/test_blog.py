@@ -1,9 +1,10 @@
-"""Testy integracyjne API v2 -- Blog (MON-261, MON-262).
+"""Testy integracyjne API v2 -- Blog (MON-261, MON-262, MON-263).
 
-Pokrywa 4 endpointy `src/monolynx/api/v2/blog.py`: lista wpisów (z szkicami), szczegóły wpisu
-z treścią, częściowy PATCH metadanych i lint wpisu (MON-262). Logika w `services/blog.py` (`list_posts`,
-`get_post`, `set_post_meta`) i `services/blog_lint.py` (`lint_post_by_id`); tu sprawdzamy kontrakt HTTP: kształt odpowiedzi, paginację, rozróżnienie
-"pole nieobecne / null / []" w PATCH, mapowanie błędów na problem+json i uprawnienia `wiki:*`.
+Pokrywa 6 endpointów `src/monolynx/api/v2/blog.py`: lista wpisów (z szkicami), szczegóły wpisu
+z treścią, częściowy PATCH metadanych, lint wpisu (MON-262) oraz publikacja z bramką lintu i cofnięcie
+publikacji (MON-263). Logika w `services/blog.py` (`list_posts`, `get_post`, `set_post_meta`, `publish_post`,
+`unpublish_post`) i `services/blog_lint.py` (`lint_post_by_id`); tu sprawdzamy kontrakt HTTP: kształt odpowiedzi,
+paginację, rozróżnienie "pole nieobecne / null / []" w PATCH, mapowanie błędów na problem+json i uprawnienia `wiki:*`.
 
 MinIO nie działa w testach -- treść wpisu jest mockowana na `monolynx.services.wiki.get_markdown`
 (wzorzec `test_wiki.py`).
@@ -12,8 +13,9 @@ MinIO nie działa w testach -- treść wpisu jest mockowana na `monolynx.service
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -70,6 +72,11 @@ async def _page(db_session, project, user, *, is_public: bool = False, with_post
 async def _row(db_session, page_id) -> BlogPost:
     db_session.expire_all()
     return (await db_session.execute(select(BlogPost).where(BlogPost.page_id == page_id))).scalar_one()
+
+
+async def _is_public(db_session, page_id) -> bool:
+    db_session.expire_all()
+    return (await db_session.execute(select(WikiPage.is_public).where(WikiPage.id == page_id))).scalar_one()
 
 
 async def _actor_with_permissions(db_session, project, tag: str, permissions: dict[str, list[str]]):
@@ -843,3 +850,499 @@ class TestPatchBlogPost:
             response = await client.get(f"{_posts_url(project)}/{page.id}", headers=actor.headers)
 
         assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v2/projects/{slug}/blog/posts/{page_id}/publish i /unpublish (MON-263)
+# ---------------------------------------------------------------------------
+
+_CLEAN_CONTENT = "> [!TLDR]\n> - Pierwszy punkt streszczenia.\n> - Drugi punkt streszczenia.\n\n## Czym jest lint?\n\nLint sprawdza wpis.\n"
+_BAD_CONTENT = "# Tytuł\n\nWstęp bez streszczenia.\n"
+_REFUSAL_PREFIX = "Publikacja odrzucona: wpis ma błędy lintu"
+
+
+def _publish_url(project, page_id) -> str:
+    return f"{_posts_url(project)}/{page_id}/publish"
+
+
+def _unpublish_url(project, page_id) -> str:
+    return f"{_posts_url(project)}/{page_id}/unpublish"
+
+
+async def _clean_page(db_session, project, user, **kwargs) -> WikiPage:
+    return await _page(db_session, project, user, description=_LINT_DESCRIPTION, last_verified_at=date.today(), **kwargs)
+
+
+@contextmanager
+def _commit_states(db_session, page_id):
+    """Zapisuje `is_public` strony widziane w chwili KAŻDEGO commita (spy pada na mutancie 'commit -> flush')."""
+    states: list[bool] = []
+    original = db_session.commit
+
+    async def spy():
+        states.append((await db_session.execute(select(WikiPage.is_public).where(WikiPage.id == page_id))).scalar_one())
+        await original()
+
+    with patch.object(db_session, "commit", spy):
+        yield states
+
+
+class TestPublishBlogPost:
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_publishes_clean_post_with_body_and_returns_view_with_lint(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-ok")
+        page = await _clean_page(db_session, project, actor.user)
+        page_id, slug = page.id, page.slug
+
+        response = await client.post(_publish_url(project, page_id), headers=actor.headers, json={"force": False})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == _ITEM_KEYS | {"lint"}
+        assert body["page_id"] == str(page_id)
+        assert body["is_public"] is True
+        assert body["published_at"] is not None
+        assert body["public_url"].endswith(f"/blog/{slug}")
+        assert body["markdown_url"] == body["public_url"] + ".md"
+        assert set(body["lint"]) == _LINT_KEYS
+        assert body["lint"]["page_id"] == str(page_id)
+        assert body["lint"]["error_count"] == 0
+        assert [i["rule"] for i in body["lint"]["issues"]] == ["translation-missing"]
+        assert await _is_public(db_session, page_id) is True
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_publishes_without_request_body(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-nobody")
+        page = await _clean_page(db_session, project, actor.user)
+
+        response = await client.post(_publish_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 200
+        assert response.json()["is_public"] is True
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_lint_errors_without_force_return_422_with_rules_and_page_stays_private(self, mock_get_markdown, client, db_session):
+        """Kryterium f926d213: odmowa w v2 to 422 problem+json z listą reguł, strona zostaje prywatna."""
+        mock_get_markdown.return_value = _BAD_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-refuse")
+        page = await _clean_page(db_session, project, actor.user)
+        page_id = page.id
+        rollback_spy = AsyncMock()
+
+        with patch.object(db_session, "rollback", rollback_spy):
+            response = await client.post(_publish_url(project, page_id), headers=actor.headers)
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+        # Pełny tekst: liczba błędów i reguła z numerem linii; ostrzeżenie h2-no-question i informacja translation-missing poza listą.
+        assert response.json()["detail"] == ("Publikacja odrzucona: wpis ma błędy lintu (1): tldr-missing (linia 3). Napraw je albo użyj force.")
+        rollback_spy.assert_awaited_once()
+        assert await _is_public(db_session, page_id) is False
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_empty_body_defaults_force_to_false(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _BAD_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-default-force")
+        page = await _clean_page(db_session, project, actor.user)
+
+        with patch.object(db_session, "rollback", AsyncMock()):
+            response = await client.post(_publish_url(project, page.id), headers=actor.headers, json={})
+
+        assert response.status_code == 422
+        assert response.json()["detail"].startswith(_REFUSAL_PREFIX)
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_force_publishes_despite_errors_and_returns_the_lint(self, mock_get_markdown, client, db_session):
+        """Kryterium e2183d47: force=true przechodzi mimo błędów i zwraca ocenę lintu."""
+        mock_get_markdown.return_value = _BAD_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-force")
+        page = await _clean_page(db_session, project, actor.user)
+
+        response = await client.post(_publish_url(project, page.id), headers=actor.headers, json={"force": True})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["is_public"] is True
+        assert body["lint"]["error_count"] == 1
+        assert body["lint"]["score"] == 75
+        assert "tldr-missing" in [i["rule"] for i in body["lint"]["issues"]]
+        assert await _is_public(db_session, page.id) is True
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_non_boolean_force_returns_422_and_publishes_nothing(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-badforce")
+        page = await _clean_page(db_session, project, actor.user)
+        page_id = page.id
+
+        response = await client.post(_publish_url(project, page_id), headers=actor.headers, json={"force": "nie-bool"})
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+        assert await _is_public(db_session, page_id) is False
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_page_without_post_row_is_refused_for_missing_description_without_force(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-norow")
+        page = await _page(db_session, project, actor.user, with_post=False)
+
+        with patch.object(db_session, "rollback", AsyncMock()):
+            response = await client.post(_publish_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 422
+        # Reguła z linią 0 jest wypisana bez numeru linii.
+        assert response.json()["detail"] == "Publikacja odrzucona: wpis ma błędy lintu (1): description-missing. Napraw je albo użyj force."
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_force_on_page_without_post_row_creates_row_and_publishes(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-norow-force")
+        page = await _page(db_session, project, actor.user, with_post=False)
+
+        response = await client.post(_publish_url(project, page.id), headers=actor.headers, json={"force": True})
+
+        assert response.status_code == 200
+        slug = page.slug
+        row = await _row(db_session, page.id)
+        assert row.slug == slug
+        assert row.published_at is not None
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_second_publication_keeps_published_at_and_address(self, mock_get_markdown, client, db_session):
+        """Kryterium fe99bafa: druga publikacja nie zmienia published_at."""
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-twice")
+        page = await _clean_page(db_session, project, actor.user)
+
+        first = (await client.post(_publish_url(project, page.id), headers=actor.headers)).json()
+        second = await client.post(_publish_url(project, page.id), headers=actor.headers)
+
+        assert second.status_code == 200
+        assert second.json()["published_at"] == first["published_at"]
+        assert second.json()["public_url"] == first["public_url"]
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_existing_published_at_survives_publication(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-keepdate")
+        original = datetime(2024, 3, 1, 12, 0, tzinfo=UTC)
+        page = await _clean_page(db_session, project, actor.user, published_at=original)
+
+        response = await client.post(_publish_url(project, page.id), headers=actor.headers)
+
+        assert datetime.fromisoformat(response.json()["published_at"]) == original
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_published_post_is_served_at_public_address_and_markdown_twin(self, mock_get_markdown, client, db_session):
+        """Kryterium a5ea606d: publikacja jest widoczna pod publicznym adresem w kolejnym żądaniu."""
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-visible")
+        page = await _clean_page(db_session, project, actor.user)
+        page_id, slug = page.id, page.slug
+        assert (await client.get(f"/blog/{slug}")).status_code == 404
+        assert (await client.get(f"/blog/{slug}.md")).status_code == 404
+
+        with _commit_states(db_session, page_id) as states:
+            response = await client.post(_publish_url(project, page_id), headers=actor.headers)
+
+        assert response.status_code == 200
+        assert True in states
+        assert (await client.get(f"/blog/{slug}")).status_code == 200
+        assert (await client.get(f"/blog/{slug}.md")).status_code == 200
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_role_without_wiki_write_gets_403_and_nothing_is_published(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        owner, project = await make_owner_project(db_session, "blog-pub-ro")
+        actor = await _actor_with_permissions(db_session, project, "blog-pub-ro-a", {"wiki": ["read"]})
+        page = await _clean_page(db_session, project, owner.user)
+        page_id = page.id
+
+        response = await client.post(_publish_url(project, page_id), headers=actor.headers, json={"force": True})
+
+        assert response.status_code == 403
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == "Brak uprawnienia wiki:write"
+        mock_get_markdown.assert_not_called()
+        assert await _is_public(db_session, page_id) is False
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_role_without_wiki_write_gets_403_even_for_nonexistent_page(self, mock_get_markdown, client, db_session):
+        _owner, project = await make_owner_project(db_session, "blog-pub-perm")
+        actor = await _actor_with_permissions(db_session, project, "blog-pub-perm-a", {"wiki": ["read"]})
+
+        response = await client.post(_publish_url(project, uuid.uuid4()), headers=actor.headers)
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Brak uprawnienia wiki:write"
+        mock_get_markdown.assert_not_called()
+
+    @patch("monolynx.services.wiki.get_page_content", side_effect=RuntimeError("minio down"))
+    async def test_role_without_wiki_write_stays_403_when_storage_is_down(self, _mock_content, client, db_session):
+        owner, project = await make_owner_project(db_session, "blog-pub-storage-perm")
+        actor = await _actor_with_permissions(db_session, project, "blog-pub-storage-perm-a", {"wiki": ["read"]})
+        page = await _clean_page(db_session, project, owner.user)
+
+        response = await client.post(_publish_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 403
+
+    async def test_nonexistent_page_returns_404_page_detail(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-pub-404")
+
+        response = await client.post(_publish_url(project, uuid.uuid4()), headers=actor.headers)
+
+        assert response.status_code == 404
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == "Strona wiki nie istnieje"
+
+    async def test_page_from_other_project_returns_404_and_stays_private(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-pub-foreign")
+        other = await make_project(db_session, "blog-pub-foreign-other")
+        foreign = await _clean_page(db_session, other, actor.user)
+        foreign_id = foreign.id
+
+        response = await client.post(_publish_url(project, foreign_id), headers=actor.headers, json={"force": True})
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Strona wiki nie istnieje"
+        assert await _is_public(db_session, foreign_id) is False
+
+    async def test_malformed_page_id_returns_422(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-pub-422")
+
+        response = await client.post(f"{_posts_url(project)}/nie-uuid/publish", headers=actor.headers)
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+
+    async def test_non_member_returns_403(self, client, db_session):
+        owner, project = await make_owner_project(db_session, "blog-pub-nonmember")
+        page = await _clean_page(db_session, project, owner.user)
+        outsider = await make_actor(db_session, "blog-pub-nonmember-out")
+
+        response = await client.post(_publish_url(project, page.id), headers=outsider.headers)
+
+        assert response.status_code == 403
+
+    async def test_missing_token_returns_401(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-pub-401")
+        page = await _clean_page(db_session, project, actor.user)
+
+        response = await client.post(_publish_url(project, page.id))
+
+        assert response.status_code == 401
+
+    @patch("monolynx.services.wiki.get_page_content", side_effect=RuntimeError("minio down"))
+    async def test_storage_failure_returns_503_problem_json(self, _mock_content, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-pub-storage")
+        page = await _clean_page(db_session, project, actor.user)
+
+        response = await client.post(_publish_url(project, page.id), headers=actor.headers, json={"force": True})
+
+        assert response.status_code == 503
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["title"] == "Service Unavailable"
+
+    @patch("monolynx.services.wiki.get_page_content", side_effect=RuntimeError("minio down"))
+    async def test_missing_page_stays_404_when_storage_is_down(self, _mock_content, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-pub-storage-404")
+
+        response = await client.post(_publish_url(project, uuid.uuid4()), headers=actor.headers)
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Strona wiki nie istnieje"
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_slug_collision_with_public_page_of_other_project_returns_422_not_500(self, mock_get_markdown, client, db_session):
+        """Kryterium 6640796f: kolizja sluga to czytelny 422 problem+json, nie 500."""
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-collide")
+        other = await make_project(db_session, "blog-pub-collide-other")
+        page = await _clean_page(db_session, project, actor.user)
+        page_id = page.id
+        slug = page.slug
+        db_session.add(
+            WikiPage(
+                project_id=other.id,
+                title="Inny",
+                slug=slug,
+                position=0,
+                minio_path=f"wiki/{other.slug}/{slug}.md",
+                is_public=True,
+                created_by_id=actor.user.id,
+                last_edited_by_id=actor.user.id,
+            )
+        )
+        await db_session.flush()
+
+        response = await client.post(_publish_url(project, page_id), headers=actor.headers)
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+        assert "już istnieje w innym projekcie" in response.json()["detail"]
+        assert slug in response.json()["detail"]
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_slug_held_by_other_projects_post_returns_422_not_500(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-pub-collide-post")
+        other = await make_project(db_session, "blog-pub-collide-post-other")
+        page = await _page(db_session, project, actor.user, with_post=False)
+        other_page = WikiPage(
+            project_id=other.id,
+            title="Inny",
+            slug=page.slug,
+            position=0,
+            minio_path=f"wiki/{other.slug}/{page.slug}.md",
+            is_public=False,
+            created_by_id=actor.user.id,
+            last_edited_by_id=actor.user.id,
+        )
+        db_session.add(other_page)
+        await db_session.flush()
+        db_session.add(BlogPost(page_id=other_page.id, slug=page.slug))
+        await db_session.flush()
+
+        response = await client.post(_publish_url(project, page.id), headers=actor.headers, json={"force": True})
+
+        assert response.status_code == 422
+        assert "zajęty przez inny wpis bloga" in response.json()["detail"]
+
+
+class TestUnpublishBlogPost:
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_unpublishes_and_keeps_date_and_slug(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-unpub-ok")
+        published_at = datetime(2026, 4, 5, 6, 7, tzinfo=UTC)
+        page = await _page(db_session, project, actor.user, is_public=True, published_at=published_at)
+        page_id, slug = page.id, page.slug
+
+        response = await client.post(_unpublish_url(project, page_id), headers=actor.headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == _ITEM_KEYS
+        assert body["page_id"] == str(page_id)
+        assert body["is_public"] is False
+        assert body["public_url"] is None
+        assert body["markdown_url"] is None
+        assert body["slug"] == slug
+        assert datetime.fromisoformat(body["published_at"]) == published_at
+        assert await _is_public(db_session, page_id) is False
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_after_unpublish_address_and_markdown_twin_return_404(self, mock_get_markdown, client, db_session):
+        """Kryterium a5980e21: po unpublish adres wpisu i jego .md dają 404."""
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-unpub-404")
+        page = await _page(db_session, project, actor.user, is_public=True, published_at=datetime(2026, 4, 5, tzinfo=UTC))
+        page_id, slug = page.id, page.slug
+        assert (await client.get(f"/blog/{slug}")).status_code == 200
+        assert (await client.get(f"/blog/{slug}.md")).status_code == 200
+
+        with _commit_states(db_session, page_id) as states:
+            response = await client.post(_unpublish_url(project, page_id), headers=actor.headers)
+
+        assert response.status_code == 200
+        assert False in states
+        assert (await client.get(f"/blog/{slug}")).status_code == 404
+        assert (await client.get(f"/blog/{slug}.md")).status_code == 404
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_republication_restores_the_same_address(self, mock_get_markdown, client, db_session):
+        """Kryterium a5980e21: ponowna publikacja przywraca ten sam adres i tę samą datę."""
+        mock_get_markdown.return_value = _CLEAN_CONTENT
+        actor, project = await make_owner_project(db_session, "blog-unpub-republish")
+        page = await _clean_page(db_session, project, actor.user)
+        page_id, slug = page.id, page.slug
+        first = (await client.post(_publish_url(project, page_id), headers=actor.headers)).json()
+        await client.post(_unpublish_url(project, page_id), headers=actor.headers)
+        assert (await client.get(f"/blog/{slug}")).status_code == 404
+
+        again = await client.post(_publish_url(project, page_id), headers=actor.headers)
+
+        assert again.status_code == 200
+        assert again.json()["public_url"] == first["public_url"]
+        assert again.json()["published_at"] == first["published_at"]
+        assert (await client.get(f"/blog/{slug}")).status_code == 200
+        assert (await client.get(f"/blog/{slug}.md")).status_code == 200
+
+    async def test_unpublishing_private_post_is_idempotent(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-unpub-idem")
+        page = await _page(db_session, project, actor.user, is_public=False)
+
+        first = await client.post(_unpublish_url(project, page.id), headers=actor.headers)
+        second = await client.post(_unpublish_url(project, page.id), headers=actor.headers)
+
+        assert (first.status_code, second.status_code) == (200, 200)
+        assert second.json()["is_public"] is False
+
+    async def test_page_without_post_row_returns_404_post_detail(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-unpub-norow")
+        page = await _page(db_session, project, actor.user, is_public=True, with_post=False)
+
+        response = await client.post(_unpublish_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 404
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == "Wpis bloga nie istnieje"
+
+    async def test_nonexistent_page_returns_404_page_detail(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-unpub-404page")
+
+        response = await client.post(_unpublish_url(project, uuid.uuid4()), headers=actor.headers)
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Strona wiki nie istnieje"
+
+    async def test_role_without_wiki_write_gets_403_and_post_stays_public(self, client, db_session):
+        owner, project = await make_owner_project(db_session, "blog-unpub-ro")
+        actor = await _actor_with_permissions(db_session, project, "blog-unpub-ro-a", {"wiki": ["read"]})
+        page = await _page(db_session, project, owner.user, is_public=True)
+        page_id = page.id
+
+        response = await client.post(_unpublish_url(project, page_id), headers=actor.headers)
+
+        assert response.status_code == 403
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == "Brak uprawnienia wiki:write"
+        assert await _is_public(db_session, page_id) is True
+
+    async def test_role_without_wiki_write_gets_403_even_for_nonexistent_page(self, client, db_session):
+        _owner, project = await make_owner_project(db_session, "blog-unpub-perm")
+        actor = await _actor_with_permissions(db_session, project, "blog-unpub-perm-a", {"wiki": ["read"]})
+
+        response = await client.post(_unpublish_url(project, uuid.uuid4()), headers=actor.headers)
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Brak uprawnienia wiki:write"
+
+    async def test_malformed_page_id_returns_422(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-unpub-422")
+
+        response = await client.post(f"{_posts_url(project)}/nie-uuid/unpublish", headers=actor.headers)
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+
+    async def test_non_member_returns_403(self, client, db_session):
+        owner, project = await make_owner_project(db_session, "blog-unpub-nonmember")
+        page = await _page(db_session, project, owner.user, is_public=True)
+        outsider = await make_actor(db_session, "blog-unpub-nonmember-out")
+
+        response = await client.post(_unpublish_url(project, page.id), headers=outsider.headers)
+
+        assert response.status_code == 403
+
+    async def test_missing_token_returns_401(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-unpub-401")
+        page = await _page(db_session, project, actor.user, is_public=True)
+
+        response = await client.post(_unpublish_url(project, page.id))
+
+        assert response.status_code == 401

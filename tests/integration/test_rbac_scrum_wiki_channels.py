@@ -3,7 +3,8 @@
 Kontrakt: samo członkostwo w projekcie nie wystarcza. Operacje na ticketach, sprintach, komentarzach,
 kryteriach akceptacji, etykietach, czasie pracy, załącznikach i stronach wiki sprawdzają uprawnienia roli
 (`scrum:read|write|delete`, `wiki:read|write|delete`; metadane wpisów bloga MON-261: `list_blog_posts` i `get_blog_post` -> `wiki:read`,
-`set_blog_post_meta` -> `wiki:write`; lint wpisu MON-262: `lint_blog_post` -> `wiki:read`) tak samo jak dashboard:
+`set_blog_post_meta` -> `wiki:write`; lint wpisu MON-262: `lint_blog_post` -> `wiki:read`; publikacja i cofnięcie publikacji MON-263:
+`publish_blog_post` i `unpublish_blog_post` -> `wiki:write`) tak samo jak dashboard:
 
 - odmowa to `ValueError("Brak uprawnienia <moduł>:<akcja>")` w MCP i 403 `application/problem+json` z tym samym
   `detail` w API v2,
@@ -262,6 +263,9 @@ CASES: list[Case] = [
         lambda s: _a(str(s.page_id), description="Nowy opis wpisu"),
         lambda s: V2Req(json={"description": "Nowy opis wpisu"}, path={"page_id": s.page_id}),
     ),
+    # Seed ma wpis z błędami lintu (opis za krótki, brak TLDR), więc udana publikacja bez force jest niemożliwa: positive=False.
+    Case("publish_blog_post", "wiki:write", lambda s: _a(str(s.page_id)), lambda s: V2Req(path={"page_id": s.page_id}), positive=False),
+    Case("unpublish_blog_post", "wiki:write", lambda s: _a(str(s.page_id)), lambda s: V2Req(path={"page_id": s.page_id})),
     # --- wiki:delete ---
     Case("delete_wiki_page", "wiki:delete", lambda s: _a(str(s.page_id)), lambda s: V2Req(path={"page_id": s.page_id})),
 ]
@@ -440,7 +444,7 @@ def _expected_ok_status(tool: str) -> int:
     method = TOOL_TO_ENDPOINT[tool].method
     if method == "DELETE":
         return 204
-    if method == "POST" and tool not in {"start_sprint", "complete_sprint"}:
+    if method == "POST" and tool not in {"start_sprint", "complete_sprint", "publish_blog_post", "unpublish_blog_post"}:
         return 201
     return 200
 
@@ -1177,6 +1181,30 @@ ORDER_CASES: list[OrderCase] = [
         "wiki:write",
         lambda s: _a(_MISSING_UUID, description="Zmiana"),
         lambda s: V2Req(json={"description": "Zmiana"}, path={"page_id": _MISSING_UUID}),
+    ),
+    OrderCase("publish_blog_post-malformed-id", "publish_blog_post", "wiki:write", lambda s: _a(_MALFORMED)),
+    OrderCase(
+        "publish_blog_post-missing-page",
+        "publish_blog_post",
+        "wiki:write",
+        lambda s: _a(_MISSING_UUID),
+        lambda s: V2Req(path={"page_id": _MISSING_UUID}),
+    ),
+    # Rola `readonly` ma wiki:read, więc lint wpisu by przeszedł: bez checku wiki:write przed lintem odmowa byłaby odmową lintu (422 w v2).
+    OrderCase(
+        "publish_blog_post-page-failing-lint",
+        "publish_blog_post",
+        "wiki:write",
+        lambda s: _a(str(s.page_id)),
+        lambda s: V2Req(path={"page_id": s.page_id}),
+    ),
+    OrderCase("unpublish_blog_post-malformed-id", "unpublish_blog_post", "wiki:write", lambda s: _a(_MALFORMED)),
+    OrderCase(
+        "unpublish_blog_post-missing-page",
+        "unpublish_blog_post",
+        "wiki:write",
+        lambda s: _a(_MISSING_UUID),
+        lambda s: V2Req(path={"page_id": _MISSING_UUID}),
     ),
     # --- wiki:read ---
     OrderCase("get_wiki_page-malformed-id", "get_wiki_page", "wiki:read", lambda s: _a(_MALFORMED)),
