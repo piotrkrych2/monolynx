@@ -34,3 +34,4 @@
 ## Reguly z review krytyka
 
 - Zmieniając zachowanie skilla, poprawiasz każdą deklarację tego zachowania w plikach, które i tak edytujesz w tym diffie (frontmatter, tabela skilli w README, changelog), po grepie starego sformułowania. (MON-206)
+- MON-265 (reguła powtórzona, ta sama klasa co MON-206): Po napisaniu skilla każde zdanie o jego zachowaniu w README, changelogu i CLAUDE.md porównujesz z krokiem SKILL.md, który to zachowanie definiuje (README i CLAUDE.md mówiły "opublikowany wpis zatrzymuje skill" i "zawsze bez force", a skill po jawnym "tak" edytuje opublikowany wpis i dopuszcza `force=true` na wyraźną prośbę).

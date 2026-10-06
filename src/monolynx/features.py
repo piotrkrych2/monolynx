@@ -866,6 +866,15 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     ),
                 },
                 {
+                    "title": "Skill blog-post i przewodnik dla każdego modelu",
+                    "desc": (
+                        "Skill /monolynx:blog-post prowadzi wpis od briefu przez konspekt, szkic i lint do podglądu, "
+                        "a publikuje dopiero po Twojej jawnej zgodzie; w sesji w tle kończy na szkicu. "
+                        "Publiczny przewodnik /blog-authoring.md opisuje składnię bloków, reguły lintu i operacje connectorów, "
+                        "więc wpis w tym formacie napisze też model bez pluginu."
+                    ),
+                },
+                {
                     "title": "Wstawianie bloków i obrazków w edytorze",
                     "desc": (
                         "Menu „Wstaw blok” w pasku edytora wstawia w miejscu kursora gotowy szablon składni każdego bloku wpisu, "
@@ -1059,6 +1068,15 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     'A "Post preview" button on the wiki page opens the draft in the look of the public blog, with blocks, the table of contents '
                     'and reading time, before you tick "public page". Only a signed-in user with wiki read permission sees the preview, '
                     "and its address carries a noindex header and never appears in the sitemap, the feeds or /llms.txt."
+                ),
+            },
+            {
+                "title": "The blog-post skill and a guide for any model",
+                "desc": (
+                    "The /monolynx:blog-post skill takes a post from the brief through the outline, the draft and the lint to the preview, "
+                    "and publishes only after your explicit consent; in a background session it ends at the draft. "
+                    "The public guide /blog-authoring.md describes the block syntax, the lint rules and the connector operations, "
+                    "so a model without the plugin can write a post in this format too."
                 ),
             },
             {

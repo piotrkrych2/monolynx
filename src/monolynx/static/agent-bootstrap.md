@@ -67,7 +67,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 
 ---
 
-## Komplet 23 skilli `/monolynx:*`
+## Komplet 24 skilli `/monolynx:*`
 
 - **`/monolynx:next`** - pierwsza komenda do zapamiętania. Router read-only sprawdza git, ticket, sprint, sesje, MR i konfigurację; podaje 1-3 komendy z uzasadnieniem oraz `NEXT: <komenda>`, bez uruchamiania pracy.
 
@@ -89,6 +89,7 @@ Zapytaj uzytkownika, **ktory modul go interesuje** (Scrum, Wiki, monitoring, gra
 - **`/monolynx:wiki-ingest`** - zintegruj nowe zrodlo (plik, URL, wklejona tresc) z wiki, linkujac wikilinkami.
 - **`/monolynx:wiki-lint`** - audyt zdrowia wiki: sieroty, martwe linki, sprzecznosci, luki.
 - **`/monolynx:wiki-sync-merge`** - post-merge INGEST do wiki, uruchamiany po merge ticketow/PR do main.
+- **`/monolynx:blog-post`** - wpis na blog od briefu do publikacji: konspekt, szkic jako prywatna strona wiki, lint do zera bledow, adres podgladu. Publikuje dopiero po jawnej zgodzie uzytkownika, a w sesji w tle (`MONOLYNX_SPRINT_RUN=1`) konczy na szkicu. Skladnia blokow i reguly lintu: <https://monolynx.com/blog-authoring.md>.
 - **`/monolynx:help`** - mapa skilli w 6 grupach (Setup, Planowanie, Praca, Integracja, Sprint, Wiki) z dwiema ścieżkami pracy: ręczną i autopilotem.
 - **`/monolynx:create-graph-ci-script`** - wygeneruj skrypt CI synchronizujacy graf zaleznosci kodu z Monolynx.
 - **`/monolynx:create-mutation-ci-script`** - wygeneruj nieblokujacy krok CI z testami mutacyjnymi: tryb diffowy na MR/PR, raport jako artefakt, zapadka baseline (score / baseline / delta).

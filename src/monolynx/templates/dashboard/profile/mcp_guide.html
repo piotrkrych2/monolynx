@@ -324,7 +324,7 @@
         </div>
 
         <p class="text-gray-700 dark:text-gray-300 text-sm mb-4">
-            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz 23 skilli i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code>, gotowy zdalny serwer MCP bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> oraz dwa hooki: <code class="text-indigo-300 font-mono text-sm">bash_guard</code> (subagenci nie odpalają testów ani operacji zapisu w git) i <code class="text-indigo-300 font-mono text-sm">brief_guard</code> (pierwszy goły imperatyw w sesji, np. „napraw build”, dostaje kontrakt ze skilla <code class="text-indigo-300 font-mono text-sm">/monolynx:brief</code>; tryby <code class="text-indigo-300 font-mono text-sm">MONOLYNX_BRIEF_GUARD=auto|block|off</code>).
+            Najprostszy sposób: zainstaluj Monolynx jako natywny plugin Claude Code. Dostajesz 24 skilli i agentów jako komendy <code class="text-indigo-300 font-mono text-sm">/monolynx:*</code>, gotowy zdalny serwer MCP bez ręcznej edycji <code class="text-indigo-300 font-mono text-sm">.mcp.json</code> oraz dwa hooki: <code class="text-indigo-300 font-mono text-sm">bash_guard</code> (subagenci nie odpalają testów ani operacji zapisu w git) i <code class="text-indigo-300 font-mono text-sm">brief_guard</code> (pierwszy goły imperatyw w sesji, np. „napraw build”, dostaje kontrakt ze skilla <code class="text-indigo-300 font-mono text-sm">/monolynx:brief</code>; tryby <code class="text-indigo-300 font-mono text-sm">MONOLYNX_BRIEF_GUARD=auto|block|off</code>).
         </p>
 
         <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-x-auto mb-4">
@@ -361,6 +361,7 @@
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-ingest</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-lint</code>
             <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:wiki-sync-merge</code>
+            <code class="text-indigo-300 font-mono text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-2 py-1 rounded">/monolynx:blog-post</code>
         </div>
 
         <div class="bg-gray-100/40 dark:bg-gray-700/30 border border-gray-300 dark:border-gray-600 rounded-lg p-3">
@@ -549,6 +550,11 @@ install_monolynx_skills(
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:wiki-sync-merge</p>
                 <p class="text-xs text-gray-600 dark:text-gray-400">Post-merge INGEST do wiki metodą LLM Wiki. Odpalane po merge ticketów/PR do main. Wymaga włączonego LLM Wiki.</p>
                 <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:wiki-sync-merge [ticket-id]</code></p>
+            </div>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
+                <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:blog-post</p>
+                <p class="text-xs text-gray-600 dark:text-gray-400">Wpis na blog od briefu do publikacji: konspekt, szkic jako prywatna strona wiki, lint do zera błędów i adres podglądu. Publikuje dopiero po Twojej jawnej zgodzie; w sesji w tle kończy na szkicu. Składnia bloków i reguły lintu: <a href="/blog-authoring.md" class="text-indigo-400 hover:text-indigo-300 underline">przewodnik blog-authoring.md</a>.</p>
+                <p class="text-xs text-gray-500 mt-1">Użycie: <code class="text-green-400 font-mono">/monolynx:blog-post [temat | page_id szkicu]</code></p>
             </div>
             <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-3">
                 <p class="text-sm font-medium text-gray-900 dark:text-white mb-1">monolynx:retro</p>

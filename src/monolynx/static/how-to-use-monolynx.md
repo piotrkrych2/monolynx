@@ -200,11 +200,12 @@ Every task starts from the wiki and ends by enriching it. Tickets carry verifiab
 | Enable the LLM Wiki method | `monolynx:wiki-init` (run once per project) |
 | Grow the wiki | `monolynx:wiki-ingest`, `monolynx:wiki-sync-merge` (post-merge) |
 | Keep the wiki healthy | `monolynx:wiki-lint` |
+| Write a blog post | `monolynx:blog-post [topic \| draft page_id]` - brief, outline, draft as a private wiki page, lint loop until there are no errors, preview address. It publishes only after your explicit consent and never in a background session (`MONOLYNX_SPRINT_RUN=1` ends at the draft and the lint report). Block syntax, lint rules and connector operations for any model: <https://monolynx.com/blog-authoring.md> |
 | Generate a code-graph CI script | `monolynx:create-graph-ci-script` |
 | Add a non-blocking mutation-testing CI step | `monolynx:create-mutation-ci-script` - diff mode on MR/PR, report artifact, baseline ratchet (does not install the mutation tool) |
 | See which skill to pick | `monolynx:help` - a map of all skills in 6 groups (Setup, Planning, Work, Integration, Sprint, Wiki) plus the manual and autopilot work paths |
 
-Full set of 23 skills: `monolynx:next`, `monolynx:setup`, `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:mr-queue`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`, `monolynx:create-mutation-ci-script`.
+Full set of 24 skills: `monolynx:next`, `monolynx:setup`, `monolynx:brief`, `monolynx:work`, `monolynx:work-simple`, `monolynx:resume`, `monolynx:ticket-create`, `monolynx:ticket-review`, `monolynx:sprint-run`, `monolynx:mr-queue`, `monolynx:sprint-end`, `monolynx:retro`, `monolynx:project-toolchain`, `monolynx:mutation-check`, `monolynx:search`, `monolynx:wiki-init`, `monolynx:wiki-ingest`, `monolynx:wiki-lint`, `monolynx:wiki-sync-merge`, `monolynx:blog-post`, `monolynx:help`, `monolynx:create-graph-ci-script`, `monolynx:graph-sync`, `monolynx:create-mutation-ci-script`.
 
 Full module and tool reference: <https://monolynx.com/llms.txt>
 
