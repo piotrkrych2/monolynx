@@ -100,6 +100,139 @@
         );
     });
 
+    var TYPING_MAX_MS = 1800;
+    var TYPING_TICK_MS = 30;
+
+    function prefersReducedMotion() {
+        return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    }
+
+    function initDiagrams() {
+        var diagrams = document.querySelectorAll("[data-blog-diagram]");
+        if (!diagrams.length || !window.mermaid) {
+            return;
+        }
+        var dark = document.documentElement.classList.contains("dark");
+        try {
+            window.mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: dark ? "dark" : "default"
+            });
+        } catch (e) {
+            return;
+        }
+        Array.prototype.forEach.call(diagrams, function (figure, index) {
+            var canvas = figure.querySelector(".blog-diagram-canvas");
+            var source = figure.querySelector(".blog-diagram-source code");
+            if (!canvas || !source) {
+                return;
+            }
+            try {
+                Promise.resolve(
+                    window.mermaid.render("blog-diagram-svg-" + index, source.textContent)
+                ).then(function (result) {
+                    // SVG zwraca biblioteka przy securityLevel strict, nie treść autora.
+                    canvas.innerHTML = result.svg;
+                    canvas.hidden = false;
+                    figure.classList.add("blog-diagram-rendered");
+                }, function () {
+                    var leftover = document.getElementById("dblog-diagram-svg-" + index);
+                    if (leftover && leftover.parentNode) {
+                        leftover.parentNode.removeChild(leftover);
+                    }
+                });
+            } catch (e) {
+                return;
+            }
+        });
+    }
+
+    function typeTerminal(figure) {
+        var code = figure.querySelector(".blog-terminal-body code");
+        if (!code) {
+            return;
+        }
+        var full = code.textContent;
+        if (!full) {
+            return;
+        }
+        var body = code.parentNode;
+        body.style.minHeight = body.offsetHeight + "px";
+        var step = Math.max(1, Math.ceil(full.length / (TYPING_MAX_MS / TYPING_TICK_MS)));
+        var position = 0;
+        code.textContent = "";
+        figure.classList.add("blog-terminal-typing");
+        function tick() {
+            position = Math.min(full.length, position + step);
+            code.textContent = full.slice(0, position);
+            if (position < full.length) {
+                window.setTimeout(tick, TYPING_TICK_MS);
+                return;
+            }
+            figure.classList.remove("blog-terminal-typing");
+            body.style.minHeight = "";
+        }
+        tick();
+    }
+
+    function initTerminals() {
+        if (prefersReducedMotion()) {
+            return;
+        }
+        var terminals = document.querySelectorAll("[data-blog-terminal]");
+        Array.prototype.forEach.call(terminals, function (figure) {
+            if (!("IntersectionObserver" in window)) {
+                typeTerminal(figure);
+                return;
+            }
+            var observer = new IntersectionObserver(function (entries) {
+                if (entries.some(function (entry) { return entry.isIntersecting; })) {
+                    observer.disconnect();
+                    typeTerminal(figure);
+                }
+            });
+            observer.observe(figure);
+        });
+    }
+
+    function initGraphics() {
+        var graphics = window.BlogGraphics;
+        var nodes = document.querySelectorAll("[data-blog-graphic]");
+        if (!graphics) {
+            return;
+        }
+        Array.prototype.forEach.call(nodes, function (el) {
+            var name = el.getAttribute("data-blog-graphic") || "";
+            if (!Object.prototype.hasOwnProperty.call(graphics, name)) {
+                return;
+            }
+            try {
+                graphics[name].mount(el);
+                el.classList.add("blog-graphic-mounted");
+            } catch (e) {
+                // Zostaje sam opis z HTML.
+            }
+        });
+    }
+
+    function initBlocks() {
+        [initDiagrams, initTerminals, initGraphics].forEach(function (init) {
+            try {
+                init();
+            } catch (e) {
+                // Jeden blok nie psuje pozostałych.
+            }
+        });
+    }
+
+    // Skrypty defer wykonują się przed DOMContentLoaded, więc Mermaid i komponenty są już zarejestrowane.
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initBlocks);
+    } else {
+        initBlocks();
+    }
+
     // Spis treści (MON-260): bez JS linki działają, a <details> jest zwinięty.
     var WIDE_QUERY = "(min-width: 1024px)";
 

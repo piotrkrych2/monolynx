@@ -12,6 +12,10 @@ przez formularz.
 MON-254: adres wpisu to stabilny `BlogPost.slug` (nie slug strony wiki), lista sortuje po
 `published_at`, a strona publiczna bez wiersza BlogPost daje 404. Helper `_create_wiki_page`
 tworzy wiec dla stron publicznych tez BlogPost.
+
+MON-257: `TestBlogGraphicBlocks` sprawdza bloki graficzne na realnej trasie: biblioteka Mermaid
+tylko we wpisie z diagramem (raz), skrypt i styl komponentu z `BLOG_GRAPHICS` tylko we wpisie,
+ktory go uzywa (raz), bliźniak `.md` bez HTML i pliki statyczne komponentu `agent-loop`.
 """
 
 import html
@@ -1601,6 +1605,270 @@ class TestBlogPostBlocks:
         # Pozytyw obok negatywu: blok details nadal sie renderuje, a tresc zostaje.
         assert 'class="blog-details"' in resp.text
         assert "Treść MON256 ukryta." in resp.text
+
+
+# ---------------------------------------------------------------------------
+# MON-257: bloki graficzne (chart, diagram, terminal, graphic) na realnej trasie /blog/{slug},
+# w bliźniaku .md i w plikach statycznych komponentow
+# ---------------------------------------------------------------------------
+
+_MERMAID_SCRIPT = re.compile(
+    r'<script\b[^>]*\bsrc="https://cdn\.jsdelivr\.net/npm/mermaid@11\.17\.2/dist/mermaid\.min\.js"[^>]*\bdefer\b[^>]*></script>',
+)
+_CHART_SVG_TAG = re.compile(r'<svg\b[^>]*\bclass="blog-chart-svg"[^>]*>')
+_CHART_BLOCK = ':::chart type="bar" title="Tickety MON257"\n| Miesiąc | Tickety |\n|---|---|\n| Styczeń | 12 |\n| Luty | 18 |\n:::'
+_DIAGRAM_BLOCK = ':::diagram title="Obieg MON257"\nOpis diagramu MON257 w kilku słowach.\n\n```mermaid\ngraph LR\nA[Ticket] --> B[Agent]\n```\n:::'
+_TERMINAL_BLOCK = ':::terminal title="Logowanie MON257"\n```console\n$ monolynx auth login\nZalogowano jako piotr@example.com\n```\n:::'
+_GRAPHIC_BLOCK = ':::graphic name="agent-loop"\nOpis grafiki MON257: ticket, agent, MR i wiki.\n:::'
+_GRAPHICS_DIR = "/static/blog/graphics/"
+
+
+def _twin_body(text: str) -> str:
+    """Treść bliźniaka `.md` bez frontmatter."""
+    assert text.startswith("---\n")
+    return text[text.index("\n---\n", 4) + len("\n---\n") :]
+
+
+@pytest.mark.integration
+class TestBlogGraphicBlocks:
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_post_without_a_diagram_has_no_mermaid_reference_even_with_other_graphic_blocks(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"Tekst MON257.\n\n{_CHART_BLOCK}\n\n{_TERMINAL_BLOCK}\n\n{_GRAPHIC_BLOCK}"
+        page = await _published_post(db_session, "gfx-no-diagram")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "mermaid" not in resp.text.lower()
+        assert "data-blog-diagram" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_plain_mermaid_code_block_does_not_load_the_library(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Tekst MON257.\n\n```mermaid\ngraph TD\nA-->B\n```"
+        page = await _published_post(db_session, "gfx-code-only")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "cdn.jsdelivr.net" not in resp.text
+        assert "data-blog-diagram" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_diagram_without_a_mermaid_block_shows_the_description_and_loads_no_library(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = ':::diagram title="Opis"\nSam opis MON257 bez źródła.\n:::'
+        page = await _published_post(db_session, "gfx-diagram-no-source")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "Sam opis MON257 bez źródła." in resp.text
+        assert "mermaid" not in resp.text.lower()
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_post_with_a_diagram_loads_the_pinned_library_exactly_once(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"Tekst MON257.\n\n{_DIAGRAM_BLOCK}"
+        page = await _published_post(db_session, "gfx-diagram")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert resp.text.count("cdn.jsdelivr.net/npm/mermaid@") == 1
+        assert len(_MERMAID_SCRIPT.findall(resp.text)) == 1
+        assert resp.text.count("data-blog-diagram") == 1
+        assert "Opis diagramu MON257 w kilku słowach." in resp.text
+        assert "A[Ticket] --&gt; B[Agent]" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_library_script_carries_subresource_integrity_and_anonymous_cors(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"Tekst MON257.\n\n{_DIAGRAM_BLOCK}"
+        page = await _published_post(db_session, "gfx-diagram-sri")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        tag = _MERMAID_SCRIPT.findall(resp.text)
+        assert len(tag) == 1
+        assert re.search(r'\bintegrity="sha384-[A-Za-z0-9+/]{64}"', tag[0])
+        assert 'crossorigin="anonymous"' in tag[0]
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_two_diagrams_in_one_post_still_load_the_library_once(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"{_DIAGRAM_BLOCK}\n\nTekst pomiędzy.\n\n{_DIAGRAM_BLOCK.replace('MON257', 'MON257-drugi')}"
+        page = await _published_post(db_session, "gfx-two-diagrams")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert resp.text.count("data-blog-diagram") == 2
+        assert resp.text.count("cdn.jsdelivr.net/npm/mermaid@") == 1
+        assert len(_MERMAID_SCRIPT.findall(resp.text)) == 1
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_diagram_marker_inside_a_code_fence_does_not_load_the_library(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"````\n{_DIAGRAM_BLOCK}\n````"
+        page = await _published_post(db_session, "gfx-fenced-diagram")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "cdn.jsdelivr.net" not in resp.text
+        assert "data-blog-diagram" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_registered_graphic_links_its_own_script_and_style_once_and_shows_the_description(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"Tekst MON257.\n\n{_GRAPHIC_BLOCK}"
+        page = await _published_post(db_session, "gfx-graphic")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert resp.text.count(f"{_GRAPHICS_DIR}agent-loop.js") == 1
+        assert resp.text.count(f"{_GRAPHICS_DIR}agent-loop.css") == 1
+        styles = re.findall(rf'<link\b[^>]*href="{re.escape(_GRAPHICS_DIR)}agent-loop\.css"[^>]*>', resp.text)
+        scripts = re.findall(rf'<script\b[^>]*src="{re.escape(_GRAPHICS_DIR)}agent-loop\.js"[^>]*>', resp.text)
+        assert len(styles) == 1
+        assert 'rel="stylesheet"' in styles[0]
+        assert len(scripts) == 1
+        assert "defer" in scripts[0]
+        assert resp.text.count('data-blog-graphic="agent-loop"') == 1
+        assert "Opis grafiki MON257: ticket, agent, MR i wiki." in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_graphic_used_twice_still_links_the_component_once(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"{_GRAPHIC_BLOCK}\n\nTekst pomiędzy.\n\n{_GRAPHIC_BLOCK.replace('MON257', 'MON257-drugi')}"
+        page = await _published_post(db_session, "gfx-graphic-twice")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert resp.text.count('data-blog-graphic="agent-loop"') == 2
+        assert resp.text.count(f"{_GRAPHICS_DIR}agent-loop.js") == 1
+        assert resp.text.count(f"{_GRAPHICS_DIR}agent-loop.css") == 1
+
+    @pytest.mark.parametrize(
+        ("tag", "name"),
+        [("unknown", "no-such-component"), ("traversal", "../../../etc/passwd"), ("case", "Agent-Loop")],
+    )
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_graphic_outside_the_registry_shows_only_the_description(self, mock_get_markdown, tag, name, client, db_session):
+        mock_get_markdown.return_value = f':::graphic name="{name}"\nOpis spoza rejestru MON257.\n:::'
+        page = await _published_post(db_session, f"gfx-{tag}")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "Opis spoza rejestru MON257." in resp.text
+        assert _GRAPHICS_DIR not in resp.text
+        assert "data-blog-graphic" not in resp.text
+        assert name not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_post_without_graphics_links_no_component_files(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"Tekst MON257.\n\n{_CHART_BLOCK}\n\n{_DIAGRAM_BLOCK}"
+        page = await _published_post(db_session, "gfx-no-graphic")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert _GRAPHICS_DIR not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_graphic_without_description_renders_the_page_and_links_nothing(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = 'Tekst MON257.\n\n:::graphic name="agent-loop"\n:::'
+        page = await _published_post(db_session, "gfx-graphic-empty")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "Tekst MON257." in resp.text
+        assert _GRAPHICS_DIR not in resp.text
+        assert "data-blog-graphic" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_graphic_marker_inside_a_code_fence_links_no_component_files(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"````\n{_GRAPHIC_BLOCK}\n````"
+        page = await _published_post(db_session, "gfx-fenced-graphic")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert _GRAPHICS_DIR not in resp.text
+        assert "data-blog-graphic" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_chart_renders_inline_svg_with_collapsible_table_and_keeps_label_markup_out(self, mock_get_markdown, client, db_session):
+        label = "<script>alert('mon257-xss')</script>"
+        table = f"| Miesiąc | Tickety |\n|---|---|\n| {label} | 12 |\n| Luty | 18 |"
+        mock_get_markdown.return_value = f':::chart type="line" title="Tickety MON257"\n{table}\n:::'
+        page = await _published_post(db_session, "gfx-chart")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert 'class="blog-chart blog-chart-line"' in resp.text
+        svg_tags = _CHART_SVG_TAG.findall(resp.text)
+        assert len(svg_tags) == 1
+        assert 'role="img"' in svg_tags[0]
+        assert "Dane wykresu" in resp.text
+        assert "<script>alert(" not in resp.text
+        assert "&lt;script&gt;alert(" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_chart_with_non_numeric_value_shows_the_table_without_svg(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = ':::chart type="bar" title="Brak liczb MON257"\n| Miesiąc | Tickety |\n|---|---|\n| Styczeń | dużo |\n:::'
+        page = await _published_post(db_session, "gfx-chart-text")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "blog-chart-svg" not in resp.text
+        assert "dużo" in resp.text
+        assert "Dane wykresu" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_terminal_renders_the_full_content_in_html(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _TERMINAL_BLOCK
+        page = await _published_post(db_session, "gfx-terminal")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert resp.text.count("data-blog-terminal") == 1
+        assert 'class="blog-terminal-body"' in resp.text
+        assert "$ monolynx auth login\nZalogowano jako piotr@example.com" in resp.text
+        assert "Logowanie MON257" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_markdown_twin_of_all_four_blocks_carries_their_data_and_no_html(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = f"Tekst MON257.\n\n{_CHART_BLOCK}\n\n{_DIAGRAM_BLOCK}\n\n{_TERMINAL_BLOCK}\n\n{_GRAPHIC_BLOCK}"
+        page = await _published_post(db_session, "gfx-twin")
+
+        resp = await client.get(f"/blog/{page.slug}.md")
+
+        assert resp.status_code == 200
+        body = _twin_body(resp.text)
+        assert re.search(r"</?[A-Za-z]", body) is None
+        assert ":::" not in body
+        for expected in (
+            "**Tickety MON257**",
+            "| Styczeń | 12 |",
+            "Opis diagramu MON257 w kilku słowach.",
+            "```mermaid\ngraph LR\nA[Ticket] --> B[Agent]\n```",
+            "```console\n$ monolynx auth login\nZalogowano jako piotr@example.com\n```",
+            "Opis grafiki MON257: ticket, agent, MR i wiki.",
+        ):
+            assert expected in body
+        assert "agent-loop" not in body
+
+    @pytest.mark.parametrize(
+        ("path", "content_type_part"),
+        [("/static/blog/graphics/agent-loop.js", "javascript"), ("/static/blog/graphics/agent-loop.css", "css")],
+    )
+    async def test_agent_loop_component_files_are_served(self, path, content_type_part, client):
+        resp = await client.get(path)
+
+        assert resp.status_code == 200
+        assert content_type_part in resp.headers["content-type"]
+        assert len(resp.content) > 0
 
 
 # ---------------------------------------------------------------------------

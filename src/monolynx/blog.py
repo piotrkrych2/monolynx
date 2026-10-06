@@ -15,6 +15,10 @@ treści.
 MON-255: treść wpisu renderuje `services/blog_blocks.render_post_html` (bloki + sanityzacja nh3);
 streszczenie (zajawka, meta description) liczy się ze źródła bez znaczników bloków (`strip_block_markers`).
 
+MON-257: `public_page` liczy `collect_block_assets(content)` i przekazuje szablonowi `has_diagram` (biblioteka
+Mermaid ładowana tylko wpisowi z diagramem) oraz `graphics` (nazwy komponentów z `BLOG_GRAPHICS`, których
+skrypt i styl dołącza `page.html` tylko wpisowi, który ich używa).
+
 MON-258: `/blog/{slug}` z `Accept: text/markdown` zwraca ten sam dokument co `/blog/{slug}.md`
 (`blog_ai.markdown_twin_response`); odpowiedź HTML niesie `Vary: Accept` i `Link` do bliźniaka,
 a strony dostają JSON-LD (`services/blog.build_post_jsonld` / `build_blog_jsonld`).
@@ -68,7 +72,13 @@ from monolynx.services.blog import (
     list_related_posts,
     reading_time_minutes,
 )
-from monolynx.services.blog_blocks import extract_structured_data, render_post_html, render_post_markdown, strip_block_markers
+from monolynx.services.blog_blocks import (
+    collect_block_assets,
+    extract_structured_data,
+    render_post_html,
+    render_post_markdown,
+    strip_block_markers,
+)
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.wiki import extract_summary, get_page_content
 
@@ -276,6 +286,7 @@ async def public_page(slug: str, request: Request, lang: str | None = None, db: 
         logger.exception("Blad pobierania tresci strony wiki z MinIO (page_id=%s)", page.id)
         raise HTTPException(status_code=404, detail="Nie znaleziono strony") from None
     content_html = render_post_html(content)
+    assets = collect_block_assets(content)
     meta_description = post.description or extract_summary(strip_block_markers(content))
 
     # Okladka musi nalezec do tej strony (set_post_meta to pilnuje, ale zalacznik mogl byc potem
@@ -328,6 +339,8 @@ async def public_page(slug: str, request: Request, lang: str | None = None, db: 
             "page_title": page.title,
             "page_slug": post.slug,
             "content_html": content_html,
+            "has_diagram": assets.has_diagram,
+            "graphics": list(assets.graphics),
             "breadcrumbs": breadcrumbs,
             "children": children,
             "backlinks": backlinks,

@@ -1,14 +1,20 @@
-"""Silnik blokow wpisu bloga (MON-255, MON-256).
+"""Silnik blokow wpisu bloga (MON-255, MON-256, MON-257).
 
 `render_post_html` buduje HTML strony wpisu, `render_post_markdown` bliźniak `.md`
 (markdown dla AI), `strip_block_markers` usuwa ze zrodla znaczniki blokow (alert, kontenery),
 zeby streszczenie wpisu (meta description, zajawka listy) liczylo sie z tresci,
-`extract_structured_data` wyciaga z kontenerow `faq`, `steps` i `video` dane do JSON-LD.
+`extract_structured_data` wyciaga z kontenerow `faq`, `steps` i `video` dane do JSON-LD,
+`collect_block_assets` mowi, jakie zasoby dolaczyc do strony (biblioteka Mermaid, komponenty
+z `BLOG_GRAPHICS`), a `find_block_issues` wskazuje braki w blokach graficznych (lint).
 Rejestry `TEXT_BLOCKS` i `CONTAINER_BLOCKS` opisuja bloki. Bloki tekstowe (alerty GitHub, cytat
 z autorem, obrazek z podpisem, kod z nazwa pliku, kotwice naglowkow, przypisy) sa zapisane jako
 zwykly, czytelny markdown. Kontenery `:::typ ... :::` (faq, steps, stats, compare, details,
-gallery, video, cta, glossary) tez: ich wnetrze to markdown autora, a renderery z rejestru
-buduja z niego strukture. HTML generuja wylacznie renderery z tego modulu.
+gallery, video, cta, glossary oraz graficzne chart, diagram, terminal, graphic) tez: ich wnetrze
+to markdown autora, a renderery z rejestru buduja z niego strukture. Bloki graficzne maja tekst
+jako zrodlo (tabela, opis, kod), a grafika jest warstwa nad nim: wykres to SVG z `blog_chart`,
+diagram renderuje w przegladarce Mermaid ze zrodla, terminal to okno CSS z trescia w HTML,
+grafika z rejestru to opis podmieniany przez komponent z repozytorium. HTML generuja wylacznie
+renderery z tego modulu.
 
 Kolejnosc `render_post_html` (sanityzacja jest jedna, na treści autora):
 1. kontenery `:::typ`: znany typ (rejestr) renderuje swoj HTML i parkuje go na tokenie, nieznany
@@ -18,7 +24,8 @@ Kolejnosc `render_post_html` (sanityzacja jest jedna, na treści autora):
 3. obrazki z podpisem na juz oczyszczonym HTML;
 4. podmiana tokenow na HTML blokow, tylko w postaci `<p>token</p>` (token gdziekolwiek indziej
    jest usuwany): kazda wartosc od autora w bloku jest albo escapowana (`html.escape`), albo
-   pochodzi z `nh3` (tresc alertu, cytatu i kontenera), albo to wartosc ze slownika rendererow.
+   pochodzi z `nh3` (tresc alertu, cytatu i kontenera), albo to wartosc ze slownika rendererow
+   (nazwa grafiki z `BLOG_GRAPHICS`, SVG zbudowany przez `blog_chart` z danych sparsowanych).
    Tokeny maja losowy nonce, wiec autor nie zasymuluje bloku;
 5. kotwice naglowkow i odnosniki przypisow na calosci (takze w alertach i cytatach).
 """
@@ -37,6 +44,7 @@ from urllib.parse import parse_qs, urlsplit
 import markdown
 import nh3
 
+from monolynx.services.blog_chart import parse_chart_table, render_chart_svg
 from monolynx.services.wiki import _PUBLIC_ALLOWED_TAGS, _PUBLIC_URL_SCHEMES
 
 logger = logging.getLogger("monolynx.blog_blocks")
@@ -115,6 +123,9 @@ _VIDEO_HOSTS = {
     "www.vimeo.com": "vimeo",
     "player.vimeo.com": "vimeo",
 }
+
+# Zamknieta lista komponentow z `static/blog/graphics/<nazwa>.js|.css`; nowy komponent to pliki i wpis tutaj (MR).
+BLOG_GRAPHICS: frozenset[str] = frozenset({"agent-loop"})
 
 _Fence = tuple[str, int, str]
 
@@ -343,11 +354,12 @@ def _extract_blocks(lines: list[str], nonce: str) -> tuple[list[str], dict[str, 
 
 @dataclass(frozen=True)
 class _Container:
-    """Domkniety kontener znanego typu; `attrs` to reszta linii otwarcia (dla `details`: tytul)."""
+    """Domkniety kontener znanego typu; `attrs` to reszta linii otwarcia (dla `details`: tytul), `line` to jej numer (od 1)."""
 
     kind: str
     attrs: str
     inner: list[str]
+    line: int = 0
 
 
 _Part = list[str] | _Container
@@ -373,9 +385,9 @@ def _split_containers(lines: list[str]) -> list[_Part]:
     parts: list[_Part] = []
     plain: list[str] = []
     inner: list[str] = []
-    opened: tuple[str, str, str] | None = None
+    opened: tuple[str, str, str, int] | None = None
     fence: _Fence | None = None
-    for line in lines:
+    for number, line in enumerate(lines, start=1):
         target = plain if opened is None else inner
         if fence is not None:
             target.append(line)
@@ -390,15 +402,15 @@ def _split_containers(lines: list[str]) -> list[_Part]:
             if found is None:
                 plain.append(line)
             else:
-                opened = (found[0], found[1], line)
+                opened = (found[0], found[1], line, number)
                 inner = []
         elif line.strip() == ":::":
-            kind, attrs, open_line = opened
+            kind, attrs, open_line, open_number = opened
             if kind in CONTAINER_BLOCKS:
                 if plain:
                     parts.append(plain)
                     plain = []
-                parts.append(_Container(kind, attrs, inner))
+                parts.append(_Container(kind, attrs, inner, open_number))
             else:
                 plain.extend([open_line, *inner, line])
             opened = None
@@ -677,6 +689,97 @@ def _glossary_html(container: _Container) -> str:
     return f'<dl class="blog-glossary">{rendered}</dl>'
 
 
+def _split_fenced(lines: list[str]) -> tuple[list[str], str, list[str]] | None:
+    """(linie poza blokiem, jezyk malymi literami, tresc) pierwszego domknietego bloku ogrodzonego; None, gdy go nie ma."""
+    for index, line in enumerate(lines):
+        fence = _open_fence(line)
+        if fence is None:
+            continue
+        end = next((j for j in range(index + 1, len(lines)) if _closes_fence(lines[j], fence)), None)
+        if end is None:
+            return None
+        lang = _FENCE_LANG.match(fence[2])
+        return [*lines[:index], *lines[end + 1 :]], lang.group(1).lower() if lang else "", lines[index + 1 : end]
+    return None
+
+
+def _diagram_parts(inner: list[str]) -> tuple[list[str], list[str] | None]:
+    """(opis, zrodlo mermaid): zrodlo to niepusty pierwszy blok ogrodzony `mermaid`, inaczej None."""
+    fenced = _split_fenced(inner)
+    if fenced is None:
+        return inner, None
+    outside, lang, content = fenced
+    if lang != "mermaid":
+        # Blok w innym jezyku to tresc autora: zostaje w opisie, nie znika.
+        return inner, None
+    return outside, content if _has_content(content) else None
+
+
+def _terminal_content(inner: list[str]) -> list[str] | None:
+    """Tresc pierwszego bloku ogrodzonego (dowolny jezyk); None, gdy brak bloku albo jest pusty."""
+    fenced = _split_fenced(inner)
+    return fenced[2] if fenced is not None and _has_content(fenced[2]) else None
+
+
+def _text_escape(text: str) -> str:
+    """`html.escape` plus `[` jako encja: `_link_footnotes` biegnie po wstawieniu blokow i zamienilaby `[^x]` w ich tekscie."""
+    return html.escape(text).replace("[", "&#91;")
+
+
+def _chart_html(container: _Container) -> str:
+    attrs = dict(_ATTR.findall(container.attrs))
+    title = attrs.get("title", "")
+    source = "\n".join(container.inner)
+    caption = f"<figcaption>{_text_escape(title)}</figcaption>" if title else ""
+    table_html = _clean(source)
+    data = parse_chart_table(source)
+    chart_type = attrs.get("type", "")
+    svg = render_chart_svg(chart_type, title, data) if data is not None else None
+    if svg is None:
+        return f'<figure class="blog-chart">{caption}{table_html}</figure>'
+    # `chart_type` jest tu jednym z `CHART_TYPES`: inaczej `render_chart_svg` zwrocilby None.
+    return (
+        f'<figure class="blog-chart blog-chart-{chart_type}">{caption}{svg}'
+        f'<details class="blog-chart-data"><summary>Dane wykresu</summary>{table_html}</details></figure>'
+    )
+
+
+def _diagram_html(container: _Container) -> str:
+    title = dict(_ATTR.findall(container.attrs)).get("title", "")
+    description, source = _diagram_parts(container.inner)
+    caption = f"<figcaption>{_text_escape(title)}</figcaption>" if title else ""
+    description_html = f'<div class="blog-diagram-description">{_clean(chr(10).join(description))}</div>' if _has_content(description) else ""
+    if source is None:
+        if not description_html:
+            return _degrade(container)
+        return f'<figure class="blog-diagram">{caption}{description_html}</figure>'
+    # Zrodlo bez klasy `language-mermaid`: slowo `mermaid` w HTML strony ma oznaczac tylko skrypt biblioteki.
+    return (
+        f'<figure class="blog-diagram" data-blog-diagram>{caption}{description_html}'
+        '<div class="blog-diagram-canvas" hidden></div>'
+        f'<pre class="blog-diagram-source"><code>{html.escape(chr(10).join(source), quote=False)}</code></pre></figure>'
+    )
+
+
+def _terminal_html(container: _Container) -> str:
+    content = _terminal_content(container.inner)
+    if content is None:
+        return _degrade(container)
+    title = dict(_ATTR.findall(container.attrs)).get("title", "")
+    return (
+        '<figure class="blog-terminal" data-blog-terminal>'
+        f'<div class="blog-terminal-bar"><span class="blog-terminal-title">{_text_escape(title)}</span></div>'
+        f'<pre class="blog-terminal-body"><code>{html.escape(chr(10).join(content), quote=False)}</code></pre></figure>'
+    )
+
+
+def _graphic_html(container: _Container) -> str:
+    name = dict(_ATTR.findall(container.attrs)).get("name", "")
+    # Atrybut dostaje wylacznie nazwa z rejestru (dokladne dopasowanie), wiec nazwa autora nigdy nie trafia do sciezki pliku.
+    marker = f' data-blog-graphic="{name}"' if name in BLOG_GRAPHICS else ""
+    return f'<div class="blog-graphic"{marker}><div class="blog-graphic-description">{_clean(chr(10).join(container.inner))}</div></div>'
+
+
 def _html_container(container: _Container, nonce: str, blocks: dict[str, str]) -> list[str]:
     """Renderuje znany kontener i parkuje jego HTML na tokenie (wstawianym po nh3, jak cytat)."""
     block = ""
@@ -711,6 +814,43 @@ def _labelled_markdown(label: str) -> Callable[[_Container], str]:
 
 def _details_markdown(container: _Container) -> str:
     return f"**{container.attrs or 'Szczegóły'}**\n\n" + "\n".join(container.inner)
+
+
+def _titled_markdown(title: str, body: str) -> str:
+    return f"**{title}**\n\n{body}" if title else body
+
+
+def _markdown_fence(lang: str, content: list[str]) -> str:
+    """Blok ogrodzony z plotem dluzszym niz kazdy ciag backtickow w tresci, zeby jej nie zamknela."""
+    longest = max((len(run) for line in content for run in re.findall(r"`+", line)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return "\n".join([f"{fence}{lang}", *content, fence])
+
+
+def _chart_markdown(container: _Container) -> str:
+    title = dict(_ATTR.findall(container.attrs)).get("title", "")
+    return _titled_markdown(title, "\n".join(container.inner))
+
+
+def _diagram_markdown(container: _Container) -> str:
+    title = dict(_ATTR.findall(container.attrs)).get("title", "")
+    description, source = _diagram_parts(container.inner)
+    if source is None:
+        return _titled_markdown(title, "\n".join(description if _has_content(description) else container.inner))
+    parts = ["\n".join(description).strip(), _markdown_fence("mermaid", source)]
+    return _titled_markdown(title, "\n\n".join(part for part in parts if part))
+
+
+def _terminal_markdown(container: _Container) -> str:
+    title = dict(_ATTR.findall(container.attrs)).get("title", "")
+    content = _terminal_content(container.inner)
+    if content is None:
+        return _titled_markdown(title, "\n".join(container.inner))
+    return _titled_markdown(title, _markdown_fence("console", content))
+
+
+def _graphic_markdown(container: _Container) -> str:
+    return "\n".join(container.inner)
 
 
 def _render_html(source: str) -> str:
@@ -850,5 +990,83 @@ CONTAINER_BLOCKS: dict[str, BlockDefinition] = dict(
         _container_block("video", _video_html, _labelled_markdown("**Wideo**")),
         _container_block("cta", _cta_html, _labelled_markdown("**Wezwanie do działania**")),
         _container_block("glossary", _glossary_html, _labelled_markdown("**Słownik**")),
+        _container_block("chart", _chart_html, _chart_markdown),
+        _container_block("diagram", _diagram_html, _diagram_markdown),
+        _container_block("terminal", _terminal_html, _terminal_markdown),
+        _container_block("graphic", _graphic_html, _graphic_markdown),
     ]
 )
+
+
+@dataclass(frozen=True)
+class BlockAssets:
+    """Zasoby strony wpisu: czy ma diagram (biblioteka Mermaid) i ktore komponenty grafik dolaczyc."""
+
+    has_diagram: bool
+    graphics: tuple[str, ...]
+
+
+def collect_block_assets(markdown_text: str) -> BlockAssets:
+    """Zasoby wpisu liczone ta sama sciezka co render (kontenery w kodzie i niedomkniete sie nie licza); nie rzuca."""
+    try:
+        has_diagram = False
+        graphics: list[str] = []
+        for part in _split_containers(markdown_text.splitlines()):
+            if not isinstance(part, _Container):
+                continue
+            if part.kind == "diagram":
+                has_diagram = has_diagram or _diagram_parts(part.inner)[1] is not None
+            elif part.kind == "graphic" and _has_content(part.inner):
+                name = dict(_ATTR.findall(part.attrs)).get("name", "")
+                if name in BLOG_GRAPHICS and name not in graphics:
+                    graphics.append(name)
+        return BlockAssets(has_diagram=has_diagram, graphics=tuple(graphics))
+    except Exception:
+        logger.exception("Blad zbierania zasobow blokow wpisu bloga")
+        return BlockAssets(has_diagram=False, graphics=())
+
+
+@dataclass(frozen=True)
+class BlockIssue:
+    """Problem w bloku graficznym wpisu (lint); `level` to zawsze `error`, `line` to linia otwarcia kontenera."""
+
+    rule: str
+    level: str
+    line: int
+    message: str
+
+
+def _container_issues(container: _Container) -> list[tuple[str, str]]:
+    """(regula, komunikat) dla jednego kontenera graficznego."""
+    issues: list[tuple[str, str]] = []
+    if container.kind == "graphic":
+        if not _has_content(container.inner):
+            issues.append(("graphic-missing-description", "Blok :::graphic wymaga akapitu z opisem grafiki."))
+        if dict(_ATTR.findall(container.attrs)).get("name", "") not in BLOG_GRAPHICS:
+            issues.append(("graphic-unknown-name", "Blok :::graphic wymaga atrybutu name z nazwą komponentu z rejestru BLOG_GRAPHICS."))
+    elif container.kind == "chart":
+        if parse_chart_table("\n".join(container.inner)) is None:
+            issues.append(("chart-missing-data", "Blok :::chart wymaga tabeli z etykietami w pierwszej kolumnie i liczbami w kolejnych."))
+    elif container.kind == "diagram":
+        description, source = _diagram_parts(container.inner)
+        if not _has_content(description):
+            issues.append(("diagram-missing-description", "Blok :::diagram wymaga akapitu z opisem diagramu."))
+        if source is None:
+            issues.append(("diagram-missing-source", "Blok :::diagram wymaga niepustego bloku ```mermaid."))
+    elif container.kind == "terminal" and _terminal_content(container.inner) is None:
+        issues.append(("terminal-missing-content", "Blok :::terminal wymaga niepustego bloku ogrodzonego z treścią terminala."))
+    return issues
+
+
+def find_block_issues(markdown_text: str) -> list[BlockIssue]:
+    """Braki w blokach graficznych (opis, dane, zrodlo, nazwa z rejestru) do lintu wpisu; nie rzuca."""
+    try:
+        return [
+            BlockIssue(rule=rule, level="error", line=part.line, message=message)
+            for part in _split_containers(markdown_text.splitlines())
+            if isinstance(part, _Container)
+            for rule, message in _container_issues(part)
+        ]
+    except Exception:
+        logger.exception("Blad lintu blokow graficznych wpisu bloga")
+        return []
