@@ -9,6 +9,11 @@
     <!-- AI agents & LLMs: machine-readable overview at /llms.txt ; usage guide at /how-to-use-monolynx.md ; project bootstrap at /agent-bootstrap.md{% if md_url %} ; markdown version of this page at {{ md_url }}{% endif %} -->
     <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
     {% if md_url %}<link rel="alternate" type="text/markdown" href="{{ md_url }}" title="Markdown version of this page">{% endif %}
+    {% if request is defined and (request.url.path == '/blog' or request.url.path.startswith('/blog/')) %}
+    <link rel="alternate" type="application/atom+xml" title="Blog Monolynx (Atom)" href="/blog/feed.xml">
+    <link rel="alternate" type="application/rss+xml" title="Blog Monolynx (RSS)" href="/blog/rss.xml">
+    <link rel="alternate" type="application/feed+json" title="Blog Monolynx (JSON Feed)" href="/blog/feed.json">
+    {% endif %}
     {% block canonical %}{% endblock %}
     <!-- Open Graph / Facebook / LinkedIn -->
     <meta property="og:type" content="{% block og_type %}website{% endblock %}">

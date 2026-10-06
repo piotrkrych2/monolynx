@@ -68,7 +68,7 @@ from monolynx.services.blog import (
     list_related_posts,
     reading_time_minutes,
 )
-from monolynx.services.blog_blocks import render_post_html, render_post_markdown, strip_block_markers
+from monolynx.services.blog_blocks import extract_structured_data, render_post_html, render_post_markdown, strip_block_markers
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.wiki import extract_summary, get_page_content
 
@@ -303,6 +303,7 @@ async def public_page(slug: str, request: Request, lang: str | None = None, db: 
             description=meta_description,
             word_count=len(render_post_markdown(content).split()),
             image_url=cover_image_url,
+            structured=extract_structured_data(content),
         )
     )
 

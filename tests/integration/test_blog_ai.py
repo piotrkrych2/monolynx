@@ -8,15 +8,23 @@ importuje `get_page_content`.
 
 Funkcje czyste `absolutize_markdown_urls` i `conditional_response` mają testy bez bazy
 (klasy `TestAbsolutizeMarkdownUrls`, `TestConditionalResponse`).
+
+MON-259 dopisuje: feedy `/blog/feed.xml`, `/blog/rss.xml`, `/blog/feed.json` (pełna treść, znaki specjalne,
+filtr `lang`, limit, ETag), dynamiczną sekcję `## Blog` w `/llms.txt`, `/llms-full.txt` (separator, limit
+bajtów, linia `Truncated`), JSON-LD z bloków (`FAQPage`, `HowTo`, `VideoObject`), linki `rel="alternate"`
+do feedów w `<head>` bloga i link do bloga w `/index.md`.
 """
 
 import hashlib
 import json
 import re
 import uuid
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
-from email.utils import format_datetime
+from email.utils import format_datetime, parsedate_to_datetime
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from urllib.parse import quote, urlsplit
 
@@ -24,6 +32,7 @@ import pytest
 import yaml
 from starlette.requests import Request
 
+from monolynx import blog_ai
 from monolynx.blog_ai import absolutize_markdown_urls, conditional_response, wants_markdown
 from monolynx.config import settings
 from monolynx.services import blog as blog_service
@@ -1301,3 +1310,956 @@ class TestJsonLdWordCountAndImage:
 
         posting = next(n for n in json.loads(_ld_blocks(resp.text)[0])["@graph"] if n["@type"] == "BlogPosting")
         assert posting["image"] == f"{BASE}/blog/{slug}/attachments/{attachment.id}/{quote('okladka wpisu.png')}"
+
+
+# ---------------------------------------------------------------------------
+# MON-259: feedy Atom / RSS / JSON Feed (kryteria 1, 2, 3)
+# ---------------------------------------------------------------------------
+
+# Daty z 2099, zeby wpisy testu byly zawsze najnowsze na listach globalnych (feed bierze N najnowszych z calej bazy).
+_FUTURE = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+_ATOM = "{http://www.w3.org/2005/Atom}"
+_CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
+_FEEDS = {
+    "atom": ("/blog/feed.xml", "application/atom+xml; charset=utf-8"),
+    "rss": ("/blog/rss.xml", "application/rss+xml; charset=utf-8"),
+    "json": ("/blog/feed.json", "application/feed+json; charset=utf-8"),
+}
+_ALL_KINDS = pytest.mark.parametrize("kind", ["atom", "rss", "json"])
+_EPOCH_HEADER = "Thu, 01 Jan 1970 00:00:00 GMT"
+_END_MARKER = "KONIEC-WPISU-MON259"
+
+
+def _at(days: int) -> datetime:
+    return _FUTURE + timedelta(days=days)
+
+
+def _long_content(end_marker: str = _END_MARKER) -> str:
+    """Dluga tresc z **pogrubieniem**; marker na koncu nie moze trafic do zajawki."""
+    return "Akapit tresci wpisu. " * 150 + f"\n\nTo jest **pogrubiony** fragment.\n\n{end_marker}"
+
+
+def _parse_feed(kind: str, body: bytes) -> list[dict]:
+    """Feed -> lista wpisow w kolejnosci dokumentu: {url, title, content, summary} (ten sam ksztalt dla 3 formatow)."""
+    if kind == "atom":
+        root = ET.fromstring(body)
+        return [
+            {
+                "url": e.findtext(f"{_ATOM}id"),
+                "title": e.findtext(f"{_ATOM}title"),
+                "content": e.findtext(f"{_ATOM}content"),
+                "summary": e.findtext(f"{_ATOM}summary"),
+            }
+            for e in root.findall(f"{_ATOM}entry")
+        ]
+    if kind == "rss":
+        root = ET.fromstring(body)
+        return [
+            {
+                "url": i.findtext("guid"),
+                "title": i.findtext("title"),
+                "content": i.findtext(f"{_CONTENT_NS}encoded"),
+                "summary": i.findtext("description"),
+            }
+            for i in root.findall("channel/item")
+        ]
+    data = json.loads(body)
+    return [{"url": i["id"], "title": i["title"], "content": i.get("content_text"), "summary": i.get("summary")} for i in data["items"]]
+
+
+async def _get_feed(client, env, kind: str, query: str = ""):
+    with _minio(env.store):
+        return await client.get(_FEEDS[kind][0] + query)
+
+
+def _url(slug: str) -> str:
+    return f"{BASE}/blog/{slug}"
+
+
+@pytest.mark.integration
+class TestFeedsCommon:
+    @_ALL_KINDS
+    async def test_returns_200_with_the_feed_media_type(self, kind, client, db_session):
+        env = await _env(db_session, "fct")
+        await env.post("fct", published_at=_at(1))
+
+        resp = await _get_feed(client, env, kind)
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == _FEEDS[kind][1]
+
+    @_ALL_KINDS
+    async def test_entry_has_full_content_not_just_the_teaser(self, kind, client, db_session):
+        env = await _env(db_session, "ffull")
+        _page, slug = await env.post("ffull", _long_content(), description="Krotka zajawka wpisu.", published_at=_at(1))
+
+        resp = await _get_feed(client, env, kind)
+
+        item = next(i for i in _parse_feed(kind, resp.content) if i["url"] == _url(slug))
+        assert _END_MARKER in item["content"]
+        assert item["summary"] == "Krotka zajawka wpisu."
+        assert _END_MARKER not in item["summary"]
+
+    @pytest.mark.parametrize("kind", ["atom", "rss"])
+    async def test_xml_feeds_carry_rendered_html_content(self, kind, client, db_session):
+        env = await _env(db_session, "fhtml")
+        _page, slug = await env.post("fhtml", _long_content(), published_at=_at(1))
+
+        resp = await _get_feed(client, env, kind)
+
+        item = next(i for i in _parse_feed(kind, resp.content) if i["url"] == _url(slug))
+        assert "<strong>pogrubiony</strong>" in item["content"]
+        assert "**pogrubiony**" not in item["content"]
+
+    async def test_json_feed_carries_the_markdown_source(self, client, db_session):
+        env = await _env(db_session, "fmd")
+        _page, slug = await env.post("fmd", _long_content(), published_at=_at(1))
+
+        resp = await _get_feed(client, env, "json")
+
+        item = next(i for i in _parse_feed("json", resp.content) if i["url"] == _url(slug))
+        assert "**pogrubiony**" in item["content"]
+        assert "<strong>" not in item["content"]
+        assert not item["content"].startswith("---")
+
+    @_ALL_KINDS
+    async def test_title_with_xml_special_characters_round_trips(self, kind, client, db_session):
+        env = await _env(db_session, "ftitle")
+        title = 'Fish & <Chips> ]]> "cytat" koniec'
+        _page, slug = await env.post("ftitle", f"Tresc & <b> ]]> {_END_MARKER}", title=title, published_at=_at(1))
+
+        resp = await _get_feed(client, env, kind)
+
+        assert resp.status_code == 200
+        item = next(i for i in _parse_feed(kind, resp.content) if i["url"] == _url(slug))
+        assert item["title"] == title
+        assert _END_MARKER in item["content"]
+
+    @pytest.mark.parametrize("kind", ["atom", "rss"])
+    async def test_control_characters_illegal_in_xml_are_removed(self, kind, client, db_session):
+        env = await _env(db_session, "fctl")
+        # \x08, \x0e, \x1f lezą na krawedziach zakresow sterujacych; U+FFFE i U+FFFF to niedozwolone znaki nie-sterujace.
+        title = "Ster\x01ujacy\x0b \x08tytul\x0e\x1f\ufffe\uffff"
+        _page, slug = await env.post("fctl", f"tresc\x0b\x0c\ufffe\uffff {_END_MARKER}", title=title, published_at=_at(1))
+
+        resp = await _get_feed(client, env, kind)
+
+        assert resp.status_code == 200
+        item = next(i for i in _parse_feed(kind, resp.content) if i["url"] == _url(slug))
+        assert item["title"] == "Sterujacy tytul"
+        assert "\ufffe" not in item["content"]
+        assert "\uffff" not in item["content"]
+        assert _END_MARKER in item["content"]
+
+    @_ALL_KINDS
+    async def test_private_post_is_absent(self, kind, client, db_session):
+        env = await _env(db_session, "fpriv")
+        _pub, pub_slug = await env.post("fpub", published_at=_at(2))
+        _priv, priv_slug = await env.post("fprv", "TAJNA-TRESC-FEED-MON259", title="Prywatny wpis feedu MON259", public=False, published_at=_at(3))
+
+        resp = await _get_feed(client, env, kind)
+
+        urls = [i["url"] for i in _parse_feed(kind, resp.content)]
+        assert _url(pub_slug) in urls
+        assert _url(priv_slug) not in urls
+        assert priv_slug not in resp.text
+        assert "TAJNA-TRESC-FEED-MON259" not in resp.text
+        assert "Prywatny wpis feedu MON259" not in resp.text
+
+    @_ALL_KINDS
+    async def test_lang_filter_narrows_the_feed(self, kind, client, db_session):
+        env = await _env(db_session, "flang")
+        _pl, pl_slug = await env.post("flangpl", lang="pl", published_at=_at(1))
+        _en, en_slug = await env.post("flangen", lang="en", published_at=_at(2))
+
+        pl_resp = await _get_feed(client, env, kind, "?lang=pl")
+        en_resp = await _get_feed(client, env, kind, "?lang=en")
+
+        pl_urls = [i["url"] for i in _parse_feed(kind, pl_resp.content)]
+        en_urls = [i["url"] for i in _parse_feed(kind, en_resp.content)]
+        assert _url(pl_slug) in pl_urls
+        assert _url(en_slug) not in pl_urls
+        assert _url(en_slug) in en_urls
+        assert _url(pl_slug) not in en_urls
+
+    @_ALL_KINDS
+    @pytest.mark.parametrize("bad_lang", ["xx", "\x00"])
+    async def test_invalid_lang_gives_an_empty_feed_like_index_md(self, kind, bad_lang, client, db_session):
+        env = await _env(db_session, "fbadlang")
+        await env.post("fbadlang", published_at=_at(1))
+
+        resp = await _get_feed(client, env, kind, f"?lang={quote(bad_lang)}")
+
+        assert resp.status_code == 200
+        assert _parse_feed(kind, resp.content) == []
+        assert resp.headers["last-modified"] == _EPOCH_HEADER
+
+    @_ALL_KINDS
+    async def test_entries_are_newest_first(self, kind, client, db_session):
+        env = await _env(db_session, "ford")
+        # Kolejnosc wstawiania (5, 9, 1, 7) rozna od oczekiwanej (9, 7, 5, 1).
+        slugs = {}
+        for days in (5, 9, 1, 7):
+            _page, slugs[days] = await env.post(f"ford{days}", published_at=_at(days))
+
+        resp = await _get_feed(client, env, kind)
+
+        urls = [i["url"] for i in _parse_feed(kind, resp.content)]
+        assert urls[:4] == [_url(slugs[d]) for d in (9, 7, 5, 1)]
+
+    @_ALL_KINDS
+    async def test_feed_is_limited_to_feed_limit_newest_posts(self, kind, client, db_session):
+        env = await _env(db_session, "flimit")
+        slugs = {}
+        for days in (3, 1, 2):
+            _page, slugs[days] = await env.post(f"flimit{days}", published_at=_at(days))
+
+        with patch("monolynx.blog_ai.FEED_LIMIT", 2):
+            resp = await _get_feed(client, env, kind)
+
+        urls = [i["url"] for i in _parse_feed(kind, resp.content)]
+        assert urls == [_url(slugs[3]), _url(slugs[2])]
+
+    async def test_json_feed_with_21_posts_lists_exactly_the_20_newest(self, client, db_session):
+        env = await _env(db_session, "f21")
+        slugs = {}
+        for days in range(21):
+            _page, slugs[days] = await env.post(f"f21-{days}", published_at=_at(days))
+
+        resp = await _get_feed(client, env, "json")
+
+        urls = [i["url"] for i in _parse_feed("json", resp.content)]
+        assert urls == [_url(slugs[d]) for d in range(20, 0, -1)]
+        assert _url(slugs[0]) not in urls
+
+    @_ALL_KINDS
+    async def test_storage_error_of_one_post_skips_only_that_post(self, kind, client, db_session):
+        env = await _env(db_session, "fminio")
+        _good_page, good_slug = await env.post("fgood", f"Dobra tresc {_END_MARKER}", published_at=_at(2))
+        bad_page, bad_slug = await env.post("fbad", published_at=_at(3))
+        env.store[bad_page.minio_path] = RuntimeError("MinIO niedostepne")
+
+        resp = await _get_feed(client, env, kind)
+
+        assert resp.status_code == 200
+        items = _parse_feed(kind, resp.content)
+        urls = [i["url"] for i in items]
+        assert _url(good_slug) in urls
+        assert _url(bad_slug) not in urls
+        assert _END_MARKER in next(i for i in items if i["url"] == _url(good_slug))["content"]
+
+    @_ALL_KINDS
+    async def test_last_modified_is_the_max_updated_at_of_the_listed_posts(self, kind, client, db_session):
+        env = await _env(db_session, "flm")
+        newest = _at(400)
+        # Kolejnosc listy (published_at malejaco): x, z, y. Najnowszy updated_at ma srodkowy z.
+        await env.post("flmy", published_at=_at(11), updated_at=_at(300))
+        await env.post("flmz", published_at=_at(12), updated_at=newest)
+        await env.post("flmx", published_at=_at(13), updated_at=_at(200))
+
+        resp = await _get_feed(client, env, kind)
+
+        assert resp.headers["last-modified"] == format_datetime(newest, usegmt=True)
+
+
+@pytest.mark.integration
+class TestFeedsConditionalRequests:
+    @_ALL_KINDS
+    async def test_matching_if_none_match_returns_304_with_empty_body(self, kind, client, db_session):
+        env = await _env(db_session, "fetag")
+        await env.post("fetag", published_at=_at(1))
+
+        first = await _get_feed(client, env, kind)
+        with _minio(env.store):
+            resp = await client.get(_FEEDS[kind][0], headers={"If-None-Match": first.headers["etag"]})
+
+        assert first.status_code == 200
+        assert re.fullmatch(r'"[0-9a-f]{32}"', first.headers["etag"])
+        assert resp.status_code == 304
+        assert resp.content == b""
+        assert resp.headers["etag"] == first.headers["etag"]
+
+    @_ALL_KINDS
+    async def test_etag_is_stable_between_requests(self, kind, client, db_session):
+        env = await _env(db_session, "fstable")
+        await env.post("fstable", published_at=_at(1))
+
+        first = await _get_feed(client, env, kind)
+        second = await _get_feed(client, env, kind)
+
+        assert first.content == second.content
+        assert first.headers["etag"] == second.headers["etag"]
+
+    @_ALL_KINDS
+    async def test_etag_changes_after_content_edit(self, kind, client, db_session):
+        env = await _env(db_session, "fedit")
+        page, _slug = await env.post("fedit", "Tresc przed edycja.", published_at=_at(1))
+
+        first = await _get_feed(client, env, kind)
+        env.store[page.minio_path] = "Tresc po edycji."
+        with _minio(env.store):
+            resp = await client.get(_FEEDS[kind][0], headers={"If-None-Match": first.headers["etag"]})
+
+        assert resp.status_code == 200
+        assert resp.headers["etag"] != first.headers["etag"]
+        assert "Tresc po edycji." in resp.text
+
+
+@pytest.mark.integration
+class TestFeedStructure:
+    async def test_atom_feed_level_elements(self, client, db_session):
+        env = await _env(db_session, "atomroot")
+        await env.post("atomroot", published_at=_at(1))
+
+        resp = await _get_feed(client, env, "atom")
+
+        root = ET.fromstring(resp.content)
+        assert root.tag == f"{_ATOM}feed"
+        assert root.findtext(f"{_ATOM}title")
+        assert root.findtext(f"{_ATOM}id")
+        assert root.findtext(f"{_ATOM}updated")
+        links = {link.get("rel"): link.get("href") for link in root.findall(f"{_ATOM}link")}
+        assert links["self"] == f"{BASE}/blog/feed.xml"
+        assert links["alternate"] == f"{BASE}/blog/"
+        assert resp.content.startswith(b"<?xml")
+
+    async def test_atom_entry_elements(self, client, db_session):
+        env = await _env(db_session, "atomentry")
+        _page, slug = await env.post(
+            "atomentry",
+            "Tresc atom.",
+            description="Opis atom.",
+            author_name="Jan Kowalski",
+            published_at=PUBLISHED,
+            updated_at=UPDATED,
+        )
+
+        resp = await _get_feed(client, env, "atom")
+
+        entry = next(e for e in ET.fromstring(resp.content).findall(f"{_ATOM}entry") if e.findtext(f"{_ATOM}id") == _url(slug))
+        assert entry.find(f"{_ATOM}link[@rel='alternate']").get("href") == _url(slug)
+        assert datetime.fromisoformat(entry.findtext(f"{_ATOM}published")) == PUBLISHED
+        assert datetime.fromisoformat(entry.findtext(f"{_ATOM}updated")) == UPDATED
+        assert entry.findtext(f"{_ATOM}author/{_ATOM}name") == "Jan Kowalski"
+        assert entry.findtext(f"{_ATOM}summary") == "Opis atom."
+        assert entry.find(f"{_ATOM}content").get("type") == "html"
+
+    async def test_atom_entry_without_published_at_has_no_published_element(self, client, db_session):
+        env = await _env(db_session, "atomnopub")
+        # Wpis bez published_at sortuje sie na koncu (NULLS LAST), wiec duzy limit gwarantuje, ze trafi do feedu.
+        _page, slug = await env.post("atomnopub", published_at=None, created_at=_at(1))
+
+        with patch("monolynx.blog_ai.FEED_LIMIT", 10_000):
+            resp = await _get_feed(client, env, "atom")
+
+        entry = next(e for e in ET.fromstring(resp.content).findall(f"{_ATOM}entry") if e.findtext(f"{_ATOM}id") == _url(slug))
+        assert entry.find(f"{_ATOM}published") is None
+        assert entry.findtext(f"{_ATOM}updated")
+
+    async def test_rss_channel_and_item_elements(self, client, db_session):
+        env = await _env(db_session, "rss")
+        _page, slug = await env.post("rss", "Tresc rss.", description="Opis rss.", published_at=PUBLISHED)
+
+        resp = await _get_feed(client, env, "rss")
+
+        root = ET.fromstring(resp.content)
+        assert root.tag == "rss"
+        assert root.get("version") == "2.0"
+        assert root.findtext("channel/title")
+        assert root.findtext("channel/link")
+        assert root.findtext("channel/description")
+        item = next(i for i in root.findall("channel/item") if i.findtext("guid") == _url(slug))
+        assert item.find("guid").get("isPermaLink") == "true"
+        assert item.findtext("link") == _url(slug)
+        assert parsedate_to_datetime(item.findtext("pubDate")) == PUBLISHED
+        assert item.findtext("description") == "Opis rss."
+        assert resp.content.startswith(b"<?xml")
+
+    async def test_rss_item_without_published_at_has_no_pubdate(self, client, db_session):
+        env = await _env(db_session, "rssnopub")
+        _page, slug = await env.post("rssnopub", published_at=None, created_at=_at(1))
+
+        with patch("monolynx.blog_ai.FEED_LIMIT", 10_000):
+            resp = await _get_feed(client, env, "rss")
+
+        item = next(i for i in ET.fromstring(resp.content).findall("channel/item") if i.findtext("guid") == _url(slug))
+        assert item.find("pubDate") is None
+
+    async def test_json_feed_level_fields(self, client, db_session):
+        env = await _env(db_session, "jroot")
+        await env.post("jroot", published_at=_at(1))
+
+        resp = await _get_feed(client, env, "json")
+
+        data = json.loads(resp.content)
+        assert data["version"] == "https://jsonfeed.org/version/1.1"
+        assert data["title"]
+        assert data["home_page_url"] == f"{BASE}/blog/"
+        assert data["feed_url"] == f"{BASE}/blog/feed.json"
+
+    async def test_json_feed_item_fields(self, client, db_session):
+        env = await _env(db_session, "jitem")
+        _page, slug = await env.post(
+            "jitem",
+            "Tresc json.",
+            title="Tytul json",
+            description="Opis json.",
+            tags=["alfa", "beta"],
+            lang="en",
+            published_at=PUBLISHED,
+            updated_at=UPDATED,
+        )
+
+        resp = await _get_feed(client, env, "json")
+
+        item = next(i for i in json.loads(resp.content)["items"] if i["id"] == _url(slug))
+        assert item["url"] == _url(slug)
+        assert item["title"] == "Tytul json"
+        assert item["summary"] == "Opis json."
+        assert datetime.fromisoformat(item["date_published"]) == PUBLISHED
+        assert datetime.fromisoformat(item["date_modified"]) == UPDATED
+        assert item["tags"] == ["alfa", "beta"]
+        assert item["language"] == "en"
+
+    async def test_json_feed_item_without_published_at_tags_or_description_omits_those_fields(self, client, db_session):
+        env = await _env(db_session, "jbare")
+        _page, slug = await env.post("jbare", published_at=None, created_at=_at(1))
+
+        with patch("monolynx.blog_ai.FEED_LIMIT", 10_000):
+            resp = await _get_feed(client, env, "json")
+
+        item = next(i for i in json.loads(resp.content)["items"] if i["id"] == _url(slug))
+        assert "date_published" not in item
+        assert "tags" not in item
+        assert "summary" not in item
+
+
+# ---------------------------------------------------------------------------
+# MON-259: dynamiczny /llms.txt i /llms-full.txt (kryteria 3, 4)
+# ---------------------------------------------------------------------------
+
+
+def _static_llms() -> str:
+    return (Path(blog_ai.__file__).parent / "static" / "llms.txt").read_text(encoding="utf-8")
+
+
+@pytest.mark.integration
+class TestLlmsTxtBlogSection:
+    async def test_section_lists_public_posts_with_md_addresses(self, client, db_session):
+        env = await _env(db_session, "llms")
+        _p1, slug1 = await env.post("llmsdesc", title="Wpis z opisem", description="Opis wpisu llms.", published_at=_at(2))
+        _p2, slug2 = await env.post("llmsbare", title="Wpis bez opisu", published_at=_at(1))
+
+        resp = await client.get("/llms.txt")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+        lines = resp.text.splitlines()
+        assert "## Blog" in lines
+        assert f"- [Wpis z opisem]({BASE}/blog/{slug1}.md): Opis wpisu llms." in lines
+        assert f"- [Wpis bez opisu]({BASE}/blog/{slug2}.md)" in lines
+        assert f"{BASE}/blog/index.md" in resp.text
+        assert f"{BASE}/blog/feed.xml" in resp.text
+
+    async def test_static_content_comes_first_then_a_blank_line_then_the_section(self, client, db_session):
+        env = await _env(db_session, "llmsorder")
+        await env.post("llmsorder", published_at=_at(1))
+
+        resp = await client.get("/llms.txt")
+
+        static = _static_llms()
+        assert resp.text.startswith(static.rstrip())
+        rest = resp.text[len(static.rstrip()) :]
+        assert rest.lstrip("\n").startswith("## Blog")
+        assert "\n\n## Blog" in resp.text
+
+    async def test_private_post_is_absent(self, client, db_session):
+        env = await _env(db_session, "llmspriv")
+        _pub, pub_slug = await env.post("llmspub", published_at=_at(2))
+        _priv, priv_slug = await env.post("llmsprv", title="Prywatny wpis llms MON259", public=False, published_at=_at(3))
+
+        resp = await client.get("/llms.txt")
+
+        assert pub_slug in resp.text
+        assert priv_slug not in resp.text
+        assert "Prywatny wpis llms MON259" not in resp.text
+
+    async def test_section_has_only_the_10_newest_posts_newest_first(self, client, db_session):
+        env = await _env(db_session, "llms10")
+        slugs = {}
+        for days in range(11):
+            _page, slugs[days] = await env.post(f"llms10-{days}", published_at=_at(days))
+
+        resp = await client.get("/llms.txt")
+
+        positions = [resp.text.find(f"/blog/{slugs[d]}.md") for d in range(10, 0, -1)]
+        assert all(pos >= 0 for pos in positions)
+        assert positions == sorted(positions)
+        assert f"/blog/{slugs[0]}.md" not in resp.text
+
+    async def test_database_error_gives_200_with_static_content_only(self, client):
+        with patch("monolynx.blog_ai.list_public_posts", AsyncMock(side_effect=Exception("baza niedostepna"))):
+            resp = await client.get("/llms.txt")
+
+        assert resp.status_code == 200
+        assert resp.text == _static_llms()
+        assert "## Blog" not in resp.text
+
+    async def test_no_public_posts_omits_the_section(self, client):
+        with patch("monolynx.blog_ai.list_public_posts", AsyncMock(return_value=SimpleNamespace(items=[]))):
+            resp = await client.get("/llms.txt")
+
+        assert resp.status_code == 200
+        assert resp.text == _static_llms()
+        assert "## Blog" not in resp.text
+
+
+@pytest.mark.integration
+class TestLlmsFull:
+    async def _full(self, client, env):
+        with _minio(env.store):
+            return await client.get("/llms-full.txt")
+
+    async def test_returns_text_plain_with_full_documents_of_public_posts(self, client, db_session):
+        env = await _env(db_session, "full")
+        _page, slug = await env.post("full", _long_content(), title="Pelny wpis llms", published_at=_at(1))
+
+        resp = await self._full(client, env)
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+        assert _END_MARKER in resp.text
+        assert f"/blog/{slug}" in resp.text
+        for key in FRONTMATTER_KEYS:
+            assert f"\n{key}: " in resp.text
+
+    async def test_posts_are_separated_by_the_separator_newest_first(self, client, db_session):
+        env = await _env(db_session, "fullsep")
+        _old, old_slug = await env.post("fullold", "Tresc starego MON259-OLD.", published_at=_at(1))
+        _new, new_slug = await env.post("fullnew", "Tresc nowego MON259-NEW.", published_at=_at(2))
+
+        resp = await self._full(client, env)
+
+        parts = resp.text.split(blog_ai.LLMS_FULL_SEPARATOR)
+        new_idx = next(i for i, p in enumerate(parts) if "MON259-NEW" in p)
+        old_idx = next(i for i, p in enumerate(parts) if "MON259-OLD" in p)
+        assert new_idx < old_idx
+        assert f"/blog/{new_slug}" in parts[new_idx]
+        assert "MON259-OLD" not in parts[new_idx]
+        assert f"/blog/{old_slug}" in parts[old_idx]
+        assert "MON259-NEW" not in parts[old_idx]
+        front, body = _split(parts[old_idx])
+        assert list(front) == FRONTMATTER_KEYS
+        assert "MON259-OLD" in body
+
+    async def test_private_post_is_absent(self, client, db_session):
+        env = await _env(db_session, "fullpriv")
+        await env.post("fullpub", "Publiczna tresc MON259.", published_at=_at(2))
+        _priv, priv_slug = await env.post("fullprv", "TAJNA-TRESC-FULL-MON259", title="Prywatny wpis full MON259", public=False, published_at=_at(3))
+
+        resp = await self._full(client, env)
+
+        assert "Publiczna tresc MON259." in resp.text
+        assert "TAJNA-TRESC-FULL-MON259" not in resp.text
+        assert "Prywatny wpis full MON259" not in resp.text
+        assert priv_slug not in resp.text
+
+    async def test_storage_error_of_one_post_skips_only_that_post(self, client, db_session):
+        env = await _env(db_session, "fullminio")
+        await env.post("fullgood", "Dobra tresc MON259-GOOD.", published_at=_at(1))
+        bad_page, bad_slug = await env.post("fullbad", published_at=_at(2))
+        env.store[bad_page.minio_path] = RuntimeError("MinIO niedostepne")
+
+        resp = await self._full(client, env)
+
+        assert resp.status_code == 200
+        assert "MON259-GOOD" in resp.text
+        assert f"/blog/{bad_slug}" not in resp.text
+
+    async def test_no_truncation_line_when_everything_fits(self, client, db_session):
+        env = await _env(db_session, "fullfit")
+        await env.post("fullfit", published_at=_at(1))
+
+        resp = await self._full(client, env)
+
+        assert "> Truncated:" not in resp.text
+
+    async def test_posts_over_the_size_limit_are_omitted_whole_with_a_correct_truncated_line(self, client, db_session):
+        env = await _env(db_session, "fulltrunc")
+        for days, marker in ((3, "END-A-MON259"), (2, "END-B-MON259"), (1, "END-C-MON259")):
+            await env.post(f"fulltrunc{days}", _long_content(marker), published_at=_at(days))
+        full = await self._full(client, env)
+        parts = full.text.split(blog_ai.LLMS_FULL_SEPARATOR)
+        idx_b = next(i for i, p in enumerate(parts) if "END-B-MON259" in p)
+        # Limit miesci wpisy A i B (z zapasem mniejszym niz dokument C), ale nie C.
+        limit = len(blog_ai.LLMS_FULL_SEPARATOR.join(parts[: idx_b + 1]).encode()) + 300
+        total = len(re.findall(r"^word_count: \d+$", full.text, re.MULTILINE))
+
+        with patch("monolynx.blog_ai.LLMS_FULL_MAX_BYTES", limit):
+            resp = await self._full(client, env)
+
+        kept = len(re.findall(r"^word_count: \d+$", resp.text, re.MULTILINE))
+        assert resp.status_code == 200
+        assert "END-A-MON259" in resp.text
+        assert "END-B-MON259" in resp.text
+        assert "END-C-MON259" not in resp.text
+        assert 0 < kept < total
+        expected = f"> Truncated: {total - kept} of {total} posts omitted (size limit {limit} bytes). Full list: {BASE}/blog/index.md"
+        assert resp.text.rstrip("\n").splitlines()[-1] == expected
+        assert resp.text.count("> Truncated:") == 1
+
+
+# ---------------------------------------------------------------------------
+# MON-259: JSON-LD z blokow (kryterium 7)
+# ---------------------------------------------------------------------------
+
+_FAQ_BLOCK = ":::faq\n### Jak zaczac?\nZaloz konto.\n\n### Co z danymi?\nSa szyfrowane.\n\n### Ile to kosztuje?\nPierwszy projekt jest darmowy.\n:::"
+_STEPS_BLOCK = ":::steps\n1. **Pierwszy** Opis a.\n2. **Drugi** Opis b.\n3. **Trzeci** Opis c.\n4. **Czwarty** Opis d.\n:::"
+_VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+_VIDEO_BLOCK = f":::video\n{_VIDEO_URL}\n\nOpis wideo.\n:::"
+_STRUCTURED_TYPES = {"FAQPage", "HowTo", "VideoObject"}
+
+
+def _graph_by_type(html: str) -> dict[str, list[dict]]:
+    blocks = _ld_blocks(html)
+    assert len(blocks) == 1
+    result: dict[str, list[dict]] = {}
+    for node in json.loads(blocks[0])["@graph"]:
+        result.setdefault(node["@type"], []).append(node)
+    return result
+
+
+@pytest.mark.integration
+class TestJsonLdStructuredBlocks:
+    @pytest.mark.parametrize(
+        ("blocks", "expected"),
+        [
+            ([], set()),
+            ([_FAQ_BLOCK], {"FAQPage"}),
+            ([_STEPS_BLOCK], {"HowTo"}),
+            ([_VIDEO_BLOCK], {"VideoObject"}),
+            ([_FAQ_BLOCK, _STEPS_BLOCK, _VIDEO_BLOCK], _STRUCTURED_TYPES),
+        ],
+        ids=["none", "faq", "steps", "video", "all"],
+    )
+    async def test_graph_has_exactly_the_types_of_the_blocks_in_the_post(self, blocks, expected, client, db_session):
+        env = await _env(db_session, "ldtypes")
+        content = "Wstep.\n\n" + "\n\n".join(blocks)
+        _page, slug = await env.post("ldtypes", content)
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}")
+
+        graph = _graph_by_type(resp.text)
+        assert set(graph) & _STRUCTURED_TYPES == expected
+        assert {"BlogPosting", "BreadcrumbList"} <= set(graph)
+        for type_name in expected:
+            assert len(graph[type_name]) == 1
+
+    async def test_faq_page_has_one_question_per_faq_item(self, client, db_session):
+        env = await _env(db_session, "ldfaq")
+        _page, slug = await env.post("ldfaq", _FAQ_BLOCK)
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}")
+
+        faq = _graph_by_type(resp.text)["FAQPage"][0]
+        assert len(faq["mainEntity"]) == 3
+        assert [q["@type"] for q in faq["mainEntity"]] == ["Question"] * 3
+        assert [q["name"] for q in faq["mainEntity"]] == ["Jak zaczac?", "Co z danymi?", "Ile to kosztuje?"]
+        assert [q["acceptedAnswer"] for q in faq["mainEntity"]][1] == {"@type": "Answer", "text": "Sa szyfrowane."}
+
+    async def test_how_to_has_a_numbered_step_per_item_named_after_the_post(self, client, db_session):
+        env = await _env(db_session, "ldhowto")
+        _page, slug = await env.post("ldhowto", _STEPS_BLOCK, title="Jak to zrobic krok po kroku")
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}")
+
+        how_to = _graph_by_type(resp.text)["HowTo"][0]
+        assert how_to["name"] == "Jak to zrobic krok po kroku"
+        assert [s["@type"] for s in how_to["step"]] == ["HowToStep"] * 4
+        assert [s["position"] for s in how_to["step"]] == [1, 2, 3, 4]
+        assert [s["name"] for s in how_to["step"]] == ["Pierwszy", "Drugi", "Trzeci", "Czwarty"]
+        assert how_to["step"][2]["text"] == "Opis c."
+
+    async def test_video_object_carries_url_description_and_upload_date(self, client, db_session):
+        env = await _env(db_session, "ldvideo")
+        _page, slug = await env.post("ldvideo", _VIDEO_BLOCK, title="Wpis z wideo", published_at=PUBLISHED)
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}")
+
+        video = _graph_by_type(resp.text)["VideoObject"][0]
+        assert video["name"] == "Wpis z wideo"
+        assert video["description"] == "Opis wideo."
+        assert video["embedUrl"] == _VIDEO_URL
+        assert datetime.fromisoformat(video["uploadDate"]) == PUBLISHED
+
+    async def test_one_video_object_per_video(self, client, db_session):
+        env = await _env(db_session, "ldvideos")
+        second = ":::video\nhttps://vimeo.com/123456789\n\nDrugie wideo.\n:::"
+        _page, slug = await env.post("ldvideos", f"{_VIDEO_BLOCK}\n\n{second}")
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}")
+
+        videos = _graph_by_type(resp.text)["VideoObject"]
+        assert [v["embedUrl"] for v in videos] == [_VIDEO_URL, "https://vimeo.com/123456789"]
+        assert [v["description"] for v in videos] == ["Opis wideo.", "Drugie wideo."]
+
+
+# ---------------------------------------------------------------------------
+# MON-259: <link rel="alternate"> do feedow w <head> bloga (kryterium 8) i /index.md
+# ---------------------------------------------------------------------------
+
+_FEED_LINKS = {
+    ("application/atom+xml", "/blog/feed.xml"),
+    ("application/rss+xml", "/blog/rss.xml"),
+    ("application/feed+json", "/blog/feed.json"),
+}
+
+
+def _feed_alternate_links(html: str) -> set[tuple[str, str]]:
+    """Pary (type, href) z tagow `<link rel="alternate">` wskazujacych na feedy bloga."""
+    found = set()
+    for tag in re.findall(r"<link\b[^>]*>", html):
+        attrs = dict(re.findall(r'([\w-]+)="([^"]*)"', tag))
+        if attrs.get("rel") == "alternate" and attrs.get("href", "").startswith("/blog/") and attrs["href"].rsplit(".", 1)[-1] in ("xml", "json"):
+            found.add((attrs.get("type", ""), attrs["href"]))
+    return found
+
+
+@pytest.mark.integration
+class TestFeedDiscoveryLinks:
+    async def test_post_page_head_links_to_the_three_feeds(self, client, db_session):
+        env = await _env(db_session, "headpost")
+        _page, slug = await env.post("headpost")
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}")
+
+        head = resp.text.split("</head>")[0]
+        assert _feed_alternate_links(head) == _FEED_LINKS
+
+    async def test_blog_list_head_links_to_the_three_feeds(self, client, db_session):
+        with _minio({}):
+            resp = await client.get("/blog/")
+
+        head = resp.text.split("</head>")[0]
+        assert resp.status_code == 200
+        assert _feed_alternate_links(head) == _FEED_LINKS
+
+    async def test_page_outside_the_blog_has_no_feed_links(self, client, monkeypatch):
+        # Domyślne SKIP_LANDING_PAGE=True (CI) przekierowuje "/" na logowanie.
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        resp = await client.get("/")
+
+        assert resp.status_code == 200
+        assert _feed_alternate_links(resp.text) == set()
+
+
+@pytest.mark.integration
+class TestLandingMarkdownLinksToBlog:
+    # `_landing_markdown` buduje wszystkie adresy ze stalej bazy produkcyjnej, nie z APP_URL.
+    @pytest.mark.parametrize(
+        ("query", "module_name", "other_language_name"),
+        [("", "Connections", "Połączenia"), ("?lang=en", "Connections", "Połączenia"), ("?lang=pl", "Połączenia", "Connections")],
+    )
+    async def test_index_md_links_to_the_blog_index_in_each_language(self, query, module_name, other_language_name, client):
+        resp = await client.get(f"/index.md{query}")
+
+        assert resp.status_code == 200
+        assert f"[{module_name}](" in resp.text
+        assert f"[{other_language_name}](" not in resp.text
+        assert "(https://monolynx.com/blog/index.md)" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# MON-259, poprawka 2: gałęzie kodu feedów, llms i JSON-LD z wejściem, które do nich dociera
+# ---------------------------------------------------------------------------
+
+
+def _only(*slugs: str):
+    """Patch `list_public_posts`: realna lista zawężona do podanych slugów (deterministyczne liczby w `Truncated`)."""
+
+    async def fake(db, page, per_page, **kwargs):
+        real = await real_list_public_posts(db, page, per_page, **kwargs)
+        return SimpleNamespace(items=[item for item in real.items if item.post.slug in slugs])
+
+    return patch("monolynx.blog_ai.list_public_posts", fake)
+
+
+@pytest.mark.integration
+class TestFeedBranches:
+    @_ALL_KINDS
+    async def test_post_without_description_has_no_summary(self, kind, client, db_session):
+        env = await _env(db_session, "fnodesc")
+        _page, slug = await env.post("fnodesc", published_at=_at(1))
+
+        resp = await _get_feed(client, env, kind)
+
+        item = next(i for i in _parse_feed(kind, resp.content) if i["url"] == _url(slug))
+        assert item["summary"] is None
+
+    async def test_atom_entry_with_empty_author_name_has_no_author_element(self, client, db_session):
+        env = await _env(db_session, "fnoauth")
+        _page, slug = await env.post("fnoauth", author_name="", published_at=_at(1))
+
+        resp = await _get_feed(client, env, "atom")
+
+        entry = next(e for e in ET.fromstring(resp.content).findall(f"{_ATOM}entry") if e.findtext(f"{_ATOM}id") == _url(slug))
+        assert entry.find(f"{_ATOM}author") is None
+
+    async def test_json_feed_content_text_has_absolute_links(self, client, db_session):
+        env = await _env(db_session, "fabs")
+        _page, slug = await env.post("fabs", "Zobacz [inny wpis](/blog/inny-wpis).", published_at=_at(1))
+
+        resp = await _get_feed(client, env, "json")
+
+        item = next(i for i in _parse_feed("json", resp.content) if i["url"] == _url(slug))
+        assert f"[inny wpis]({BASE}/blog/inny-wpis)" in item["content"]
+
+    @_ALL_KINDS
+    async def test_empty_lang_means_no_filter(self, kind, client, db_session):
+        env = await _env(db_session, "femptylang")
+        _pl, pl_slug = await env.post("femptypl", lang="pl", published_at=_at(1))
+        _en, en_slug = await env.post("femptyen", lang="en", published_at=_at(2))
+
+        resp = await _get_feed(client, env, kind, "?lang=")
+
+        urls = [i["url"] for i in _parse_feed(kind, resp.content)]
+        assert _url(pl_slug) in urls
+        assert _url(en_slug) in urls
+
+
+@pytest.mark.integration
+class TestLlmsTxtDetails:
+    async def test_whitespace_in_title_and_description_is_collapsed_to_one_line(self, client, db_session):
+        env = await _env(db_session, "llmsws")
+        _page, slug = await env.post("llmsws", title="Wpis\nz   nowa linia", description="Opis\nwielu   linii", published_at=_at(1))
+
+        resp = await client.get("/llms.txt")
+
+        assert f"- [Wpis z nowa linia]({BASE}/blog/{slug}.md): Opis wielu linii" in resp.text.splitlines()
+
+    async def test_missing_static_file_returns_404_without_touching_the_blog(self, client, tmp_path):
+        spy = AsyncMock(return_value="## Blog\n")
+
+        with patch("monolynx.main._STATIC_DIR", tmp_path), patch("monolynx.blog_ai.build_llms_blog_section", spy):
+            resp = await client.get("/llms.txt")
+
+        assert resp.status_code == 404
+        spy.assert_not_awaited()
+
+
+@pytest.mark.integration
+class TestLlmsFullLimits:
+    async def _get(self, client, env, *slugs):
+        with _minio(env.store), _only(*slugs):
+            return await client.get("/llms-full.txt")
+
+    async def test_no_public_posts_gives_200_with_the_header_only(self, client):
+        with patch("monolynx.blog_ai.list_public_posts", AsyncMock(return_value=SimpleNamespace(items=[]))):
+            resp = await client.get("/llms-full.txt")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+        assert resp.text.startswith("# Monolynx Blog: full content")
+        assert f"{BASE}/blog/index.md" in resp.text
+        assert resp.text.rstrip("\n").endswith("No public posts yet.")
+        assert blog_ai.LLMS_FULL_SEPARATOR not in resp.text
+        assert "> Truncated:" not in resp.text
+
+    async def test_posts_carry_their_translations_in_the_frontmatter(self, client, db_session):
+        env = await _env(db_session, "fulltr")
+        root, root_slug = await env.post("fulltrpl", "Tresc MON259-TRPL.", lang="pl", published_at=_at(2))
+        _en, en_slug = await env.post("fulltren", "Tresc MON259-TREN.", lang="en", translation_of_id=root.id, published_at=_at(1))
+
+        resp = await self._get(client, env, root_slug, en_slug)
+
+        docs = {("pl" if "MON259-TRPL" in p else "en"): p for p in resp.text.split(blog_ai.LLMS_FULL_SEPARATOR)[1:]}
+        assert _split(docs["pl"])[0]["translations"] == [{"lang": "en", "url": f"{BASE}/blog/{en_slug}"}]
+        assert _split(docs["en"])[0]["translations"] == [{"lang": "pl", "url": f"{BASE}/blog/{root_slug}"}]
+
+    async def test_oversized_post_ends_the_list_even_when_a_later_one_would_fit(self, client, db_session):
+        env = await _env(db_session, "fullstop")
+        _a, a_slug = await env.post("fullstopa", "Krotki A MON259-A.", published_at=_at(3))
+        _c, c_slug = await env.post("fullstopc", "Duzy akapit. " * 600 + "\n\nMON259-C", published_at=_at(2))
+        _d, d_slug = await env.post("fullstopd", "Krotki D MON259-D.", published_at=_at(1))
+        full = await self._get(client, env, a_slug, c_slug, d_slug)
+        parts = full.text.split(blog_ai.LLMS_FULL_SEPARATOR)
+        doc_a = next(p for p in parts if "MON259-A" in p)
+        doc_d = next(p for p in parts if "MON259-D" in p)
+        # Miesci sie A i D (z zapasem na linie Truncated), ale nie duzy C pomiedzy nimi.
+        limit = len(blog_ai.LLMS_FULL_SEPARATOR.join([parts[0], doc_a, doc_d]).encode()) + 400
+
+        with patch("monolynx.blog_ai.LLMS_FULL_MAX_BYTES", limit):
+            resp = await self._get(client, env, a_slug, c_slug, d_slug)
+
+        assert "MON259-A" in resp.text
+        assert "MON259-C" not in resp.text
+        assert "MON259-D" not in resp.text
+        expected = f"> Truncated: 2 of 3 posts omitted (size limit {limit} bytes). Full list: {BASE}/blog/index.md"
+        assert resp.text.rstrip("\n").splitlines()[-1] == expected
+        assert len(resp.content) <= limit
+
+    async def test_limit_counts_utf8_bytes_and_separator_and_allows_exactly_the_limit(self, client, db_session):
+        env = await _env(db_session, "fullbytes")
+        _a, a_slug = await env.post("fullbytes", "Zażółć gęślą jaźń. " * 200 + "MON259-PL", published_at=_at(1))
+        full = await self._get(client, env, a_slug)
+        exact = len(full.content)
+
+        with patch("monolynx.blog_ai.LLMS_FULL_MAX_BYTES", exact):
+            at_limit = await self._get(client, env, a_slug)
+        with patch("monolynx.blog_ai.LLMS_FULL_MAX_BYTES", exact - 1):
+            below_limit = await self._get(client, env, a_slug)
+
+        assert "> Truncated:" not in full.text
+        assert at_limit.content == full.content
+        assert "MON259-PL" not in below_limit.text
+        expected = f"> Truncated: 1 of 1 posts omitted (size limit {exact - 1} bytes). Full list: {BASE}/blog/index.md"
+        assert below_limit.text.rstrip("\n").splitlines()[-1] == expected
+        assert len(below_limit.content) <= exact - 1
+
+    async def test_truncated_response_never_exceeds_the_limit_including_the_truncated_line(self, client, db_session):
+        env = await _env(db_session, "fullreserve")
+        _a, a_slug = await env.post("fullresa", "Tresc A MON259-RA.", published_at=_at(2))
+        _b, b_slug = await env.post("fullresb", "Tresc B MON259-RB.", published_at=_at(1))
+        full = await self._get(client, env, a_slug, b_slug)
+        parts = full.text.split(blog_ai.LLMS_FULL_SEPARATOR)
+        # Limit miesci naglowek i wpis A, ale juz bez linii Truncated: A musi odpasc, zeby calosc zmiescila sie w limicie.
+        limit = len(blog_ai.LLMS_FULL_SEPARATOR.join(parts[:2]).encode())
+
+        with patch("monolynx.blog_ai.LLMS_FULL_MAX_BYTES", limit):
+            resp = await self._get(client, env, a_slug, b_slug)
+
+        assert "MON259-RA" not in resp.text
+        assert "MON259-RB" not in resp.text
+        assert f"> Truncated: 2 of 2 posts omitted (size limit {limit} bytes)" in resp.text
+        assert len(resp.content) <= limit
+
+
+@pytest.mark.integration
+class TestJsonLdVideoBranches:
+    async def test_video_without_description_falls_back_to_the_post_description(self, client, db_session):
+        env = await _env(db_session, "ldvnodesc")
+        _page, slug = await env.post("ldvnodesc", ":::video\nhttps://youtu.be/dQw4w9WgXcQ\n:::", description="Opis wpisu dla wideo.")
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}")
+
+        video = _graph_by_type(resp.text)["VideoObject"][0]
+        assert video["description"] == "Opis wpisu dla wideo."
+        assert video["embedUrl"] == "https://youtu.be/dQw4w9WgXcQ"
+
+    async def test_video_object_has_no_upload_date_for_a_post_without_published_at(self, client, db_session):
+        env = await _env(db_session, "ldvnopub")
+        _page, slug = await env.post("ldvnopub", _VIDEO_BLOCK, published_at=None, created_at=_at(1))
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}")
+
+        video = _graph_by_type(resp.text)["VideoObject"][0]
+        assert "uploadDate" not in video
