@@ -2050,7 +2050,10 @@ class TestFeedDiscoveryLinks:
         assert resp.status_code == 200
         assert _feed_alternate_links(head) == _FEED_LINKS
 
-    async def test_page_outside_the_blog_has_no_feed_links(self, client):
+    async def test_page_outside_the_blog_has_no_feed_links(self, client, monkeypatch):
+        # Domyślne SKIP_LANDING_PAGE=True (CI) przekierowuje "/" na logowanie.
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
         resp = await client.get("/")
 
         assert resp.status_code == 200
