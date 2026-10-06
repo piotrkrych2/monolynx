@@ -6,12 +6,16 @@ Sitemap zawiera też stronę listy `{base}/blog/`.
 
 MON-259: pary `xhtml:link hreflang` dla publicznych tłumaczeń (klasa `TestSitemapHreflang`) oraz osobne
 grupy `User-agent` dla botów AI w robots.txt (klasa `TestRobotsAiBots`).
+
+MON-265: trasa `/blog-authoring.md` (przewodnik pisania wpisów) i jej adres w sitemap (klasa `TestBlogAuthoringGuide`).
 """
 
 import secrets
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import UTC, date, datetime
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -532,3 +536,34 @@ class TestRobotsAiBots:
         assert f"Sitemap: {base}/sitemap.xml" in resp.text.splitlines()
         assert f"{base}/llms.txt" in resp.text
         assert f"{base}/blog/feed.xml" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# 6. /blog-authoring.md -- publiczny przewodnik pisania wpisow (MON-265)
+# ---------------------------------------------------------------------------
+
+_BLOG_GUIDE_PATH = Path(__file__).resolve().parents[2] / "src" / "monolynx" / "static" / "blog-authoring.md"
+
+
+@pytest.mark.integration
+class TestBlogAuthoringGuide:
+    async def test_guide_returns_markdown_with_the_file_content(self, client):
+        resp = await client.get("/blog-authoring.md")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/markdown")
+        assert resp.text == _BLOG_GUIDE_PATH.read_text(encoding="utf-8")
+        assert "## Block catalog" in resp.text
+
+    async def test_guide_returns_404_when_file_is_missing(self, client):
+        with patch.object(Path, "is_file", return_value=False):
+            resp = await client.get("/blog-authoring.md")
+
+        assert resp.status_code == 404
+
+    async def test_sitemap_lists_the_guide(self, client):
+        resp = await client.get("/sitemap.xml")
+
+        assert resp.status_code == 200
+        base = settings.APP_URL.rstrip("/")
+        assert f"{base}/blog-authoring.md" in _sitemap_entries(resp.text)

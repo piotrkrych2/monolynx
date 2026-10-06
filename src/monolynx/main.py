@@ -140,7 +140,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Claude Code skills - one prompt, zero setup",
         "skills_sub": (
-            "The flagship AI tool install_monolynx_skills drops all 23 ticket and wiki"
+            "The flagship AI tool install_monolynx_skills drops all 24 ticket and wiki"
             " skills into any project connected to Monolynx - Claude Code, Codex or Cursor."
             " No ZIPs, no manual placeholder replacement."
         ),
@@ -154,7 +154,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " /monolynx:mr-queue walks MRs and PRs to merge in order: green CI, no conflict, approval, then merge"
         ),
         "skills_what_2": (
-            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG"
+            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG;"
+            " /monolynx:blog-post takes a topic (or a draft page_id) through brief, outline, draft, lint and preview"
+            " to a blog post, and publishes only after your explicit consent"
         ),
         "skills_what_3": (
             "/monolynx:next, /monolynx:setup, /monolynx:project-toolchain, /monolynx:mutation-check,"
@@ -210,7 +212,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Skille Claude Code - jeden prompt, zero konfiguracji",
         "skills_sub": (
-            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 23 skilli"
+            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 24 skilli"
             " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - w Claude Code,"
             " Codeksie lub Cursorze. Bez ZIP-ów i ręcznego podmieniania placeholderów."
         ),
@@ -224,7 +226,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " /monolynx:mr-queue prowadzi MR-y i PR-y do merge po kolei: zielone CI, brak konfliktu, approve, merge"
         ),
         "skills_what_2": (
-            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG"
+            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG;"
+            " /monolynx:blog-post prowadzi od tematu (albo page_id szkicu) przez brief, konspekt, szkic, lint i podgląd"
+            " do wpisu na blogu, a publikuje dopiero po Twojej jawnej zgodzie"
         ),
         "skills_what_3": (
             "/monolynx:next, /monolynx:setup, /monolynx:project-toolchain, /monolynx:mutation-check,"
@@ -306,6 +310,7 @@ async def robots_txt() -> Response:
         + f"# Full blog content for AI assistants: {base}/llms-full.txt\n"
         + f"# Blog feed (Atom): {base}/blog/feed.xml\n"
         + f"# Usage guide for AI agents: {base}/how-to-use-monolynx.md\n"
+        + f"# Blog authoring guide for AI agents: {base}/blog-authoring.md\n"
     )
     return Response(content=content, media_type="text/plain; charset=utf-8")
 
@@ -328,6 +333,7 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
     urls += [
         f"{base}/llms.txt",
         f"{base}/how-to-use-monolynx.md",
+        f"{base}/blog-authoring.md",
         f"{base}/agent-bootstrap.md",
         f"{base}/agent-explain.md",
         f"{base}/index.md",
@@ -375,6 +381,15 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
 async def how_to_use_monolynx() -> Response:
     """Serve the AI-assistant usage guide as markdown for LLM consumption."""
     guide_path = _STATIC_DIR / "how-to-use-monolynx.md"
+    if not guide_path.is_file():
+        return Response(status_code=404, content="Not Found")
+    return _markdown_response(guide_path.read_text(encoding="utf-8"))
+
+
+@app.get("/blog-authoring.md", include_in_schema=False)
+async def blog_authoring() -> Response:
+    """Serve the blog authoring guide (block syntax, lint rules, markdown twin) as markdown."""
+    guide_path = _STATIC_DIR / "blog-authoring.md"
     if not guide_path.is_file():
         return Response(status_code=404, content="Not Found")
     return _markdown_response(guide_path.read_text(encoding="utf-8"))
@@ -519,6 +534,8 @@ def _landing_markdown(lang: str) -> str:
             f"- [Jak używać Monolynx (przewodnik dla asystentów AI)]({base}/how-to-use-monolynx.md):"
             " pełny workflow - instalacja marketplace'u i pluginu, konfiguracja MCP, wiki jako źródło prawdy,"
             " tworzenie ticketów i praca przez skille.",
+            f"- [Pisanie wpisów bloga]({base}/blog-authoring.md): składnia bloków, reguły lintu, bliźniak markdown"
+            " i operacje connectorów - przewodnik dla dowolnego modelu.",
             f"- [Bootstrap projektu]({base}/agent-bootstrap.md): instrukcja krok po kroku dla agenta,"
             " który ma skonfigurować połączenie z Monolynx w repozytorium użytkownika.",
             f"- [llms.txt]({base}/llms.txt): maszynowy przegląd platformy - wszystkie moduły i punkty wejścia.",
@@ -529,6 +546,8 @@ def _landing_markdown(lang: str) -> str:
             f"- [How to use Monolynx (guide for AI assistants)]({base}/how-to-use-monolynx.md):"
             " the full workflow - installing the marketplace and plugin, configuring MCP, the wiki as the"
             " source of truth, creating tickets and working through the skills.",
+            f"- [Writing blog posts]({base}/blog-authoring.md): block syntax, lint rules, the markdown twin"
+            " and connector operations - a guide for any model.",
             f"- [Project bootstrap]({base}/agent-bootstrap.md): step-by-step instructions for an agent"
             " configuring the Monolynx connection inside a user's repository.",
             f"- [llms.txt]({base}/llms.txt): machine-readable overview of the platform - all modules and entry points.",
