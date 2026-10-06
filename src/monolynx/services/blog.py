@@ -282,8 +282,10 @@ def build_post_jsonld(
     description: str,
     word_count: int | None = None,
     image_url: str | None = None,
+    structured: dict[str, list[dict[str, str]]] | None = None,
 ) -> dict[str, Any]:
-    """`BlogPosting` + `BreadcrumbList` (schema.org) wpisu; czysta funkcja, bez IO."""
+    """`BlogPosting` + `BreadcrumbList` (schema.org) wpisu, a z `structured` (wynik `extract_structured_data`)
+    także `FAQPage`, `HowTo` i `VideoObject` dla niepustych list; czysta funkcja, bez IO."""
     base = base_url.rstrip("/")
     url = f"{base}/blog/{post.slug}"
     posting: dict[str, Any] = {
@@ -310,7 +312,40 @@ def build_post_jsonld(
             {"@type": "ListItem", "position": 2, "name": page.title, "item": url},
         ],
     }
-    return {"@context": "https://schema.org", "@graph": [posting, breadcrumbs]}
+    graph: list[dict[str, Any]] = [posting, breadcrumbs]
+    data = structured or {}
+    if data.get("faq"):
+        graph.append(
+            {
+                "@type": "FAQPage",
+                "mainEntity": [
+                    {"@type": "Question", "name": item["question"], "acceptedAnswer": {"@type": "Answer", "text": item["answer"]}}
+                    for item in data["faq"]
+                ],
+            }
+        )
+    if data.get("steps"):
+        graph.append(
+            {
+                "@type": "HowTo",
+                "name": page.title,
+                "step": [
+                    {"@type": "HowToStep", "position": position, "name": item["name"], "text": item["text"]}
+                    for position, item in enumerate(data["steps"], start=1)
+                ],
+            }
+        )
+    for video in data.get("videos", []):
+        node: dict[str, Any] = {
+            "@type": "VideoObject",
+            "name": page.title,
+            "description": video["description"] or description,
+            "embedUrl": video["url"],
+        }
+        if post.published_at is not None:
+            node["uploadDate"] = post.published_at.isoformat()
+        graph.append(node)
+    return {"@context": "https://schema.org", "@graph": graph}
 
 
 def build_blog_jsonld(posts: Sequence[PublicPost], *, base_url: str) -> dict[str, Any]:

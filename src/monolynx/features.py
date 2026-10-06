@@ -802,6 +802,15 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "Z FAQ, kroków i wideo serwer przygotowuje dane strukturalne dla wyszukiwarek i modeli AI."
                     ),
                 },
+                {
+                    "title": "Blog dla czytników i modeli AI",
+                    "desc": (
+                        "Blog ma feedy Atom, RSS i JSON Feed z pełną treścią 20 najnowszych wpisów, a czytniki znajdują je w nagłówku strony. "
+                        "Plik /llms.txt zawiera na żywo listę najnowszych wpisów z adresami markdown, a /llms-full.txt całą publiczną treść bloga w jednym dokumencie. "
+                        "Wersje językowe wpisów są powiązane w mapie strony, a roboty AI (GPTBot, ClaudeBot, PerplexityBot i inne) mają w robots.txt "
+                        "dostęp do bloga bez dostępu do panelu, API i MCP."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -921,6 +930,15 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "a collapsible section, a gallery, a CTA button and a glossary. "
                     "YouTube and Vimeo videos load only after a click, so the page sends no request to the video service before that. "
                     "From the FAQ, steps and videos the server prepares structured data for search engines and AI models."
+                ),
+            },
+            {
+                "title": "Blog for feed readers and AI models",
+                "desc": (
+                    "The blog has Atom, RSS and JSON Feed feeds with the full content of the 20 newest posts, and readers find them in the page head. "
+                    "The /llms.txt file lists the newest posts live with markdown addresses, and /llms-full.txt holds all public blog content in one document. "
+                    "Post translations are linked in the sitemap, and AI crawlers (GPTBot, ClaudeBot, PerplexityBot and others) may read the blog "
+                    "in robots.txt without getting into the dashboard, the API or MCP."
                 ),
             },
         ],

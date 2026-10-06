@@ -47,7 +47,7 @@ from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.blog import PublicPost, build_blog_jsonld, build_post_jsonld, dump_jsonld, get_public_post_by_slug, list_public_posts
-from monolynx.services.blog_blocks import render_post_html, render_post_markdown, strip_block_markers
+from monolynx.services.blog_blocks import extract_structured_data, render_post_html, render_post_markdown, strip_block_markers
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.wiki import extract_summary, get_page_content
 
@@ -248,6 +248,7 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
             description=meta_description,
             word_count=len(render_post_markdown(content).split()),
             image_url=cover_image_url,
+            structured=extract_structured_data(content),
         )
     )
 
