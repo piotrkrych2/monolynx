@@ -2,7 +2,12 @@
 
 Trasy (rejestrowane PRZED `blog.router`, inaczej `/blog/{slug}` połknęłoby adresy `.md`):
 - `GET /blog/index.md` -- lista publicznych wpisów (`?lang=`, `?tag=`),
-- `GET /blog/{slug}.md` -- wpis jako markdown z frontmatter YAML; stary slug daje 301 na nowy `.md`.
+- `GET /blog/{slug}.md` -- wpis jako markdown z frontmatter YAML; stary slug daje 301 na nowy `.md`,
+- `GET /blog/feed.xml` (Atom 1.0), `GET /blog/rss.xml` (RSS 2.0), `GET /blog/feed.json` (JSON Feed 1.1) --
+  `FEED_LIMIT` najnowszych wpisów z pełną treścią (`?lang=`, XML wyłącznie przez ElementTree).
+
+Poza routerem moduł wystawia dla `main.py` `build_llms_blog_section` (sekcja `## Blog` w `/llms.txt`)
+i `build_llms_full` (`/llms-full.txt`, wpisy rozdzielone `LLMS_FULL_SEPARATOR`, limit `LLMS_FULL_MAX_BYTES`).
 
 Ten sam dokument zwraca `blog.py` dla `Accept: text/markdown` (`markdown_twin_response`), więc
 adres HTML i adres `.md` mają identyczne ciało i `ETag`. Odpowiedzi przechodzą przez
@@ -20,6 +25,8 @@ import json
 import logging
 import math
 import re
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import format_datetime
 from typing import Any
@@ -41,7 +48,7 @@ from monolynx.services.blog import (
     list_public_posts,
     list_public_translations,
 )
-from monolynx.services.blog_blocks import render_post_markdown, strip_block_markers
+from monolynx.services.blog_blocks import render_post_html, render_post_markdown, strip_block_markers
 from monolynx.services.wiki import extract_summary, get_page_content
 
 logger = logging.getLogger("monolynx.blog_ai")
@@ -52,6 +59,19 @@ MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 _INDEX_LIMIT = 1000
 _WORDS_PER_MINUTE = 200
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+FEED_LIMIT = 20
+LLMS_BLOG_LIMIT = 10
+LLMS_FULL_MAX_BYTES = 1_000_000
+LLMS_FULL_SEPARATOR = "\n\n=====\n\n"
+
+_FEED_TITLE = "Blog Monolynx"
+_FEED_DESCRIPTION = "Wpisy bloga Monolynx: platforma projektowa AI-first, MCP, wiki i zarządzanie pracą."
+_ATOM_NS = "http://www.w3.org/2005/Atom"
+_CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
+_XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>\n'
+# Znaki niedozwolone w XML 1.0 (sterujące poza \t \n \r oraz U+FFFE, U+FFFF); ElementTree ich nie odrzuca.
+_XML_ILLEGAL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
 _FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _INLINE_CODE = re.compile(r"(``[^\n]*?``|`[^`\n]*`)")
@@ -252,3 +272,203 @@ async def post_markdown(slug: str, request: Request, db: AsyncSession = Depends(
     if lookup.post is None or lookup.page is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono strony")
     return await markdown_twin_response(request, db, lookup.post, lookup.page)
+
+
+@dataclass
+class _FeedEntry:
+    post: BlogPost
+    page: WikiPage
+    content: str
+
+
+def _xml_text(value: str) -> str:
+    return _XML_ILLEGAL_CHARS.sub("", value)
+
+
+def _text_element(parent: ET.Element, tag: str, value: str, **attrs: str) -> ET.Element:
+    element = ET.SubElement(parent, tag, attrs)
+    element.text = _xml_text(value)
+    return element
+
+
+def _xml_document(root: ET.Element) -> str:
+    return _XML_DECLARATION + ET.tostring(root, encoding="unicode") + "\n"
+
+
+async def _load_feed_entries(db: AsyncSession, lang: str | None) -> tuple[list[_FeedEntry], datetime]:
+    """Najnowsze publiczne wpisy z treścią i `Last-Modified` (max `updated_at` listy, `_EPOCH` gdy pusta).
+
+    Błąd storage jednego wpisu pomija ten wpis (feed zawsze 200); `lang` spoza `POST_LANGS` daje pustą listę
+    bez zapytania, jak w `index_markdown`.
+    """
+    lang = lang or None
+    items: list[PublicPost] = []
+    if lang is None or lang in POST_LANGS:
+        items = (await list_public_posts(db, 1, FEED_LIMIT, lang=lang)).items
+
+    loop = asyncio.get_running_loop()
+    results = await asyncio.gather(*(loop.run_in_executor(None, get_page_content, item.page) for item in items), return_exceptions=True)
+    entries: list[_FeedEntry] = []
+    for item, result in zip(items, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.error("Blad pobierania tresci strony wiki z MinIO dla feedu (page_id=%s)", item.page.id, exc_info=result)
+            continue
+        entries.append(_FeedEntry(post=item.post, page=item.page, content=result))
+    last_modified = max((_utc(item.page.updated_at) for item in items), default=_EPOCH)
+    return entries, last_modified
+
+
+@router.get("/feed.xml", response_model=None)
+async def atom_feed(request: Request, lang: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
+    """Atom 1.0: pełny HTML wpisu w `content type="html"`, zajawka w `summary`."""
+    entries, last_modified = await _load_feed_entries(db, lang)
+    base = _base_url()
+    feed = ET.Element("feed", {"xmlns": _ATOM_NS})
+    _text_element(feed, "title", _FEED_TITLE)
+    _text_element(feed, "id", f"{base}/blog/feed.xml")
+    _text_element(feed, "updated", _utc(last_modified).isoformat())
+    ET.SubElement(feed, "link", {"rel": "self", "href": f"{base}/blog/feed.xml"})
+    ET.SubElement(feed, "link", {"rel": "alternate", "href": f"{base}/blog/"})
+    for entry in entries:
+        url = f"{base}/blog/{entry.post.slug}"
+        element = ET.SubElement(feed, "entry")
+        _text_element(element, "title", entry.page.title)
+        _text_element(element, "id", url)
+        ET.SubElement(element, "link", {"rel": "alternate", "href": url})
+        _text_element(element, "updated", _utc(entry.page.updated_at).isoformat())
+        if entry.post.published_at is not None:
+            _text_element(element, "published", _utc(entry.post.published_at).isoformat())
+        if entry.post.author_name:
+            _text_element(ET.SubElement(element, "author"), "name", entry.post.author_name)
+        if entry.post.description:
+            _text_element(element, "summary", entry.post.description)
+        _text_element(element, "content", render_post_html(entry.content), type="html")
+    return conditional_response(request, _xml_document(feed), last_modified=last_modified, media_type="application/atom+xml; charset=utf-8")
+
+
+@router.get("/rss.xml", response_model=None)
+async def rss_feed(request: Request, lang: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
+    """RSS 2.0: pełny HTML wpisu w `content:encoded`, zajawka w `description`."""
+    entries, last_modified = await _load_feed_entries(db, lang)
+    base = _base_url()
+    # Prefiks `content:` zapisany literalnie, bez `ET.register_namespace` (rejestr jest wspólny dla całego procesu).
+    rss = ET.Element("rss", {"version": "2.0", "xmlns:content": _CONTENT_NS})
+    channel = ET.SubElement(rss, "channel")
+    _text_element(channel, "title", _FEED_TITLE)
+    _text_element(channel, "link", f"{base}/blog/")
+    _text_element(channel, "description", _FEED_DESCRIPTION)
+    for entry in entries:
+        url = f"{base}/blog/{entry.post.slug}"
+        item = ET.SubElement(channel, "item")
+        _text_element(item, "title", entry.page.title)
+        _text_element(item, "link", url)
+        _text_element(item, "guid", url, isPermaLink="true")
+        if entry.post.published_at is not None:
+            _text_element(item, "pubDate", format_datetime(_utc(entry.post.published_at), usegmt=True))
+        if entry.post.description:
+            _text_element(item, "description", entry.post.description)
+        _text_element(item, "content:encoded", render_post_html(entry.content))
+    return conditional_response(request, _xml_document(rss), last_modified=last_modified, media_type="application/rss+xml; charset=utf-8")
+
+
+@router.get("/feed.json", response_model=None)
+async def json_feed(request: Request, lang: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
+    """JSON Feed 1.1: `content_text` to markdown wpisu bez frontmattera (te same bezwzględne adresy co `.md`)."""
+    entries, last_modified = await _load_feed_entries(db, lang)
+    base = _base_url()
+    items: list[dict[str, Any]] = []
+    for entry in entries:
+        url = f"{base}/blog/{entry.post.slug}"
+        item: dict[str, Any] = {
+            "id": url,
+            "url": url,
+            "title": entry.page.title,
+            "content_text": absolutize_markdown_urls(render_post_markdown(entry.content), base),
+        }
+        if entry.post.description:
+            item["summary"] = entry.post.description
+        if entry.post.published_at is not None:
+            item["date_published"] = _utc(entry.post.published_at).isoformat()
+        item["date_modified"] = _utc(entry.page.updated_at).isoformat()
+        if entry.post.tags:
+            item["tags"] = list(entry.post.tags)
+        item["language"] = entry.post.lang
+        items.append(item)
+    feed = {
+        "version": "https://jsonfeed.org/version/1.1",
+        "title": _FEED_TITLE,
+        "home_page_url": f"{base}/blog/",
+        "feed_url": f"{base}/blog/feed.json",
+        "items": items,
+    }
+    return conditional_response(
+        request, json.dumps(feed, ensure_ascii=False), last_modified=last_modified, media_type="application/feed+json; charset=utf-8"
+    )
+
+
+async def build_llms_blog_section(db: AsyncSession) -> str:
+    """Sekcja `## Blog` do `/llms.txt`: `LLMS_BLOG_LIMIT` najnowszych wpisów z adresami `.md`; pusty string bez wpisów.
+
+    Czyta tylko bazę (opis wpisu), nie MinIO. Wyjątek z bazy wychodzi do wołającego, który zostawia samą treść statyczną.
+    """
+    items = (await list_public_posts(db, 1, LLMS_BLOG_LIMIT)).items
+    if not items:
+        return ""
+    base = _base_url()
+    lines = ["## Blog", ""]
+    for item in items:
+        line = f"- [{' '.join(item.page.title.split())}]({base}/blog/{item.post.slug}.md)"
+        description = " ".join((item.post.description or "").split())
+        if description:
+            line += f": {description}"
+        lines.append(line)
+    lines.append(f"- [All posts]({base}/blog/index.md): the full post list as markdown")
+    lines.append(f"- [Atom feed]({base}/blog/feed.xml): the latest posts with full content")
+    return "\n".join(lines) + "\n"
+
+
+async def build_llms_full(db: AsyncSession) -> str:
+    """Pełna treść publicznych wpisów (`render_post_markdown_document`), najnowsze pierwsze, do `LLMS_FULL_MAX_BYTES`.
+
+    Wpis, który nie zmieści się w limicie (razem z linią obcięcia), i wszystkie następne są pomijane w całości;
+    wtedy dokument kończy linia `> Truncated: <pominięte> of <wszystkie> posts omitted ...`. Wpis z błędem storage
+    jest pomijany, ale wchodzi do `<wszystkie>`. Wpisy są czytane po kolei i pętla staje przy pierwszym przekroczeniu,
+    więc nie czytamy z MinIO wpisów, które i tak nie wejdą.
+    """
+    items = (await list_public_posts(db, 1, _INDEX_LIMIT)).items
+    base = _base_url()
+    header = f"# Monolynx Blog: full content\n\nPublic posts as markdown with YAML frontmatter, newest first. Index: {base}/blog/index.md\n"
+    if not items:
+        return header + "\nNo public posts yet.\n"
+
+    total = len(items)
+
+    def truncation_line(omitted: int) -> str:
+        return f"\n> Truncated: {omitted} of {total} posts omitted (size limit {LLMS_FULL_MAX_BYTES} bytes). Full list: {base}/blog/index.md\n"
+
+    # Rezerwa na linię obcięcia (najdłuższy wariant: wszystkie pominięte), żeby całość nigdy nie przekroczyła limitu.
+    reserve = len(truncation_line(total).encode())
+    separator_size = len(LLMS_FULL_SEPARATOR.encode())
+    loop = asyncio.get_running_loop()
+    parts = [header]
+    size = len(header.encode())
+    kept = 0
+    truncated = False
+    for index, item in enumerate(items):
+        try:
+            content = await loop.run_in_executor(None, get_page_content, item.page)
+        except Exception:
+            logger.exception("Blad pobierania tresci strony wiki z MinIO dla llms-full (page_id=%s)", item.page.id)
+            continue
+        translations = [{"lang": t.lang, "url": f"{base}/blog/{t.slug}"} for t in await list_public_translations(db, item.post)]
+        document = render_post_markdown_document(item.post, item.page, content, translations)
+        needed = size + separator_size + len(document.encode())
+        if needed + (reserve if index < total - 1 else 0) > LLMS_FULL_MAX_BYTES:
+            truncated = True
+            break
+        parts.append(document)
+        size = needed
+        kept += 1
+
+    body = LLMS_FULL_SEPARATOR.join(parts)
+    return body + truncation_line(total - kept) if truncated else body

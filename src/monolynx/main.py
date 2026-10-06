@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import xml.etree.ElementTree as ET
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -254,31 +255,57 @@ def _landing_redirect() -> RedirectResponse:
 
 
 @app.get("/llms.txt", include_in_schema=False)
-async def llms_txt() -> Response:
-    """Serve llms.txt at site root for LLM consumption (llmstxt.org standard)."""
+async def llms_txt(db: AsyncSession = Depends(get_db)) -> Response:
+    """Serve llms.txt at site root for LLM consumption (llmstxt.org standard), with a live `## Blog` section.
+
+    The section is best-effort: any failure while building it leaves the static content alone (200, no section).
+    """
+    from monolynx.blog_ai import build_llms_blog_section
+
     llms_path = _STATIC_DIR / "llms.txt"
     if not llms_path.is_file():
         return Response(status_code=404, content="Not Found")
-    return Response(content=llms_path.read_text(encoding="utf-8"), media_type="text/plain; charset=utf-8")
+    content = llms_path.read_text(encoding="utf-8")
+    try:
+        section = await build_llms_blog_section(db)
+    except Exception:
+        logger.exception("Nie udalo sie zbudowac sekcji bloga w llms.txt")
+        section = ""
+    if section:
+        content = content.rstrip() + "\n\n" + section
+    return Response(content=content, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/llms-full.txt", include_in_schema=False)
+async def llms_full_txt(db: AsyncSession = Depends(get_db)) -> Response:
+    """Full markdown of all public blog posts in one document (size-capped), for LLM ingestion."""
+    from monolynx.blog_ai import build_llms_full
+
+    return Response(content=await build_llms_full(db), media_type="text/plain; charset=utf-8")
+
+
+# Jedna lista dla grupy `*` i grup botow AI: grupa nazwanego bota nie dziedziczy regul z `*` (RFC 9309),
+# wiec bez wlasnych Disallow samo `Allow: /blog/` otworzyloby botom AI panel, logowanie, API i MCP.
+_ROBOTS_DISALLOW = ("/dashboard/", "/auth/", "/api/", "/mcp")
+_ROBOTS_AI_BOTS = ("GPTBot", "ClaudeBot", "Claude-User", "PerplexityBot", "Google-Extended", "CCBot")
 
 
 @app.get("/robots.txt", include_in_schema=False)
 async def robots_txt() -> Response:
     """Robots policy for crawlers and AI agents; points to the sitemap and llms.txt."""
     base = settings.APP_URL.rstrip("/")
+    disallow = "".join(f"Disallow: {path}\n" for path in _ROBOTS_DISALLOW)
+    groups = ["User-agent: *\nAllow: /\nAllow: /blog/\n" + disallow]
+    groups += [f"User-agent: {bot}\nAllow: /blog/\n{disallow}" for bot in _ROBOTS_AI_BOTS]
     content = (
-        "User-agent: *\n"
-        "Allow: /\n"
-        "Allow: /blog/\n"
-        "Disallow: /dashboard/\n"
-        "Disallow: /auth/\n"
-        "Disallow: /api/\n"
-        "Disallow: /mcp\n"
-        "\n"
-        f"Sitemap: {base}/sitemap.xml\n"
-        "\n"
-        f"# AI assistants: machine-readable overview at {base}/llms.txt\n"
-        f"# Usage guide for AI agents: {base}/how-to-use-monolynx.md\n"
+        "\n".join(groups)
+        + "\n"
+        + f"Sitemap: {base}/sitemap.xml\n"
+        + "\n"
+        + f"# AI assistants: machine-readable overview at {base}/llms.txt\n"
+        + f"# Full blog content for AI assistants: {base}/llms-full.txt\n"
+        + f"# Blog feed (Atom): {base}/blog/feed.xml\n"
+        + f"# Usage guide for AI agents: {base}/how-to-use-monolynx.md\n"
     )
     return Response(content=content, media_type="text/plain; charset=utf-8")
 
@@ -305,23 +332,42 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
         f"{base}/agent-explain.md",
         f"{base}/index.md",
     ]
-    entries = [f"  <url><loc>{url.replace('&', '&amp;')}</loc></url>" for url in urls]
+    # Namespace'y jako atrybuty literalne, bez ET.register_namespace (rejestr jest wspolny dla calego procesu).
+    urlset = ET.Element("urlset", {"xmlns": "http://www.sitemaps.org/schemas/sitemap/0.9", "xmlns:xhtml": "http://www.w3.org/1999/xhtml"})
+    for url in urls:
+        ET.SubElement(ET.SubElement(urlset, "url"), "loc").text = url
 
     # Lista bloga bez lastmod, potem wpisy z bazy (is_public=True) pod BlogPost.slug -- filtr w SQL,
     # nigdy w petli Pythona (MON-202, MON-254). lastmod: last_verified_at, potem published_at, potem updated_at strony.
-    entries.append(f"  <url><loc>{base}/blog/</loc></url>")
+    ET.SubElement(ET.SubElement(urlset, "url"), "loc").text = f"{base}/blog/"
     result = await db.execute(
-        select(BlogPost.slug, BlogPost.last_verified_at, BlogPost.published_at, WikiPage.updated_at)
+        select(
+            BlogPost.slug,
+            BlogPost.lang,
+            BlogPost.page_id,
+            BlogPost.translation_of_id,
+            BlogPost.last_verified_at,
+            BlogPost.published_at,
+            WikiPage.updated_at,
+        )
         .join(WikiPage, WikiPage.id == BlogPost.page_id)
         .where(WikiPage.is_public.is_(True))
     )
-    for slug, last_verified_at, published_at, updated_at in result.all():
-        loc = f"{base}/blog/{slug}".replace("&", "&amp;")
-        lastmod = (last_verified_at or published_at or updated_at).isoformat()
-        entries.append(f"  <url><loc>{loc}</loc><lastmod>{lastmod}</lastmod></url>")
+    rows = result.all()
+    # Grupa tlumaczen = publiczne wpisy o wspolnym korzeniu; hreflang tylko gdy grupa ma >= 2 publiczne wpisy.
+    groups: dict[object, list[tuple[str, str]]] = {}
+    for row in rows:
+        groups.setdefault(row.translation_of_id or row.page_id, []).append((row.lang, row.slug))
+    for row in rows:
+        url_el = ET.SubElement(urlset, "url")
+        ET.SubElement(url_el, "loc").text = f"{base}/blog/{row.slug}"
+        ET.SubElement(url_el, "lastmod").text = (row.last_verified_at or row.published_at or row.updated_at).isoformat()
+        versions = groups[row.translation_of_id or row.page_id]
+        if len(versions) > 1:
+            for lang, slug in sorted(versions):
+                ET.SubElement(url_el, "xhtml:link", {"rel": "alternate", "hreflang": lang, "href": f"{base}/blog/{slug}"})
 
-    body = "\n".join(entries)
-    content = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{body}\n</urlset>\n'
+    content = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(urlset, encoding="unicode") + "\n"
     return Response(content=content, media_type="application/xml; charset=utf-8")
 
 
@@ -476,6 +522,7 @@ def _landing_markdown(lang: str) -> str:
             f"- [Bootstrap projektu]({base}/agent-bootstrap.md): instrukcja krok po kroku dla agenta,"
             " który ma skonfigurować połączenie z Monolynx w repozytorium użytkownika.",
             f"- [llms.txt]({base}/llms.txt): maszynowy przegląd platformy - wszystkie moduły i punkty wejścia.",
+            f"- [Blog]({base}/blog/index.md): lista publicznych wpisów jako markdown; pełna treść w [llms-full.txt]({base}/llms-full.txt).",
         ]
     else:
         lines += [
@@ -485,6 +532,7 @@ def _landing_markdown(lang: str) -> str:
             f"- [Project bootstrap]({base}/agent-bootstrap.md): step-by-step instructions for an agent"
             " configuring the Monolynx connection inside a user's repository.",
             f"- [llms.txt]({base}/llms.txt): machine-readable overview of the platform - all modules and entry points.",
+            f"- [Blog]({base}/blog/index.md): the public post list as markdown; full content in [llms-full.txt]({base}/llms-full.txt).",
         ]
     return "\n".join(lines).rstrip() + "\n"
 
