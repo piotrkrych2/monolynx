@@ -21,6 +21,14 @@
 {% if json_ld %}<script type="application/ld+json">{{ json_ld|safe }}</script>{% endif %}
 <link rel="stylesheet" href="/static/blog/blocks.css">
 <script src="/static/blog/blocks.js" defer></script>
+{# Komponenty grafik i biblioteka diagramów tylko dla wpisu, który ich używa. Zmienne nie istnieją w innych widokach. #}
+{% for name in graphics or [] %}
+<link rel="stylesheet" href="/static/blog/graphics/{{ name }}.css">
+<script src="/static/blog/graphics/{{ name }}.js" defer></script>
+{% endfor %}
+{% if has_diagram %}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js" integrity="sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2" crossorigin="anonymous" defer></script>
+{% endif %}
 <style>
     .blog-content {
         color: #374151; /* text-gray-700 */

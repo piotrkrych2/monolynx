@@ -1,0 +1,76 @@
+/* Komponent agent-loop (MON-257). Motyw ciemny: klasa .dark na <html>. */
+
+.blog-graphic[data-blog-graphic="agent-loop"] {
+    --agent-loop-node-bg: #eef2ff;
+    --agent-loop-node-border: #a5b4fc;
+    --agent-loop-active-bg: #c7d2fe;
+    --agent-loop-active-border: #4f46e5;
+    --agent-loop-text: #1e1b4b;
+    --agent-loop-muted: #4b5563;
+    --agent-loop-arrow: #9ca3af;
+    --agent-loop-arrow-active: #4f46e5;
+}
+.dark .blog-graphic[data-blog-graphic="agent-loop"] {
+    --agent-loop-node-bg: rgba(99, 102, 241, 0.12);
+    --agent-loop-node-border: #3730a3;
+    --agent-loop-active-bg: rgba(129, 140, 248, 0.3);
+    --agent-loop-active-border: #818cf8;
+    --agent-loop-text: #e0e7ff;
+    --agent-loop-muted: #9ca3af;
+    --agent-loop-arrow: #4b5563;
+    --agent-loop-arrow-active: #a5b4fc;
+}
+
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop {
+    max-width: 32rem;
+    margin: 0 auto;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-node rect {
+    fill: var(--agent-loop-node-bg);
+    stroke: var(--agent-loop-node-border);
+    stroke-width: 1.5;
+    transition: fill 0.3s, stroke 0.3s;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-node.is-active rect {
+    fill: var(--agent-loop-active-bg);
+    stroke: var(--agent-loop-active-border);
+    stroke-width: 2.5;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-label {
+    fill: var(--agent-loop-text);
+    font-size: 16px;
+    font-weight: 600;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-step {
+    fill: var(--agent-loop-muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-center {
+    fill: var(--agent-loop-muted);
+    font-size: 13px;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-arrow {
+    stroke: var(--agent-loop-arrow);
+    stroke-width: 2;
+    transition: stroke 0.3s;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-arrow.is-active {
+    stroke: var(--agent-loop-arrow-active);
+    stroke-width: 3;
+}
+.blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-arrowhead {
+    fill: var(--agent-loop-arrow-active);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-node rect,
+    .blog-graphic[data-blog-graphic="agent-loop"] .agent-loop-arrow {
+        transition: none;
+    }
+}

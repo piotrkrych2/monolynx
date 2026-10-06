@@ -802,6 +802,16 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "Z FAQ, kroków i wideo serwer przygotowuje dane strukturalne dla wyszukiwarek i modeli AI."
                     ),
                 },
+                {
+                    "title": "Bloki graficzne wpisu bloga",
+                    "desc": (
+                        "Tabela markdown staje się wykresem słupkowym, liniowym albo kołowym, który serwer rysuje jako SVG, "
+                        "opis z kodem Mermaid staje się diagramem, a blok konsoli oknem terminala z animacją pisania. "
+                        "Animowane schematy pochodzą z zamkniętej listy komponentów w repozytorium, więc treść wpisu nie zawiera skryptów ani stylów. "
+                        "Źródłem każdej grafiki jest tekst: dane, opis albo kod widzi model AI w wersji markdown i czytelnik z wyłączonym JS. "
+                        "Wykresy i schematy działają w jasnym i ciemnym motywie, a animacje wyłączają się przy ograniczeniu ruchu w systemie."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -921,6 +931,17 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "a collapsible section, a gallery, a CTA button and a glossary. "
                     "YouTube and Vimeo videos load only after a click, so the page sends no request to the video service before that. "
                     "From the FAQ, steps and videos the server prepares structured data for search engines and AI models."
+                ),
+            },
+            {
+                "title": "Graphic blog post blocks",
+                "desc": (
+                    "A markdown table becomes a bar, line or pie chart that the server draws as SVG, "
+                    "a description with Mermaid code becomes a diagram, and a console block becomes a terminal window with a typing animation. "
+                    "Animated schematics come from a closed list of components kept in the repository, so a post never contains scripts or styles. "
+                    "The source of every graphic is text: an AI model reading the markdown version and a reader with JS turned off get the data, "
+                    "the description or the code. "
+                    "Charts and schematics work in the light and the dark theme, and animations turn off when the system asks for reduced motion."
                 ),
             },
         ],
