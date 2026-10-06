@@ -780,6 +780,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "title": "Publikacja publiczna (blog)",
                     "desc": (
                         "Checkbox „strona publiczna” w formularzu wiki wystawia treść bez logowania pod /blog/{slug}. "
+                        "Zmienia go tylko konto z uprawnieniem do edycji bloga, które nadaje superuser; pozostałe konta widzą stan strony bez możliwości zmiany. "
                         "Załączniki wpisu (obrazy, PDF) serwowane bezpiecznie — allow-lista MIME dla inline (PNG/JPEG/GIF/WebP), "
                         "reszta jako attachment z nagłówkiem X-Content-Type-Options: nosniff."
                     ),
@@ -853,7 +854,9 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "Cofnięcie publikacji zdejmuje wpis i jego wersję markdown z sieci (404), a data publikacji i slug zostają, "
                         "więc ponowna publikacja wraca pod ten sam adres. "
                         "Robią to narzędzia MCP publish_blog_post i unpublish_blog_post, REST API "
-                        "oraz komendy monolynx blog publish i monolynx blog unpublish."
+                        "oraz komendy monolynx blog publish i monolynx blog unpublish. "
+                        "Publikacja, jej cofnięcie i zmiana metadanych wymagają uprawnienia do edycji bloga na koncie użytkownika: "
+                        "nadaje je wyłącznie superuser, a sama rola w projekcie, także właściciela, nie wystarcza."
                     ),
                 },
                 {
@@ -861,7 +864,8 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "desc": (
                         "Sekcja „Wpis na blogu” w formularzu edycji strony ustawia adres (slug), opis z licznikiem znaków, autora, tagi, język, "
                         "powiązanie z tłumaczeniem, okładkę wybraną z załączników strony i datę weryfikacji. "
-                        "Błąd walidacji pokazuje komunikat i zachowuje wpisane wartości, a zwykła strona wiki z pustą sekcją nie staje się wpisem."
+                        "Błąd walidacji pokazuje komunikat i zachowuje wpisane wartości, a zwykła strona wiki z pustą sekcją nie staje się wpisem. "
+                        "Sekcję widzi tylko konto z uprawnieniem do edycji bloga."
                     ),
                 },
                 {
@@ -978,6 +982,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 "title": "Public publishing (blog)",
                 "desc": (
                     'A "public page" checkbox on the wiki form exposes content without login at /blog/{slug}. '
+                    "Only an account with the blog permission, granted by a superuser, can change it; other accounts see the state read-only. "
                     "Page attachments (images, PDFs) are served safely — MIME allow-list for inline (PNG/JPEG/GIF/WebP), "
                     "everything else as attachment with an X-Content-Type-Options: nosniff header."
                 ),
@@ -1052,7 +1057,9 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "Unpublishing takes the post and its markdown version offline (404), while the publication date and the slug stay, "
                     "so publishing again restores the same address. "
                     "The publish_blog_post and unpublish_blog_post MCP tools, the REST API "
-                    "and the monolynx blog publish and monolynx blog unpublish commands do it."
+                    "and the monolynx blog publish and monolynx blog unpublish commands do it. "
+                    "Publishing, unpublishing and changing the metadata need the blog permission on the user account: "
+                    "only a superuser grants it, and a role in the project, the owner's included, is not enough."
                 ),
             },
             {
@@ -1060,7 +1067,8 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 "desc": (
                     'A "Blog post" section on the page edit form sets the address (slug), a description with a character counter, the author, tags, '
                     "language, the link to a translation, a cover picked from the page attachments and the verified date. "
-                    "A validation error shows a message and keeps the values you typed, and a regular wiki page with an empty section does not become a post."
+                    "A validation error shows a message and keeps the values you typed, and a regular wiki page with an empty section does not become a post. "
+                    "Only an account with the blog permission sees the section."
                 ),
             },
             {
@@ -2123,7 +2131,13 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                     "name": "monolynx blog lint",
                     "desc": "Lint wpisu pod AI: problemy z linią i poziomem oraz ocena 0-100; kod wyjścia 1 przy błędzie.",
                 },
-                {"name": "monolynx blog publish", "desc": "Opublikuj wpis po lincie; błędy lintu to odmowa i kod wyjścia 1, chyba że --force."},
+                {
+                    "name": "monolynx blog publish",
+                    "desc": (
+                        "Opublikuj wpis po lincie; błędy lintu to odmowa i kod wyjścia 1, chyba że --force. "
+                        "Komendy meta, publish i unpublish wymagają uprawnienia do edycji bloga (bez niego 403 i kod wyjścia 3)."
+                    ),
+                },
                 {"name": "monolynx blog unpublish", "desc": "Cofnij publikację wpisu: adres i wersja .md dają 404, data i slug zostają."},
             ],
             "tech_details": [
@@ -2261,7 +2275,13 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                 "name": "monolynx blog lint",
                 "desc": "Lint a post for AI: problems with line and level, plus a score from 0 to 100; exit code 1 on an error.",
             },
-            {"name": "monolynx blog publish", "desc": "Publish a post after the lint; lint errors mean a refusal and exit code 1, unless --force."},
+            {
+                "name": "monolynx blog publish",
+                "desc": (
+                    "Publish a post after the lint; lint errors mean a refusal and exit code 1, unless --force. "
+                    "The meta, publish and unpublish commands need the blog permission (without it a 403 and exit code 3)."
+                ),
+            },
             {"name": "monolynx blog unpublish", "desc": "Unpublish a post: its address and its .md version answer 404, the date and the slug stay."},
         ],
         "tech_details": [
@@ -2365,6 +2385,16 @@ def _feature_blog(lang: str) -> dict[str, Any]:
                     ),
                 },
                 {
+                    "title": "Uprawnienie do edycji bloga",
+                    "desc": (
+                        "Publikować, cofać publikację i zmieniać metadane wpisu może tylko konto z uprawnieniem do edycji bloga. "
+                        "Uprawnienie należy do konta, nie do roli w projekcie, jest domyślnie wyłączone, a nadaje je i odbiera wyłącznie superuser "
+                        "na stronie edycji konta; właściciel ani admin projektu go nie nada. Ta sama reguła obowiązuje w panelu, MCP, REST API i CLI, "
+                        "także przy oznaczaniu strony wiki jako publicznej. Konto bez uprawnienia dostaje odmowę (403 w REST API), nic nie jest zapisywane, "
+                        "a narzędzia zapisu bloga nie pojawiają się na jego liście narzędzi MCP. Czytanie wpisów i lint wymagają tylko prawa odczytu wiki."
+                    ),
+                },
+                {
                     "title": "Podgląd szkicu",
                     "desc": (
                         "Przycisk „Podgląd wpisu” na stronie wiki otwiera szkic w wyglądzie publicznego bloga, zanim zaznaczysz „strona publiczna”. "
@@ -2400,17 +2430,29 @@ def _feature_blog(lang: str) -> dict[str, Any]:
                 {"title": "Opublikuj", "desc": "Wpis trafia pod /blog/{slug} razem z wersją markdown, danymi strukturalnymi i feedami."},
                 {
                     "title": "AI pisze i publikuje przez MCP",
-                    "desc": "Agent AI przechodzi te same kroki connectorami, a publikację wykonuje dopiero po Twojej zgodzie.",
+                    "desc": (
+                        "Agent AI przechodzi te same kroki connectorami, a publikację wykonuje dopiero po Twojej zgodzie. "
+                        "Konto, na którym pracuje agent, potrzebuje uprawnienia do edycji bloga."
+                    ),
                 },
             ],
             "ai_intro": "Blog jest zbudowany tak, żeby agent AI mógł go i pisać, i czytać. Agent ustawia metadane wpisu, sprawdza go lintem, publikuje i cofa publikację - 6 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_blog_posts", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft"},
                 {"name": "get_blog_post", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown"},
-                {"name": "set_blog_post_meta", "desc": "Metadane wpisu: slug, opis, autor, tagi, język, tłumaczenie, okładka, data weryfikacji"},
+                {
+                    "name": "set_blog_post_meta",
+                    "desc": "Metadane wpisu: slug, opis, autor, tagi, język, tłumaczenie, okładka, data weryfikacji; wymaga uprawnienia do edycji bloga",
+                },
                 {"name": "lint_blog_post", "desc": "Lint wpisu pod AI: lista problemów z linią i poziomem oraz ocena 0-100"},
-                {"name": "publish_blog_post", "desc": "Publikacja wpisu po lincie: odmowa przy błędach, chyba że force; zwraca adresy i ocenę lintu"},
-                {"name": "unpublish_blog_post", "desc": "Cofnięcie publikacji: adres wpisu i jego .md dają 404, data i slug zostają"},
+                {
+                    "name": "publish_blog_post",
+                    "desc": "Publikacja wpisu po lincie: odmowa przy błędach, chyba że force; zwraca adresy i ocenę lintu; wymaga uprawnienia do edycji bloga",
+                },
+                {
+                    "name": "unpublish_blog_post",
+                    "desc": "Cofnięcie publikacji: adres wpisu i jego .md dają 404, data i slug zostają; wymaga uprawnienia do edycji bloga",
+                },
             ],
             "tech_details": [
                 {
@@ -2501,6 +2543,16 @@ def _feature_blog(lang: str) -> dict[str, Any]:
                 ),
             },
             {
+                "title": "Blog permission",
+                "desc": (
+                    "Only an account with the blog permission can publish a post, unpublish it or change its metadata. "
+                    "The permission belongs to the account, not to a role in a project, is off by default, and only a superuser grants or revokes it "
+                    "on the account edit page; a project owner or admin cannot. The same rule holds in the dashboard, MCP, the REST API and the CLI, "
+                    "also when a wiki page is marked public. An account without it gets a refusal (403 in the REST API), nothing is saved, "
+                    "and the blog write tools do not appear on its MCP tool list. Reading posts and the lint need only wiki read permission."
+                ),
+            },
+            {
                 "title": "Draft preview",
                 "desc": (
                     'The "Post preview" button on a wiki page opens the draft in the look of the public blog before you tick "public page". '
@@ -2539,17 +2591,29 @@ def _feature_blog(lang: str) -> dict[str, Any]:
             {"title": "Publish", "desc": "The post goes live at /blog/{slug} together with its markdown version, structured data and feeds."},
             {
                 "title": "AI writes and publishes via MCP",
-                "desc": "Your AI agent goes through the same steps with the connectors and publishes only after you agree.",
+                "desc": (
+                    "Your AI agent goes through the same steps with the connectors and publishes only after you agree. "
+                    "The account the agent runs under needs the blog permission."
+                ),
             },
         ],
         "ai_intro": "The blog is built so that an AI agent can both write and read it. The agent sets post metadata, lints a post, publishes it and unpublishes it - 6 MCP tools.",
         "mcp_tools": [
             {"name": "list_blog_posts", "desc": "List blog posts with metadata, drafts included; published or draft filter"},
             {"name": "get_blog_post", "desc": "A blog post: metadata, public URLs and markdown content"},
-            {"name": "set_blog_post_meta", "desc": "Post metadata: slug, description, author, tags, language, translation, cover, verified date"},
+            {
+                "name": "set_blog_post_meta",
+                "desc": "Post metadata: slug, description, author, tags, language, translation, cover, verified date; needs the blog permission",
+            },
             {"name": "lint_blog_post", "desc": "Lint a post for AI: a list of problems with line and level, plus a score from 0 to 100"},
-            {"name": "publish_blog_post", "desc": "Publish a post after the lint: refused on errors unless force; returns URLs and the lint score"},
-            {"name": "unpublish_blog_post", "desc": "Unpublish a post: its address and its .md answer 404, the date and the slug stay"},
+            {
+                "name": "publish_blog_post",
+                "desc": "Publish a post after the lint: refused on errors unless force; returns URLs and the lint score; needs the blog permission",
+            },
+            {
+                "name": "unpublish_blog_post",
+                "desc": "Unpublish a post: its address and its .md answer 404, the date and the slug stay; needs the blog permission",
+            },
         ],
         "tech_details": [
             {

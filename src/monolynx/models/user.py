@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import Boolean, DateTime, String, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,6 +27,7 @@ class User(Base):
     first_name: Mapped[str] = mapped_column(String(100), default="")
     last_name: Mapped[str] = mapped_column(String(100), default="")
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_edit_blog: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     google_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
     invitation_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), unique=True, index=True, nullable=True)
     invitation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

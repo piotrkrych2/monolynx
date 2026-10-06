@@ -48,6 +48,10 @@ _BLOG_POST = "/api/v2/projects/{project_slug}/blog/posts/{page_id}"
 _BLOG_LINT = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/lint"
 _BLOG_PUBLISH = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/publish"
 _BLOG_UNPUBLISH = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/unpublish"
+_BLOG_WRITE_NOTE = (
+    "Zapis wymaga uprawnienia blog:write na koncie (MON-270): MCP ukrywa to narzędzie na liście dla konta bez uprawnienia "
+    "(wywołanie wprost zwraca Brak uprawnienia blog:write), v2 zwraca 403 problem+json z tym samym tekstem w detail."
+)
 
 
 TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
@@ -315,7 +319,7 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         is_write=True,
         known_differences=(
             "MCP: pominięty parametr (None) = bez zmian, pusty tekst w translation_of_id, cover_attachment_id i last_verified_at "
-            "czyści pole; v2: pole nieobecne w body = bez zmian, null czyści pole."
+            "czyści pole; v2: pole nieobecne w body = bez zmian, null czyści pole. " + _BLOG_WRITE_NOTE
         ),
     ),
     "publish_blog_post": ToolEndpointSpec(
@@ -324,10 +328,10 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         is_write=True,
         known_differences=(
             "force to parametr MCP, a w v2 opcjonalne pole body JSON (brak body = false); odmowa przy błędach lintu bez force "
-            "to ValueError z tekstem w MCP i 422 problem+json w v2 (ten sam komunikat w detail)."
+            "to ValueError z tekstem w MCP i 422 problem+json w v2 (ten sam komunikat w detail). " + _BLOG_WRITE_NOTE
         ),
     ),
-    "unpublish_blog_post": ToolEndpointSpec("POST", _BLOG_UNPUBLISH, is_write=True),
+    "unpublish_blog_post": ToolEndpointSpec("POST", _BLOG_UNPUBLISH, is_write=True, known_differences=_BLOG_WRITE_NOTE),
     # --- Graph (5) ---
     "list_graph_nodes": ToolEndpointSpec(
         "GET",

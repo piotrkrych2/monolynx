@@ -55,7 +55,7 @@ from monolynx.services.minio_client import delete_object as minio_delete_object
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.minio_client import upload_attachment
 from monolynx.services.minio_client import upload_object as minio_upload_object
-from monolynx.services.permissions import require_permission
+from monolynx.services.permissions import has_blog_permission, require_permission
 from monolynx.services.wiki import (
     create_wiki_page,
     delete_wiki_page,
@@ -106,7 +106,13 @@ _BLOG_FORM_FIELDS = (
 
 
 def _creation_form_context(
-    slug: str, project: Project | None, parent: WikiPage | None, *, error: str | None, form_data: dict[str, Any] | None
+    slug: str,
+    project: Project | None,
+    parent: WikiPage | None,
+    *,
+    error: str | None,
+    form_data: dict[str, Any] | None,
+    can_edit_blog: bool,
 ) -> dict[str, Any]:
     """Kontekst formularzy tworzenia: bez sekcji "Wpis na blogu" (strona jeszcze nie istnieje), z menu bloków.
 
@@ -123,6 +129,7 @@ def _creation_form_context(
         "blog_meta": None,
         "blog_is_post": False,
         "blog_translation_candidates": [],
+        "can_edit_blog": can_edit_blog,
         "block_templates": list_block_templates(),
         "image_upload_url": f"/dashboard/{slug}/wiki/upload",
     }
@@ -139,6 +146,7 @@ async def _edit_form_context(
     *,
     error: str | None,
     form_data: dict[str, Any],
+    can_edit_blog: bool,
     typed_blog_meta: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Kontekst formularza edycji; `typed_blog_meta` (wartości wpisane po błędzie) wygrywa z wartościami z bazy."""
@@ -185,6 +193,7 @@ async def _edit_form_context(
         "blog_meta": blog_meta,
         "blog_is_post": post is not None or page.is_public,
         "blog_translation_candidates": [{"page_id": str(row.page_id), "title": row.title, "lang": row.lang} for row in candidates.all()],
+        "can_edit_blog": can_edit_blog,
         "block_templates": list_block_templates(),
         "image_upload_url": f"/dashboard/{project.slug}/wiki/upload?page_id={page.id}",
     }
@@ -326,11 +335,12 @@ async def wiki_page_create_form(
         return HTMLResponse("Project not found", status_code=404)
 
     await require_permission(db, user_id, project.id, "wiki", "read")
+    can_edit_blog = await has_blog_permission(db, user_id)
 
     return await render_project_page(
         request,
         "dashboard/wiki/page_form.html",
-        _creation_form_context(slug, project, None, error=None, form_data=None),
+        _creation_form_context(slug, project, None, error=None, form_data=None, can_edit_blog=can_edit_blog),
         db=db,
     )
 
@@ -350,6 +360,7 @@ async def wiki_page_create(
         return HTMLResponse("Project not found", status_code=404)
 
     await require_permission(db, user_id, project.id, "wiki", "write")
+    can_edit_blog = await has_blog_permission(db, user_id)
 
     form = await request.form()
     title = str(form.get("title", "")).strip()
@@ -371,7 +382,7 @@ async def wiki_page_create(
         return templates.TemplateResponse(
             request,
             "dashboard/wiki/page_form.html",
-            _creation_form_context(slug, project, None, error=error, form_data=form_data),
+            _creation_form_context(slug, project, None, error=error, form_data=form_data, can_edit_blog=can_edit_blog),
         )
 
     try:
@@ -393,7 +404,7 @@ async def wiki_page_create(
         return templates.TemplateResponse(
             request,
             "dashboard/wiki/page_form.html",
-            _creation_form_context(slug, project, None, error=None, form_data=form_data),
+            _creation_form_context(slug, project, None, error=None, form_data=form_data, can_edit_blog=can_edit_blog),
         )
 
     flash(request, "Strona wiki zostala utworzona")
@@ -419,6 +430,7 @@ async def wiki_child_create_form(
         return HTMLResponse("Project not found", status_code=404)
 
     await require_permission(db, user_id, project.id, "wiki", "read")
+    can_edit_blog = await has_blog_permission(db, user_id)
 
     parent = await _get_wiki_page(page_id, project.id, db)
     if parent is None:
@@ -427,7 +439,7 @@ async def wiki_child_create_form(
     return await render_project_page(
         request,
         "dashboard/wiki/page_form.html",
-        _creation_form_context(slug, project, parent, error=None, form_data=None),
+        _creation_form_context(slug, project, parent, error=None, form_data=None, can_edit_blog=can_edit_blog),
         db=db,
     )
 
@@ -448,6 +460,7 @@ async def wiki_child_create(
         return HTMLResponse("Project not found", status_code=404)
 
     await require_permission(db, user_id, project.id, "wiki", "write")
+    can_edit_blog = await has_blog_permission(db, user_id)
 
     parent = await _get_wiki_page(page_id, project.id, db)
     if parent is None:
@@ -473,7 +486,7 @@ async def wiki_child_create(
         return templates.TemplateResponse(
             request,
             "dashboard/wiki/page_form.html",
-            _creation_form_context(slug, project, parent, error=error, form_data=form_data),
+            _creation_form_context(slug, project, parent, error=error, form_data=form_data, can_edit_blog=can_edit_blog),
         )
 
     try:
@@ -497,7 +510,7 @@ async def wiki_child_create(
         return templates.TemplateResponse(
             request,
             "dashboard/wiki/page_form.html",
-            _creation_form_context(slug, project, parent, error=None, form_data=form_data),
+            _creation_form_context(slug, project, parent, error=None, form_data=form_data, can_edit_blog=can_edit_blog),
         )
 
     flash(request, "Podstrona wiki zostala utworzona")
@@ -645,6 +658,7 @@ async def wiki_page_edit_form(
         return HTMLResponse("Project not found", status_code=404)
 
     await require_permission(db, user_id, project.id, "wiki", "read")
+    can_edit_blog = await has_blog_permission(db, user_id)
 
     page = await _get_wiki_page(page_id, project.id, db)
     if page is None:
@@ -656,7 +670,7 @@ async def wiki_page_edit_form(
     return await render_project_page(
         request,
         "dashboard/wiki/page_form.html",
-        await _edit_form_context(project, page, db, error=None, form_data=form_data),
+        await _edit_form_context(project, page, db, error=None, form_data=form_data, can_edit_blog=can_edit_blog),
         db=db,
     )
 
@@ -677,6 +691,7 @@ async def wiki_page_edit(
         return HTMLResponse("Project not found", status_code=404)
 
     await require_permission(db, user_id, project.id, "wiki", "write")
+    can_edit_blog = await has_blog_permission(db, user_id)
 
     page = await _get_wiki_page(page_id, project.id, db)
     if page is None:
@@ -686,7 +701,10 @@ async def wiki_page_edit(
     title = str(form.get("title", "")).strip()
     content = str(form.get("content", ""))
     position_raw = str(form.get("position", str(page.position))).strip()
-    is_public = form.get("is_public") is not None
+    is_public_checked = form.get("is_public") is not None
+    # Konto bez uprawnienia blog:write ma wyłączony checkbox, więc brak pola to nie prośba o cofnięcie
+    # publikacji: None zostawia stan strony (zaznaczone pole to zmiana, którą serwis odrzuci).
+    is_public: bool | None = is_public_checked if can_edit_blog or is_public_checked else None
 
     error = None
     if not title:
@@ -697,14 +715,16 @@ async def wiki_page_edit(
     except ValueError:
         position = page.position
 
-    form_data = {"title": title, "content": content, "position": position, "is_public": is_public}
+    form_data = {"title": title, "content": content, "position": position, "is_public": is_public_checked if can_edit_blog else page.is_public}
     typed_blog_meta = _read_blog_form(form) if form.get("blog_meta") is not None else None
 
     if error:
         return templates.TemplateResponse(
             request,
             "dashboard/wiki/page_form.html",
-            await _edit_form_context(project, page, db, error=error, form_data=form_data, typed_blog_meta=typed_blog_meta),
+            await _edit_form_context(
+                project, page, db, error=error, form_data=form_data, can_edit_blog=can_edit_blog, typed_blog_meta=typed_blog_meta
+            ),
         )
 
     async def rerender_after_error(exc: ValueError) -> HTMLResponse:
@@ -722,12 +742,16 @@ async def wiki_page_edit(
         return templates.TemplateResponse(
             request,
             "dashboard/wiki/page_form.html",
-            await _edit_form_context(fresh_project, fresh_page, db, error=None, form_data=form_data, typed_blog_meta=typed_blog_meta),
+            await _edit_form_context(
+                fresh_project, fresh_page, db, error=None, form_data=form_data, can_edit_blog=can_edit_blog, typed_blog_meta=typed_blog_meta
+            ),
         )
 
     # Metadane PRZED trescia: set_post_meta waliduje wszystko przed pierwsza mutacja, wiec odrzucone
     # metadane nie zostawiaja zapisanej tresci ani brudnej sesji (stad bez db.rollback() w tej galezi).
-    if typed_blog_meta is not None and (is_public or _blog_meta_touched(typed_blog_meta, page) or await _get_blog_post(page.id, db) is not None):
+    if typed_blog_meta is not None and (
+        is_public_checked or _blog_meta_touched(typed_blog_meta, page) or await _get_blog_post(page.id, db) is not None
+    ):
         user = await get_session_user(request, db)
         if user is None:
             return RedirectResponse(url="/auth/login", status_code=303)

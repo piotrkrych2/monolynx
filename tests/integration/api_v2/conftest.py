@@ -32,13 +32,16 @@ class ApiV2Actor:
     headers: dict[str, str]
 
 
-async def make_actor(db_session, tag: str, *, is_superuser: bool = False) -> ApiV2Actor:
+async def make_actor(db_session, tag: str, *, is_superuser: bool = False, can_edit_blog: bool = False) -> ApiV2Actor:
     """Utwórz użytkownika z tokenem `osk_*` (jak `UserApiToken` z profilu) i zwróć
-    nagłówki Bearer gotowe do requestów `/api/v2/*`."""
+    nagłówki Bearer gotowe do requestów `/api/v2/*`.
+
+    `can_edit_blog` (MON-270): uprawnienie `blog:write` na koncie; domyślnie `False`, jak w produkcji."""
     user = User(
         email=f"v2-{tag}-{uuid.uuid4().hex[:8]}@example.com",
         password_hash=hash_password("testpass123"),
         is_superuser=is_superuser,
+        can_edit_blog=can_edit_blog,
     )
     db_session.add(user)
     await db_session.flush()
@@ -88,9 +91,11 @@ async def add_member(db_session, project: Project, user: User, role: str = "owne
     return member
 
 
-async def make_owner_project(db_session, tag: str) -> tuple[ApiV2Actor, Project]:
-    """Skrót: nowy użytkownik + nowy projekt + członkostwo 'owner' (pełne uprawnienia)."""
-    actor = await make_actor(db_session, tag)
+async def make_owner_project(db_session, tag: str, *, can_edit_blog: bool = False) -> tuple[ApiV2Actor, Project]:
+    """Skrót: nowy użytkownik + nowy projekt + członkostwo 'owner' (pełne uprawnienia w projekcie).
+
+    Konto nie ma `blog:write`, dopóki test nie poda `can_edit_blog=True` (MON-270)."""
+    actor = await make_actor(db_session, tag, can_edit_blog=can_edit_blog)
     project = await make_project(db_session, tag)
     await add_member(db_session, project, actor.user, role="owner")
     return actor, project

@@ -4,7 +4,8 @@
 Routery cienkie jak toole MCP (`mcp_server.py`, sekcja "--- Wiki ---") -- zadnej
 logiki biznesowej tutaj. Uprawnienia roli (MON-241): odczyty (lista, szczegoly, config)
 sprawdza serwis (`wiki:read`), a router jawnie `require_permission` dla funkcji serwisu
-bez uzytkownika: create/update strony `wiki:write` (pokrywa tez `is_public`), delete
+bez uzytkownika: create/update strony `wiki:write` (`is_public` wymaga dodatkowo uprawnienia konta `blog:write`,
+MON-270: serwis rzuca `ValueError`, `service_error` daje 403), delete
 `wiki:delete`, search `wiki:read`, `set_wiki_config` `settings:write`. Check idzie przed
 lookupem strony, wiec rola bez uprawnienia dostaje 403, nie 404.
 `get_api_user_and_project` sprawdza tylko czlonkostwo."""

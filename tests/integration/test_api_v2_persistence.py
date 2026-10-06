@@ -13,6 +13,9 @@ Każdy wpis `is_write=True` w `TOOL_TO_ENDPOINT` musi mieć scenariusz w
 `PERSISTENCE_SCENARIOS`, a scenariusz wysyła request na metodę i ścieżkę wzięte
 z mapy, więc sprawdza realny wpis mapy, nie własną kopię ścieżki.
 
+Zapisy bloga (MON-270, K7) mają dodatkowo testy odmowy: konto bez `blog:write` dostaje 403, a stan odczytany w
+nowej sesji jest identyczny jak przed requestem.
+
 Testy commitują do współdzielonej bazy `open_sentry_test`, więc każdy scenariusz
 sprząta wszystkie swoje wiersze w `finally` (w tym rekordy tworzone pośrednio
 przez endpoint: projekt z `create_project`, użytkownik z `invite_member`).
@@ -181,14 +184,14 @@ async def _persistence_env(engine) -> AsyncIterator[_Env]:
         await _cleanup(factory, tracker)
 
 
-async def _seed_actor(env: _Env, tag: str) -> _Actor:
-    """Użytkownik z realnym tokenem API, zacommitowany w osobnej sesji."""
+async def _seed_actor(env: _Env, tag: str, *, can_edit_blog: bool = False) -> _Actor:
+    """Użytkownik z realnym tokenem API, zacommitowany w osobnej sesji; `can_edit_blog` = uprawnienie `blog:write` (MON-270)."""
     raw_token, token_hash = generate_api_token()
     user_id = uuid.uuid4()
     email = f"persist-{tag}-{_uid()}@example.com"
     env.tracker.user_ids.add(user_id)
     async with env.factory() as db:
-        db.add(User(id=user_id, email=email, is_superuser=False))
+        db.add(User(id=user_id, email=email, is_superuser=False, can_edit_blog=can_edit_blog))
         await db.flush()
         db.add(UserApiToken(user_id=user_id, token_hash=token_hash, token_prefix=raw_token[:8], name=f"persist-{tag}"))
         await db.commit()
@@ -689,7 +692,7 @@ async def _set_wiki_config(env: _Env) -> None:
 
 @_scenario("set_blog_post_meta")
 async def _set_blog_post_meta(env: _Env) -> None:
-    actor = await _seed_actor(env, "blogmeta")
+    actor = await _seed_actor(env, "blogmeta", can_edit_blog=True)
     project = await _seed_project(env, actor, "blogmeta")
     page_id = await _seed_wiki_page(env, project, actor, title="Wpis bloga")
     async with env.factory() as db:
@@ -713,7 +716,7 @@ async def _set_blog_post_meta(env: _Env) -> None:
 
 @_scenario("publish_blog_post")
 async def _publish_blog_post(env: _Env) -> None:
-    actor = await _seed_actor(env, "blogpub")
+    actor = await _seed_actor(env, "blogpub", can_edit_blog=True)
     project = await _seed_project(env, actor, "blogpub")
     page_id = await _seed_wiki_page(env, project, actor, title="Szkic wpisu")
 
@@ -731,7 +734,7 @@ async def _publish_blog_post(env: _Env) -> None:
 
 @_scenario("unpublish_blog_post")
 async def _unpublish_blog_post(env: _Env) -> None:
-    actor = await _seed_actor(env, "blogunpub")
+    actor = await _seed_actor(env, "blogunpub", can_edit_blog=True)
     project = await _seed_project(env, actor, "blogunpub")
     page_id = await _seed_wiki_page(env, project, actor, title="Opublikowany wpis")
     async with env.factory() as db:
@@ -760,3 +763,134 @@ def test_every_write_tool_has_a_persistence_scenario() -> None:
 async def test_write_endpoint_persists_to_separate_session(engine, tool_name: str) -> None:
     async with _persistence_env(engine) as env:
         await PERSISTENCE_SCENARIOS[tool_name](env)
+
+
+# --- MON-270: odmowa blog:write nic nie zapisuje (K7), odczyt w NOWEJ sesji ---
+
+
+async def _seed_blog_target(env: _Env, tag: str, *, can_edit_blog: bool, is_public: bool) -> tuple[_Actor, _ProjectRef, uuid.UUID]:
+    actor = await _seed_actor(env, tag, can_edit_blog=can_edit_blog)
+    project = await _seed_project(env, actor, tag)
+    page_id = await _seed_wiki_page(env, project, actor, title="Wpis bloga")
+    async with env.factory() as db:
+        page = await db.get(WikiPage, page_id)
+        page.is_public = is_public
+        db.add(BlogPost(page_id=page_id, slug=f"{tag}-{_uid()}", description="Stary opis", tags=["a"]))
+        await db.commit()
+    return actor, project, page_id
+
+
+async def _blog_snapshot(env: _Env, page_id: uuid.UUID) -> tuple[bool, str, list[str], Any]:
+    page = await _one(env, select(WikiPage).where(WikiPage.id == page_id))
+    post = await _one(env, select(BlogPost).where(BlogPost.page_id == page_id))
+    assert page is not None
+    assert post is not None
+    return page.is_public, post.description, post.tags, post.published_at
+
+
+_BLOG_WRITE_REQUESTS: dict[str, tuple[dict[str, Any] | None, bool]] = {
+    "set_blog_post_meta": ({"description": "Nowy opis", "tags": ["z"]}, False),
+    "publish_blog_post": ({"force": True}, False),
+    "unpublish_blog_post": (None, True),
+}
+
+
+@pytest.mark.parametrize("tool_name", sorted(_BLOG_WRITE_REQUESTS))
+async def test_denied_blog_write_persists_nothing(engine, tool_name: str) -> None:
+    body, starts_public = _BLOG_WRITE_REQUESTS[tool_name]
+    async with _persistence_env(engine) as env:
+        actor, project, page_id = await _seed_blog_target(env, f"deny-{tool_name[:5]}", can_edit_blog=False, is_public=starts_public)
+        before = await _blog_snapshot(env, page_id)
+
+        with patch("monolynx.services.wiki.get_markdown", return_value="# Szkic\n\nTreść bez TLDR."):
+            response = await _call(env, tool_name, actor, body=body, project_slug=project.slug, page_id=str(page_id))
+
+        assert response.status_code == 403
+        assert "blog:write" in response.json()["detail"]
+        assert await _blog_snapshot(env, page_id) == before
+
+
+@pytest.mark.parametrize("tool_name", sorted(_BLOG_WRITE_REQUESTS))
+async def test_allowed_blog_write_changes_state_in_the_same_scenario(engine, tool_name: str) -> None:
+    body, starts_public = _BLOG_WRITE_REQUESTS[tool_name]
+    async with _persistence_env(engine) as env:
+        actor, project, page_id = await _seed_blog_target(env, f"allow-{tool_name[:5]}", can_edit_blog=True, is_public=starts_public)
+        before = await _blog_snapshot(env, page_id)
+
+        with patch("monolynx.services.wiki.get_markdown", return_value="# Szkic\n\nTreść bez TLDR."):
+            response = await _call(env, tool_name, actor, body=body, project_slug=project.slug, page_id=str(page_id))
+
+        assert response.status_code == 200
+        assert await _blog_snapshot(env, page_id) != before
+
+
+async def test_denied_public_wiki_create_persists_no_page_and_no_post(engine) -> None:
+    async with _persistence_env(engine) as env:
+        actor = await _seed_actor(env, "denycreate", can_edit_blog=False)
+        project = await _seed_project(env, actor, "denycreate")
+
+        with patch("monolynx.services.wiki.upload_markdown", return_value="x/y.md") as upload_mock:
+            response = await _call(
+                env, "create_wiki_page", actor, body={"title": "Publiczna odmowa", "content": "# Treść", "is_public": True}, project_slug=project.slug
+            )
+
+        assert response.status_code == 403
+        assert "blog:write" in response.json()["detail"]
+        upload_mock.assert_not_called()
+        assert await _all(env, select(WikiPage.id).where(WikiPage.project_id == project.id)) == []
+
+
+async def test_allowed_public_wiki_create_persists_page_and_post(engine) -> None:
+    async with _persistence_env(engine) as env:
+        actor = await _seed_actor(env, "allowcreate", can_edit_blog=True)
+        project = await _seed_project(env, actor, "allowcreate")
+
+        with patch("monolynx.services.wiki.upload_markdown", return_value="x/y.md"):
+            response = await _call(
+                env, "create_wiki_page", actor, body={"title": "Publiczna zgoda", "content": "# Treść", "is_public": True}, project_slug=project.slug
+            )
+
+        assert response.status_code == 201
+        page_id = uuid.UUID(response.json()["id"])
+        page = await _one(env, select(WikiPage).where(WikiPage.id == page_id))
+        assert page is not None
+        assert page.is_public is True
+        assert await _one(env, select(BlogPost).where(BlogPost.page_id == page_id)) is not None
+
+
+@pytest.mark.parametrize("starts_public", [False, True], ids=["publish", "unpublish"])
+async def test_denied_is_public_change_on_wiki_update_persists_nothing(engine, starts_public: bool) -> None:
+    async with _persistence_env(engine) as env:
+        actor, project, page_id = await _seed_blog_target(env, f"denyupd{int(starts_public)}", can_edit_blog=False, is_public=starts_public)
+        before = await _blog_snapshot(env, page_id)
+
+        with patch("monolynx.services.wiki.upload_markdown", return_value="x/y.md") as upload_mock:
+            response = await _call(
+                env,
+                "update_wiki_page",
+                actor,
+                body={"title": "Zmieniony tytuł", "content": "# Nowa treść", "is_public": not starts_public},
+                project_slug=project.slug,
+                page_id=str(page_id),
+            )
+
+        assert response.status_code == 403
+        assert "blog:write" in response.json()["detail"]
+        upload_mock.assert_not_called()
+        assert await _blog_snapshot(env, page_id) == before
+        page = await _one(env, select(WikiPage).where(WikiPage.id == page_id))
+        assert page.title == "Wpis bloga"
+
+
+async def test_content_edit_of_public_page_without_flag_persists_and_keeps_it_public(engine) -> None:
+    async with _persistence_env(engine) as env:
+        actor, project, page_id = await _seed_blog_target(env, "keeppub", can_edit_blog=False, is_public=True)
+
+        with patch("monolynx.services.wiki.upload_markdown", return_value="x/y.md"):
+            response = await _call(
+                env, "update_wiki_page", actor, body={"title": "Nowy tytuł treści"}, project_slug=project.slug, page_id=str(page_id)
+            )
+
+        assert response.status_code == 200
+        page = await _one(env, select(WikiPage).where(WikiPage.id == page_id))
+        assert (page.title, page.is_public) == ("Nowy tytuł treści", True)

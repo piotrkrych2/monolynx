@@ -85,6 +85,17 @@ echo "SPRINT_RUN=${MONOLYNX_SPRINT_RUN:-0}"
 
 `SPRINT_RUN=1` znaczy, ze nikt nie przeczyta pytania: sesja w tle nie ma czlowieka po drugiej stronie. W tym trybie skill konczy na szkicu, lincie i raporcie z KROK 5. Kazde miejsce, w ktorym zwykly przebieg czeka na odpowiedz, ma nizej opisany wariant dla tego trybu.
 
+### Uprawnienie do edycji bloga
+
+Zapis metadanych wpisu (KROK 3) i publikacja (KROK 6) wymagaja dwoch rzeczy naraz: uprawnienia `wiki:write` z roli w projekcie oraz uprawnienia do edycji bloga (`blog:write`). To drugie jest ustawieniem konta uzytkownika, nie roli w projekcie, i jest domyslnie wylaczone. Nadaje je i odbiera wylacznie superuser, przelacznikiem na stronie edycji konta w panelu (`/dashboard/users/{user_id}`, wejscie z listy `/dashboard/users`); wlasciciel ani admin projektu go nie nada, a skill nie ma operacji, ktora je nadaje. Odczyt wpisow i lint wymagaja tylko `wiki:read`.
+
+Brak uprawnienia poznasz po jednym z dwoch sygnalow:
+
+- **Odmowa `Brak uprawnienia blog:write`.** Przez MCP to tresc bledu toola. Przez CLI wrapper konczy sie kodem 3 z linia `OP-FALLBACK`, a powod na stderr zawiera ten sam komunikat; tool MCP odpowie wtedy ta sama odmowa albo nie bedzie go na liscie narzedzi, wiec nie traktuj tego jak zwyklego fallbacku. Odmowa pada przed wyszukaniem strony i przed lintem i niczego nie zapisuje.
+- **Brak toola zapisu bloga na liscie narzedzi MCP.** Konto bez uprawnienia nie widzi tooli zapisu bloga (metadane, publikacja, cofniecie publikacji), choc widzi odczyty, lint i operacje na stronach wiki.
+
+W obu przypadkach **zatrzymaj sie**: powiedz uzytkownikowi, ze konto nie ma uprawnienia do edycji bloga, i popros, zeby superuser nadal je na stronie edycji konta (`/dashboard/users/{user_id}`). Nie szukaj obejscia. W szczegolnosci nie zmieniaj `is_public` przez zapis strony wiki: ta sciezka wymaga tego samego uprawnienia i skonczy sie ta sama odmowa. Nie ponawiaj operacji, dopoki uzytkownik nie potwierdzi, ze uprawnienie zostalo nadane. Przy `SPRINT_RUN=1` zakoncz ture linia `SPRINT-RUN STOP: brak uprawnienia do edycji bloga (blog:write)`.
+
 ### Argument
 
 Faktyczny argument wywolania to temat wpisu albo `page_id` istniejacego szkicu.
@@ -204,7 +215,7 @@ Istniejacy szkic - tylko zmieniane pola, bez parametru `is_public`:
 mcp__monolynx__update_wiki_page(project_slug="<PROJECT_SLUG>", page_id="<page_id>", content="<tresc markdown>")
 ```
 
-Parametr `title` podaj tylko wtedy, gdy tytul sie zmienia. W tym kroku nigdy nie ustawiasz `is_public=true`: taka zmiana upublicznia strone z pominieciem lintu.
+Parametr `title` podaj tylko wtedy, gdy tytul sie zmienia. W tym kroku nigdy nie ustawiasz `is_public=true`: taka zmiana upublicznia strone z pominieciem lintu i wymaga tego samego uprawnienia do edycji bloga co publikacja.
 
 ### Metadane
 
@@ -226,6 +237,7 @@ mcp__monolynx__set_blog_post_meta(
 - `author_name` podaj tylko wtedy, gdy uzytkownik wskazal autora. `slug` podaj tylko na zyczenie uzytkownika - domyslnie pochodzi z tytulu strony.
 - `translation_of_id` (`page_id` oryginalu) podaj, gdy wpis jest tlumaczeniem istniejacego wpisu.
 - Parametr pominiety zostaje bez zmian. Ta operacja nie zmienia `is_public`.
+- Odmowa `Brak uprawnienia blog:write` albo brak tej operacji na liscie narzedzi MCP: zatrzymaj sie wedlug sekcji "Uprawnienie do edycji bloga" z KROK 0. Strona zostaje prywatnym szkicem bez metadanych, a lint z KROK 4 jej nie przyjmie, wiec nie przechodz dalej.
 
 ---
 
@@ -301,6 +313,7 @@ Parametru `force` domyslnie nie podajesz (jedyny wyjatek jest opisany na koncu t
 
 - **Sukces** - wynik niesie pola `public_url` i `markdown_url` oraz obiekt `lint` z ocena. Podaj uzytkownikowi oba adresy: strone wpisu i jej wersje markdown dla modeli AI.
 - **Odmowa bramki lintu** - komunikat zaczyna sie od `Publikacja odrzucona: wpis ma błędy lintu` i wymienia reguly; przez MCP to tresc bledu toola, przez CLI kod 2 wrappera z powodem na stderr. Strona zostaje prywatna. Wroc do KROK 4, popraw bledy i przejdz ponownie przez KROK 5; zgoda na publikacje wygasla, wiec pytasz o nia od nowa.
+- **Odmowa uprawnienia** - komunikat `Brak uprawnienia blog:write` (przez MCP tresc bledu toola, przez CLI kod 3 wrappera z tym powodem na stderr) albo brak operacji publikacji na liscie narzedzi MCP. Strona zostaje prywatna i nic nie zostalo zapisane. Zatrzymaj sie wedlug sekcji "Uprawnienie do edycji bloga" z KROK 0: popros o nadanie uprawnienia przez superusera na stronie edycji konta (`/dashboard/users/{user_id}`) i nie upubliczniaj strony inna droga. Po nadaniu uprawnienia pytasz o zgode na publikacje od nowa.
 - **Inny blad zapisu** (kod 2 wrappera bez komunikatu o lincie, blad sieci) - nie ponawiaj na slepo. Sprawdz stan przez `mcp__monolynx__get_blog_post(project_slug="<PROJECT_SLUG>", page_id="<page_id>")`: pole `is_public` mowi, czy publikacja doszla.
 
 `force=true` wolno podac wylacznie wtedy, gdy uzytkownik sam, wprost, poprosi o publikacje mimo bledow po zobaczeniu ich listy z odmowy. Nigdy nie proponujesz tego pierwszy i nigdy nie uzywasz `force`, zeby skrocic petle z KROK 4.
@@ -318,3 +331,4 @@ Parametru `force` domyslnie nie podajesz (jedyny wyjatek jest opisany na koncu t
 7. **Fakty ze zrodel.** `last_verified_at` ustawiasz tylko dla faktow sprawdzonych w tym przebiegu.
 8. **Slug projektu zawsze jako `<PROJECT_SLUG>`**, nigdy wpisany na stale.
 9. **Jezyk raportu: polski.** Jezyk wpisu wynika z briefu.
+10. **Brak uprawnienia do edycji bloga zatrzymuje skill.** Odmowa `Brak uprawnienia blog:write` albo brak toola zapisu bloga na liscie narzedzi konczy prace prosba o nadanie uprawnienia przez superusera na stronie edycji konta (`/dashboard/users/{user_id}`); nie obchodzisz jej zmiana `is_public` przy zapisie strony wiki ani zadna inna droga (KROK 0).

@@ -6,6 +6,8 @@ robi spy na `commit` (wzorzec tests/integration/test_projects_service.py), a tes
 `TestSetPostMetaPersistence` czyta wynik w NOWEJ sesji z realnego `engine`.
 MON-263 (`publish_post`, `unpublish_post`): testy odmowy lintu i kolizji sluga seedują dane
 zatwierdzone (`_committed_blog`), bo `db.rollback()` serwisu cofnąłby cały seed fixture.
+MON-270: `_make_user` domyślnie nadaje `can_edit_blog=True` (bramka `blog:write` w `set_post_meta`,
+`publish_post`, `unpublish_post`); testy odmowy przekazują `can_edit_blog=False`.
 """
 
 from __future__ import annotations
@@ -41,8 +43,8 @@ def _uid() -> str:
     return uuid.uuid4().hex[:8]
 
 
-async def _make_user(db, tag: str) -> User:
-    user = User(email=f"blogsvc-{tag}-{_uid()}@example.com", is_superuser=False)
+async def _make_user(db, tag: str, *, can_edit_blog: bool = True, is_superuser: bool = False) -> User:
+    user = User(email=f"blogsvc-{tag}-{_uid()}@example.com", is_superuser=is_superuser, can_edit_blog=can_edit_blog)
     db.add(user)
     await db.flush()
     return user
@@ -685,7 +687,7 @@ class TestSetPostMetaPersistence:
         slug = f"persist-blog-{tag}"
 
         async with factory() as setup_db:
-            user = User(email=f"blogsvc-persist-{tag}@example.com", is_superuser=False)
+            user = User(email=f"blogsvc-persist-{tag}@example.com", is_superuser=False, can_edit_blog=True)
             setup_db.add(user)
             await setup_db.flush()
             project = Project(
@@ -1724,7 +1726,7 @@ async def _committed_blog(engine, *, post: bool = True, last_verified: bool = Tr
     slug = f"pub-{tag}"
     project_ids: list[uuid.UUID] = []
     async with factory() as setup_db:
-        user = User(email=f"blogpub-{tag}@example.com", is_superuser=False)
+        user = User(email=f"blogpub-{tag}@example.com", is_superuser=False, can_edit_blog=True)
         setup_db.add(user)
         await setup_db.flush()
         project = Project(name=f"Pub {tag}", slug=f"pub-{tag}", code="Q" + tag[:5].upper(), api_key=secrets.token_urlsafe(32), is_active=True)
@@ -2271,3 +2273,144 @@ class TestUnpublishPost:
             assert post is not None
             assert post.published_at == published.published_at
             assert post.slug == env.slug
+
+
+# ---------------------------------------------------------------------------
+# MON-270: bramka blog:write (uprawnienie konta, nie roli projektu)
+# ---------------------------------------------------------------------------
+
+_BLOG_DENIED = "Brak uprawnienia blog:write"
+
+
+async def _call_set_meta(db, user, project, page_id):
+    return await svc.set_post_meta(db, user, project, page_id, description="zmieniony opis")
+
+
+async def _call_publish(db, user, project, page_id):
+    return await svc.publish_post(db, user, project, page_id, content_fn=lambda p: _PUB_CLEAN)
+
+
+async def _call_unpublish(db, user, project, page_id):
+    return await svc.unpublish_post(db, user, project, page_id)
+
+
+_BLOG_WRITE_CALLS = pytest.mark.parametrize(
+    "call",
+    [_call_set_meta, _call_publish, _call_unpublish],
+    ids=["set_post_meta", "publish_post", "unpublish_post"],
+)
+
+
+async def _seed_page_with_post(db, tag: str, *, is_public: bool, can_edit_blog: bool, is_superuser: bool = False, member: bool = True):
+    user = await _make_user(db, tag, can_edit_blog=can_edit_blog, is_superuser=is_superuser)
+    project = await _make_project(db, tag)
+    if member:
+        await _make_member(db, project, user)
+    page = await _make_page(db, project, user, is_public=is_public)
+    await _make_post(db, page, description=_PUB_DESCRIPTION)
+    return user, project, page
+
+
+class TestBlogWritePermission:
+    @_BLOG_WRITE_CALLS
+    async def test_owner_without_flag_gets_exact_message(self, db_session, call):
+        user, project, page = await _seed_page_with_post(db_session, "bw-deny", is_public=True, can_edit_blog=False)
+
+        with pytest.raises(ValueError) as exc_info:
+            await call(db_session, user, project, page.id)
+
+        assert str(exc_info.value) == _BLOG_DENIED
+
+    @_BLOG_WRITE_CALLS
+    async def test_owner_without_flag_is_checked_before_page_lookup(self, db_session, call):
+        user = await _make_user(db_session, "bw-first", can_edit_blog=False)
+        project = await _make_project(db_session, "bw-first")
+        await _make_member(db_session, project, user)
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia blog:write$"):
+            await call(db_session, user, project, uuid.uuid4())
+
+    @_BLOG_WRITE_CALLS
+    async def test_owner_with_flag_passes_the_same_call(self, db_session, call):
+        user, project, page = await _seed_page_with_post(db_session, "bw-allow", is_public=True, can_edit_blog=True)
+
+        result = await call(db_session, user, project, page.id)
+
+        assert result is not None
+
+    @_BLOG_WRITE_CALLS
+    async def test_superuser_without_flag_passes_the_same_call(self, db_session, call):
+        user, project, page = await _seed_page_with_post(db_session, "bw-super", is_public=True, can_edit_blog=False, is_superuser=True, member=False)
+
+        result = await call(db_session, user, project, page.id)
+
+        assert result is not None
+
+    @_BLOG_WRITE_CALLS
+    async def test_wiki_write_is_checked_before_blog_write(self, db_session, call):
+        user = await _make_user(db_session, "bw-order", can_edit_blog=False)
+        project = await _make_project(db_session, "bw-order")
+        await _make_role_member(db_session, project, user, {"wiki": ["read"]})
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia wiki:write$"):
+            await call(db_session, user, project, uuid.uuid4())
+
+    async def test_denied_publish_keeps_page_private_and_does_not_lint(self, db_session):
+        user, project, page = await _seed_page_with_post(db_session, "bw-pub-state", is_public=False, can_edit_blog=False)
+        content_fn = Mock(return_value=_PUB_CLEAN)
+
+        with (
+            patch("monolynx.services.blog_lint.lint_post_by_id", new=AsyncMock()) as lint_mock,
+            pytest.raises(ValueError, match=r"^Brak uprawnienia blog:write$"),
+        ):
+            await svc.publish_post(db_session, user, project, page.id, content_fn=content_fn)
+
+        lint_mock.assert_not_awaited()
+        content_fn.assert_not_called()
+        await db_session.refresh(page)
+        assert page.is_public is False
+        post = await _post_row(db_session, page.id)
+        assert post is not None
+        assert post.published_at is None
+
+    async def test_denied_unpublish_keeps_page_public(self, db_session):
+        user, project, page = await _seed_page_with_post(db_session, "bw-unpub-state", is_public=True, can_edit_blog=False)
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia blog:write$"):
+            await svc.unpublish_post(db_session, user, project, page.id)
+
+        await db_session.refresh(page)
+        assert page.is_public is True
+
+    async def test_denied_set_meta_keeps_existing_meta(self, db_session):
+        user, project, page = await _seed_page_with_post(db_session, "bw-meta-state", is_public=False, can_edit_blog=False)
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia blog:write$"):
+            await svc.set_post_meta(db_session, user, project, page.id, description="nowy opis", tags=["a"], lang="en")
+
+        post = await _post_row(db_session, page.id)
+        assert post is not None
+        await db_session.refresh(post)
+        assert post.description == _PUB_DESCRIPTION
+        assert post.tags == []
+        assert post.lang == "pl"
+
+    async def test_denied_set_meta_creates_no_row_for_page_without_post(self, db_session):
+        user = await _make_user(db_session, "bw-meta-norow", can_edit_blog=False)
+        project = await _make_project(db_session, "bw-meta-norow")
+        await _make_member(db_session, project, user)
+        page = await _make_page(db_session, project, user)
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia blog:write$"):
+            await svc.set_post_meta(db_session, user, project, page.id, description="x")
+
+        assert await _post_row(db_session, page.id) is None
+
+    async def test_reads_stay_available_without_flag(self, db_session):
+        user, project, page = await _seed_page_with_post(db_session, "bw-read", is_public=False, can_edit_blog=False)
+
+        listing = await svc.list_posts(db_session, user, project)
+        detail = await svc.get_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert [item.page_id for item in listing] == [page.id]
+        assert detail.page_id == page.id

@@ -91,6 +91,33 @@
         {% endif %}
     </div>
 
+    <!-- Sekcja 2a: Uprawnienie do bloga -->
+    <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-2">Blog</h2>
+        {% if user.is_superuser %}
+        <p class="text-sm text-gray-600 dark:text-gray-400">Superużytkownik ma uprawnienie do edycji bloga zawsze.</p>
+        {% else %}
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Uprawnienie do publikowania na blogu, zmiany metadanych wpisów i oznaczania stron wiki jako publiczne. Nie zależy od roli w projekcie.</p>
+        <form method="post" action="/dashboard/users/{{ user.id }}/blog-permission" class="flex items-center gap-3">
+            {% if user.can_edit_blog %}
+            <span class="bg-green-600/30 text-green-800 dark:text-green-300 text-sm px-3 py-1 rounded">Może edytować blog</span>
+            <input type="hidden" name="enabled" value="false">
+            <button type="submit"
+                class="bg-red-600 hover:bg-red-700 text-white font-medium px-4 py-2 rounded transition text-sm">
+                Odbierz uprawnienie
+            </button>
+            {% else %}
+            <span class="bg-gray-600/30 text-gray-600 dark:text-gray-300 text-sm px-3 py-1 rounded">Brak uprawnienia</span>
+            <input type="hidden" name="enabled" value="true">
+            <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-4 py-2 rounded transition text-sm">
+                Nadaj uprawnienie
+            </button>
+            {% endif %}
+        </form>
+        {% endif %}
+    </div>
+
     <!-- Sekcja 3: Projekty -->
     <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
         <h2 class="text-lg font-semibold mb-4">Projekty</h2>

@@ -110,6 +110,22 @@ async def ensure_permission(
         raise ValueError(f"Brak uprawnienia {module}:{action}")
 
 
+async def has_blog_permission(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    """Czy konto moze publikowac na blogu: aktywny superuser albo aktywne konto z `can_edit_blog`.
+
+    Uprawnienie jest kontowe, nie projektowe: publiczny blog nie jest przypiety do projektu,
+    wiec rola w projekcie (takze owner) go nie daje. Nadaje je wylacznie superuser.
+    """
+    user = (await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))).scalar_one_or_none()
+    return user is not None and (user.is_superuser or user.can_edit_blog)
+
+
+async def ensure_blog_permission(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """Jak has_blog_permission ale rzuca ValueError("Brak uprawnienia blog:write") (-> 403 w API v2)."""
+    if not await has_blog_permission(db, user_id):
+        raise ValueError("Brak uprawnienia blog:write")
+
+
 async def get_user_permissions(
     db: AsyncSession,
     user_id: uuid.UUID,

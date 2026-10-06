@@ -4,7 +4,8 @@ Pokrywa 6 endpointów `src/monolynx/api/v2/blog.py`: lista wpisów (z szkicami),
 z treścią, częściowy PATCH metadanych, lint wpisu (MON-262) oraz publikacja z bramką lintu i cofnięcie
 publikacji (MON-263). Logika w `services/blog.py` (`list_posts`, `get_post`, `set_post_meta`, `publish_post`,
 `unpublish_post`) i `services/blog_lint.py` (`lint_post_by_id`); tu sprawdzamy kontrakt HTTP: kształt odpowiedzi,
-paginację, rozróżnienie "pole nieobecne / null / []" w PATCH, mapowanie błędów na problem+json i uprawnienia `wiki:*`.
+paginację, rozróżnienie "pole nieobecne / null / []" w PATCH, mapowanie błędów na problem+json i uprawnienia `wiki:*`
+oraz `blog:write` (MON-270: zapisy bloga wymagają uprawnienia konta, odczyty nie).
 
 MinIO nie działa w testach -- treść wpisu jest mockowana na `monolynx.services.wiki.get_markdown`
 (wzorzec `test_wiki.py`).
@@ -26,7 +27,8 @@ from monolynx.models.role import Role
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_page import WikiPage
 
-from .conftest import make_actor, make_owner_project, make_project
+from .conftest import add_member, make_actor, make_project
+from .conftest import make_owner_project as _make_owner_project
 
 pytestmark = pytest.mark.integration
 
@@ -87,6 +89,15 @@ async def _actor_with_permissions(db_session, project, tag: str, permissions: di
     db_session.add(ProjectMember(project_id=project.id, user_id=actor.user.id, role="member", role_id=role.id))
     await db_session.flush()
     return actor
+
+
+async def make_owner_project(db_session, tag: str, *, can_edit_blog: bool = True):
+    """Właściciel z `blog:write` (MON-270): zapisy bloga w tym pliku zakładają uprawnienie, odmowy testuje `_flagless_owner_project`."""
+    return await _make_owner_project(db_session, tag, can_edit_blog=can_edit_blog)
+
+
+async def _flagless_owner_project(db_session, tag: str):
+    return await _make_owner_project(db_session, tag, can_edit_blog=False)
 
 
 def _posts_url(project) -> str:
@@ -1346,3 +1357,142 @@ class TestUnpublishBlogPost:
         response = await client.post(_unpublish_url(project, page.id))
 
         assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# MON-270: zapisy bloga wymagają blog:write (uprawnienie konta, nie roli projektu)
+# ---------------------------------------------------------------------------
+
+_BLOG_DENIED = "Brak uprawnienia blog:write"
+
+
+def _meta_url(project, page_id) -> str:
+    return f"{_posts_url(project)}/{page_id}"
+
+
+_BLOG_WRITES = pytest.mark.parametrize("write", ["patch_meta", "publish", "unpublish"])
+
+
+async def _send_blog_write(client, write, project, page_id, headers):
+    if write == "patch_meta":
+        return await client.patch(_meta_url(project, page_id), headers=headers, json={"description": "Zmieniony opis"})
+    if write == "publish":
+        return await client.post(_publish_url(project, page_id), headers=headers, json={"force": True})
+    return await client.post(_unpublish_url(project, page_id), headers=headers)
+
+
+class TestBlogWritesRequireBlogPermission:
+    @_BLOG_WRITES
+    @patch("monolynx.services.wiki.get_markdown", return_value=_CLEAN_CONTENT)
+    async def test_owner_without_flag_gets_403_problem_json_naming_the_permission(self, mock_get_markdown, client, db_session, write):
+        owner, project = await _flagless_owner_project(db_session, f"blog-deny-{write}")
+        page = await _page(db_session, project, owner.user, is_public=(write == "unpublish"), description="Stary opis")
+
+        response = await _send_blog_write(client, write, project, page.id, owner.headers)
+
+        assert response.status_code == 403
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == _BLOG_DENIED
+
+    @_BLOG_WRITES
+    @patch("monolynx.services.wiki.get_markdown", return_value=_CLEAN_CONTENT)
+    async def test_owner_without_flag_gets_403_not_404_for_nonexistent_page(self, mock_get_markdown, client, db_session, write):
+        owner, project = await _flagless_owner_project(db_session, f"blog-deny-404-{write}")
+
+        response = await _send_blog_write(client, write, project, uuid.uuid4(), owner.headers)
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == _BLOG_DENIED
+
+    @_BLOG_WRITES
+    @patch("monolynx.services.wiki.get_markdown", return_value=_CLEAN_CONTENT)
+    async def test_account_with_flag_passes_the_same_request(self, mock_get_markdown, client, db_session, write):
+        actor, project = await make_owner_project(db_session, f"blog-allow-{write}", can_edit_blog=True)
+        page = await _page(db_session, project, actor.user, is_public=(write == "unpublish"), description="Stary opis")
+
+        response = await _send_blog_write(client, write, project, page.id, actor.headers)
+
+        assert response.status_code == 200
+
+    @_BLOG_WRITES
+    @patch("monolynx.services.wiki.get_markdown", return_value=_CLEAN_CONTENT)
+    async def test_superuser_without_flag_passes_the_same_request(self, mock_get_markdown, client, db_session, write):
+        actor = await make_actor(db_session, f"blog-super-{write}", is_superuser=True)
+        project = await make_project(db_session, f"blog-super-{write}")
+        await add_member(db_session, project, actor.user, role="owner")
+        page = await _page(db_session, project, actor.user, is_public=(write == "unpublish"), description="Stary opis")
+
+        response = await _send_blog_write(client, write, project, page.id, actor.headers)
+
+        assert response.status_code == 200
+
+    @patch("monolynx.services.wiki.get_markdown", return_value=_CLEAN_CONTENT)
+    async def test_denied_publish_keeps_page_private_and_does_not_read_content(self, mock_get_markdown, client, db_session):
+        owner, project = await _flagless_owner_project(db_session, "blog-deny-pub-state")
+        page = await _clean_page(db_session, project, owner.user)
+        page_id = page.id
+
+        response = await client.post(_publish_url(project, page_id), headers=owner.headers, json={"force": True})
+
+        assert response.status_code == 403
+        mock_get_markdown.assert_not_called()
+        assert await _is_public(db_session, page_id) is False
+        assert (await _row(db_session, page_id)).published_at is None
+
+    @patch("monolynx.services.wiki.get_markdown", return_value=_CLEAN_CONTENT)
+    async def test_denied_unpublish_keeps_page_public(self, mock_get_markdown, client, db_session):
+        owner, project = await _flagless_owner_project(db_session, "blog-deny-unpub-state")
+        page = await _page(db_session, project, owner.user, is_public=True, published_at=datetime(2026, 4, 5, tzinfo=UTC))
+        page_id = page.id
+        slug = page.slug
+
+        response = await client.post(_unpublish_url(project, page_id), headers=owner.headers)
+
+        assert response.status_code == 403
+        assert await _is_public(db_session, page_id) is True
+        assert (await client.get(f"/blog/{slug}")).status_code == 200
+
+    async def test_denied_patch_keeps_every_meta_field(self, client, db_session):
+        owner, project = await _flagless_owner_project(db_session, "blog-deny-meta-state")
+        page = await _page(db_session, project, owner.user, description="Stary opis", tags=["a"], author_name="Autor", lang="pl")
+        page_id = page.id
+
+        response = await client.patch(
+            _meta_url(project, page_id), headers=owner.headers, json={"description": "Nowy", "tags": ["b"], "author_name": "Inny", "lang": "en"}
+        )
+
+        assert response.status_code == 403
+        row = await _row(db_session, page_id)
+        assert (row.description, row.tags, row.author_name, row.lang) == ("Stary opis", ["a"], "Autor", "pl")
+
+    async def test_denied_patch_creates_no_row_for_page_without_post(self, client, db_session):
+        owner, project = await _flagless_owner_project(db_session, "blog-deny-meta-norow")
+        page = await _page(db_session, project, owner.user, with_post=False)
+        page_id = page.id
+
+        response = await client.patch(_meta_url(project, page_id), headers=owner.headers, json={"description": "x"})
+
+        assert response.status_code == 403
+        assert (await db_session.execute(select(BlogPost).where(BlogPost.page_id == page_id))).scalar_one_or_none() is None
+
+    @_BLOG_WRITES
+    async def test_wiki_write_refusal_comes_before_blog_write_refusal(self, client, db_session, write):
+        owner, project = await make_owner_project(db_session, f"blog-order-{write}")
+        actor = await _actor_with_permissions(db_session, project, f"blog-order-{write}-a", {"wiki": ["read"]})
+        page = await _page(db_session, project, owner.user)
+
+        response = await _send_blog_write(client, write, project, page.id, actor.headers)
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Brak uprawnienia wiki:write"
+
+    @patch("monolynx.services.wiki.get_markdown", return_value=_CLEAN_CONTENT)
+    async def test_reads_stay_available_without_flag(self, mock_get_markdown, client, db_session):
+        owner, project = await _flagless_owner_project(db_session, "blog-reads-noflag")
+        page = await _clean_page(db_session, project, owner.user)
+
+        listing = await client.get(_posts_url(project), headers=owner.headers)
+        detail = await client.get(_meta_url(project, page.id), headers=owner.headers)
+        lint = await client.get(f"{_meta_url(project, page.id)}/lint", headers=owner.headers)
+
+        assert (listing.status_code, detail.status_code, lint.status_code) == (200, 200, 200)

@@ -213,7 +213,7 @@ class TestWikiPageIsPublicMcpCommit:
         raw_token, token_hash = generate_api_token()
 
         async with test_factory() as setup_db:
-            user = User(email=f"mcp-pub-{uid}@test.com", is_superuser=False)
+            user = User(email=f"mcp-pub-{uid}@test.com", is_superuser=False, can_edit_blog=True)
             setup_db.add(user)
             await setup_db.flush()
             setup_db.add(UserApiToken(user_id=user.id, token_hash=token_hash, token_prefix=raw_token[:8], name="mon203-mcp-create"))
@@ -321,7 +321,7 @@ class TestWikiPageIsPublicMcpCommit:
         raw_token, token_hash = generate_api_token()
 
         async with test_factory() as setup_db:
-            user = User(email=f"mcp-pub-upd-{uid}@test.com", is_superuser=False)
+            user = User(email=f"mcp-pub-upd-{uid}@test.com", is_superuser=False, can_edit_blog=True)
             setup_db.add(user)
             await setup_db.flush()
             setup_db.add(UserApiToken(user_id=user.id, token_hash=token_hash, token_prefix=raw_token[:8], name="mon203-mcp-update"))
@@ -454,10 +454,10 @@ class TestSetBlogPostMetaMcpCommit:
     """MON-261: zapis `set_blog_post_meta` jest commitowany (wzorzec MON-71 / MON-203)."""
 
     @staticmethod
-    async def _setup(test_factory, uid: str):
+    async def _setup(test_factory, uid: str, *, can_edit_blog: bool = True):
         raw_token, token_hash = generate_api_token()
         async with test_factory() as setup_db:
-            user = User(email=f"mcp-blog-{uid}@test.com", is_superuser=False)
+            user = User(email=f"mcp-blog-{uid}@test.com", is_superuser=False, can_edit_blog=can_edit_blog)
             setup_db.add(user)
             await setup_db.flush()
             setup_db.add(UserApiToken(user_id=user.id, token_hash=token_hash, token_prefix=raw_token[:8], name="mon261-blog-meta"))
@@ -552,5 +552,138 @@ class TestSetBlogPostMetaMcpCommit:
             assert listed[0]["author_name"] == "Nowy Autor"
             assert listed[0]["is_public"] is False
             assert listed[0]["public_url"] is None
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)
+
+
+@pytest.mark.integration
+class TestBlogWriteDeniedWithoutFlagMcpPersistsNothing:
+    """MON-270 (K1, K2, K7): konto bez `blog:write` dostaje odmowę, a stan odczytany w NOWEJ sesji się nie zmienia."""
+
+    _setup = staticmethod(TestSetBlogPostMetaMcpCommit._setup)
+    _cleanup = staticmethod(TestSetBlogPostMetaMcpCommit._cleanup)
+
+    @staticmethod
+    async def _state(test_factory, page_id):
+        async with test_factory() as check_db:
+            page = (await check_db.execute(select(WikiPage).where(WikiPage.id == page_id))).scalar_one()
+            post = (await check_db.execute(select(BlogPost).where(BlogPost.page_id == page_id))).scalar_one()
+            return page.is_public, page.title, post.description, post.tags, post.published_at
+
+    @staticmethod
+    async def _make_public(test_factory, page_id):
+        async with test_factory() as db:
+            page = (await db.execute(select(WikiPage).where(WikiPage.id == page_id))).scalar_one()
+            page.is_public = True
+            await db.commit()
+
+    async def test_set_blog_post_meta_is_denied_and_row_is_unchanged(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, page_id = await self._setup(test_factory, uuid.uuid4().hex[:8], can_edit_blog=False)
+        before = await self._state(test_factory, page_id)
+
+        try:
+            with pytest.raises(ValueError) as exc_info:
+                await mcp_server.set_blog_post_meta(_mcp_ctx(raw_token), project_slug, str(page_id), description="Nowy opis", lang="en")
+
+            assert str(exc_info.value) == "Brak uprawnienia blog:write"
+            assert await self._state(test_factory, page_id) == before
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)
+
+    async def test_publish_blog_post_is_denied_and_page_stays_private(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, page_id = await self._setup(test_factory, uuid.uuid4().hex[:8], can_edit_blog=False)
+        before = await self._state(test_factory, page_id)
+
+        try:
+            with (
+                patch("monolynx.mcp_server.get_page_content", return_value="# Szkic\n\nTreść bez TLDR."),
+                pytest.raises(ValueError) as exc_info,
+            ):
+                await mcp_server.publish_blog_post(_mcp_ctx(raw_token), project_slug, str(page_id), force=True)
+
+            assert str(exc_info.value) == "Brak uprawnienia blog:write"
+            assert await self._state(test_factory, page_id) == before
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)
+
+    async def test_unpublish_blog_post_is_denied_and_page_stays_public(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, page_id = await self._setup(test_factory, uuid.uuid4().hex[:8], can_edit_blog=False)
+        await self._make_public(test_factory, page_id)
+        before = await self._state(test_factory, page_id)
+
+        try:
+            with pytest.raises(ValueError) as exc_info:
+                await mcp_server.unpublish_blog_post(_mcp_ctx(raw_token), project_slug, str(page_id))
+
+            assert str(exc_info.value) == "Brak uprawnienia blog:write"
+            assert await self._state(test_factory, page_id) == before
+            assert before[0] is True
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)
+
+    async def test_update_wiki_page_is_public_is_denied_but_content_edit_goes_through(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, page_id = await self._setup(test_factory, uuid.uuid4().hex[:8], can_edit_blog=False)
+        before = await self._state(test_factory, page_id)
+        ctx = _mcp_ctx(raw_token)
+
+        try:
+            with (
+                patch("monolynx.services.wiki.upload_markdown", return_value=f"{project_slug}/x.md") as upload_mock,
+                patch("monolynx.services.embeddings.update_page_embeddings"),
+            ):
+                with pytest.raises(ValueError) as exc_info:
+                    await mcp_server.update_wiki_page(ctx, project_slug, str(page_id), title="Zmieniony", content="# Nowa", is_public=True)
+
+                assert str(exc_info.value) == "Brak uprawnienia blog:write"
+                upload_mock.assert_not_called()
+                assert await self._state(test_factory, page_id) == before
+
+                result = await mcp_server.update_wiki_page(ctx, project_slug, str(page_id), title="Zmieniony po cichu")
+
+            assert result["is_public"] is False
+            after = await self._state(test_factory, page_id)
+            assert (after[0], after[1]) == (False, "Zmieniony po cichu")
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)
+
+    async def test_create_wiki_page_is_public_is_denied_and_creates_nothing(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, _page_id = await self._setup(test_factory, uuid.uuid4().hex[:8], can_edit_blog=False)
+        title = f"Publiczna bez prawa {uuid.uuid4().hex[:6]}"
+
+        try:
+            with (
+                patch("monolynx.services.wiki.upload_markdown", return_value=f"{project_slug}/y.md") as upload_mock,
+                pytest.raises(ValueError) as exc_info,
+            ):
+                await mcp_server.create_wiki_page(_mcp_ctx(raw_token), project_slug, title, "# Treść", is_public=True)
+
+            assert str(exc_info.value) == "Brak uprawnienia blog:write"
+            upload_mock.assert_not_called()
+            async with test_factory() as check_db:
+                assert (await check_db.execute(select(WikiPage.id).where(WikiPage.project_id == project_id, WikiPage.title == title))).first() is None
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)
+
+    async def test_account_with_flag_publishes_through_the_same_call(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, page_id = await self._setup(test_factory, uuid.uuid4().hex[:8], can_edit_blog=True)
+
+        try:
+            with patch("monolynx.mcp_server.get_page_content", return_value="# Szkic\n\nTreść bez TLDR."):
+                result = await mcp_server.publish_blog_post(_mcp_ctx(raw_token), project_slug, str(page_id), force=True)
+
+            assert result["is_public"] is True
+            assert (await self._state(test_factory, page_id))[0] is True
         finally:
             await self._cleanup(test_factory, user_id, project_id)

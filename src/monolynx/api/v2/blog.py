@@ -2,8 +2,9 @@
 
 Routery cienkie jak toole MCP (`mcp_server.py`, sekcja "--- Blog ---"). Uprawnienia
 sprawdza serwis jako pierwszy krok (`wiki:read` dla odczytow i lintu, `wiki:write` dla
-`set_post_meta`, `publish_post` i `unpublish_post`), przed lookupem strony, wiec rola bez uprawnienia
-dostaje 403, nie 404. Commit zapisu robi serwis. Szczegoly wpisu, lint i publikacja czytaja tresc
+`set_post_meta`, `publish_post` i `unpublish_post`; te trzy wymagaja tez uprawnienia konta
+`blog:write`, MON-270), przed lookupem strony, wiec rola albo konto bez uprawnienia dostaje 403,
+nie 404. Commit zapisu robi serwis. Szczegoly wpisu, lint i publikacja czytaja tresc
 z MinIO, wiec blad storage wraca jako 503 problem+json, nie 500. Odmowa publikacji przez lint i
 kolizja sluga to `ValueError` serwisu, czyli 422.
 """

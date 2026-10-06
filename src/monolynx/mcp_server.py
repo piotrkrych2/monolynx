@@ -23,7 +23,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from monolynx.config import settings as app_settings
 from monolynx.constants import (
@@ -239,6 +239,62 @@ async def _verify_token(raw_token: str) -> User:
     return user
 
 
+BLOG_WRITE_TOOLS = frozenset({"set_blog_post_meta", "publish_blog_post", "unpublish_blog_post"})
+
+
+def _hide_blog_write_tools(body: bytes) -> bytes:
+    """Usun toole zapisu bloga z odpowiedzi JSON-RPC `tools/list`; kazde inne cialo zwroc bez zmian."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(data, dict):
+        return body
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return body
+    tools = result.get("tools")
+    if not isinstance(tools, list):
+        return body
+    visible = [t for t in tools if not (isinstance(t, dict) and t.get("name") in BLOG_WRITE_TOOLS)]
+    if len(visible) == len(tools):
+        return body
+    result["tools"] = visible
+    return json.dumps(data).encode()
+
+
+def _filtering_send(send: Send) -> Send:
+    """Opakuj `send`: buforuj odpowiedz JSON, przepusc cialo przez _hide_blog_write_tools, popraw content-length.
+
+    Odpowiedzi innego typu niz application/json (np. strumien SSE) leca dalej bez buforowania.
+    """
+    start: Message | None = None
+    chunks: list[bytes] = []
+
+    async def wrapped(message: Message) -> None:
+        nonlocal start
+        if message["type"] == "http.response.start":
+            content_type = dict((k.lower(), v) for k, v in message.get("headers", [])).get(b"content-type", b"")
+            if content_type.startswith(b"application/json"):
+                start = message
+            else:
+                await send(message)
+            return
+        if start is None or message["type"] != "http.response.body":
+            await send(message)
+            return
+        chunks.append(message.get("body", b""))
+        if message.get("more_body", False):
+            return
+        body = _hide_blog_write_tools(b"".join(chunks))
+        headers = [(k, v) for k, v in start["headers"] if k.lower() != b"content-length"]
+        headers.append((b"content-length", str(len(body)).encode()))
+        await send({**start, "headers": headers})
+        await send({"type": "http.response.body", "body": body})
+
+    return wrapped
+
+
 class _MCPBearerAuthMiddleware:
     """Lekki ASGI middleware wymuszajacy Bearer auth na calym mountcie /mcp.
 
@@ -251,6 +307,10 @@ class _MCPBearerAuthMiddleware:
 
     Middleware reuzywac _verify_token (OAuth + legacy osk_*) bez zmian w
     116 toolach. Per-tool _auth(ctx) pozostaje jako defense-in-depth.
+
+    MON-270: konto bez uprawnienia `blog:write` (nie superuser, bez `can_edit_blog`) dostaje
+    odpowiedz JSON przepuszczona przez _hide_blog_write_tools, wiec nie widzi tooli zapisu bloga
+    na liscie narzedzi. To ukrycie, nie zabezpieczenie: odmowe przy wywolaniu daje serwis bloga.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -276,12 +336,16 @@ class _MCPBearerAuthMiddleware:
             return
 
         try:
-            await _verify_token(raw_token)
+            user = await _verify_token(raw_token)
         except Exception:
             await _send_401(send, scope)
             return
 
-        await self.app(scope, receive, send)
+        if user.is_superuser or user.can_edit_blog:
+            await self.app(scope, receive, send)
+            return
+
+        await self.app(scope, receive, _filtering_send(send))
 
 
 def _resource_metadata_url(scope: Scope) -> str:
@@ -2764,7 +2828,8 @@ async def create_wiki_page(
 
     parent_id -- UUID strony nadrzednej (opcjonalnie, dla podstron).
     is_public -- czy strona ma byc dostepna publicznie pod /blog/{slug} (bez logowania).
-    Wymaga wiki:write (rowniez dla is_public=True, jak w dashboardzie).
+    Wymaga wiki:write; is_public=True wymaga dodatkowo uprawnienia konta do edycji bloga (blog:write,
+    nadawanego przez superusera), inaczej "Brak uprawnienia blog:write" i nic nie jest zapisywane.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -2811,7 +2876,8 @@ async def update_wiki_page(
 
     Podaj tylko pola do zmiany. is_public=True/False publikuje/wycofuje strone z /blog/{slug};
     None (domyslnie) nie zmienia flagi.
-    Wymaga wiki:write (rowniez dla zmiany is_public, jak w dashboardzie).
+    Wymaga wiki:write; zmiana is_public (publikacja i cofniecie) wymaga dodatkowo uprawnienia konta do
+    edycji bloga (blog:write, nadawanego przez superusera), inaczej "Brak uprawnienia blog:write".
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -3001,7 +3067,7 @@ async def set_blog_post_meta(
     tags -- lista tagow (male litery, cyfry, myslniki); pusta lista czyści tagi.
     translation_of_id, cover_attachment_id (UUID) i last_verified_at (YYYY-MM-DD) --
     pusty tekst czysci pole. lang: pl lub en. Zmiana sluga zachowuje stary adres jako
-    przekierowanie. Nie zmienia is_public ani daty publikacji. Wymaga wiki:write.
+    przekierowanie. Nie zmienia is_public ani daty publikacji. Wymaga wiki:write i uprawnienia konta do edycji bloga (blog:write).
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -3049,7 +3115,7 @@ async def publish_blog_post(
 
     Przy bledach lintu publikacja jest odrzucana z lista regul, a strona zostaje prywatna;
     force=true publikuje mimo bledow. Ponowna publikacja nie zmienia daty ani adresu.
-    Wynik: widok wpisu (public_url, markdown_url) i pole `lint` z ocena. Wymaga wiki:write.
+    Wynik: widok wpisu (public_url, markdown_url) i pole `lint` z ocena. Wymaga wiki:write i uprawnienia konta do edycji bloga (blog:write).
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -3073,7 +3139,7 @@ async def unpublish_blog_post(
     """Cofnij publikacje wpisu bloga: adres /blog/<slug> i jego .md zwracaja 404.
 
     Data publikacji i slug zostaja, wiec ponowna publikacja przywraca ten sam adres.
-    Idempotentne dla wpisu juz prywatnego. Wymaga wiki:write.
+    Idempotentne dla wpisu juz prywatnego. Wymaga wiki:write i uprawnienia konta do edycji bloga (blog:write).
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 

@@ -280,6 +280,32 @@ async def user_edit(
     return RedirectResponse(url=f"/dashboard/users/{user_id}", status_code=303)
 
 
+@router.post("/users/{user_id}/blog-permission", response_class=HTMLResponse, response_model=None)
+async def user_blog_permission(
+    request: Request,
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse | RedirectResponse:
+    """Nadaje albo odbiera uprawnienie do edycji bloga (MON-270); tylko superuser, idempotentnie."""
+    current_user = await _require_superuser(request, db)
+    if current_user is None:
+        if request.session.get("user_id"):
+            return HTMLResponse("Brak uprawnien", status_code=403)
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return HTMLResponse("Uzytkownik nie znaleziony", status_code=404)
+
+    form = await request.form()
+    user.can_edit_blog = str(form.get("enabled", "")).lower() == "true"
+    await db.commit()
+
+    flash(request, "Uprawnienie do edycji bloga zostało nadane" if user.can_edit_blog else "Uprawnienie do edycji bloga zostało odebrane")
+    return RedirectResponse(url=f"/dashboard/users/{user_id}", status_code=303)
+
+
 @router.post("/users/{user_id}/activate", response_class=HTMLResponse, response_model=None)
 async def user_activate(
     request: Request,
