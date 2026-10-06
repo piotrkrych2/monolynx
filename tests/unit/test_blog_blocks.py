@@ -25,6 +25,7 @@ from monolynx.services.blog_blocks import (
     CONTAINER_BLOCKS,
     TEXT_BLOCKS,
     BlockDefinition,
+    list_block_templates,
     render_post_html,
     render_post_markdown,
     strip_block_markers,
@@ -3340,3 +3341,134 @@ class TestInjectionsInGraphicBlocks:
         assert _event_attrs(html) == []
         svg = _one(_dom(html), "svg")
         assert {node.tag for node in svg.descendants()}.isdisjoint({"script", "iframe", "img"})
+
+
+# ---------------------------------------------------------------------------
+# MON-264: szablony składni bloków (menu "Wstaw blok" w edytorze)
+# ---------------------------------------------------------------------------
+
+# (tag, klasa, atrybut): element, który powstaje wyłącznie, gdy blok się wyrenderował (nie zdegradował do zwykłego tekstu).
+_RENDERED_BLOCK_MARKERS: dict[str, tuple[str, str | None, str | None]] = {
+    "callout": ("aside", "blog-callout", None),
+    "quote": ("figure", "blog-quote", None),
+    "figure": ("figure", "blog-figure", None),
+    "code": ("div", "blog-code", None),
+    "heading": ("h2", None, "id"),
+    "footnotes": ("section", "blog-footnotes", None),
+    "faq": ("div", "blog-faq", None),
+    "steps": ("ol", "blog-steps", None),
+    "stats": ("div", "blog-stats", None),
+    "compare": ("div", "blog-compare", None),
+    "details": ("details", "blog-details", None),
+    "gallery": ("div", "blog-gallery", None),
+    "video": ("div", "blog-video", None),
+    "cta": ("div", "blog-cta", None),
+    "glossary": ("dl", "blog-glossary", None),
+    "chart": ("svg", None, None),
+    "diagram": ("figure", None, "data-blog-diagram"),
+    "terminal": ("figure", None, "data-blog-terminal"),
+    "graphic": ("div", None, "data-blog-graphic"),
+}
+
+
+def _has_element(html: str, tag: str, css_class: str | None, attribute: str | None) -> bool:
+    return any(
+        name == tag and (css_class is None or css_class in attrs.get("class", "").split()) and (attribute is None or attribute in attrs)
+        for name, attrs in _parse(html)
+    )
+
+
+def _registry_items() -> list[tuple[str, BlockDefinition]]:
+    return [*TEXT_BLOCKS.items(), *CONTAINER_BLOCKS.items()]
+
+
+@pytest.mark.unit
+class TestBlockSyntaxTemplates:
+    def test_definition_without_syntax_template_defaults_to_empty_string(self):
+        definition = BlockDefinition(name="probe", to_html=lambda *a, **k: "", to_markdown=lambda *a, **k: "")
+
+        assert definition.syntax_template == ""
+
+    def test_definition_keeps_given_syntax_template(self):
+        definition = BlockDefinition(name="probe", to_html=lambda *a, **k: "", to_markdown=lambda *a, **k: "", syntax_template=":::probe\n:::")
+
+        assert definition.syntax_template == ":::probe\n:::"
+
+    @pytest.mark.parametrize("name", [name for name, _ in _registry_items()])
+    def test_every_registered_block_has_a_non_blank_syntax_template(self, name):
+        definition = {**TEXT_BLOCKS, **CONTAINER_BLOCKS}[name]
+
+        assert definition.syntax_template.strip() != ""
+
+    def test_marker_table_covers_exactly_the_registered_blocks(self):
+        assert set(_RENDERED_BLOCK_MARKERS) == {name for name, _ in _registry_items()}
+
+    @pytest.mark.parametrize("name", list(CONTAINER_BLOCKS))
+    def test_container_template_opens_with_its_type_and_closes_with_a_bare_fence_line(self, name):
+        lines = CONTAINER_BLOCKS[name].syntax_template.strip().splitlines()
+
+        assert re.match(rf"^:::{re.escape(name)}(?=[ \t]|$)", lines[0])
+        assert lines[-1].strip() == ":::"
+        assert len(lines) >= 3
+
+    @pytest.mark.parametrize("name", [name for name, _ in _registry_items()])
+    def test_template_renders_as_its_own_block(self, name):
+        template = {**TEXT_BLOCKS, **CONTAINER_BLOCKS}[name].syntax_template
+        tag, css_class, attribute = _RENDERED_BLOCK_MARKERS[name]
+
+        html = render_post_html(template)
+
+        assert _has_element(html, tag, css_class, attribute), html
+
+    @pytest.mark.parametrize("name", list(CONTAINER_BLOCKS))
+    def test_container_template_leaves_no_fence_markers_in_the_page(self, name):
+        html = render_post_html(CONTAINER_BLOCKS[name].syntax_template)
+
+        assert ":::" not in html
+        assert "blogblock" not in html
+
+    @pytest.mark.parametrize("name", [name for name, _ in _registry_items()])
+    def test_plain_paragraph_does_not_produce_the_block_marker(self, name):
+        # Bez tego test renderowania szablonu przeszedłby także na markerze, który ma każda strona.
+        tag, css_class, attribute = _RENDERED_BLOCK_MARKERS[name]
+
+        html = render_post_html("Zwykły akapit tekstu bez bloków.")
+
+        assert not _has_element(html, tag, css_class, attribute)
+
+
+@pytest.mark.unit
+class TestListBlockTemplates:
+    def test_lists_text_blocks_then_container_blocks_with_their_templates(self):
+        result = list_block_templates()
+
+        assert result == [{"name": name, "template": definition.syntax_template} for name, definition in _registry_items()]
+
+    def test_names_are_the_registry_keys_in_registry_order(self):
+        names = [item["name"] for item in list_block_templates()]
+
+        assert names == [*TEXT_BLOCKS, *CONTAINER_BLOCKS]
+
+    def test_reads_the_registries_at_call_time(self):
+        def render(*args, **kwargs):
+            return ""
+
+        text_probe = BlockDefinition(name="zz_text", to_html=render, to_markdown=render, syntax_template="TEXT-PROBE")
+        container_probe = BlockDefinition(name="zz_container", to_html=render, to_markdown=render, syntax_template=":::zz_container\nx\n:::")
+        with (
+            patch.dict(TEXT_BLOCKS, {"zz_text": text_probe}),
+            patch.dict(CONTAINER_BLOCKS, {"zz_container": container_probe}),
+        ):
+            names_inside = [item["name"] for item in list_block_templates()]
+            templates_inside = {item["name"]: item["template"] for item in list_block_templates()}
+
+        assert names_inside == [*TEXT_BLOCKS, "zz_text", *CONTAINER_BLOCKS, "zz_container"]
+        assert templates_inside["zz_text"] == "TEXT-PROBE"
+        assert templates_inside["zz_container"] == ":::zz_container\nx\n:::"
+        assert "zz_text" not in [item["name"] for item in list_block_templates()]
+
+    def test_each_element_has_only_name_and_template_string_keys(self):
+        for item in list_block_templates():
+            assert set(item) == {"name", "template"}
+            assert isinstance(item["name"], str)
+            assert isinstance(item["template"], str)

@@ -8,7 +8,9 @@ zeby streszczenie wpisu (meta description, zajawka listy) liczylo sie z tresci,
 z `BLOG_GRAPHICS`), `find_block_issues` wskazuje braki w blokach graficznych (lint), a
 `iter_source_lines` oddaje linie zrodla z numerem, informacja o kodzie ogrodzonym i kontenerze
 (lint wpisu, `services/blog_lint.py`).
-Rejestry `TEXT_BLOCKS` i `CONTAINER_BLOCKS` opisuja bloki. Bloki tekstowe (alerty GitHub, cytat
+Rejestry `TEXT_BLOCKS` i `CONTAINER_BLOCKS` opisuja bloki (nazwa, renderery, `syntax_template` czyli
+gotowa skladnia do wstawienia w edytorze); `list_block_templates` zwraca te szablony dla menu
+"Wstaw blok" w formularzu wiki. Bloki tekstowe (alerty GitHub, cytat
 z autorem, obrazek z podpisem, kod z nazwa pliku, kotwice naglowkow, przypisy) sa zapisane jako
 zwykly, czytelny markdown. Kontenery `:::typ ... :::` (faq, steps, stats, compare, details,
 gallery, video, cta, glossary oraz graficzne chart, diagram, terminal, graphic) tez: ich wnetrze
@@ -54,11 +56,12 @@ logger = logging.getLogger("monolynx.blog_blocks")
 
 @dataclass(frozen=True)
 class BlockDefinition:
-    """Definicja bloku: nazwa i dwa renderery (strona HTML, bliźniak markdown)."""
+    """Definicja bloku: nazwa, dwa renderery (strona HTML, bliźniak markdown) i szablon składni dla edytora."""
 
     name: str
     to_html: Callable[..., str]
     to_markdown: Callable[..., str]
+    syntax_template: str = ""
 
     def __post_init__(self) -> None:
         if not callable(self.to_html) or not callable(self.to_markdown):
@@ -961,43 +964,98 @@ def _verbatim(source: str) -> str:
     return source
 
 
-def _text_block(name: str, to_html: Callable[..., str]) -> tuple[str, BlockDefinition]:
-    return name, BlockDefinition(name=name, to_html=to_html, to_markdown=_verbatim)
+def _text_block(name: str, to_html: Callable[..., str], syntax_template: str) -> tuple[str, BlockDefinition]:
+    return name, BlockDefinition(name=name, to_html=to_html, to_markdown=_verbatim, syntax_template=syntax_template)
 
 
 TEXT_BLOCKS: dict[str, BlockDefinition] = dict(
     [
-        _text_block("callout", _callout_html),
-        _text_block("quote", _quote_html),
-        _text_block("figure", _figure_html),
-        _text_block("code", _code_html),
-        _text_block("heading", _anchor_headings),
-        _text_block("footnotes", _footnotes_html),
+        _text_block("callout", _callout_html, "> [!NOTE]\n> Treść uwagi\n"),
+        _text_block("quote", _quote_html, "> Treść cytatu\n> -- Autor cytatu\n"),
+        _text_block("figure", _figure_html, '![Opis obrazka](https://example.com/obrazek.png "Podpis pod obrazkiem")\n'),
+        _text_block("code", _code_html, '```python title="przyklad.py"\nprint("Cześć")\n```\n'),
+        _text_block("heading", _anchor_headings, "## Nagłówek sekcji\n"),
+        _text_block("footnotes", _footnotes_html, "Zdanie z przypisem[^1].\n\n[^1]: Treść przypisu.\n"),
     ]
 )
 
 
-def _container_block(name: str, to_html: Callable[..., str], to_markdown: Callable[..., str]) -> tuple[str, BlockDefinition]:
-    return name, BlockDefinition(name=name, to_html=to_html, to_markdown=to_markdown)
+def _container_block(name: str, to_html: Callable[..., str], to_markdown: Callable[..., str], syntax_template: str) -> tuple[str, BlockDefinition]:
+    return name, BlockDefinition(name=name, to_html=to_html, to_markdown=to_markdown, syntax_template=syntax_template)
 
 
 CONTAINER_BLOCKS: dict[str, BlockDefinition] = dict(
     [
-        _container_block("faq", _faq_html, _labelled_markdown("**FAQ**")),
-        _container_block("steps", _steps_html, _labelled_markdown("**Kroki**")),
-        _container_block("stats", _stats_html, _labelled_markdown("**Statystyki**")),
-        _container_block("compare", _compare_html, _labelled_markdown("**Porównanie**")),
-        _container_block("details", _details_html, _details_markdown),
-        _container_block("gallery", _gallery_html, _labelled_markdown("**Galeria**")),
-        _container_block("video", _video_html, _labelled_markdown("**Wideo**")),
-        _container_block("cta", _cta_html, _labelled_markdown("**Wezwanie do działania**")),
-        _container_block("glossary", _glossary_html, _labelled_markdown("**Słownik**")),
-        _container_block("chart", _chart_html, _chart_markdown),
-        _container_block("diagram", _diagram_html, _diagram_markdown),
-        _container_block("terminal", _terminal_html, _terminal_markdown),
-        _container_block("graphic", _graphic_html, _graphic_markdown),
+        _container_block("faq", _faq_html, _labelled_markdown("**FAQ**"), ":::faq\n### Pytanie?\nOdpowiedź.\n:::\n"),
+        _container_block(
+            "steps",
+            _steps_html,
+            _labelled_markdown("**Kroki**"),
+            ":::steps\n1. **Pierwszy krok** Opis kroku.\n2. **Drugi krok** Opis kroku.\n:::\n",
+        ),
+        _container_block(
+            "stats",
+            _stats_html,
+            _labelled_markdown("**Statystyki**"),
+            ":::stats\n- **99%** - opis liczby\n- **24/7** - opis liczby\n:::\n",
+        ),
+        _container_block(
+            "compare",
+            _compare_html,
+            _labelled_markdown("**Porównanie**"),
+            ':::compare highlight="2"\n| Cecha | Opcja A | Opcja B |\n| --- | --- | --- |\n| Cena | niska | wysoka |\n:::\n',
+        ),
+        _container_block(
+            "details",
+            _details_html,
+            _details_markdown,
+            ":::details Tytuł rozwijanej sekcji\nTreść widoczna po rozwinięciu.\n:::\n",
+        ),
+        _container_block(
+            "gallery",
+            _gallery_html,
+            _labelled_markdown("**Galeria**"),
+            ":::gallery\n![Pierwszy](https://example.com/a.png)\n![Drugi](https://example.com/b.png)\n:::\n",
+        ),
+        _container_block(
+            "video",
+            _video_html,
+            _labelled_markdown("**Wideo**"),
+            ":::video\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ\nOpis wideo.\n:::\n",
+        ),
+        _container_block(
+            "cta",
+            _cta_html,
+            _labelled_markdown("**Wezwanie do działania**"),
+            ":::cta\nZachęta do działania.\n\n[Przycisk](https://example.com)\n:::\n",
+        ),
+        _container_block(
+            "glossary",
+            _glossary_html,
+            _labelled_markdown("**Słownik**"),
+            ":::glossary\n- **Termin** - definicja terminu\n- **Drugi termin** - jego definicja\n:::\n",
+        ),
+        _container_block(
+            "chart",
+            _chart_html,
+            _chart_markdown,
+            ':::chart type="bar" title="Tytuł wykresu"\n| Etykieta | Wartość |\n| --- | --- |\n| A | 10 |\n| B | 20 |\n:::\n',
+        ),
+        _container_block(
+            "diagram",
+            _diagram_html,
+            _diagram_markdown,
+            ':::diagram title="Tytuł diagramu"\nOpis diagramu.\n```mermaid\nflowchart LR\n  A --> B\n```\n:::\n',
+        ),
+        _container_block("terminal", _terminal_html, _terminal_markdown, ':::terminal title="Terminal"\n```\n$ polecenie\n```\n:::\n'),
+        _container_block("graphic", _graphic_html, _graphic_markdown, ':::graphic name="agent-loop"\nOpis grafiki.\n:::\n'),
     ]
 )
+
+
+def list_block_templates() -> list[dict[str, str]]:
+    """Szablony składni wszystkich bloków (menu "Wstaw blok" w edytorze), czytane z rejestrów w chwili wywołania."""
+    return [{"name": name, "template": definition.syntax_template} for name, definition in [*TEXT_BLOCKS.items(), *CONTAINER_BLOCKS.items()]]
 
 
 @dataclass(frozen=True)

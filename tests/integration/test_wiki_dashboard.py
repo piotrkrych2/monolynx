@@ -1,20 +1,29 @@
 """Testy integracyjne -- dashboard wiki (drzewo stron, CRUD, upload, wyszukiwanie)."""
 
+import json
 import re
 import secrets
 import uuid
+from datetime import UTC, date, datetime
 from unittest.mock import patch
+from urllib.parse import quote
 
+import httpx
 import pytest
 from sqlalchemy import select
 
+from monolynx.main import app
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
+from monolynx.models.role import Role
 from monolynx.models.user import User
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.auth import hash_password
+from monolynx.services.blog import DEFAULT_AUTHOR_NAME
+from monolynx.services.blog_blocks import CONTAINER_BLOCKS, TEXT_BLOCKS, BlockDefinition
 from tests.conftest import login_session
 
 # ---------------------------------------------------------------------------
@@ -2095,3 +2104,1044 @@ class TestWikiPagePublicSlugConflictFlash:
         # komunikat z flash() faktycznie widoczny w HTML tej samej odpowiedzi.
         assert resp.status_code == 200
         assert "już istnieje w innym projekcie" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# MON-264: metadane wpisu, podglad szkicu, menu blokow i upload obrazkow w edytorze
+# ---------------------------------------------------------------------------
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
+def _anonymous_client() -> httpx.AsyncClient:
+    """Klient bez ciasteczek sesji (osobny od `client` z zalogowanym uzytkownikiem); `get_db` jest juz nadpisany przez fixture `client`."""
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+async def _login_regular_member(client, db_session, project, email, permissions=None):
+    """Zwykly (nie-superuser) czlonek projektu. `permissions` podane = rola z RBAC o dokladnie tych uprawnieniach."""
+    await login_session(client, db_session, email=email, is_superuser=False)
+    user = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
+    role_id = None
+    if permissions is not None:
+        role = Role(name=f"rola-{uuid.uuid4().hex[:8]}", project_id=project.id, permissions=permissions, is_system=False)
+        db_session.add(role)
+        await db_session.flush()
+        role_id = role.id
+    db_session.add(ProjectMember(project_id=project.id, user_id=user.id, role="member", role_id=role_id))
+    await db_session.flush()
+    return user
+
+
+async def _add_blog_post(db_session, page, slug=None, **fields):
+    """BlogPost dla strony; published_at ustawione tylko dla strony publicznej."""
+    fields.setdefault("published_at", datetime.now(UTC) if page.is_public else None)
+    post = BlogPost(page_id=page.id, slug=slug or page.slug, **fields)
+    db_session.add(post)
+    await db_session.flush()
+    return post
+
+
+async def _add_attachment(db_session, page, filename="obraz.png", mime_type="image/png"):
+    attachment = WikiAttachment(
+        wiki_page_id=page.id,
+        filename=filename,
+        storage_path=f"wiki-attachments/{page.id}/{filename}",
+        mime_type=mime_type,
+        size=10,
+        created_via_ai=False,
+    )
+    db_session.add(attachment)
+    await db_session.flush()
+    return attachment
+
+
+async def _blog_post_of(db_session, page_id):
+    return (await db_session.execute(select(BlogPost).where(BlogPost.page_id == page_id))).scalar_one_or_none()
+
+
+def _default_blog_form(page, **overrides):
+    """Pola sekcji "Wpis na blogu" w stanie, w jakim formularz wysyla ja nietknieta dla strony bez BlogPost."""
+    form = {
+        "title": page.title,
+        "content": "Tresc strony",
+        "position": "0",
+        "blog_meta": "1",
+        "blog_slug": page.slug,
+        "blog_description": "",
+        "blog_author_name": DEFAULT_AUTHOR_NAME,
+        "blog_tags": "",
+        "blog_lang": "pl",
+        "blog_translation_of_id": "",
+        "blog_cover_attachment_id": "",
+        "blog_last_verified_at": "",
+    }
+    form.update(overrides)
+    return form
+
+
+def _tag(html: str, name: str) -> str | None:
+    match = re.search(rf'<(?:input|select)[^>]*name="{name}"[^>]*>', html, re.IGNORECASE)
+    return match.group(0) if match else None
+
+
+def _textarea(html: str, name: str) -> str | None:
+    match = re.search(rf'<textarea[^>]*name="{name}"[^>]*>(.*?)</textarea>', html, re.IGNORECASE | re.DOTALL)
+    return match.group(1).strip() if match else None
+
+
+def _options(html: str, name: str) -> list[tuple[str, bool]]:
+    """(value, selected) kazdej opcji selecta o danej nazwie, w kolejnosci z HTML."""
+    block = re.search(rf'<select[^>]*name="{name}"[^>]*>(.*?)</select>', html, re.IGNORECASE | re.DOTALL)
+    assert block is not None, f"brak selecta {name}"
+    result = []
+    for attrs in re.findall(r"<option([^>]*)>", block.group(1), re.IGNORECASE):
+        value = re.search(r'value="([^"]*)"', attrs)
+        result.append((value.group(1) if value else "", re.search(r"\bselected\b", attrs) is not None))
+    return result
+
+
+def _blog_meta_details_tag(html: str) -> str | None:
+    match = re.search(r'<details[^>]*id="blog-meta-section"[^>]*>', html, re.IGNORECASE)
+    return match.group(0) if match else None
+
+
+def _block_templates_json(html: str) -> list[dict[str, str]]:
+    match = re.search(r'<script[^>]*type="application/json"[^>]*id="blog-block-templates"[^>]*>(.*?)</script>', html, re.DOTALL)
+    assert match is not None, "brak <script id=blog-block-templates>"
+    data: list[dict[str, str]] = json.loads(match.group(1))
+    return data
+
+
+@pytest.mark.integration
+class TestWikiPageBlogMetaSave:
+    """Kryterium 1: zapis formularza ustawia metadane wpisu; blad walidacji = flash + wpisane wartosci, tresc niezapisana."""
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-save/fake.md")
+    async def test_edit_saves_every_blog_meta_field(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-save")
+        user = await _login_and_add_member(client, db_session, project, "m264-save@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Do Metadanych", is_public=True)
+        await _add_blog_post(db_session, page, slug="stary-adres-m264")
+        original = await _create_wiki_page(db_session, project, user, title="Oryginal Wpisu", is_public=True)
+        await _add_blog_post(db_session, original, slug="oryginal-m264")
+        cover = await _add_attachment(db_session, page)
+        page_id, original_id, cover_id = page.id, original.id, cover.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data=_default_blog_form(
+                page,
+                is_public="on",
+                blog_slug="nowy-adres-m264",
+                blog_description="Krotki opis wpisu",
+                blog_author_name="Anna Autorka",
+                blog_tags="alfa, beta ,, gamma",
+                blog_lang="en",
+                blog_translation_of_id=str(original_id),
+                blog_cover_attachment_id=str(cover_id),
+                blog_last_verified_at="2026-05-04",
+            ),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        post = await _blog_post_of(db_session, page_id)
+        assert post is not None
+        assert post.slug == "nowy-adres-m264"
+        assert post.description == "Krotki opis wpisu"
+        assert post.author_name == "Anna Autorka"
+        assert post.tags == ["alfa", "beta", "gamma"]
+        assert post.lang == "en"
+        assert post.translation_of_id == original_id
+        assert post.cover_attachment_id == cover_id
+        assert post.last_verified_at == date(2026, 5, 4)
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-clear/fake.md")
+    async def test_edit_with_blank_nullable_fields_clears_them(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-clear")
+        user = await _login_and_add_member(client, db_session, project, "m264-clear@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Do Czyszczenia", is_public=True)
+        original = await _create_wiki_page(db_session, project, user, title="Oryginal Do Czyszczenia", is_public=True)
+        await _add_blog_post(db_session, original, slug="oryginal-czysc-m264")
+        cover = await _add_attachment(db_session, page)
+        await _add_blog_post(
+            db_session,
+            page,
+            slug="wpis-czysc-m264",
+            description="Stary opis",
+            translation_of_id=original.id,
+            cover_attachment_id=cover.id,
+            last_verified_at=date(2026, 1, 2),
+        )
+        page_id = page.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data=_default_blog_form(page, is_public="on", blog_slug="wpis-czysc-m264"),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        post = await _blog_post_of(db_session, page_id)
+        assert post is not None
+        assert post.description == ""
+        assert post.translation_of_id is None
+        assert post.cover_attachment_id is None
+        assert post.last_verified_at is None
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-blank/fake.md")
+    async def test_edit_with_blank_slug_and_author_keeps_stored_values(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-blank")
+        user = await _login_and_add_member(client, db_session, project, "m264-blank@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Z Zachowanymi", is_public=True)
+        await _add_blog_post(db_session, page, slug="zostaje-m264", author_name="Zostaje Autor")
+        page_id = page.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data=_default_blog_form(page, is_public="on", blog_slug="", blog_author_name="", blog_description="Nowy opis"),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        post = await _blog_post_of(db_session, page_id)
+        assert post is not None
+        assert post.slug == "zostaje-m264"
+        assert post.author_name == "Zostaje Autor"
+        assert post.description == "Nowy opis"
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-draft/fake.md")
+    async def test_edit_saves_blog_meta_of_unpublished_page_that_has_a_post(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-draft")
+        user = await _login_and_add_member(client, db_session, project, "m264-draft@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Szkic Z Wpisem", is_public=False)
+        await _add_blog_post(db_session, page, slug="szkic-m264")
+        page_id = page.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data=_default_blog_form(page, blog_slug="szkic-m264", blog_description="Opis szkicu"),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        post = await _blog_post_of(db_session, page_id)
+        assert post is not None
+        assert post.description == "Opis szkicu"
+        await db_session.refresh(page)
+        assert page.is_public is False
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-plain/fake.md")
+    async def test_plain_page_with_untouched_blog_section_gets_no_blog_post(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-plain")
+        user = await _login_and_add_member(client, db_session, project, "m264-plain@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Zwykla Strona Wiki", is_public=False)
+        page_id = page.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data=_default_blog_form(page, title="Zwykla Strona Wiki Po Edycji"),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        await db_session.refresh(page)
+        assert page.title == "Zwykla Strona Wiki Po Edycji"
+        assert await _blog_post_of(db_session, page_id) is None
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-fill/fake.md")
+    async def test_plain_page_with_filled_blog_section_gets_a_blog_post(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-fill")
+        user = await _login_and_add_member(client, db_session, project, "m264-fill@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Zwykla Z Opisem", is_public=False)
+        page_id = page.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data=_default_blog_form(page, blog_description="Opis wpisany od zera"),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        post = await _blog_post_of(db_session, page_id)
+        assert post is not None
+        assert post.description == "Opis wpisany od zera"
+        await db_session.refresh(page)
+        assert page.is_public is False
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-nomarker/fake.md")
+    async def test_blog_fields_without_marker_are_ignored(self, mock_upload, mock_embeddings, client, db_session):
+        """Formularz bez sekcji (brak pola `blog_meta`) nie zapisuje metadanych, nawet gdy pola `blog_*` przyszly w zadaniu."""
+        project = await _create_project(db_session, "m264-nomarker")
+        user = await _login_and_add_member(client, db_session, project, "m264-nomarker@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Bez Znacznika", is_public=False)
+        form = _default_blog_form(page, blog_description="Opis bez znacznika")
+        del form["blog_meta"]
+        page_id = page.id
+
+        resp = await client.post(f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit", data=form, follow_redirects=False)
+
+        assert resp.status_code == 303
+        assert await _blog_post_of(db_session, page_id) is None
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-err/fake.md")
+    async def test_too_long_description_flashes_error_keeps_typed_values_and_saves_nothing(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-err")
+        user = await _login_and_add_member(client, db_session, project, "m264-err@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Z Bledem", is_public=False)
+        long_description = "Opis " + "a" * 300
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data=_default_blog_form(
+                page,
+                title="Nowy tytul wpisany MON264",
+                content="Tresc wpisana MON264",
+                blog_description=long_description,
+                blog_author_name="Autorka Z Bledem",
+                blog_tags="alfa, beta",
+            ),
+        )
+
+        assert resp.status_code == 200
+        assert "Opis może mieć maksymalnie 300 znaków" in resp.text
+        assert long_description in resp.text
+        assert "Autorka Z Bledem" in resp.text
+        assert "alfa, beta" in resp.text
+        assert "Nowy tytul wpisany MON264" in resp.text
+        assert "Tresc wpisana MON264" in resp.text
+        mock_upload.assert_not_called()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-lang/fake.md")
+    async def test_unsupported_language_flashes_error_and_saves_nothing(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-lang")
+        user = await _login_and_add_member(client, db_session, project, "m264-lang@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Zly Jezyk", is_public=False)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data=_default_blog_form(page, content="Tresc zlego jezyka MON264", blog_lang="de"),
+        )
+
+        assert resp.status_code == 200
+        assert "Język musi być jednym z: pl, en" in resp.text
+        assert "Tresc zlego jezyka MON264" in resp.text
+        mock_upload.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("blog_last_verified_at", "2026-13-45"),
+            ("blog_translation_of_id", "to-nie-jest-uuid"),
+            ("blog_cover_attachment_id", "to-nie-jest-uuid"),
+        ],
+    )
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-parse/fake.md")
+    async def test_unparsable_value_is_a_validation_error_not_a_server_error(self, mock_upload, mock_embeddings, field, value, client, db_session):
+        project = await _create_project(db_session, f"m264-parse-{field.replace('_', '-')}")
+        user = await _login_and_add_member(client, db_session, project, f"m264-parse-{field}@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Zla Wartosc", is_public=False)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data=_default_blog_form(page, content="Tresc zlej wartosci MON264", **{field: value}),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 200
+        assert "Tresc zlej wartosci MON264" in resp.text
+        mock_upload.assert_not_called()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-date/fake.md")
+    async def test_unparsable_verification_date_is_kept_in_the_date_input(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m264-date")
+        user = await _login_and_add_member(client, db_session, project, "m264-date@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Zla Data", is_public=False)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data=_default_blog_form(page, blog_last_verified_at="2026-13-45"),
+        )
+
+        assert resp.status_code == 200
+        assert 'value="2026-13-45"' in (_tag(resp.text, "blog_last_verified_at") or "")
+
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("blog_translation_of_id", "to-nie-jest-uuid", "Nieprawidłowy identyfikator tłumaczenia"),
+            ("blog_cover_attachment_id", "to-nie-jest-uuid", "Nieprawidłowy identyfikator okładki"),
+            ("blog_last_verified_at", "2026-13-45", "Data weryfikacji ma nieprawidłowy format (RRRR-MM-DD)"),
+        ],
+    )
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-msg/fake.md")
+    async def test_unparsable_value_flashes_the_message_of_its_own_field(
+        self, mock_upload, mock_embeddings, field, value, message, client, db_session
+    ):
+        suffix = field.removeprefix("blog_").replace("_", "-")
+        project = await _create_project(db_session, f"m264-msg-{suffix}")
+        user = await _login_and_add_member(client, db_session, project, f"m264-msg-{suffix}@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Komunikat Pola", is_public=False)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data=_default_blog_form(page, **{field: value}),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 200
+        assert message in resp.text
+        mock_upload.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("case", "overrides", "field", "expected"),
+        [
+            ("slug", {"blog_slug": "tylko-nowy-adres-m264"}, "slug", "tylko-nowy-adres-m264"),
+            ("author", {"blog_author_name": "Tylko Inny Autor"}, "author_name", "Tylko Inny Autor"),
+            ("tags", {"blog_tags": "jedyny-tag"}, "tags", ["jedyny-tag"]),
+        ],
+    )
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-touch/fake.md")
+    async def test_plain_page_with_only_one_changed_blog_field_gets_a_blog_post(
+        self, mock_upload, mock_embeddings, case, overrides, field, expected, client, db_session
+    ):
+        project = await _create_project(db_session, f"m264-touch-{case}")
+        user = await _login_and_add_member(client, db_session, project, f"m264-touch-{case}@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Zwykla Strona Jedno Pole", is_public=False)
+        page_id = page.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data=_default_blog_form(page, **overrides),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        post = await _blog_post_of(db_session, page_id)
+        assert post is not None
+        assert getattr(post, field) == expected
+
+
+@pytest.mark.integration
+class TestWikiPageFormBlogContext:
+    """Formularz edycji: sekcja "Wpis na blogu", select tlumaczenia i okladki, adres uploadu."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_edit_form_of_a_post_has_open_section_filled_from_the_post(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-form-post")
+        user = await _login_and_add_member(client, db_session, project, "m264-form-post@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis W Formularzu", is_public=True)
+        cover = await _add_attachment(db_session, page)
+        await _add_blog_post(
+            db_session,
+            page,
+            slug="adres-w-formularzu-m264",
+            description="Opis z bazy MON264",
+            author_name="Autor Z Bazy",
+            tags=["alfa", "beta"],
+            lang="en",
+            cover_attachment_id=cover.id,
+            last_verified_at=date(2026, 5, 4),
+        )
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        assert resp.status_code == 200
+        details = _blog_meta_details_tag(resp.text)
+        assert details is not None
+        assert re.search(r"\bopen\b", details)
+        assert 'name="blog_meta"' in resp.text
+        assert 'value="adres-w-formularzu-m264"' in (_tag(resp.text, "blog_slug") or "")
+        assert _textarea(resp.text, "blog_description") == "Opis z bazy MON264"
+        assert 'value="Autor Z Bazy"' in (_tag(resp.text, "blog_author_name") or "")
+        assert 'value="alfa, beta"' in (_tag(resp.text, "blog_tags") or "")
+        assert 'value="2026-05-04"' in (_tag(resp.text, "blog_last_verified_at") or "")
+        assert [value for value, selected in _options(resp.text, "blog_lang") if selected] == ["en"]
+        assert [value for value, selected in _options(resp.text, "blog_cover_attachment_id") if selected] == [str(cover.id)]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_edit_form_of_a_plain_page_has_collapsed_section_with_defaults(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-form-plain")
+        user = await _login_and_add_member(client, db_session, project, "m264-form-plain@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Zwykla W Formularzu", is_public=False)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        assert resp.status_code == 200
+        details = _blog_meta_details_tag(resp.text)
+        assert details is not None
+        assert not re.search(r"\bopen\b", details)
+        assert f'value="{page.slug}"' in (_tag(resp.text, "blog_slug") or "")
+        assert f'value="{DEFAULT_AUTHOR_NAME}"' in (_tag(resp.text, "blog_author_name") or "")
+        assert [value for value, selected in _options(resp.text, "blog_lang") if selected] == ["pl"]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_edit_form_of_a_public_page_without_post_row_has_open_section(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-form-pub")
+        user = await _login_and_add_member(client, db_session, project, "m264-form-pub@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Publiczna Bez Wiersza", is_public=True)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        details = _blog_meta_details_tag(resp.text)
+        assert details is not None
+        assert re.search(r"\bopen\b", details)
+
+    async def test_create_forms_have_no_blog_section(self, client, db_session):
+        project = await _create_project(db_session, "m264-form-create")
+        user = await _login_and_add_member(client, db_session, project, "m264-form-create@test.com")
+        parent = await _create_wiki_page(db_session, project, user, title="Rodzic Formularza")
+
+        top = await client.get(f"/dashboard/{project.slug}/wiki/pages/create")
+        child = await client.get(f"/dashboard/{project.slug}/wiki/pages/{parent.id}/create")
+
+        assert top.status_code == 200
+        assert child.status_code == 200
+        for resp in (top, child):
+            assert "blog-meta-section" not in resp.text
+            assert 'name="blog_meta"' not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_translation_select_lists_only_other_pages_that_are_posts(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-form-trans")
+        user = await _login_and_add_member(client, db_session, project, "m264-form-trans@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Edytowany Wpis", is_public=True)
+        await _add_blog_post(db_session, page, slug="edytowany-m264")
+        other_post = await _create_wiki_page(db_session, project, user, title="Inny Wpis", is_public=True)
+        await _add_blog_post(db_session, other_post, slug="inny-m264")
+        plain = await _create_wiki_page(db_session, project, user, title="Zwykla Strona Obok", is_public=False)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        values = [value for value, _ in _options(resp.text, "blog_translation_of_id")]
+        assert str(other_post.id) in values
+        assert str(page.id) not in values
+        assert str(plain.id) not in values
+        assert "" in values
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_translation_select_excludes_posts_of_another_project(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-trans-scope")
+        foreign_project = await _create_project(db_session, "m264-trans-foreign")
+        user = await _login_and_add_member(client, db_session, project, "m264-trans-scope@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis W Swoim Projekcie", is_public=True)
+        await _add_blog_post(db_session, page, slug="swoj-wpis-m264")
+        own_other = await _create_wiki_page(db_session, project, user, title="Drugi Wpis Swojego Projektu", is_public=True)
+        await _add_blog_post(db_session, own_other, slug="swoj-drugi-m264")
+        foreign = await _create_wiki_page(db_session, foreign_project, user, title="Wpis Obcego Projektu", is_public=True)
+        await _add_blog_post(db_session, foreign, slug="obcy-wpis-m264")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        values = [value for value, _ in _options(resp.text, "blog_translation_of_id")]
+        assert str(own_other.id) in values
+        assert str(foreign.id) not in values
+        assert "Wpis Obcego Projektu" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_translation_select_orders_options_by_title(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-trans-order")
+        user = await _login_and_add_member(client, db_session, project, "m264-trans-order@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Edytowany Dla Kolejnosci", is_public=True)
+        await _add_blog_post(db_session, page, slug="edytowany-kolejnosc-m264")
+        third = await _create_wiki_page(db_session, project, user, title="Ccc Trzeci Tytul", is_public=True)
+        await _add_blog_post(db_session, third, slug="ccc-m264")
+        first = await _create_wiki_page(db_session, project, user, title="Aaa Pierwszy Tytul", is_public=True)
+        await _add_blog_post(db_session, first, slug="aaa-m264")
+        second = await _create_wiki_page(db_session, project, user, title="Bbb Drugi Tytul", is_public=True)
+        await _add_blog_post(db_session, second, slug="bbb-m264")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        values = [value for value, _ in _options(resp.text, "blog_translation_of_id") if value]
+        assert values == [str(first.id), str(second.id), str(third.id)]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_cover_select_lists_only_attachments_of_this_page(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-form-cover")
+        user = await _login_and_add_member(client, db_session, project, "m264-form-cover@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Strona Z Okladka", is_public=True)
+        other = await _create_wiki_page(db_session, project, user, title="Strona Obok Okladki", is_public=True)
+        own_attachment = await _add_attachment(db_session, page, filename="moja.png")
+        foreign_attachment = await _add_attachment(db_session, other, filename="cudza.png")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        values = [value for value, _ in _options(resp.text, "blog_cover_attachment_id")]
+        assert str(own_attachment.id) in values
+        assert str(foreign_attachment.id) not in values
+        assert "" in values
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_edit_form_points_the_editor_upload_at_this_page(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-form-upl")
+        user = await _login_and_add_member(client, db_session, project, "m264-form-upl@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Upload Z Edycji")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        assert f"/dashboard/{project.slug}/wiki/upload?page_id={page.id}" in resp.text
+
+    async def test_create_form_keeps_the_upload_endpoint_without_page_id(self, client, db_session):
+        project = await _create_project(db_session, "m264-form-upl2")
+        await _login_and_add_member(client, db_session, project, "m264-form-upl2@test.com")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/create")
+
+        assert f"/dashboard/{project.slug}/wiki/upload" in resp.text
+        assert "wiki/upload?page_id=" not in resp.text
+
+
+@pytest.mark.integration
+class TestWikiBlockInsertMenu:
+    """Kryterium 4: menu "Wstaw blok" korzysta z listy generowanej z rejestru, nie z listy wpisanej w szablon."""
+
+    @staticmethod
+    def _expected():
+        return [{"name": name, "template": definition.syntax_template} for name, definition in [*TEXT_BLOCKS.items(), *CONTAINER_BLOCKS.items()]]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_edit_form_lists_every_registered_block_with_its_template(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-menu-edit")
+        user = await _login_and_add_member(client, db_session, project, "m264-menu-edit@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Menu Blokow Edycja")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit")
+
+        assert _block_templates_json(resp.text) == self._expected()
+
+    async def test_create_forms_list_every_registered_block_with_its_template(self, client, db_session):
+        project = await _create_project(db_session, "m264-menu-create")
+        user = await _login_and_add_member(client, db_session, project, "m264-menu-create@test.com")
+        parent = await _create_wiki_page(db_session, project, user, title="Rodzic Menu Blokow")
+
+        top = await client.get(f"/dashboard/{project.slug}/wiki/pages/create")
+        child = await client.get(f"/dashboard/{project.slug}/wiki/pages/{parent.id}/create")
+
+        assert _block_templates_json(top.text) == self._expected()
+        assert _block_templates_json(child.text) == self._expected()
+
+    async def test_block_added_to_the_registry_shows_up_in_the_form(self, client, db_session):
+        project = await _create_project(db_session, "m264-menu-live")
+        await _login_and_add_member(client, db_session, project, "m264-menu-live@test.com")
+
+        def render(*args, **kwargs):
+            return ""
+
+        probe = BlockDefinition(name="zz_probe", to_html=render, to_markdown=render, syntax_template=":::zz_probe\nProbe MON264\n:::")
+        with patch.dict(CONTAINER_BLOCKS, {"zz_probe": probe}):
+            resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/create")
+
+        listed = _block_templates_json(resp.text)
+        assert listed[-1] == {"name": "zz_probe", "template": ":::zz_probe\nProbe MON264\n:::"}
+        assert [item["name"] for item in listed[:-1]] == [*TEXT_BLOCKS, *CONTAINER_BLOCKS]
+
+
+@pytest.mark.integration
+class TestWikiBlogPreview:
+    """Kryterium 2: podglad szkicu pod sesja i `wiki:read`, z `X-Robots-Tag: noindex`, bez zapisu do bazy."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Szkic wpisu\n\nTresc szkicu MON264")
+    async def test_private_page_preview_returns_draft_page_with_noindex(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-prev-ok")
+        user = await _login_regular_member(client, db_session, project, "m264-prev-ok@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Prywatny Szkic", is_public=False)
+        back_url = f"/dashboard/{project.slug}/wiki/pages/{page.id}"
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview")
+
+        assert resp.status_code == 200
+        assert resp.headers.get("x-robots-tag") == "noindex"
+        assert '<meta name="robots" content="noindex">' in resp.text
+        assert f'<a href="{back_url}"' in resp.text
+        assert "Podgląd szkicu" in resp.text
+        assert "Tresc szkicu MON264" in resp.text
+        assert 'rel="canonical"' not in resp.text
+        assert "application/ld+json" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Szkic\n\nTresc")
+    async def test_preview_does_not_create_a_blog_post_row(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-prev-nowrite")
+        user = await _login_regular_member(client, db_session, project, "m264-prev-nowrite@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Podglad Bez Zapisu", is_public=False)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview")
+
+        assert resp.status_code == 200
+        assert await _blog_post_of(db_session, page.id) is None
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Szkic\n\nTresc")
+    async def test_preview_does_not_commit(self, mock_get_md, client, db_session, monkeypatch):
+        project = await _create_project(db_session, "m264-prev-nocommit")
+        user = await _login_regular_member(client, db_session, project, "m264-prev-nocommit@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Podglad Bez Commita", is_public=False)
+        commits: list[int] = []
+        original_commit = db_session.commit
+
+        async def spy_commit():
+            commits.append(1)
+            await original_commit()
+
+        monkeypatch.setattr(db_session, "commit", spy_commit)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview")
+
+        assert resp.status_code == 200
+        assert commits == []
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Szkic\n\nTresc")
+    async def test_preview_shows_metadata_of_existing_post_row(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-prev-meta")
+        user = await _login_regular_member(client, db_session, project, "m264-prev-meta@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Podglad Z Metadanymi", is_public=False)
+        await _add_blog_post(db_session, page, slug="szkic-meta-m264", description="Opis szkicu MON264", author_name="Autor Szkicu MON264")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview")
+
+        assert resp.status_code == 200
+        assert "Opis szkicu MON264" in resp.text
+        assert "Autor Szkicu MON264" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Publiczny\n\nTresc publiczna")
+    async def test_preview_of_public_page_also_carries_noindex(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-prev-pub")
+        user = await _login_regular_member(client, db_session, project, "m264-prev-pub@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Podglad Publicznej", is_public=True)
+        await _add_blog_post(db_session, page, slug="podglad-publicznej-m264")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview")
+
+        assert resp.status_code == 200
+        assert resp.headers.get("x-robots-tag") == "noindex"
+        assert "Podgląd szkicu" in resp.text
+
+    async def test_preview_without_session_redirects_to_login(self, client, db_session):
+        project = await _create_project(db_session, "m264-prev-anon")
+        user = User(email="m264-prev-anon-setup@test.com", password_hash=hash_password("testpass123"))
+        db_session.add(user)
+        await db_session.flush()
+        page = await _create_wiki_page(db_session, project, user, title="Podglad Bez Sesji")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview", follow_redirects=False)
+
+        assert resp.status_code == 303
+        assert "/auth/login" in resp.headers["location"]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Szkic\n\nTresc sekretna MON264")
+    async def test_preview_without_wiki_read_is_forbidden(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-prev-403")
+        user = await _login_regular_member(client, db_session, project, "m264-prev-403@test.com", permissions={"scrum": ["read"]})
+        page = await _create_wiki_page(db_session, project, user, title="Podglad Bez Uprawnienia", is_public=False)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview")
+
+        assert resp.status_code == 403
+        assert "Tresc sekretna MON264" not in resp.text
+        assert "Podgląd szkicu" not in resp.text
+
+    async def test_preview_of_unknown_page_returns_404(self, client, db_session):
+        project = await _create_project(db_session, "m264-prev-nopage")
+        await _login_regular_member(client, db_session, project, "m264-prev-nopage@test.com")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{uuid.uuid4()}/blog-preview")
+
+        assert resp.status_code == 404
+
+    async def test_preview_of_unknown_project_returns_404(self, client, db_session):
+        await login_session(client, db_session, email="m264-prev-noproj@test.com")
+
+        resp = await client.get(f"/dashboard/nie-ma-takiego-projektu-m264/wiki/pages/{uuid.uuid4()}/blog-preview")
+
+        assert resp.status_code == 404
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Cudza\n\nTresc cudza MON264")
+    async def test_preview_of_page_from_another_project_returns_404(self, mock_get_md, client, db_session):
+        mine = await _create_project(db_session, "m264-prev-mine")
+        theirs = await _create_project(db_session, "m264-prev-theirs")
+        user = await _login_regular_member(client, db_session, mine, "m264-prev-cross@test.com")
+        foreign_page = await _create_wiki_page(db_session, theirs, user, title="Cudza Strona Podgladu", is_public=False)
+
+        resp = await client.get(f"/dashboard/{mine.slug}/wiki/pages/{foreign_page.id}/blog-preview")
+
+        assert resp.status_code == 404
+        assert "Tresc cudza MON264" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", side_effect=Exception("MinIO niedostepne"))
+    async def test_preview_storage_error_returns_404(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-prev-storage")
+        user = await _login_regular_member(client, db_session, project, "m264-prev-storage@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Podglad Blad Storage", is_public=False)
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview")
+
+        assert resp.status_code == 404
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Tresc")
+    async def test_page_detail_links_to_the_preview(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-prev-link")
+        user = await _login_and_add_member(client, db_session, project, "m264-prev-link@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Szczegoly Z Podgladem")
+
+        resp = await client.get(f"/dashboard/{project.slug}/wiki/pages/{page.id}")
+
+        assert resp.status_code == 200
+        assert f"/dashboard/{project.slug}/wiki/pages/{page.id}/blog-preview" in resp.text
+        assert "Podgląd wpisu" in resp.text
+
+    @pytest.mark.parametrize(
+        "url",
+        ["/sitemap.xml", "/blog/feed.xml", "/blog/rss.xml", "/blog/feed.json", "/llms.txt", "/llms-full.txt", "/blog/"],
+    )
+    @patch("monolynx.services.wiki.get_markdown", return_value="# Wpis\n\nTresc publiczna MON264")
+    async def test_preview_address_is_absent_from_sitemap_feeds_and_llms(self, mock_get_md, url, client, db_session):
+        """Kryterium 3: obok wpisu publicznego (jest w kazdym z tych adresow) nie ma adresu podgladu."""
+        project = await _create_project(db_session, "m264-prev-seo")
+        user = await _login_and_add_member(client, db_session, project, "m264-prev-seo@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Poza Indeksem", is_public=True)
+        await _add_blog_post(db_session, page, slug="wpis-poza-indeksem-m264")
+
+        resp = await client.get(url)
+
+        assert resp.status_code == 200
+        present = "Tresc publiczna MON264" if url == "/llms-full.txt" else "wpis-poza-indeksem-m264"
+        assert present in resp.text
+        assert "blog-preview" not in resp.text
+        assert f"/wiki/pages/{page.id}" not in resp.text
+
+
+@pytest.mark.integration
+class TestWikiUploadForPage:
+    """Upload z edytora z `page_id`: zalacznik strony i adres wg stanu publikacji."""
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_to_draft_creates_attachment_and_returns_dashboard_address(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "m264-upl-draft")
+        user = await _login_and_add_member(client, db_session, project, "m264-upl-draft@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Upload Do Szkicu", is_public=False)
+        slug, page_id = project.slug, page.id
+
+        resp = await client.post(
+            f"/dashboard/{slug}/wiki/upload?page_id={page_id}",
+            files={"file": ("moje zdjęcie.png", _PNG, "image/png")},
+        )
+
+        assert resp.status_code == 200
+        attachment = (await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page_id))).scalar_one()
+        assert attachment.mime_type == "image/png"
+        assert attachment.size == len(_PNG)
+        assert attachment.storage_path.startswith(f"{slug}/wiki-attachments/{page_id}/")
+        expected = f"/dashboard/{slug}/wiki/pages/{page_id}/attachments/{attachment.id}/{quote(attachment.filename)}"
+        assert resp.json() == {"data": {"filePath": expected}}
+        mock_upload.assert_called_once()
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_to_published_page_returns_public_address_under_the_post_slug(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "m264-upl-pub")
+        user = await _login_and_add_member(client, db_session, project, "m264-upl-pub@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Upload Do Publicznej", is_public=True)
+        await _add_blog_post(db_session, page, slug="adres-wpisu-inny-niz-strona-m264")
+        slug, page_id = project.slug, page.id
+
+        resp = await client.post(
+            f"/dashboard/{slug}/wiki/upload?page_id={page_id}",
+            files={"file": ("obraz.png", _PNG, "image/png")},
+        )
+
+        assert resp.status_code == 200
+        attachment = (await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page_id))).scalar_one()
+        assert resp.json() == {"data": {"filePath": f"/blog/adres-wpisu-inny-niz-strona-m264/attachments/{attachment.id}/obraz.png"}}
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_to_unpublished_page_with_post_row_still_returns_dashboard_address(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "m264-upl-withdrawn")
+        user = await _login_and_add_member(client, db_session, project, "m264-upl-withdrawn@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Upload Do Cofnietej", is_public=False)
+        await _add_blog_post(db_session, page, slug="cofniety-wpis-m264")
+        slug, page_id = project.slug, page.id
+
+        resp = await client.post(
+            f"/dashboard/{slug}/wiki/upload?page_id={page_id}",
+            files={"file": ("obraz.png", _PNG, "image/png")},
+        )
+
+        assert resp.status_code == 200
+        attachment = (await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page_id))).scalar_one()
+        assert resp.json() == {
+            "data": {"filePath": f"/dashboard/{slug}/wiki/pages/{page_id}/attachments/{attachment.id}/obraz.png"},
+        }
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_commits_the_attachment(self, mock_upload, client, db_session, monkeypatch):
+        project = await _create_project(db_session, "m264-upl-commit")
+        user = await _login_and_add_member(client, db_session, project, "m264-upl-commit@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Upload Z Commitem", is_public=False)
+        commits: list[int] = []
+        original_commit = db_session.commit
+
+        async def spy_commit():
+            commits.append(1)
+            await original_commit()
+
+        monkeypatch.setattr(db_session, "commit", spy_commit)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/upload?page_id={page.id}",
+            files={"file": ("obraz.png", _PNG, "image/png")},
+        )
+
+        assert resp.status_code == 200
+        assert commits != []
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_with_page_of_another_project_returns_404_and_stores_nothing(self, mock_upload, client, db_session):
+        mine = await _create_project(db_session, "m264-upl-mine")
+        theirs = await _create_project(db_session, "m264-upl-theirs")
+        user = await _login_and_add_member(client, db_session, mine, "m264-upl-cross@test.com")
+        foreign_page = await _create_wiki_page(db_session, theirs, user, title="Cudza Strona Uploadu")
+        slug, foreign_page_id = mine.slug, foreign_page.id
+
+        resp = await client.post(
+            f"/dashboard/{slug}/wiki/upload?page_id={foreign_page_id}",
+            files={"file": ("obraz.png", _PNG, "image/png")},
+        )
+
+        assert resp.status_code == 404
+        assert "error" in resp.json()
+        mock_upload.assert_not_called()
+        stored = (await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == foreign_page_id))).scalars().all()
+        assert stored == []
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_upload_with_unknown_page_returns_404(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "m264-upl-nopage")
+        await _login_and_add_member(client, db_session, project, "m264-upl-nopage@test.com")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/upload?page_id={uuid.uuid4()}",
+            files={"file": ("obraz.png", _PNG, "image/png")},
+        )
+
+        assert resp.status_code == 404
+        mock_upload.assert_not_called()
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object", side_effect=Exception("MinIO error"))
+    async def test_upload_storage_error_returns_500_and_stores_no_attachment(self, mock_upload, client, db_session):
+        project = await _create_project(db_session, "m264-upl-500")
+        user = await _login_and_add_member(client, db_session, project, "m264-upl-500@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Upload Blad Storage", is_public=False)
+        slug, page_id = project.slug, page.id
+
+        resp = await client.post(
+            f"/dashboard/{slug}/wiki/upload?page_id={page_id}",
+            files={"file": ("obraz.png", _PNG, "image/png")},
+        )
+
+        assert resp.status_code == 500
+        assert "error" in resp.json()
+        stored = (await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page_id))).scalars().all()
+        assert stored == []
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    @patch("monolynx.dashboard.wiki.upload_attachment", return_value="m264-upl-legacy/attachments/abc123.png")
+    async def test_upload_without_page_id_keeps_legacy_behaviour(self, mock_legacy, mock_page_upload, client, db_session):
+        project = await _create_project(db_session, "m264-upl-legacy")
+        user = await _login_and_add_member(client, db_session, project, "m264-upl-legacy@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Upload Bez Page Id")
+        slug, page_id = project.slug, page.id
+
+        resp = await client.post(
+            f"/dashboard/{slug}/wiki/upload",
+            files={"file": ("obraz.png", _PNG, "image/png")},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"data": {"filePath": f"/dashboard/{slug}/wiki/attachments/abc123.png"}}
+        mock_legacy.assert_called_once()
+        mock_page_upload.assert_not_called()
+        stored = (await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page_id))).scalars().all()
+        assert stored == []
+
+
+@pytest.mark.integration
+class TestWikiEditorImageReachesAnonymousReader:
+    """Kryteria 5 i 6: obrazek wgrany w dashboardzie jest widoczny anonimowo po publikacji; cudzy zalacznik nie jest przepisywany."""
+
+    @patch("monolynx.blog.minio_get_attachment", return_value=(_PNG, "image/png"))
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m264-e2e/fake.md")
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_image_uploaded_to_draft_is_served_to_anonymous_reader_after_publish(
+        self, mock_upload, mock_wiki_upload, mock_embeddings, mock_get_att, client, db_session
+    ):
+        project = await _create_project(db_session, "m264-e2e")
+        user = await _login_and_add_member(client, db_session, project, "m264-e2e@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Z Obrazkiem E2E", is_public=False)
+        slug, page_id = project.slug, page.id
+
+        upload = await client.post(
+            f"/dashboard/{slug}/wiki/upload?page_id={page_id}",
+            files={"file": ("zdjecie.png", _PNG, "image/png")},
+        )
+        assert upload.status_code == 200
+        editor_address = upload.json()["data"]["filePath"]
+        attachment = (await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page_id))).scalar_one()
+        attachment_id = attachment.id
+
+        content = f"# Wpis z obrazkiem\n\n![Zdjecie testowe]({editor_address})\n"
+        publish = await client.post(
+            f"/dashboard/{slug}/wiki/pages/{page_id}/edit",
+            data=_default_blog_form(page, content=content, is_public="on"),
+            follow_redirects=False,
+        )
+        assert publish.status_code == 303
+        post = await _blog_post_of(db_session, page_id)
+        assert post is not None
+        post_slug = post.slug
+
+        public_address = f"/blog/{post_slug}/attachments/{attachment_id}/zdjecie.png"
+        with patch("monolynx.services.wiki.get_markdown", return_value=content):
+            async with _anonymous_client() as anonymous:
+                page_resp = await anonymous.get(f"/blog/{post_slug}")
+                image_resp = await anonymous.get(public_address)
+
+        assert page_resp.status_code == 200
+        assert public_address in page_resp.text
+        assert f"/dashboard/{slug}/wiki/pages/{page_id}/attachments/" not in page_resp.text
+        assert image_resp.status_code == 200
+        assert image_resp.content == _PNG
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_attachment_of_another_page_in_content_is_not_rewritten_on_the_public_page(self, mock_get_md, client, db_session):
+        project = await _create_project(db_session, "m264-cross")
+        user = await _login_and_add_member(client, db_session, project, "m264-cross@test.com")
+        published = await _create_wiki_page(db_session, project, user, title="Wpis Z Cudzym Obrazkiem", is_public=True)
+        post = await _add_blog_post(db_session, published, slug="wpis-cudzy-obrazek-m264")
+        other = await _create_wiki_page(db_session, project, user, title="Strona Z Prywatnym Obrazkiem", is_public=False)
+        foreign = await _add_attachment(db_session, other, filename="prywatny.png")
+        own = await _add_attachment(db_session, published, filename="wlasny.png")
+        foreign_address = f"/dashboard/{project.slug}/wiki/pages/{other.id}/attachments/{foreign.id}/prywatny.png"
+        own_address = f"/dashboard/{project.slug}/wiki/pages/{published.id}/attachments/{own.id}/wlasny.png"
+        mock_get_md.return_value = f"# Wpis\n\n![Cudzy]({foreign_address})\n\n![Wlasny]({own_address})\n"
+
+        async with _anonymous_client() as anonymous:
+            resp = await anonymous.get(f"/blog/{post.slug}")
+
+        assert resp.status_code == 200
+        assert foreign_address in resp.text
+        assert f"/blog/{post.slug}/attachments/{foreign.id}" not in resp.text
+        assert f"/blog/{post.slug}/attachments/{own.id}/wlasny.png" in resp.text
+        assert own_address not in resp.text

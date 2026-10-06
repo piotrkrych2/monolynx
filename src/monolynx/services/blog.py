@@ -11,6 +11,9 @@ publicznych wersji językowych wpisu (`list_public_translations`) dla warstwy AI
 MON-260: dane szablonów dla ludzi - spis treści z kotwic silnika bloków (`TocEntry`, `extract_toc`),
 czas czytania (`reading_time_minutes`), powiązane wpisy (`list_related_posts`) i adresy okładek
 (`get_cover_urls`). Funkcje tylko czytają: nie zapisują i nie commitują.
+
+MON-264: `rewrite_attachment_urls` przepisuje adresy dashboardowe załączników strony na publiczne
+(czysta funkcja, wołana przy renderze publicznym).
 """
 
 from __future__ import annotations
@@ -458,6 +461,20 @@ def dump_jsonld(data: dict[str, Any]) -> str:
     w starszych parserach) -> escape; wynik nadal parsuje się `json.loads` do tych samych danych.
     """
     return json.dumps(data, ensure_ascii=False).replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
+def rewrite_attachment_urls(markdown_text: str, *, page_id: uuid.UUID, post_slug: str) -> str:
+    """Adresy dashboardowe załączników TEJ strony -> adresy publiczne wpisu (`/blog/<slug>/attachments/...`).
+
+    Edytor wstawia adres dashboardowy, dopóki strona nie jest publiczna (slug wpisu może się jeszcze
+    zmienić). Przepisanie dotyczy tylko `page_id` z argumentu: załącznik innej strony wskazany w treści
+    nie może wyciec na publiczny adres tego wpisu. Legacy `/dashboard/<slug>/wiki/attachments/<plik>` zostaje.
+    Funkcja czysta, bez DB.
+    """
+    pattern = re.compile(
+        rf"/dashboard/[^/\s()<>\"']+/wiki/pages/{re.escape(str(page_id))}/attachments/([0-9A-Fa-f]{{8}}-[0-9A-Fa-f-]{{27}})/([^\s()<>\"']+)"
+    )
+    return pattern.sub(lambda match: f"/blog/{post_slug}/attachments/{match.group(1)}/{match.group(2)}", markdown_text)
 
 
 def _validate_description(value: Any) -> str:

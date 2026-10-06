@@ -838,6 +838,30 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "Ten sam wynik daje narzędzie MCP lint_blog_post, REST API i komenda monolynx blog lint."
                     ),
                 },
+                {
+                    "title": "Metadane wpisu w formularzu wiki",
+                    "desc": (
+                        "Sekcja „Wpis na blogu” w formularzu edycji strony ustawia adres (slug), opis z licznikiem znaków, autora, tagi, język, "
+                        "powiązanie z tłumaczeniem, okładkę wybraną z załączników strony i datę weryfikacji. "
+                        "Błąd walidacji pokazuje komunikat i zachowuje wpisane wartości, a zwykła strona wiki z pustą sekcją nie staje się wpisem."
+                    ),
+                },
+                {
+                    "title": "Podgląd szkicu przed publikacją",
+                    "desc": (
+                        "Przycisk „Podgląd wpisu” na stronie wiki otwiera szkic w wyglądzie publicznego bloga, z blokami, spisem treści "
+                        "i czasem czytania, zanim zaznaczysz „strona publiczna”. Podgląd widzi tylko zalogowany użytkownik z prawem odczytu wiki, "
+                        "a jego adres ma nagłówek noindex i nie trafia do mapy strony, feedów ani /llms.txt."
+                    ),
+                },
+                {
+                    "title": "Wstawianie bloków i obrazków w edytorze",
+                    "desc": (
+                        "Menu „Wstaw blok” w pasku edytora wstawia w miejscu kursora gotowy szablon składni każdego bloku wpisu, "
+                        "a lista bloków pochodzi z rejestru na serwerze. "
+                        "Obrazek wgrany w edytorze zostaje załącznikiem strony i po publikacji wyświetla się czytelnikowi bez logowania."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -995,6 +1019,30 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "image alt text, the content of graphic blocks, heading order, descriptive link texts, the verified date and the translation. "
                     "The result is a list of problems with a line number and a level (error, warning, info) and a score from 0 to 100. "
                     "The lint_blog_post MCP tool, the REST API and the monolynx blog lint command return the same result."
+                ),
+            },
+            {
+                "title": "Post metadata on the wiki form",
+                "desc": (
+                    'A "Blog post" section on the page edit form sets the address (slug), a description with a character counter, the author, tags, '
+                    "language, the link to a translation, a cover picked from the page attachments and the verified date. "
+                    "A validation error shows a message and keeps the values you typed, and a regular wiki page with an empty section does not become a post."
+                ),
+            },
+            {
+                "title": "Draft preview before publishing",
+                "desc": (
+                    'A "Post preview" button on the wiki page opens the draft in the look of the public blog, with blocks, the table of contents '
+                    'and reading time, before you tick "public page". Only a signed-in user with wiki read permission sees the preview, '
+                    "and its address carries a noindex header and never appears in the sitemap, the feeds or /llms.txt."
+                ),
+            },
+            {
+                "title": "Inserting blocks and images in the editor",
+                "desc": (
+                    'An "Insert block" menu in the editor toolbar inserts a ready syntax template of every post block at the cursor, '
+                    "and the list of blocks comes from the registry on the server. "
+                    "An image uploaded in the editor becomes a page attachment and, once the post is published, shows to a reader without login."
                 ),
             },
         ],

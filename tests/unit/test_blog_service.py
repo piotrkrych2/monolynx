@@ -1600,3 +1600,91 @@ class TestReadingTimeMinutes:
         text = "słowo  " * 201
 
         assert svc.reading_time_minutes(text) == 2
+
+
+class TestRewriteAttachmentUrls:
+    """Adresy dashboardowe załączników TEJ strony -> adresy publiczne; nic poza tym."""
+
+    def _dashboard(self, project_slug: str, page_id: uuid.UUID, attachment_id: uuid.UUID, filename: str) -> str:
+        return f"/dashboard/{project_slug}/wiki/pages/{page_id}/attachments/{attachment_id}/{filename}"
+
+    def test_attachment_of_this_page_is_rewritten_to_the_public_address(self):
+        page_id, attachment_id = uuid.uuid4(), uuid.uuid4()
+        text = f"![Zdjęcie]({self._dashboard('moj-projekt', page_id, attachment_id, 'obraz.png')})"
+
+        result = svc.rewrite_attachment_urls(text, page_id=page_id, post_slug="moj-wpis")
+
+        assert result == f"![Zdjęcie](/blog/moj-wpis/attachments/{attachment_id}/obraz.png)"
+
+    def test_attachment_of_another_page_is_left_untouched(self):
+        page_id, other_page_id, attachment_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        text = f"![Cudze]({self._dashboard('moj-projekt', other_page_id, attachment_id, 'cudze.png')})"
+
+        result = svc.rewrite_attachment_urls(text, page_id=page_id, post_slug="moj-wpis")
+
+        assert result == text
+
+    def test_legacy_wiki_attachment_address_is_left_untouched(self):
+        page_id = uuid.uuid4()
+        text = "![Stare](/dashboard/moj-projekt/wiki/attachments/stary-plik.png)"
+
+        result = svc.rewrite_attachment_urls(text, page_id=page_id, post_slug="moj-wpis")
+
+        assert result == text
+
+    def test_only_own_addresses_are_rewritten_when_content_mixes_several(self):
+        page_id, other_page_id = uuid.uuid4(), uuid.uuid4()
+        own_first, own_second, foreign = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        text = (
+            f"Pierwszy ![a]({self._dashboard('p', page_id, own_first, 'a.png')})\n\n"
+            f"Cudzy ![b]({self._dashboard('p', other_page_id, foreign, 'b.png')})\n\n"
+            f"Drugi [plik]({self._dashboard('p', page_id, own_second, 'c.pdf')}) koniec\n\n"
+            "Stary ![d](/dashboard/p/wiki/attachments/d.png)"
+        )
+
+        result = svc.rewrite_attachment_urls(text, page_id=page_id, post_slug="wpis")
+
+        assert result == (
+            f"Pierwszy ![a](/blog/wpis/attachments/{own_first}/a.png)\n\n"
+            f"Cudzy ![b]({self._dashboard('p', other_page_id, foreign, 'b.png')})\n\n"
+            f"Drugi [plik](/blog/wpis/attachments/{own_second}/c.pdf) koniec\n\n"
+            "Stary ![d](/dashboard/p/wiki/attachments/d.png)"
+        )
+
+    def test_project_slug_in_the_address_does_not_matter_when_page_id_matches(self):
+        page_id, first, second = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        text = f"![a]({self._dashboard('projekt-jeden', page_id, first, 'a.png')}) ![b]({self._dashboard('inny-slug-9', page_id, second, 'b.png')})"
+
+        result = svc.rewrite_attachment_urls(text, page_id=page_id, post_slug="wpis")
+
+        assert result == f"![a](/blog/wpis/attachments/{first}/a.png) ![b](/blog/wpis/attachments/{second}/b.png)"
+
+    def test_url_quoted_filename_is_kept_as_is(self):
+        page_id, attachment_id = uuid.uuid4(), uuid.uuid4()
+        text = f"![x]({self._dashboard('p', page_id, attachment_id, 'moje%20zdj%C4%99cie.png')})"
+
+        result = svc.rewrite_attachment_urls(text, page_id=page_id, post_slug="wpis")
+
+        assert result == f"![x](/blog/wpis/attachments/{attachment_id}/moje%20zdj%C4%99cie.png)"
+
+    def test_content_without_addresses_is_returned_unchanged(self):
+        text = "# Tytuł\n\nZwykły tekst z [linkiem](https://example.com/dashboard/x/wiki/pages)."
+
+        assert svc.rewrite_attachment_urls(text, page_id=uuid.uuid4(), post_slug="wpis") == text
+
+    def test_empty_content_stays_empty(self):
+        assert svc.rewrite_attachment_urls("", page_id=uuid.uuid4(), post_slug="wpis") == ""
+
+    def test_rewritten_address_is_served_by_the_public_route_shape(self):
+        # Adres po przepisaniu ma kształt trasy publicznej /blog/<slug>/attachments/<id>/<plik>, bez śladu dashboardu.
+        page_id, attachment_id = uuid.uuid4(), uuid.uuid4()
+
+        result = svc.rewrite_attachment_urls(
+            self._dashboard("p", page_id, attachment_id, "a.png"),
+            page_id=page_id,
+            post_slug="wpis",
+        )
+
+        assert result.startswith("/blog/wpis/attachments/")
+        assert "/dashboard/" not in result
+        assert str(page_id) not in result
