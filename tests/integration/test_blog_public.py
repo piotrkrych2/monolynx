@@ -1,4 +1,8 @@
-"""Testy integracyjne publicznego bloga -- GET /blog/, GET /blog/{slug} (MON-201, MON-202, MON-203, MON-254).
+"""Testy integracyjne publicznego bloga -- GET /blog/, GET /blog/{slug} (MON-201, MON-202, MON-203, MON-254, MON-260).
+
+MON-260 (szablon wpisu i listy dla ludzi): spis treści, meta wpisu, tagi, okładka, powiązane,
+tłumaczenia z `hreflang`, filtry `?tag=` / `?lang=` z paginacją, `ETag` / `304`, język interfejsu.
+Asercje HTML celują w klasy-haki (`blog-toc`, `blog-related`, ...), nie w klasy Tailwind.
 
 WAZNE: endpointy /blog/* dzialaja BEZ sesji i BEZ project_slug w URL. Testy tras nie
 uzywaja login_session -- goly `client` bez logowania potwierdza dostep anonimowy. Wyjatek:
@@ -10,15 +14,18 @@ MON-254: adres wpisu to stabilny `BlogPost.slug` (nie slug strony wiki), lista s
 tworzy wiec dla stron publicznych tez BlogPost.
 """
 
+import html
+import re
 import secrets
 import uuid
 from contextlib import asynccontextmanager, contextmanager
-from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlsplit
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from monolynx import mcp_server
@@ -1070,7 +1077,8 @@ class TestBlogIndexOrderAndSummary:
         assert "2025-06-15" in resp.text
 
     @patch("monolynx.services.wiki.get_markdown", return_value="Tresc zastepcza MON254-FALLBACK.")
-    async def test_summary_comes_from_description_and_minio_is_not_read(self, mock_get_markdown, client, db_session):
+    async def test_summary_comes_from_description_not_from_content(self, mock_get_markdown, client, db_session):
+        """Zajawka to `description`; treść jest czytana tylko do czasu czytania i nie trafia do zajawki (MON-260)."""
         project = await _create_project(db_session, "blog-desc")
         user = await _create_user(db_session, "blog-desc@test.com")
         await _create_wiki_page(db_session, project, user, "Wpis Z Opisem MON254", is_public=True, description="Opis z metadanych MON254-DESC.")
@@ -1079,7 +1087,6 @@ class TestBlogIndexOrderAndSummary:
 
         assert "Opis z metadanych MON254-DESC." in resp.text
         assert "MON254-FALLBACK" not in resp.text
-        mock_get_markdown.assert_not_called()
 
     @patch("monolynx.services.wiki.get_markdown", return_value="# Naglowek\n\nZajawka z tresci MON254-FALLBACK.")
     async def test_empty_description_falls_back_to_content_summary(self, mock_get_markdown, client, db_session):
@@ -1594,3 +1601,803 @@ class TestBlogPostBlocks:
         # Pozytyw obok negatywu: blok details nadal sie renderuje, a tresc zostaje.
         assert 'class="blog-details"' in resp.text
         assert "Treść MON256 ukryta." in resp.text
+
+
+# ---------------------------------------------------------------------------
+# MON-260: szablon wpisu i listy dla ludzi
+# ---------------------------------------------------------------------------
+
+_APP = settings.APP_URL.rstrip("/")
+_TEMPLATE_PAGE = Path(__file__).resolve().parents[2] / "src" / "monolynx" / "templates" / "blog" / "page.html"
+_BASE_DAY = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+
+def _words(count):
+    return " ".join(["slowo"] * count)
+
+
+def _hrefs(text):
+    return [html.unescape(href) for href in re.findall(r'href="([^"]*)"', text)]
+
+
+def _head_link(text, rel):
+    match = re.search(rf'<link rel="{rel}" href="([^"]*)"', text)
+    return html.unescape(match.group(1)) if match else None
+
+
+def _hreflangs(text):
+    pairs = re.findall(r'<link[^>]*rel="alternate"[^>]*hreflang="([\w-]+)"[^>]*href="([^"]*)"', text)
+    return {lang: html.unescape(href) for lang, href in pairs}
+
+
+def _cards(text):
+    return text.split('<article class="blog-card')[1:]
+
+
+def _after(text, marker, size=400):
+    assert marker in text, f"brak {marker!r} w HTML"
+    return text.split(marker, 1)[1][:size]
+
+
+def _section(text, opener, closer):
+    assert opener in text, f"brak {opener!r} w HTML"
+    return text.split(opener, 1)[1].split(closer, 1)[0]
+
+
+async def _scene(db_session, tag):
+    project = await _create_project(db_session, f"blog260-{tag}")
+    user = await _create_user(db_session, f"blog260-{tag}@test.com")
+    return project, user
+
+
+async def _seed_series(db_session, project, user, count, *, prefix, tags=None, lang="pl"):
+    """`count` publicznych wpisów `<prefix> 00..`, najnowszy ma najwyższy numer; opis ustawiony (bez zajawki z MinIO)."""
+    for i in range(count):
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            f"{prefix} {i:02d}",
+            is_public=True,
+            description="Opis serii MON260.",
+            tags=tags or [],
+            lang=lang,
+            published_at=_BASE_DAY + timedelta(minutes=i),
+        )
+
+
+@pytest.mark.integration
+class TestListRelatedPosts:
+    """`list_related_posts` (kryterium 3): tylko publiczne, ten sam język, bez bieżącego; wspólne tagi, potem najnowsze; limit 3."""
+
+    async def test_order_is_common_tags_desc_then_published_at_desc_limited_to_three(self, db_session):
+        project, user = await _scene(db_session, "rel-order")
+        day = timedelta(days=1)
+        current = await _create_wiki_page(
+            db_session, project, user, "Biezacy Rel Order MON260", is_public=True, tags=["a", "b", "c"], published_at=_BASE_DAY + 30 * day
+        )
+        # Kolejność wstawiania celowo inna niż oczekiwana: Y (3 wspólne) i Z (2) na końcu, W starszy od X przy równych tagach.
+        weak_old = await _create_wiki_page(
+            db_session, project, user, "Slaby Stary Rel MON260", is_public=True, tags=["a"], published_at=_BASE_DAY + 10 * day
+        )
+        weak_new = await _create_wiki_page(
+            db_session, project, user, "Slaby Nowy Rel MON260", is_public=True, tags=["a"], published_at=_BASE_DAY + 20 * day
+        )
+        two = await _create_wiki_page(
+            db_session, project, user, "Dwa Tagi Rel MON260", is_public=True, tags=["a", "b"], published_at=_BASE_DAY + 5 * day
+        )
+        three = await _create_wiki_page(
+            db_session, project, user, "Trzy Tagi Rel MON260", is_public=True, tags=["a", "b", "c"], published_at=_BASE_DAY + 1 * day
+        )
+        # Przynęty z IDENTYCZNYMI tagami i najnowszą datą: wpis prywatny oraz wpis w innym języku.
+        await _create_wiki_page(
+            db_session, project, user, "Prywatny Rel MON260", is_public=False, with_post=True, tags=["a", "b", "c"], published_at=_BASE_DAY + 25 * day
+        )
+        await _create_wiki_page(
+            db_session, project, user, "Angielski Rel MON260", is_public=True, lang="en", tags=["a", "b", "c"], published_at=_BASE_DAY + 26 * day
+        )
+        post = await _blog_post_of(db_session, current.id)
+
+        result = await blog_service.list_related_posts(db_session, post)
+
+        assert [item.post.slug for item in result] == [three.slug, two.slug, weak_new.slug]
+        assert weak_old.slug not in [item.post.slug for item in result]
+
+    async def test_limit_argument_is_respected(self, db_session):
+        project, user = await _scene(db_session, "rel-limit")
+        current = await _create_wiki_page(db_session, project, user, "Biezacy Rel Limit MON260", is_public=True, tags=["a"])
+        for i in range(3):
+            await _create_wiki_page(
+                db_session, project, user, f"Kandydat Rel Limit {i} MON260", is_public=True, tags=["a"], published_at=_BASE_DAY + timedelta(days=i)
+            )
+        post = await _blog_post_of(db_session, current.id)
+
+        result = await blog_service.list_related_posts(db_session, post, limit=1)
+
+        assert [item.post.slug for item in result] == ["kandydat-rel-limit-2-mon260"]
+
+    async def test_without_common_tags_falls_back_to_newest_same_language_posts(self, db_session):
+        project, user = await _scene(db_session, "rel-fallback")
+        current = await _create_wiki_page(db_session, project, user, "Biezacy Rel Fallback MON260", is_public=True, tags=["solo"])
+        older = await _create_wiki_page(
+            db_session, project, user, "Starszy Rel Fallback MON260", is_public=True, tags=["inne"], published_at=_BASE_DAY + timedelta(days=1)
+        )
+        newer = await _create_wiki_page(
+            db_session, project, user, "Nowszy Rel Fallback MON260", is_public=True, tags=["inne"], published_at=_BASE_DAY + timedelta(days=2)
+        )
+        await _create_wiki_page(db_session, project, user, "Angielski Rel Fallback MON260", is_public=True, lang="en", tags=["solo"])
+        post = await _blog_post_of(db_session, current.id)
+
+        result = await blog_service.list_related_posts(db_session, post)
+
+        assert [item.post.slug for item in result] == [newer.slug, older.slug]
+
+    async def test_tagged_match_comes_first_then_filler_without_duplicate(self, db_session):
+        """Jeden wpis ze wspólnym tagiem + dwa bez: dokładna lista to tagowany, potem dopełnienie od najnowszego, bez powtórki tagowanego."""
+        project, user = await _scene(db_session, "rel-mixed")
+        day = timedelta(days=1)
+        current = await _create_wiki_page(db_session, project, user, "Biezacy Rel Mixed MON260", is_public=True, tags=["solo"])
+        # Tagowany jest NAJNOWSZY, więc dopełnienie bez filtra "już wybrane" wzięłoby go drugi raz.
+        await _create_wiki_page(
+            db_session, project, user, "Bez Tagu Trzeci Rel Mixed MON260", is_public=True, tags=["inne"], published_at=_BASE_DAY + 3 * day
+        )
+        tagged = await _create_wiki_page(
+            db_session, project, user, "Tagowany Rel Mixed MON260", is_public=True, tags=["solo"], published_at=_BASE_DAY + 9 * day
+        )
+        fill_new = await _create_wiki_page(
+            db_session, project, user, "Bez Tagu Piaty Rel Mixed MON260", is_public=True, tags=["inne"], published_at=_BASE_DAY + 5 * day
+        )
+        fill_mid = await _create_wiki_page(
+            db_session, project, user, "Bez Tagu Czwarty Rel Mixed MON260", is_public=True, tags=["inne"], published_at=_BASE_DAY + 4 * day
+        )
+        post = await _blog_post_of(db_session, current.id)
+
+        result = await blog_service.list_related_posts(db_session, post)
+
+        assert [item.post.slug for item in result] == [tagged.slug, fill_new.slug, fill_mid.slug]
+
+    async def test_post_without_own_tags_gets_newest_posts_of_its_language(self, db_session):
+        project, user = await _scene(db_session, "rel-notags")
+        day = timedelta(days=1)
+        current = await _create_wiki_page(db_session, project, user, "Biezacy Rel Notags MON260", is_public=True, tags=[])
+        pages = [
+            await _create_wiki_page(
+                db_session, project, user, f"Kandydat Rel Notags {i} MON260", is_public=True, tags=["a"], published_at=_BASE_DAY + i * day
+            )
+            for i in range(1, 5)
+        ]
+        await _create_wiki_page(db_session, project, user, "Angielski Rel Notags MON260", is_public=True, lang="en", published_at=_BASE_DAY + 9 * day)
+        post = await _blog_post_of(db_session, current.id)
+
+        result = await blog_service.list_related_posts(db_session, post)
+
+        assert [item.post.slug for item in result] == [pages[3].slug, pages[2].slug, pages[1].slug]
+
+    async def test_current_post_is_never_related_to_itself(self, db_session):
+        project, user = await _scene(db_session, "rel-self")
+        current = await _create_wiki_page(db_session, project, user, "Jedyny Rel Self MON260", is_public=True, tags=["a"])
+        post = await _blog_post_of(db_session, current.id)
+
+        assert await blog_service.list_related_posts(db_session, post) == []
+
+
+@pytest.mark.integration
+class TestGetCoverUrls:
+    """`get_cover_urls`: okładka należąca do strony wpisu daje adres załącznika; cudza okładka i brak okładki nie dają klucza."""
+
+    async def test_own_cover_gets_url_foreign_cover_and_missing_cover_are_skipped(self, db_session):
+        project, user = await _scene(db_session, "cover-map")
+        page_own = await _create_wiki_page(db_session, project, user, "Okladka Wlasna MON260", is_public=True)
+        page_foreign = await _create_wiki_page(db_session, project, user, "Okladka Cudza MON260", is_public=True)
+        page_none = await _create_wiki_page(db_session, project, user, "Okladka Brak MON260", is_public=True)
+        page_other = await _create_wiki_page(db_session, project, user, "Strona Zalacznika MON260", is_public=True)
+        att_own = await _create_attachment(db_session, page_own, filename="moja okladka.png", mime_type="image/png")
+        att_other = await _create_attachment(db_session, page_other, filename="obca.png", mime_type="image/png")
+        post_own = await _blog_post_of(db_session, page_own.id)
+        post_foreign = await _blog_post_of(db_session, page_foreign.id)
+        post_none = await _blog_post_of(db_session, page_none.id)
+        post_own.cover_attachment_id = att_own.id
+        post_foreign.cover_attachment_id = att_other.id
+        await db_session.flush()
+
+        result = await blog_service.get_cover_urls(db_session, [post_own, post_foreign, post_none])
+
+        assert result == {page_own.id: f"/blog/{post_own.slug}/attachments/{att_own.id}/moja%20okladka.png"}
+
+    async def test_empty_input_gives_empty_mapping(self, db_session):
+        assert await blog_service.get_cover_urls(db_session, []) == {}
+
+    async def test_resolves_all_covers_with_a_single_query(self, db_session, engine):
+        project, user = await _scene(db_session, "cover-one-query")
+        posts = []
+        for i in range(3):
+            page = await _create_wiki_page(db_session, project, user, f"Okladka Zapytanie {i} MON260", is_public=True)
+            att = await _create_attachment(db_session, page, filename=f"o{i}.png", mime_type="image/png")
+            post = await _blog_post_of(db_session, page.id)
+            post.cover_attachment_id = att.id
+            posts.append(post)
+        await db_session.flush()
+        statements = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine.sync_engine, "before_cursor_execute", record)
+        try:
+            result = await blog_service.get_cover_urls(db_session, posts)
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", record)
+
+        assert len(result) == 3
+        assert len(statements) == 1
+
+
+@pytest.mark.integration
+class TestBlogPageHeader:
+    """Kryterium 1: autor, data publikacji, czas czytania, tagi, okładka i "zweryfikowano" są na stronie wpisu, gdy ustawione;
+    gdy ich brak, nie ma pustych elementów."""
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_header_shows_author_dates_reading_time_tags_and_cover_when_set(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _words(450)
+        project, user = await _scene(db_session, "hdr-full")
+        page = await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Naglowek Pelny MON260",
+            is_public=True,
+            author_name="Anna Autorska MON260",
+            tags=["python", "fastapi"],
+            published_at=datetime(2026, 1, 12, 8, 0, tzinfo=UTC),
+            last_verified_at=date(2026, 2, 3),
+        )
+        att = await _create_attachment(db_session, page, filename="okladka.png", mime_type="image/png")
+        post = await _blog_post_of(db_session, page.id)
+        post.cover_attachment_id = att.id
+        await db_session.flush()
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        text = resp.text
+        assert resp.status_code == 200
+        assert "Anna Autorska MON260" in _after(text, 'class="blog-author')
+        assert "3 min czytania" in _after(text, 'class="blog-reading-time')
+        assert re.search(r'<time class="blog-published[^"]*"\s+datetime="2026-01-12', text)
+        assert "2026-02-03" in _after(text, 'class="blog-verified')
+        for tag in ("python", "fastapi"):
+            assert re.search(rf'<a class="blog-tag(?:\s[^"]*)?"[^>]*href="/blog/\?tag={tag}', text)
+        assert re.search(rf'<img class="blog-cover[^>]*src="[^"]*/blog/{page.slug}/attachments/{att.id}/okladka\.png', text)
+        assert re.search(rf'<a class="blog-md-link[^>]*href="[^"]*/blog/{page.slug}\.md"', text)
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_header_omits_empty_elements_when_data_is_missing(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Krotka tresc bez naglowkow."
+        project, user = await _scene(db_session, "hdr-empty")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Naglowek Pusty MON260", is_public=True, author_name="", tags=[])
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        text = resp.text
+        assert resp.status_code == 200
+        assert 'class="blog-reading-time' in text
+        for hook in ('class="blog-author', 'class="blog-tags', 'class="blog-tag"', '<img class="blog-cover', 'class="blog-verified'):
+            assert hook not in text
+        for hook in ('class="blog-toc', '<section class="blog-related', 'class="blog-translations', "hreflang="):
+            assert hook not in text
+
+
+@pytest.mark.integration
+class TestBlogPageToc:
+    """Kryterium 2: spis treści ma wszystkie H2 i H3, każdy link prowadzi do istniejącego `id`; poniżej 3 nagłówków go nie ma."""
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_toc_lists_h2_and_h3_and_every_link_targets_an_existing_id(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = (
+            "## Alfa Sekcja\n\ntekst\n\n### Beta Sekcja\n\ntekst\n\n## Alfa Sekcja\n\ntekst\n\n#### Delta Sekcja\n\ntekst"
+        )
+        project, user = await _scene(db_session, "toc-full")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Spis Pelny MON260", is_public=True)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        text = resp.text
+        assert resp.status_code == 200
+        toc = _section(text, '<nav class="blog-toc', "</nav>")
+        targets = re.findall(r'<a href="#([^"]+)"', toc)
+        assert targets == ["alfa-sekcja", "beta-sekcja", "alfa-sekcja-2"]
+        for target in targets:
+            assert f'id="{target}"' in text
+
+    @pytest.mark.parametrize(
+        "markdown",
+        [
+            "## Alfa Sekcja\n\ntekst\n\n### Beta Sekcja\n\ntekst",
+            "## Alfa Sekcja\n\ntekst\n\n### Beta Sekcja\n\ntekst\n\n#### Gamma Sekcja\n\ntekst",
+        ],
+        ids=["two-headings", "h4-does-not-count"],
+    )
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_post_with_fewer_than_three_h2_h3_headings_has_no_toc(self, mock_get_markdown, markdown, client, db_session):
+        mock_get_markdown.return_value = markdown
+        project, user = await _scene(db_session, f"toc-short-{len(markdown)}")
+        page = await _create_wiki_page(db_session, project, user, f"Wpis Spis Krotki {len(markdown)} MON260", is_public=True)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert 'class="blog-toc' not in resp.text
+
+
+@pytest.mark.integration
+class TestBlogPageRelated:
+    """Kryterium 3 na stronie: powiązane to publiczne wpisy w tym samym języku, bez bieżącego."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_related_section_lists_only_public_same_language_posts_without_current(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "page-related")
+        current = await _create_wiki_page(db_session, project, user, "Biezacy Powiazane MON260", is_public=True, tags=["t1"])
+        await _create_wiki_page(db_session, project, user, "Publiczny Tagowany Powiazane MON260", is_public=True, tags=["t1"])
+        await _create_wiki_page(db_session, project, user, "Publiczny Bez Tagu Powiazane MON260", is_public=True)
+        await _create_wiki_page(db_session, project, user, "Prywatny Powiazane MON260", is_public=False, with_post=True, tags=["t1"])
+        await _create_wiki_page(db_session, project, user, "Angielski Powiazane MON260", is_public=True, lang="en", tags=["t1"])
+
+        resp = await client.get(f"/blog/{current.slug}")
+
+        text = resp.text
+        assert resp.status_code == 200
+        related = _section(text, '<section class="blog-related', "</section>")
+        assert "Publiczny Tagowany Powiazane MON260" in related
+        assert "Publiczny Bez Tagu Powiazane MON260" in related
+        assert "Biezacy Powiazane MON260" not in related
+        assert f'href="/blog/{current.slug}"' not in related
+        assert "Prywatny Powiazane MON260" not in text
+        assert "Angielski Powiazane MON260" not in text
+
+
+@pytest.mark.integration
+class TestBlogPageTranslations:
+    """Kryterium 5: wpis z publicznym tłumaczeniem ma `hreflang` obu języków i przełącznik; bez tłumaczenia (albo z prywatnym) - żadnego."""
+
+    async def _pair(self, db_session, tag, *, translation_public=True):
+        project, user = await _scene(db_session, tag)
+        root = await _create_wiki_page(db_session, project, user, f"Wpis Polski Tlumaczenie {tag} MON260", is_public=True, lang="pl")
+        english = await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            f"Post English Translation {tag} MON260",
+            is_public=translation_public,
+            with_post=True,
+            lang="en",
+            translation_of_id=root.id,
+        )
+        return root, english
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_original_has_hreflang_for_both_languages_and_switcher_to_translation(self, mock_get_markdown, client, db_session):
+        root, english = await self._pair(db_session, "hl-root")
+
+        resp = await client.get(f"/blog/{root.slug}")
+
+        text = resp.text
+        assert resp.status_code == 200
+        assert _hreflangs(text) == {"pl": f"{_APP}/blog/{root.slug}", "en": f"{_APP}/blog/{english.slug}"}
+        assert f"/blog/{english.slug}" in _after(text, 'class="blog-translations', 800)
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_translation_has_the_same_hreflang_set_and_switcher_back_to_original(self, mock_get_markdown, client, db_session):
+        root, english = await self._pair(db_session, "hl-en")
+
+        resp = await client.get(f"/blog/{english.slug}")
+
+        text = resp.text
+        assert resp.status_code == 200
+        assert _hreflangs(text) == {"pl": f"{_APP}/blog/{root.slug}", "en": f"{_APP}/blog/{english.slug}"}
+        assert f"/blog/{root.slug}" in _after(text, 'class="blog-translations', 800)
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_post_without_translation_has_no_hreflang_and_no_switcher(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "hl-none")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Bez Tlumaczenia MON260", is_public=True)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "hreflang=" not in resp.text
+        assert 'class="blog-translations' not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_private_translation_gives_no_hreflang_and_does_not_leak(self, mock_get_markdown, client, db_session):
+        root, english = await self._pair(db_session, "hl-private", translation_public=False)
+
+        resp = await client.get(f"/blog/{root.slug}")
+
+        assert resp.status_code == 200
+        assert "hreflang=" not in resp.text
+        assert 'class="blog-translations' not in resp.text
+        assert english.slug not in resp.text
+
+
+@pytest.mark.integration
+class TestBlogIndexFilters:
+    """Kryteria 4 i 6: filtr tagu i języka listy, paginacja zachowująca filtry, canonical/prev/next, zły tag bez 500."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_tag_filter_narrows_the_list(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "flt-tag")
+        await _create_wiki_page(db_session, project, user, "Z Tagiem X Filtr MON260", is_public=True, tags=["x"])
+        await _create_wiki_page(db_session, project, user, "Z Tagiem Y Filtr MON260", is_public=True, tags=["y"])
+        await _create_wiki_page(db_session, project, user, "Bez Tagu Filtr MON260", is_public=True)
+
+        resp = await client.get("/blog/", params={"tag": "x"})
+
+        assert resp.status_code == 200
+        assert "Z Tagiem X Filtr MON260" in resp.text
+        assert "Z Tagiem Y Filtr MON260" not in resp.text
+        assert "Bez Tagu Filtr MON260" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_empty_tag_param_means_no_filter(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "flt-tag-empty")
+        await _create_wiki_page(db_session, project, user, "Bez Tagu Pusty Filtr MON260", is_public=True)
+
+        resp = await client.get("/blog/", params={"tag": ""})
+
+        assert resp.status_code == 200
+        assert "Bez Tagu Pusty Filtr MON260" in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_lang_filter_shows_only_posts_in_that_language(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "flt-lang")
+        await _create_wiki_page(db_session, project, user, "Wpis Polski Jezyk MON260", is_public=True, lang="pl")
+        await _create_wiki_page(db_session, project, user, "Post English Language MON260", is_public=True, lang="en")
+
+        en_resp = await client.get("/blog/", params={"lang": "en"})
+        pl_resp = await client.get("/blog/", params={"lang": "pl"})
+
+        assert "Post English Language MON260" in en_resp.text
+        assert "Wpis Polski Jezyk MON260" not in en_resp.text
+        assert "Wpis Polski Jezyk MON260" in pl_resp.text
+        assert "Post English Language MON260" not in pl_resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_lang_param_outside_set_means_no_filter_and_english_interface(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "flt-lang-bad")
+        await _create_wiki_page(db_session, project, user, "Wpis Polski Zly Jezyk MON260", is_public=True, lang="pl")
+        await _create_wiki_page(db_session, project, user, "Post English Bad Language MON260", is_public=True, lang="en")
+
+        resp = await client.get("/blog/", params={"lang": "de"})
+
+        assert resp.status_code == 200
+        assert "Wpis Polski Zly Jezyk MON260" in resp.text
+        assert "Post English Bad Language MON260" in resp.text
+        assert '<html lang="en"' in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_valid_lang_param_sets_interface_language(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "flt-lang-ui")
+        await _create_wiki_page(db_session, project, user, "Wpis Polski Interfejs MON260", is_public=True, lang="pl")
+
+        resp = await client.get("/blog/", params={"lang": "pl"})
+
+        assert '<html lang="pl"' in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_language_switch_links_keep_the_tag_filter(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "flt-switch")
+        await _create_wiki_page(db_session, project, user, "Wpis Przelacznik MON260", is_public=True, tags=["x"])
+
+        resp = await client.get("/blog/", params={"tag": "x"})
+        forced = await client.get("/blog/", params={"tag": "x", "lang": "pl"})
+
+        hrefs = _hrefs(resp.text)
+        assert "/blog/?tag=x&lang=pl" in hrefs
+        assert "/blog/?tag=x&lang=en" in hrefs
+        # Navbar (interfejs en) niesie link do PL z kontekstu; domyślny `/?lang=pl` layoutu oznaczałby brak `lang_switch_url`.
+        assert "/?lang=pl" not in hrefs
+        assert "/?lang=en" not in _hrefs(forced.text)
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_second_page_with_tag_keeps_filter_in_links_and_canonical_points_to_itself(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "pag-tag")
+        await _seed_series(db_session, project, user, 41, prefix="Seria Tagowana MON260", tags=["x"])
+        await _create_wiki_page(db_session, project, user, "Przyneta Bez Tagu MON260", is_public=True, published_at=_BASE_DAY + timedelta(days=5))
+
+        resp = await client.get("/blog/", params={"tag": "x", "page": "2"})
+
+        text = resp.text
+        assert resp.status_code == 200
+        assert _head_link(text, "canonical") == f"{_APP}/blog/?tag=x&page=2"
+        assert _head_link(text, "prev") == f"{_APP}/blog/?tag=x"
+        assert _head_link(text, "next") == f"{_APP}/blog/?tag=x&page=3"
+        hrefs = _hrefs(text)
+        assert "/blog/?tag=x&page=3" in hrefs
+        paging = [href for href in hrefs if href.startswith("/blog/?") and "page=" in href]
+        assert paging
+        assert all("tag=x" in href for href in paging)
+        assert "Seria Tagowana MON260 20" in text
+        assert "Seria Tagowana MON260 40" not in text
+        assert "Przyneta Bez Tagu MON260" not in text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_canonical_orders_query_as_tag_lang_page_regardless_of_request_order(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "pag-order")
+        await _seed_series(db_session, project, user, 21, prefix="Seria Kolejnosc MON260", tags=["x"], lang="pl")
+        await _seed_series(db_session, project, user, 1, prefix="Seria Angielska Kolejnosc MON260", tags=["x"], lang="en")
+
+        resp = await client.get("/blog/?page=2&lang=pl&tag=x")
+
+        text = resp.text
+        assert resp.status_code == 200
+        assert _head_link(text, "canonical") == f"{_APP}/blog/?tag=x&lang=pl&page=2"
+        assert _head_link(text, "prev") == f"{_APP}/blog/?tag=x&lang=pl"
+        assert "Seria Angielska Kolejnosc MON260" not in text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_first_page_without_filters_has_plain_canonical_next_but_no_prev(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "pag-first")
+        await _seed_series(db_session, project, user, 21, prefix="Seria Pierwsza MON260")
+
+        plain = await client.get("/blog/")
+        explicit = await client.get("/blog/", params={"page": "1"})
+
+        for resp in (plain, explicit):
+            assert resp.status_code == 200
+            assert _head_link(resp.text, "canonical") == f"{_APP}/blog/"
+            assert 'rel="prev"' not in resp.text
+            assert _head_link(resp.text, "next") == f"{_APP}/blog/?page=2"
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_last_page_has_prev_but_no_next(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "pag-last")
+        await _seed_series(db_session, project, user, 21, prefix="Seria Ostatnia MON260")
+
+        resp = await client.get("/blog/", params={"page": "2"})
+
+        assert resp.status_code == 200
+        assert _head_link(resp.text, "prev") == f"{_APP}/blog/"
+        assert 'rel="next"' not in resp.text
+
+    @pytest.mark.parametrize(
+        "bad_tag",
+        ["A B", "a\x00b", "a" * 51, "UPPER", "a;b", "-a"],
+        ids=["space", "nul", "too-long", "uppercase", "semicolon", "leading-hyphen"],
+    )
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_invalid_tag_gives_empty_list_with_200(self, mock_get_markdown, bad_tag, client, db_session):
+        project, user = await _scene(db_session, f"bad-tag-{len(bad_tag)}-{abs(hash(bad_tag)) % 1000}")
+        await _create_wiki_page(db_session, project, user, "Wpis Zly Tag Tagowany MON260", is_public=True, tags=["x"])
+        await _create_wiki_page(db_session, project, user, "Wpis Zly Tag Bez Tagu MON260", is_public=True)
+
+        resp = await client.get("/blog/", params={"tag": bad_tag})
+
+        assert resp.status_code == 200
+        assert "No posts published yet." in resp.text
+        assert "Wpis Zly Tag Tagowany MON260" not in resp.text
+        assert "Wpis Zly Tag Bez Tagu MON260" not in resp.text
+
+    async def test_invalid_tag_does_not_query_the_database_for_the_listing(self, client):
+        with patch("monolynx.blog.list_public_posts", new=AsyncMock()) as mock_list:
+            resp = await client.get("/blog/", params={"tag": "a\x00b"})
+
+        assert resp.status_code == 200
+        mock_list.assert_not_awaited()
+
+
+@pytest.mark.integration
+class TestBlogIndexCards:
+    """Karty listy: okładka, tagi i czas czytania; błąd storage degraduje kartę, nie listę."""
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_card_shows_cover_tags_and_reading_time_only_when_present(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = _words(250)
+        project, user = await _scene(db_session, "card-full")
+        full = await _create_wiki_page(db_session, project, user, "Karta Pelna MON260", is_public=True, description="Opis karty.", tags=["alpha-tag"])
+        await _create_wiki_page(db_session, project, user, "Karta Pusta MON260", is_public=True, description="Opis karty pustej.")
+        att = await _create_attachment(db_session, full, filename="okladka.png", mime_type="image/png")
+        (await _blog_post_of(db_session, full.id)).cover_attachment_id = att.id
+        await db_session.flush()
+
+        resp = await client.get("/blog/")
+
+        cards = _cards(resp.text)
+        assert resp.status_code == 200
+        assert len(cards) == 2
+        full_card = next(card for card in cards if "Karta Pelna MON260" in card)
+        empty_card = next(card for card in cards if "Karta Pusta MON260" in card)
+        assert '<img class="blog-card-cover' in full_card
+        assert f"/blog/{full.slug}/attachments/{att.id}/okladka.png" in full_card
+        assert re.search(r'<a class="blog-tag(?:\s[^"]*)?"[^>]*href="/blog/\?tag=alpha-tag', full_card)
+        assert "2 min read" in _after(full_card, 'class="blog-reading-time')
+        assert '<img class="blog-card-cover' not in empty_card
+        assert 'class="blog-tag' not in empty_card
+        assert "2 min read" in _after(empty_card, 'class="blog-reading-time')
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_storage_error_for_one_card_drops_only_its_reading_time(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "card-storage")
+        broken_path = f"{project.slug}/broken-{uuid.uuid4()}.md"
+
+        def fake_get_markdown(path):
+            if path == broken_path:
+                raise Exception("MinIO niedostepne")
+            return _words(250)
+
+        mock_get_markdown.side_effect = fake_get_markdown
+        await _create_wiki_page(
+            db_session, project, user, "Karta Zepsuta MON260", minio_path=broken_path, is_public=True, description="Opis zepsutej."
+        )
+        await _create_wiki_page(db_session, project, user, "Karta Sprawna MON260", is_public=True, description="Opis sprawnej.")
+
+        resp = await client.get("/blog/")
+
+        cards = _cards(resp.text)
+        assert resp.status_code == 200
+        broken_card = next(card for card in cards if "Karta Zepsuta MON260" in card)
+        healthy_card = next(card for card in cards if "Karta Sprawna MON260" in card)
+        assert 'class="blog-reading-time' not in broken_card
+        assert "Opis zepsutej." in broken_card
+        assert "2 min read" in _after(healthy_card, 'class="blog-reading-time')
+
+
+@pytest.mark.integration
+class TestBlogConditionalResponses:
+    """`ETag` / `Last-Modified` i `304` na stronie wpisu i na liście."""
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_post_returns_validators_and_304_with_vary_and_link(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Tresc cache MON260."
+        project, user = await _scene(db_session, "cache-post")
+        page = await _create_wiki_page(
+            db_session, project, user, "Wpis Cache MON260", is_public=True, updated_at=datetime(2026, 2, 3, 10, 0, tzinfo=UTC)
+        )
+
+        first = await client.get(f"/blog/{page.slug}")
+        second = await client.get(f"/blog/{page.slug}", headers={"If-None-Match": first.headers["etag"]})
+
+        assert first.status_code == 200
+        assert first.headers["last-modified"] == "Tue, 03 Feb 2026 10:00:00 GMT"
+        assert second.status_code == 304
+        assert second.content == b""
+        assert second.headers["etag"] == first.headers["etag"]
+        assert second.headers["vary"] == "Accept"
+        assert 'type="text/markdown"' in second.headers["link"]
+        assert f"/blog/{page.slug}.md" in second.headers["link"]
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_content_change_changes_etag_and_old_etag_no_longer_matches(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Tresc pierwsza MON260."
+        project, user = await _scene(db_session, "cache-change")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Zmiana Cache MON260", is_public=True)
+        first = await client.get(f"/blog/{page.slug}")
+
+        mock_get_markdown.return_value = "Tresc druga MON260."
+        second = await client.get(f"/blog/{page.slug}", headers={"If-None-Match": first.headers["etag"]})
+
+        assert second.status_code == 200
+        assert second.headers["etag"] != first.headers["etag"]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_list_returns_validators_with_newest_page_update_and_304(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "cache-list")
+        # Najpóźniejszy updated_at ma wpis opublikowany wcześniej, więc nie jest pierwszą kartą.
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Lista Nowszy Cache MON260",
+            is_public=True,
+            published_at=_BASE_DAY + timedelta(days=9),
+            updated_at=datetime(2026, 2, 3, 10, 0, tzinfo=UTC),
+        )
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            "Wpis Lista Starszy Cache MON260",
+            is_public=True,
+            published_at=_BASE_DAY + timedelta(days=1),
+            updated_at=datetime(2026, 3, 5, 10, 0, tzinfo=UTC),
+        )
+
+        first = await client.get("/blog/")
+        second = await client.get("/blog/", headers={"If-None-Match": first.headers["etag"]})
+
+        assert first.status_code == 200
+        assert first.headers["last-modified"] == "Thu, 05 Mar 2026 10:00:00 GMT"
+        assert second.status_code == 304
+        assert second.content == b""
+
+    async def test_empty_list_uses_epoch_as_last_modified(self, client, db_session):
+        resp = await client.get("/blog/")
+
+        assert resp.status_code == 200
+        assert resp.headers["last-modified"] == "Thu, 01 Jan 1970 00:00:00 GMT"
+        assert resp.headers["etag"]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_new_post_changes_list_etag(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "cache-list-new")
+        await _create_wiki_page(db_session, project, user, "Wpis Lista Pierwszy MON260", is_public=True, description="Opis.")
+        first = await client.get("/blog/")
+        await _create_wiki_page(db_session, project, user, "Wpis Lista Drugi MON260", is_public=True, description="Opis.")
+
+        second = await client.get("/blog/", headers={"If-None-Match": first.headers["etag"]})
+
+        assert second.status_code == 200
+        assert second.headers["etag"] != first.headers["etag"]
+
+
+@pytest.mark.integration
+class TestBlogInterfaceLanguage:
+    """Język interfejsu wpisu: `?lang=` (`pl`/`en`), a bez niego albo z wartością spoza zbioru - `lang` wpisu."""
+
+    @pytest.mark.parametrize(
+        ("post_lang", "query", "html_lang", "reading_text", "absent_text"),
+        [
+            ("pl", {}, "pl", "4 min czytania", "4 min read"),
+            ("pl", {"lang": "en"}, "en", "4 min read", "4 min czytania"),
+            ("en", {}, "en", "4 min read", "4 min czytania"),
+            ("en", {"lang": "pl"}, "pl", "4 min czytania", "4 min read"),
+            ("pl", {"lang": "de"}, "pl", "4 min czytania", "4 min read"),
+        ],
+        ids=["pl-default", "pl-forced-en", "en-default", "en-forced-pl", "pl-unknown-lang"],
+    )
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_interface_language(self, mock_get_markdown, post_lang, query, html_lang, reading_text, absent_text, client, db_session):
+        mock_get_markdown.return_value = _words(650)
+        project, user = await _scene(db_session, f"ui-{post_lang}-{query.get('lang', 'none')}")
+        forced = query.get("lang", "none")
+        page = await _create_wiki_page(db_session, project, user, f"Wpis Interfejs {post_lang} {forced} MON260", is_public=True, lang=post_lang)
+
+        resp = await client.get(f"/blog/{page.slug}", params=query)
+
+        assert resp.status_code == 200
+        assert f'<html lang="{html_lang}"' in resp.text
+        assert reading_text in _after(resp.text, 'class="blog-reading-time')
+        assert absent_text not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_navbar_language_switch_points_to_the_other_language_of_the_post(self, mock_get_markdown, client, db_session):
+        """Navbar pokazuje link tylko do drugiego języka: wpis `pl` -> `/blog/<slug>?lang=en`, z `?lang=en` -> `/blog/<slug>?lang=pl`;
+        domyślne adresy layoutu (`/?lang=..`) nie występują."""
+        project, user = await _scene(db_session, "ui-switch")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Przelacznik Jezyka MON260", is_public=True, lang="pl")
+
+        default_hrefs = _hrefs((await client.get(f"/blog/{page.slug}")).text)
+        forced_hrefs = _hrefs((await client.get(f"/blog/{page.slug}", params={"lang": "en"})).text)
+
+        assert f"/blog/{page.slug}?lang=en" in default_hrefs
+        assert "/?lang=en" not in default_hrefs
+        assert f"/blog/{page.slug}?lang=pl" in forced_hrefs
+        assert "/?lang=pl" not in forced_hrefs
+
+
+@pytest.mark.integration
+class TestBlogPageStyles:
+    """Kryterium 8: typografia w `static/blog/blog.css`, nie w inline `<style>`; `blog.css` przed `blocks.css`."""
+
+    def test_page_template_has_no_inline_style_block(self):
+        assert "<style" not in _TEMPLATE_PAGE.read_text(encoding="utf-8")
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
+    async def test_blog_css_is_linked_before_blocks_css(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "styles-order")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Style MON260", is_public=True)
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        text = resp.text
+        blog_css = '<link rel="stylesheet" href="/static/blog/blog.css">'
+        blocks_css = '<link rel="stylesheet" href="/static/blog/blocks.css">'
+        assert blog_css in text
+        assert blocks_css in text
+        assert text.index(blog_css) < text.index(blocks_css)
+
+    async def test_blog_css_is_served(self, client):
+        resp = await client.get("/static/blog/blog.css")
+
+        assert resp.status_code == 200
+        assert "css" in resp.headers["content-type"]
+        assert len(resp.content) > 0
