@@ -36,8 +36,55 @@
         }, RESET_MS);
     }
 
+    var VIDEO_EMBEDS = {
+        youtube: {
+            id: /^[A-Za-z0-9_-]{6,20}$/,
+            url: "https://www.youtube-nocookie.com/embed/"
+        },
+        vimeo: {
+            id: /^\d+$/,
+            url: "https://player.vimeo.com/video/"
+        }
+    };
+
+    // Adres iframe powstaje tylko z providera i id, nigdy z href linku.
+    function videoEmbedUrl(provider, id) {
+        if (!Object.prototype.hasOwnProperty.call(VIDEO_EMBEDS, provider)) {
+            return null;
+        }
+        var spec = VIDEO_EMBEDS[provider];
+        if (!spec.id.test(id)) {
+            return null;
+        }
+        return spec.url + id + "?autoplay=1";
+    }
+
     document.addEventListener("click", function (event) {
         var target = event.target;
+        var play = target && target.closest ? target.closest(".blog-video-play") : null;
+        if (play) {
+            var video = play.closest(".blog-video");
+            if (!video) {
+                return;
+            }
+            var src = videoEmbedUrl(
+                video.getAttribute("data-provider") || "",
+                video.getAttribute("data-video-id") || ""
+            );
+            if (!src) {
+                return;
+            }
+            event.preventDefault();
+            var frame = document.createElement("iframe");
+            frame.setAttribute("src", src);
+            frame.setAttribute("title", play.textContent || "Wideo");
+            frame.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture; fullscreen");
+            frame.setAttribute("allowfullscreen", "");
+            frame.setAttribute("loading", "lazy");
+            frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+            video.replaceChild(frame, play);
+            return;
+        }
         var button = target && target.closest ? target.closest(".blog-code-copy") : null;
         if (!button) {
             return;

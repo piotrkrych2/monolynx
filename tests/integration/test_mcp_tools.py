@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from monolynx import mcp_server
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
 from monolynx.models.ticket import Ticket
@@ -446,3 +447,110 @@ class TestWikiPageIsPublicMcpCommit:
 
     async def test_update_wiki_page_omitted_is_public_keeps_existing_false_value(self, engine, monkeypatch):
         await self._assert_update_without_is_public_keeps_value(engine, monkeypatch, initial_is_public=False)
+
+
+@pytest.mark.integration
+class TestSetBlogPostMetaMcpCommit:
+    """MON-261: zapis `set_blog_post_meta` jest commitowany (wzorzec MON-71 / MON-203)."""
+
+    @staticmethod
+    async def _setup(test_factory, uid: str):
+        raw_token, token_hash = generate_api_token()
+        async with test_factory() as setup_db:
+            user = User(email=f"mcp-blog-{uid}@test.com", is_superuser=False)
+            setup_db.add(user)
+            await setup_db.flush()
+            setup_db.add(UserApiToken(user_id=user.id, token_hash=token_hash, token_prefix=raw_token[:8], name="mon261-blog-meta"))
+            project = Project(
+                name=f"MCP Blog {uid}",
+                slug=f"mcp-blog-{uid}",
+                code=f"MB{uid[:4].upper()}",
+                api_key=f"key-{uuid.uuid4().hex}",
+                is_active=True,
+            )
+            setup_db.add(project)
+            await setup_db.flush()
+            setup_db.add(ProjectMember(project_id=project.id, user_id=user.id, role="owner"))
+            page = WikiPage(
+                project_id=project.id,
+                title=f"Wpis MON261 {uid}",
+                slug=f"wpis-mon261-{uid}",
+                position=0,
+                minio_path=f"{project.slug}/{uid}.md",
+                is_public=False,
+                created_by_id=user.id,
+                last_edited_by_id=user.id,
+            )
+            setup_db.add(page)
+            await setup_db.flush()
+            setup_db.add(BlogPost(page_id=page.id, slug=page.slug, description="Stary opis", tags=["a", "b"], author_name="Autor"))
+            await setup_db.commit()
+            return raw_token, user.id, project.id, project.slug, page.id
+
+    @staticmethod
+    async def _cleanup(test_factory, user_id, project_id):
+        async with test_factory() as cleanup_db:
+            await cleanup_db.execute(delete(WikiPage).where(WikiPage.project_id == project_id))
+            await cleanup_db.execute(delete(ProjectMember).where(ProjectMember.project_id == project_id))
+            await cleanup_db.execute(delete(UserApiToken).where(UserApiToken.user_id == user_id))
+            await cleanup_db.execute(delete(Project).where(Project.id == project_id))
+            await cleanup_db.execute(delete(User).where(User.id == user_id))
+            await cleanup_db.commit()
+
+    async def test_set_blog_post_meta_is_visible_to_get_blog_post_in_new_session(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, page_id = await self._setup(test_factory, uuid.uuid4().hex[:8])
+        ctx = _mcp_ctx(raw_token)
+
+        try:
+            await mcp_server.set_blog_post_meta(ctx, project_slug, str(page_id), description="Nowy opis MON261", lang="en")
+
+            with patch("monolynx.mcp_server.get_page_content", return_value="# Treść"):
+                detail = await mcp_server.get_blog_post(ctx, project_slug, str(page_id))
+            async with test_factory() as check_db:
+                row = (await check_db.execute(select(BlogPost).where(BlogPost.page_id == page_id))).scalar_one()
+
+            assert detail["description"] == "Nowy opis MON261"
+            assert detail["lang"] == "en"
+            assert detail["content"] == "# Treść"
+            assert (row.description, row.lang) == ("Nowy opis MON261", "en")
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)
+
+    async def test_omitted_tags_keep_tags_and_empty_list_clears_them_across_sessions(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, page_id = await self._setup(test_factory, uuid.uuid4().hex[:8])
+        ctx = _mcp_ctx(raw_token)
+
+        async def _tags() -> list[str]:
+            async with test_factory() as check_db:
+                return list((await check_db.execute(select(BlogPost.tags).where(BlogPost.page_id == page_id))).scalar_one())
+
+        try:
+            await mcp_server.set_blog_post_meta(ctx, project_slug, str(page_id), description="Bez tagów w wywołaniu")
+            assert await _tags() == ["a", "b"]
+
+            await mcp_server.set_blog_post_meta(ctx, project_slug, str(page_id), tags=[])
+            assert await _tags() == []
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)
+
+    async def test_list_blog_posts_in_new_session_shows_saved_draft_state(self, engine, monkeypatch):
+        test_factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(mcp_server, "async_session_factory", test_factory)
+        raw_token, user_id, project_id, project_slug, page_id = await self._setup(test_factory, uuid.uuid4().hex[:8])
+        ctx = _mcp_ctx(raw_token)
+
+        try:
+            await mcp_server.set_blog_post_meta(ctx, project_slug, str(page_id), author_name="Nowy Autor")
+
+            listed = await mcp_server.list_blog_posts(ctx, project_slug, status="draft")
+
+            assert [i["page_id"] for i in listed] == [str(page_id)]
+            assert listed[0]["author_name"] == "Nowy Autor"
+            assert listed[0]["is_public"] is False
+            assert listed[0]["public_url"] is None
+        finally:
+            await self._cleanup(test_factory, user_id, project_id)

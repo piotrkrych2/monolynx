@@ -23,6 +23,7 @@ from monolynx.mcp_server import (
     create_ticket_from_issue,
     delete_monitor,
     delete_ticket,
+    get_blog_post,
     get_board,
     get_issue,
     get_monitor,
@@ -31,6 +32,7 @@ from monolynx.mcp_server import (
     get_ticket,
     get_work_report,
     invite_member,
+    list_blog_posts,
     list_comments,
     list_issues,
     list_labels,
@@ -43,6 +45,7 @@ from monolynx.mcp_server import (
     mcp,
     remove_member,
     search_tickets,
+    set_blog_post_meta,
     start_sprint,
     update_issue_status,
     update_monitor,
@@ -55,6 +58,7 @@ from monolynx.mcp_server import get_wiki_page as mcp_get_wiki_page
 from monolynx.mcp_server import list_wiki_pages as mcp_list_wiki_pages
 from monolynx.mcp_server import search_wiki as mcp_search_wiki
 from monolynx.mcp_server import update_wiki_page as mcp_update_wiki_page
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.event import Event
 from monolynx.models.issue import Issue
 from monolynx.models.label import Label, TicketLabel
@@ -68,6 +72,7 @@ from monolynx.models.ticket import Ticket
 from monolynx.models.ticket_comment import TicketComment
 from monolynx.models.time_tracking_entry import TimeTrackingEntry
 from monolynx.models.user import User
+from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.auth import hash_password
 
@@ -227,6 +232,9 @@ EXPECTED_TOOLS = [
     "update_wiki_page",
     "delete_wiki_page",
     "search_wiki",
+    "list_blog_posts",
+    "get_blog_post",
+    "set_blog_post_meta",
     "create_graph_node",
     "list_graph_nodes",
     "get_graph_node",
@@ -350,6 +358,26 @@ class TestMcpToolRegistration:
         for tool in tools:
             if tool.name.startswith(("get_", "list_", "search_")):
                 assert tool.annotations.read_only_hint is True, f"{tool.name} powinien byc read-only"
+
+    async def test_blog_tools_carry_expected_annotations(self):
+        """list/get_blog_post(s) sa READ_ONLY, set_blog_post_meta WRITE (nie destrukcyjny)."""
+        tools = {t.name: t for t in await mcp.list_tools()}
+
+        assert tools["list_blog_posts"].annotations.read_only_hint is True
+        assert tools["get_blog_post"].annotations.read_only_hint is True
+        assert tools["set_blog_post_meta"].annotations.read_only_hint is False
+        assert tools["set_blog_post_meta"].annotations.destructive_hint is False
+
+    async def test_set_blog_post_meta_has_no_published_at_parameter(self):
+        """Publikacja i data publikacji nie ida przez to narzedzie (kontrakt MON-261)."""
+        tools = {t.name: t for t in await mcp.list_tools()}
+
+        props = tools["set_blog_post_meta"].input_schema["properties"]
+
+        assert "published_at" not in props
+        assert "is_public" not in props
+        assert {"project_slug", "page_id", "slug", "description", "author_name", "tags", "lang"} <= set(props)
+        assert {"translation_of_id", "cover_attachment_id", "last_verified_at"} <= set(props)
 
     async def test_delete_tools_are_destructive(self):
         """Narzedzia delete_ musza byc oznaczone jako destrukcyjne."""
@@ -8168,3 +8196,380 @@ class TestEmptyRoleDeniedReads:
         assert "Widoczny dla membera" in issues
         assert "Mon RBAC read" in monitors
         assert str(monitor.id) in monitors
+
+
+# ---------------------------------------------------------------------------
+# Blog: list_blog_posts, get_blog_post, set_blog_post_meta (MON-261)
+# ---------------------------------------------------------------------------
+
+_BLOG_VIEW_KEYS = {
+    "page_id",
+    "title",
+    "slug",
+    "previous_slugs",
+    "description",
+    "published_at",
+    "author_name",
+    "tags",
+    "lang",
+    "translation_of_id",
+    "cover_attachment_id",
+    "last_verified_at",
+    "is_public",
+    "public_url",
+    "markdown_url",
+}
+
+
+async def _blog_page(db_session, project, user, *, is_public=False, with_post=True, **post_fields) -> WikiPage:
+    slug = f"blog-mcp-{uuid.uuid4().hex[:8]}"
+    page = WikiPage(
+        project_id=project.id,
+        title=f"Tytuł {slug}",
+        slug=slug,
+        position=0,
+        minio_path=f"{project.slug}/{uuid.uuid4()}.md",
+        is_public=is_public,
+        created_by_id=user.id,
+        last_edited_by_id=user.id,
+    )
+    db_session.add(page)
+    await db_session.flush()
+    if with_post:
+        db_session.add(BlogPost(page_id=page.id, slug=slug, **post_fields))
+        await db_session.flush()
+    return page
+
+
+async def _blog_row(db_session, page_id) -> BlogPost:
+    # populate_existing odświeża tylko wiersz BlogPost; expire_all wygaszałby też projekt i użytkownika testu.
+    stmt = select(BlogPost).where(BlogPost.page_id == page_id).execution_options(populate_existing=True)
+    return (await db_session.execute(stmt)).scalar_one()
+
+
+async def _blog_call(tool, mock_factory, verify, *args, **kwargs):
+    with (
+        patch("monolynx.mcp_server.async_session_factory", mock_factory),
+        patch("monolynx.mcp_server.verify_mcp_token", verify),
+        patch("monolynx.mcp_server.get_page_content", return_value="# Treść wpisu"),
+    ):
+        return await tool(_make_ctx(), *args, **kwargs)
+
+
+@pytest.mark.unit
+class TestListBlogPostsTool:
+    async def test_returns_dicts_for_drafts_and_published_with_serialized_values(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        published_at = datetime(2026, 4, 5, 6, 7, tzinfo=UTC)
+        published = await _blog_page(
+            db_session, mcp_project, mcp_user, is_public=True, published_at=published_at, tags=["a", "b"], last_verified_at=date(2026, 4, 1)
+        )
+        draft = await _blog_page(db_session, mcp_project, mcp_user, is_public=False)
+        await _blog_page(db_session, mcp_project, mcp_user, with_post=False)
+
+        result = await _blog_call(list_blog_posts, mock_factory, mock_verify, mcp_project.slug)
+
+        by_id = {item["page_id"]: item for item in result}
+        assert set(by_id) == {str(published.id), str(draft.id)}
+        pub = by_id[str(published.id)]
+        assert set(pub) == _BLOG_VIEW_KEYS
+        assert pub["published_at"] == published_at.isoformat()
+        assert pub["last_verified_at"] == "2026-04-01"
+        assert pub["tags"] == ["a", "b"]
+        assert pub["is_public"] is True
+        assert pub["public_url"].endswith(f"/blog/{published.slug}")
+        assert pub["markdown_url"] == pub["public_url"] + ".md"
+        dr = by_id[str(draft.id)]
+        assert dr["is_public"] is False
+        assert dr["published_at"] is None
+        assert dr["last_verified_at"] is None
+        assert dr["translation_of_id"] is None
+        assert dr["cover_attachment_id"] is None
+        assert dr["public_url"] is None
+        assert dr["markdown_url"] is None
+
+    async def test_status_filter_is_passed_through(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        published = await _blog_page(db_session, mcp_project, mcp_user, is_public=True)
+        draft = await _blog_page(db_session, mcp_project, mcp_user, is_public=False)
+
+        only_published = await _blog_call(list_blog_posts, mock_factory, mock_verify, mcp_project.slug, status="published")
+        only_drafts = await _blog_call(list_blog_posts, mock_factory, mock_verify, mcp_project.slug, status="draft")
+
+        assert [i["page_id"] for i in only_published] == [str(published.id)]
+        assert [i["page_id"] for i in only_drafts] == [str(draft.id)]
+
+    async def test_invalid_status_raises(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        with pytest.raises(ValueError, match="Nieprawidłowy status"):
+            await _blog_call(list_blog_posts, mock_factory, mock_verify, mcp_project.slug, status="archived")
+
+    async def test_role_without_wiki_read_is_refused(self, db_session, mcp_user, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={"scrum": ["read"]})
+        await _blog_page(db_session, mcp_project, mcp_user)
+
+        with pytest.raises(ValueError) as exc_info:
+            await _blog_call(list_blog_posts, mock_factory, AsyncMock(return_value=member), mcp_project.slug)
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:read"
+
+
+@pytest.mark.unit
+class TestGetBlogPostTool:
+    async def test_returns_view_fields_plus_content(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user, is_public=True, description="Opis", lang="en")
+
+        result = await _blog_call(get_blog_post, mock_factory, mock_verify, mcp_project.slug, str(page.id))
+
+        assert set(result) == _BLOG_VIEW_KEYS | {"content"}
+        assert result["content"] == "# Treść wpisu"
+        assert result["page_id"] == str(page.id)
+        assert result["title"] == page.title
+        assert result["description"] == "Opis"
+        assert result["lang"] == "en"
+        assert result["is_public"] is True
+
+    async def test_page_without_post_row_raises_post_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user, with_post=False)
+
+        with pytest.raises(ValueError) as exc_info:
+            await _blog_call(get_blog_post, mock_factory, mock_verify, mcp_project.slug, str(page.id))
+
+        assert str(exc_info.value) == "Wpis bloga nie istnieje"
+
+    async def test_nonexistent_page_raises_page_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        with pytest.raises(ValueError) as exc_info:
+            await _blog_call(get_blog_post, mock_factory, mock_verify, mcp_project.slug, str(uuid.uuid4()))
+
+        assert str(exc_info.value) == "Strona wiki nie istnieje"
+
+    async def test_malformed_page_id_raises_uuid_message_for_user_with_permission(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        with pytest.raises(ValueError) as exc_info:
+            await _blog_call(get_blog_post, mock_factory, mock_verify, mcp_project.slug, "nie-uuid")
+
+        assert str(exc_info.value) == "Nieprawidlowy page_id (oczekiwany UUID)"
+
+    async def test_role_without_wiki_read_is_refused_even_for_malformed_page_id(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={"scrum": ["read"]})
+
+        with pytest.raises(ValueError) as exc_info:
+            await _blog_call(get_blog_post, mock_factory, AsyncMock(return_value=member), mcp_project.slug, "nie-uuid")
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:read"
+
+
+@pytest.mark.unit
+class TestSetBlogPostMetaTool:
+    async def test_omitted_parameters_leave_fields_unchanged(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user, description="Stary opis", tags=["x"], author_name="Autor")
+        page_id, page_slug = page.id, page.slug
+
+        result = await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, str(page_id), lang="en")
+
+        row = await _blog_row(db_session, page_id)
+        assert row.lang == "en"
+        assert row.description == "Stary opis"
+        assert row.tags == ["x"]
+        assert row.author_name == "Autor"
+        assert row.slug == page_slug
+        assert set(result) == _BLOG_VIEW_KEYS
+        assert result["lang"] == "en"
+        assert result["page_id"] == str(page_id)
+
+    async def test_tags_none_keeps_tags_but_empty_list_clears_them(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user, tags=["a", "b"])
+        page_id = page.id
+
+        await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, str(page_id), tags=None, description="Opis")
+        assert (await _blog_row(db_session, page_id)).tags == ["a", "b"]
+
+        result = await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, str(page_id), tags=[])
+        assert (await _blog_row(db_session, page_id)).tags == []
+        assert result["tags"] == []
+
+    async def test_sets_all_scalar_fields(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user)
+        page_id, page_slug = page.id, page.slug
+        new_slug = f"nowy-{uuid.uuid4().hex[:8]}"
+
+        result = await _blog_call(
+            set_blog_post_meta,
+            mock_factory,
+            mock_verify,
+            mcp_project.slug,
+            str(page_id),
+            slug=new_slug,
+            description="Nowy opis",
+            author_name="Ada",
+            tags=["t1", "t2"],
+            lang="en",
+            last_verified_at="2026-05-06",
+        )
+
+        row = await _blog_row(db_session, page_id)
+        assert (row.slug, row.description, row.author_name, row.tags, row.lang) == (new_slug, "Nowy opis", "Ada", ["t1", "t2"], "en")
+        assert row.last_verified_at == date(2026, 5, 6)
+        assert row.previous_slugs == [page_slug]
+        assert result["slug"] == new_slug
+        assert result["previous_slugs"] == [page_slug]
+        assert result["last_verified_at"] == "2026-05-06"
+
+    async def test_parses_uuid_strings_for_translation_and_cover(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        original = await _blog_page(db_session, mcp_project, mcp_user)
+        page = await _blog_page(db_session, mcp_project, mcp_user)
+        att = WikiAttachment(wiki_page_id=page.id, filename="c.png", storage_path=f"wiki-attachments/{page.id}/c.png", mime_type="image/png", size=1)
+        db_session.add(att)
+        await db_session.flush()
+        page_id, original_id, att_id = page.id, original.id, att.id
+
+        result = await _blog_call(
+            set_blog_post_meta,
+            mock_factory,
+            mock_verify,
+            mcp_project.slug,
+            str(page_id),
+            translation_of_id=str(original_id),
+            cover_attachment_id=str(att_id),
+        )
+
+        row = await _blog_row(db_session, page_id)
+        assert row.translation_of_id == original_id
+        assert row.cover_attachment_id == att_id
+        assert result["translation_of_id"] == str(original_id)
+        assert result["cover_attachment_id"] == str(att_id)
+
+    async def test_empty_string_clears_nullable_fields(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        original = await _blog_page(db_session, mcp_project, mcp_user)
+        page = await _blog_page(db_session, mcp_project, mcp_user, translation_of_id=original.id, last_verified_at=date(2026, 1, 2))
+        att = WikiAttachment(wiki_page_id=page.id, filename="c.png", storage_path=f"wiki-attachments/{page.id}/c.png", mime_type="image/png", size=1)
+        db_session.add(att)
+        await db_session.flush()
+        page_id, att_id = page.id, att.id
+        (await _blog_row(db_session, page_id)).cover_attachment_id = att_id
+        await db_session.flush()
+
+        result = await _blog_call(
+            set_blog_post_meta,
+            mock_factory,
+            mock_verify,
+            mcp_project.slug,
+            str(page_id),
+            translation_of_id="",
+            cover_attachment_id="",
+            last_verified_at="",
+        )
+
+        row = await _blog_row(db_session, page_id)
+        assert row.translation_of_id is None
+        assert row.cover_attachment_id is None
+        assert row.last_verified_at is None
+        assert result["translation_of_id"] is None
+        assert result["cover_attachment_id"] is None
+        assert result["last_verified_at"] is None
+
+    async def test_omitted_nullable_fields_are_not_cleared(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        original = await _blog_page(db_session, mcp_project, mcp_user)
+        page = await _blog_page(db_session, mcp_project, mcp_user, translation_of_id=original.id, last_verified_at=date(2026, 1, 2))
+        page_id, original_id = page.id, original.id
+
+        await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, str(page_id), description="Tylko opis")
+
+        row = await _blog_row(db_session, page_id)
+        assert row.translation_of_id == original_id
+        assert row.last_verified_at == date(2026, 1, 2)
+
+    @pytest.mark.parametrize("param", ["translation_of_id", "cover_attachment_id"])
+    async def test_malformed_uuid_raises_with_parameter_name_and_writes_nothing(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify, param
+    ):
+        page = await _blog_page(db_session, mcp_project, mcp_user, description="Bez zmian")
+
+        with pytest.raises(ValueError, match=param):
+            await _blog_call(
+                set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, str(page.id), description="Nie zapisze się", **{param: "nie-uuid"}
+            )
+
+        assert (await _blog_row(db_session, page.id)).description == "Bez zmian"
+
+    async def test_malformed_date_raises_with_parameter_name_and_writes_nothing(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        page = await _blog_page(db_session, mcp_project, mcp_user, description="Bez zmian")
+
+        with pytest.raises(ValueError, match="last_verified_at"):
+            await _blog_call(
+                set_blog_post_meta,
+                mock_factory,
+                mock_verify,
+                mcp_project.slug,
+                str(page.id),
+                description="Nie zapisze się",
+                last_verified_at="31/12/2026",
+            )
+
+        assert (await _blog_row(db_session, page.id)).description == "Bez zmian"
+
+    async def test_malformed_page_id_raises_uuid_message_and_writes_nothing(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        page = await _blog_page(db_session, mcp_project, mcp_user, description="Bez zmian")
+        page_id = page.id
+
+        with pytest.raises(ValueError) as exc_info:
+            await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, "nie-uuid", description="Nie zapisze się")
+
+        assert str(exc_info.value) == "Nieprawidlowy page_id (oczekiwany UUID)"
+        assert (await _blog_row(db_session, page_id)).description == "Bez zmian"
+
+    async def test_malformed_parameter_messages_are_exact(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user)
+        page_id = str(page.id)
+
+        with pytest.raises(ValueError) as exc_cover:
+            await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, page_id, cover_attachment_id="x")
+        with pytest.raises(ValueError) as exc_date:
+            await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, page_id, last_verified_at="2026-13-45")
+
+        assert str(exc_cover.value) == "Nieprawidlowy cover_attachment_id (oczekiwany UUID)"
+        assert str(exc_date.value) == "Nieprawidlowy last_verified_at (oczekiwany format YYYY-MM-DD)"
+
+    async def test_creates_missing_post_row(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user, with_post=False)
+
+        result = await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, str(page.id), description="Nowy wpis")
+
+        assert (await _blog_row(db_session, page.id)).description == "Nowy wpis"
+        assert result["description"] == "Nowy wpis"
+
+    async def test_service_validation_error_is_propagated(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user)
+
+        with pytest.raises(ValueError, match="Język musi być"):
+            await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, str(page.id), lang="de")
+
+    async def test_read_only_wiki_role_is_refused_before_parsing_page_id(self, db_session, mcp_user, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={"wiki": ["read"]})
+        page = await _blog_page(db_session, mcp_project, mcp_user, description="Bez zmian")
+
+        with pytest.raises(ValueError) as exc_malformed:
+            await _blog_call(set_blog_post_meta, mock_factory, AsyncMock(return_value=member), mcp_project.slug, "nie-uuid", description="x")
+        with pytest.raises(ValueError) as exc_missing:
+            await _blog_call(set_blog_post_meta, mock_factory, AsyncMock(return_value=member), mcp_project.slug, str(uuid.uuid4()), description="x")
+        with pytest.raises(ValueError) as exc_real:
+            await _blog_call(set_blog_post_meta, mock_factory, AsyncMock(return_value=member), mcp_project.slug, str(page.id), description="x")
+
+        assert str(exc_malformed.value) == "Brak uprawnienia wiki:write"
+        assert str(exc_missing.value) == "Brak uprawnienia wiki:write"
+        assert str(exc_real.value) == "Brak uprawnienia wiki:write"
+        assert (await _blog_row(db_session, page.id)).description == "Bez zmian"
+
+    async def test_malformed_translation_uuid_is_refused_by_permission_first(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={"wiki": ["read"]})
+
+        with pytest.raises(ValueError) as exc_info:
+            await _blog_call(
+                set_blog_post_meta, mock_factory, AsyncMock(return_value=member), mcp_project.slug, str(uuid.uuid4()), translation_of_id="nie-uuid"
+            )
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:write"

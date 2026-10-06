@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from monolynx.database import get_db
 from monolynx.main import app
 from monolynx.models.activity_log import ActivityLog
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.label import Label
 from monolynx.models.project import Project
 from monolynx.models.project_member import ProjectMember
@@ -684,6 +685,30 @@ async def _set_wiki_config(env: _Env) -> None:
     assert response.status_code == 200
     saved = await _one(env, select(Project).where(Project.id == project.id))
     assert saved.wiki_llm_enabled is True
+
+
+@_scenario("set_blog_post_meta")
+async def _set_blog_post_meta(env: _Env) -> None:
+    actor = await _seed_actor(env, "blogmeta")
+    project = await _seed_project(env, actor, "blogmeta")
+    page_id = await _seed_wiki_page(env, project, actor, title="Wpis bloga")
+    async with env.factory() as db:
+        db.add(BlogPost(page_id=page_id, slug=f"blogmeta-{_uid()}", description="Stary opis", tags=["a", "b"]))
+        await db.commit()
+
+    response = await _call(
+        env,
+        "set_blog_post_meta",
+        actor,
+        body={"description": "Nowy opis", "lang": "en", "tags": ["c"], "last_verified_at": "2026-08-09"},
+        project_slug=project.slug,
+        page_id=str(page_id),
+    )
+
+    assert response.status_code == 200
+    post = await _one(env, select(BlogPost).where(BlogPost.page_id == page_id))
+    assert post is not None
+    assert (post.description, post.lang, post.tags, post.last_verified_at) == ("Nowy opis", "en", ["c"], date(2026, 8, 9))
 
 
 _WRITE_TOOLS = sorted(name for name, spec in TOOL_TO_ENDPOINT.items() if spec.is_write)

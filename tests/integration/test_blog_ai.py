@@ -274,7 +274,7 @@ class TestMarkdownTwinFrontmatter:
 
     async def test_word_count_is_computed_after_container_markers_are_removed(self, client, db_session):
         env = await _env(db_session, "wcc")
-        _page, slug = await env.post("wcc", ":::faq\nalfa beta\n:::")
+        _page, slug = await env.post("wcc", ":::foo\nalfa beta\n:::")
 
         with _minio(env.store):
             resp = await client.get(f"/blog/{slug}.md")
@@ -1281,7 +1281,7 @@ class TestFrontmatterControlCharacters:
 class TestJsonLdWordCountAndImage:
     async def test_blogposting_carries_exact_word_count_after_marker_removal(self, client, db_session):
         env = await _env(db_session, "ldwc")
-        _page, slug = await env.post("ldwc", "Jeden dwa trzy.\n\n:::faq\nczte ry\n:::")
+        _page, slug = await env.post("ldwc", "Jeden dwa trzy.\n\n:::foo\nczte ry\n:::")
 
         with _minio(env.store):
             resp = await client.get(f"/blog/{slug}")

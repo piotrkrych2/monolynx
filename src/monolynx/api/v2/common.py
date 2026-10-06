@@ -36,6 +36,7 @@ _NOT_FOUND_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"Sprint nie istnieje lub nie należy do projektu"),
     re.compile(r"Brak aktywnego sprintu dla projektu"),
     re.compile(r"Strona wiki nie istnieje"),
+    re.compile(r"Wpis bloga nie istnieje"),
     re.compile(r"Kryterium akceptacji nie istnieje w tym tickecie"),
     re.compile(r"Nieprawidlowy format criterion_id \(oczekiwany UUID\)"),
 )

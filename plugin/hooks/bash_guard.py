@@ -373,6 +373,8 @@ MONOLYNX_READ_OPS = frozenset(
         "query_graph",
         "find_graph_path",
         "get_graph_stats",
+        "list_blog_posts",
+        "get_blog_post",
     }
 )
 _MONOLYNX_SCRIPTS = ("monolynx_op.py", "monolynx_transport.py")

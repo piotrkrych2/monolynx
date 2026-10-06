@@ -1523,6 +1523,85 @@ class TestBlogPostBlocks:
         assert '<aside class="blog-callout blog-callout-note">' in resp.text
         assert "mon255-reczny" in resp.text
 
+    @pytest.mark.parametrize(
+        ("url", "provider", "video_id"),
+        [
+            ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube", "dQw4w9WgXcQ"),
+            ("https://vimeo.com/123456789", "vimeo", "123456789"),
+        ],
+    )
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_video_block_renders_placeholder_without_iframe(self, mock_get_markdown, url, provider, video_id, client, db_session):
+        mock_get_markdown.return_value = f":::video\n{url}\n\nOpis MON256 wideo.\n:::"
+        page = await _published_post(db_session, f"video-{provider}")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert 'class="blog-video"' in resp.text
+        assert f'data-provider="{provider}"' in resp.text
+        assert f'data-video-id="{video_id}"' in resp.text
+        assert f'href="{url}"' in resp.text
+        assert "Opis MON256 wideo." in resp.text
+        assert "<iframe" not in resp.text.lower()
+        assert "ytimg" not in resp.text
+        assert "vimeocdn" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_video_from_host_outside_whitelist_renders_plain_link_without_video_markup(self, mock_get_markdown, client, db_session):
+        url = "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ"
+        mock_get_markdown.return_value = f":::video\n{url}\n\nOpis MON256 obcego hosta.\n:::"
+        page = await _published_post(db_session, "video-foreign")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "blog-video" not in resp.text
+        assert "data-video-id" not in resp.text
+        assert "<iframe" not in resp.text.lower()
+        assert f'href="{url}"' in resp.text
+        assert "Opis MON256 obcego hosta." in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_faq_with_three_questions_renders_three_details_items(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = (
+            ":::faq\n"
+            "### Pytanie MON256 pierwsze?\nOdpowiedź pierwsza.\n\n"
+            "### Pytanie MON256 drugie?\nOdpowiedź druga.\n\n"
+            "### Pytanie MON256 trzecie?\nOdpowiedź trzecia.\n"
+            ":::"
+        )
+        page = await _published_post(db_session, "faq")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert resp.text.count('class="blog-faq-item"') == 3
+        assert resp.text.count('class="blog-faq-question"') == 3
+        for question in ("pierwsze", "drugie", "trzecie"):
+            assert f"Pytanie MON256 {question}?" in resp.text
+        assert ":::" not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_xss_in_details_title_and_raw_iframe_do_not_reach_the_page(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = (
+            ":::details <script>alert('mon256-xss')</script><img src=x onerror=alert('mon256-img')>\n"
+            'Treść MON256 ukryta.\n\n<iframe src="https://evil.example/mon256"></iframe>\n'
+            ":::"
+        )
+        page = await _published_post(db_session, "details-xss")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert "<script>alert(" not in resp.text
+        assert "<img src=x" not in resp.text
+        assert "<iframe" not in resp.text.lower()
+        assert "evil.example" not in resp.text
+        # Pozytyw obok negatywu: blok details nadal sie renderuje, a tresc zostaje.
+        assert 'class="blog-details"' in resp.text
+        assert "Treść MON256 ukryta." in resp.text
+
 
 # ---------------------------------------------------------------------------
 # MON-260: szablon wpisu i listy dla ludzi

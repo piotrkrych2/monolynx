@@ -1,0 +1,27 @@
+# command: monolynx blog meta --help
+# tool_version: monolynx 0.3.0 (drzewo zrodel, MON-261, niewydane)
+# captured: 2026-10-05
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                                                                                                                                        
+ Usage: monolynx blog meta [OPTIONS] {page_id}                                                                                                                                                          
+                                                                                                                                                                                                        
+ Zmień metadane wpisu bloga; do API trafiają tylko podane opcje, pusty tekst czyści pola nullowalne.                                                                                                    
+                                                                                                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    page_id      <str>  UUID strony wiki, która jest wpisem bloga (pole page_id z `blog list`). [required]                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --slug                  <str>  Nowy slug wpisu (stary trafia do historii i przekierowuje).                                                                                                           │
+│ --description           <str>  Opis wpisu (meta description).                                                                                                                                        │
+│ --author                <str>  Nazwa autora.                                                                                                                                                         │
+│ --tag                   <str>  Tag wpisu (zastępuje dotychczasowe); można powtarzać.                                                                                                                 │
+│ --no-tags                      Usuń wszystkie tagi.                                                                                                                                                  │
+│ --lang                  <str>  Język wpisu, np. pl albo en.                                                                                                                                          │
+│ --translation-of        <str>  UUID strony wiki z oryginałem tłumaczenia; pusty tekst czyści powiązanie.                                                                                             │
+│ --cover                 <str>  UUID załącznika strony wiki użytego jako okładka; pusty tekst usuwa okładkę.                                                                                          │
+│ --verified              <str>  Data ostatniej weryfikacji treści (RRRR-MM-DD); pusty tekst czyści datę.                                                                                              │
+│ --help                         Show this message and exit.                                                                                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+# exit: 0

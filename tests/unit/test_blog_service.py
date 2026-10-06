@@ -1204,6 +1204,300 @@ class TestListPublicTranslations:
         assert len(slugs) == 2
 
 
+async def _make_role_member(db, project: Project, user: User, permissions: dict) -> None:
+    role = Role(name=f"role-{_uid()}", project_id=project.id, permissions=permissions, is_system=False)
+    db.add(role)
+    await db.flush()
+    db.add(ProjectMember(project_id=project.id, user_id=user.id, role="member", role_id=role.id))
+    await db.flush()
+
+
+class TestBuildPostView:
+    @staticmethod
+    def _objects(*, is_public: bool) -> tuple[BlogPost, WikiPage]:
+        page_id = uuid.uuid4()
+        page = WikiPage(id=page_id, title="Tytuł strony wiki", slug="slug-strony-wiki", is_public=is_public)
+        post = BlogPost(
+            page_id=page_id,
+            slug="slug-wpisu",
+            previous_slugs=["stary-adres"],
+            description="Opis wpisu",
+            published_at=datetime(2026, 3, 4, 5, 6, tzinfo=UTC),
+            author_name="Ada Autor",
+            tags=["alfa", "beta"],
+            lang="en",
+            translation_of_id=uuid.uuid4(),
+            cover_attachment_id=uuid.uuid4(),
+            last_verified_at=date(2026, 3, 1),
+        )
+        return post, page
+
+    def test_public_page_gets_urls_built_from_post_slug_not_page_slug(self):
+        post, page = self._objects(is_public=True)
+
+        with patch.object(svc.settings, "APP_URL", "https://example.test"):
+            view = svc.build_post_view(post, page)
+
+        assert view.is_public is True
+        assert view.public_url == "https://example.test/blog/slug-wpisu"
+        assert view.markdown_url == "https://example.test/blog/slug-wpisu.md"
+
+    def test_trailing_slash_in_app_url_is_not_doubled(self):
+        post, page = self._objects(is_public=True)
+
+        with patch.object(svc.settings, "APP_URL", "https://example.test/"):
+            view = svc.build_post_view(post, page)
+
+        assert view.public_url == "https://example.test/blog/slug-wpisu"
+
+    def test_draft_page_has_no_urls(self):
+        post, page = self._objects(is_public=False)
+
+        with patch.object(svc.settings, "APP_URL", "https://example.test"):
+            view = svc.build_post_view(post, page)
+
+        assert view.is_public is False
+        assert view.public_url is None
+        assert view.markdown_url is None
+
+    def test_fields_come_from_the_right_source(self):
+        post, page = self._objects(is_public=False)
+
+        view = svc.build_post_view(post, page)
+
+        assert view.page_id == page.id
+        assert view.title == "Tytuł strony wiki"
+        assert view.slug == "slug-wpisu"
+        assert view.previous_slugs == ["stary-adres"]
+        assert view.description == "Opis wpisu"
+        assert view.published_at == datetime(2026, 3, 4, 5, 6, tzinfo=UTC)
+        assert view.author_name == "Ada Autor"
+        assert view.tags == ["alfa", "beta"]
+        assert view.lang == "en"
+        assert view.translation_of_id == post.translation_of_id
+        assert view.cover_attachment_id == post.cover_attachment_id
+        assert view.last_verified_at == date(2026, 3, 1)
+
+
+class TestListPosts:
+    async def _seed(self, db, project, user, slug, *, is_public, published_at=None):
+        page = await _make_page(db, project, user, slug=slug, is_public=is_public)
+        await _make_post(db, page, published_at=published_at)
+        return page
+
+    async def test_includes_drafts_and_published_but_not_pages_without_post_row(self, db_session):
+        user, project = await _setup(db_session, "lp-all")
+        published = await self._seed(db_session, project, user, f"pub-{_uid()}", is_public=True)
+        draft = await self._seed(db_session, project, user, f"draft-{_uid()}", is_public=False)
+        no_row = await _make_page(db_session, project, user, slug=f"norow-{_uid()}", is_public=True)
+
+        views = await svc.list_posts(db_session, user, project)
+
+        ids = {v.page_id for v in views}
+        assert ids == {published.id, draft.id}
+        assert no_row.id not in ids
+
+    async def test_status_published_returns_only_public(self, db_session):
+        user, project = await _setup(db_session, "lp-pub")
+        published = await self._seed(db_session, project, user, f"pub-{_uid()}", is_public=True)
+        await self._seed(db_session, project, user, f"draft-{_uid()}", is_public=False)
+
+        views = await svc.list_posts(db_session, user, project, status="published")
+
+        assert [v.page_id for v in views] == [published.id]
+        assert views[0].is_public is True
+
+    async def test_status_draft_returns_only_non_public(self, db_session):
+        user, project = await _setup(db_session, "lp-draft")
+        await self._seed(db_session, project, user, f"pub-{_uid()}", is_public=True)
+        draft = await self._seed(db_session, project, user, f"draft-{_uid()}", is_public=False)
+
+        views = await svc.list_posts(db_session, user, project, status="draft")
+
+        assert [v.page_id for v in views] == [draft.id]
+        assert views[0].is_public is False
+
+    @pytest.mark.parametrize("status", ["archived", "", "Published", "all"])
+    async def test_invalid_status_raises_value_error(self, db_session, status):
+        user, project = await _setup(db_session, f"lp-bad-{status or 'empty'}")
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.list_posts(db_session, user, project, status=status)
+
+        assert str(exc_info.value) == "Nieprawidłowy status: dozwolone published, draft"
+
+    async def test_sorted_by_published_at_desc_nulls_last_then_slug(self, db_session):
+        user, project = await _setup(db_session, "lp-sort")
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        # Kolejność wstawiania celowo różna od oczekiwanej; szkic bez daty i remis dat rozstrzyga slug.
+        undated = await self._seed(db_session, project, user, f"b-undated-{_uid()}", is_public=False, published_at=None)
+        oldest = await self._seed(db_session, project, user, f"c-oldest-{_uid()}", is_public=True, published_at=base)
+        tie_z = await self._seed(db_session, project, user, f"zzz-tie-{_uid()}", is_public=True, published_at=base + timedelta(days=9))
+        newest_draft = await self._seed(db_session, project, user, f"d-newest-{_uid()}", is_public=False, published_at=base + timedelta(days=20))
+        tie_a = await self._seed(db_session, project, user, f"aaa-tie-{_uid()}", is_public=True, published_at=base + timedelta(days=9))
+
+        views = await svc.list_posts(db_session, user, project)
+
+        assert [v.page_id for v in views] == [newest_draft.id, tie_a.id, tie_z.id, oldest.id, undated.id]
+
+    async def test_other_project_posts_are_not_listed(self, db_session):
+        user, project = await _setup(db_session, "lp-scope")
+        other_project = await _make_project(db_session, "lp-scope-other")
+        mine = await self._seed(db_session, project, user, f"mine-{_uid()}", is_public=True)
+        await self._seed(db_session, other_project, user, f"theirs-{_uid()}", is_public=True)
+
+        views = await svc.list_posts(db_session, user, project)
+
+        assert [v.page_id for v in views] == [mine.id]
+
+    async def test_urls_only_for_published_items(self, db_session):
+        user, project = await _setup(db_session, "lp-urls")
+        published = await self._seed(db_session, project, user, f"pub-{_uid()}", is_public=True)
+        draft = await self._seed(db_session, project, user, f"draft-{_uid()}", is_public=False)
+
+        views = {v.page_id: v for v in await svc.list_posts(db_session, user, project)}
+
+        public_url = views[published.id].public_url
+        assert public_url is not None
+        assert public_url.endswith(f"/blog/{published.slug}")
+        assert views[published.id].markdown_url == public_url + ".md"
+        assert views[draft.id].public_url is None
+        assert views[draft.id].markdown_url is None
+
+    async def test_role_without_wiki_read_is_refused(self, db_session):
+        user = await _make_user(db_session, "lp-perm")
+        project = await _make_project(db_session, "lp-perm")
+        await _make_role_member(db_session, project, user, {"scrum": ["read"]})
+        await self._seed(db_session, project, user, f"pub-{_uid()}", is_public=True)
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.list_posts(db_session, user, project)
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:read"
+
+    async def test_permission_is_checked_before_status_validation(self, db_session):
+        user = await _make_user(db_session, "lp-perm-first")
+        project = await _make_project(db_session, "lp-perm-first")
+        await _make_role_member(db_session, project, user, {"scrum": ["read"]})
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.list_posts(db_session, user, project, status="archived")
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:read"
+
+    async def test_read_only_wiki_role_can_list(self, db_session):
+        user = await _make_user(db_session, "lp-readonly")
+        project = await _make_project(db_session, "lp-readonly")
+        await _make_role_member(db_session, project, user, {"wiki": ["read"]})
+        page = await self._seed(db_session, project, user, f"pub-{_uid()}", is_public=False)
+
+        views = await svc.list_posts(db_session, user, project)
+
+        assert [v.page_id for v in views] == [page.id]
+
+
+class TestGetPost:
+    async def test_returns_detail_with_content_from_content_fn(self, db_session):
+        user, project = await _setup(db_session, "gp-ok")
+        page = await _make_page(db_session, project, user, slug=f"gp-{_uid()}", is_public=True)
+        await _make_post(db_session, page, description="Opis", tags=["x"], lang="en")
+        calls: list[WikiPage] = []
+
+        def content_fn(p):
+            calls.append(p)
+            return "# Treść z content_fn"
+
+        detail = await svc.get_post(db_session, user, project, page.id, content_fn=content_fn)
+
+        assert detail.content == "# Treść z content_fn"
+        assert [p.id for p in calls] == [page.id]
+        assert detail.page_id == page.id
+        assert detail.title == page.title
+        assert detail.slug == page.slug
+        assert detail.description == "Opis"
+        assert detail.tags == ["x"]
+        assert detail.lang == "en"
+        assert detail.is_public is True
+        assert detail.public_url is not None
+        assert detail.public_url.endswith(f"/blog/{page.slug}")
+        assert detail.markdown_url == detail.public_url + ".md"
+
+    async def test_draft_detail_has_no_urls(self, db_session):
+        user, project = await _setup(db_session, "gp-draft")
+        page = await _make_page(db_session, project, user, is_public=False)
+        await _make_post(db_session, page)
+
+        detail = await svc.get_post(db_session, user, project, page.id, content_fn=lambda p: "x")
+
+        assert detail.is_public is False
+        assert detail.public_url is None
+        assert detail.markdown_url is None
+
+    async def test_default_content_fn_reads_wiki_page_content(self, db_session):
+        user, project = await _setup(db_session, "gp-default")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page)
+
+        with patch("monolynx.services.wiki.get_page_content", return_value="# z domyślnego") as mock_content:
+            detail = await svc.get_post(db_session, user, project, page.id)
+
+        assert detail.content == "# z domyślnego"
+        assert mock_content.call_count == 1
+
+    async def test_nonexistent_page_raises_page_not_found(self, db_session):
+        user, project = await _setup(db_session, "gp-missing")
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.get_post(db_session, user, project, uuid.uuid4(), content_fn=lambda p: "x")
+
+        assert str(exc_info.value) == "Strona wiki nie istnieje"
+
+    async def test_page_from_other_project_raises_page_not_found(self, db_session):
+        user, project = await _setup(db_session, "gp-foreign")
+        other_project = await _make_project(db_session, "gp-foreign-other")
+        foreign = await _make_page(db_session, other_project, user)
+        await _make_post(db_session, foreign)
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.get_post(db_session, user, project, foreign.id, content_fn=lambda p: "x")
+
+        assert str(exc_info.value) == "Strona wiki nie istnieje"
+
+    async def test_page_without_post_row_raises_post_not_found_and_creates_nothing(self, db_session):
+        user, project = await _setup(db_session, "gp-norow")
+        page = await _make_page(db_session, project, user)
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.get_post(db_session, user, project, page.id, content_fn=lambda p: "x")
+
+        assert str(exc_info.value) == "Wpis bloga nie istnieje"
+        assert await _post_row(db_session, page.id) is None
+
+    async def test_content_is_not_fetched_when_post_row_is_missing(self, db_session):
+        user, project = await _setup(db_session, "gp-nofetch")
+        page = await _make_page(db_session, project, user)
+        calls: list[WikiPage] = []
+
+        def content_fn(p):
+            calls.append(p)
+            return "x"
+
+        with pytest.raises(ValueError):
+            await svc.get_post(db_session, user, project, page.id, content_fn=content_fn)
+
+        assert calls == []
+
+    async def test_role_without_wiki_read_is_refused_even_for_nonexistent_page(self, db_session):
+        user = await _make_user(db_session, "gp-perm")
+        project = await _make_project(db_session, "gp-perm")
+        await _make_role_member(db_session, project, user, {"scrum": ["read"]})
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.get_post(db_session, user, project, uuid.uuid4(), content_fn=lambda p: "x")
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:read"
+
+
 class TestExtractToc:
     """`extract_toc` (MON-260): spis treści z H2 i H3 wyrenderowanego HTML wpisu; czysta funkcja, bez bazy.
 
