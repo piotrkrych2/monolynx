@@ -4,6 +4,8 @@ Używa realnej bazy (db_session z rollbackiem), bez mockowania ORM. Fixture db_s
 opakowuje test w jedną transakcję, więc sam nie wykryje braku commita: test commita
 robi spy na `commit` (wzorzec tests/integration/test_projects_service.py), a test
 `TestSetPostMetaPersistence` czyta wynik w NOWEJ sesji z realnego `engine`.
+MON-263 (`publish_post`, `unpublish_post`): testy odmowy lintu i kolizji sluga seedują dane
+zatwierdzone (`_committed_blog`), bo `db.rollback()` serwisu cofnąłby cały seed fixture.
 """
 
 from __future__ import annotations
@@ -12,9 +14,11 @@ import dataclasses
 import json
 import secrets
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import delete, select
@@ -1688,3 +1692,582 @@ class TestRewriteAttachmentUrls:
         assert result.startswith("/blog/wpis/attachments/")
         assert "/dashboard/" not in result
         assert str(page_id) not in result
+
+
+# ---------------------------------------------------------------------------
+# MON-263: publish_post / unpublish_post
+# ---------------------------------------------------------------------------
+
+_PUB_DESCRIPTION = "Opis wpisu bloga o publikacji: sprawdza strukturę, grafiki i metadane tak, żeby agent AI mógł go czytać."
+_PUB_CLEAN = "> [!TLDR]\n> - Pierwszy punkt streszczenia.\n> - Drugi punkt streszczenia.\n\n## Czym jest lint?\n\nLint sprawdza wpis.\n"
+# Błędy: brak TLDR (linia 1) i drugi H1 (linia 5). Każdy z nich jest poziomu error.
+_PUB_BAD = "Wstęp bez streszczenia.\n\n# Pierwszy\n\n# Drugi\n"
+_PUB_REFUSAL_PREFIX = "Publikacja odrzucona: wpis ma błędy lintu"
+
+
+async def _read_only_member(db, tag: str) -> tuple[User, Project]:
+    user = await _make_user(db, tag)
+    project = await _make_project(db, tag)
+    await _make_role_member(db, project, user, {"wiki": ["read"]})
+    return user, project
+
+
+@asynccontextmanager
+async def _committed_blog(engine, *, post: bool = True, last_verified: bool = True, collide: str | None = None):
+    """Dane zatwierdzone w bazie (nie w transakcji fixture): rollback serwisu nie cofa seedu.
+
+    `collide="public"`: publiczna strona z tym samym slugiem w innym projekcie (uq_wiki_public_slug).
+    `collide="post"`: wpis z tym samym slugiem przy prywatnej stronie innego projektu (uq_blog_posts_slug).
+    """
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    tag = _uid()
+    slug = f"pub-{tag}"
+    project_ids: list[uuid.UUID] = []
+    async with factory() as setup_db:
+        user = User(email=f"blogpub-{tag}@example.com", is_superuser=False)
+        setup_db.add(user)
+        await setup_db.flush()
+        project = Project(name=f"Pub {tag}", slug=f"pub-{tag}", code="Q" + tag[:5].upper(), api_key=secrets.token_urlsafe(32), is_active=True)
+        setup_db.add(project)
+        await setup_db.flush()
+        project_ids.append(project.id)
+        setup_db.add(ProjectMember(project_id=project.id, user_id=user.id, role="owner"))
+        page = WikiPage(
+            project_id=project.id,
+            title="Pub",
+            slug=slug,
+            position=0,
+            minio_path=f"{project.slug}/{tag}.md",
+            is_public=False,
+            created_by_id=user.id,
+            last_edited_by_id=user.id,
+        )
+        setup_db.add(page)
+        await setup_db.flush()
+        if post:
+            setup_db.add(
+                BlogPost(
+                    page_id=page.id,
+                    slug=slug,
+                    description=_PUB_DESCRIPTION,
+                    last_verified_at=date.today() if last_verified else None,
+                )
+            )
+        if collide is not None:
+            other = Project(
+                name=f"Pub other {tag}",
+                slug=f"pub-other-{tag}",
+                code="R" + tag[:5].upper(),
+                api_key=secrets.token_urlsafe(32),
+                is_active=True,
+            )
+            setup_db.add(other)
+            await setup_db.flush()
+            project_ids.append(other.id)
+            other_page = WikiPage(
+                project_id=other.id,
+                title="Other",
+                slug=slug,
+                position=0,
+                minio_path=f"{other.slug}/{tag}.md",
+                is_public=collide == "public",
+                created_by_id=user.id,
+                last_edited_by_id=user.id,
+            )
+            setup_db.add(other_page)
+            await setup_db.flush()
+            if collide == "post":
+                setup_db.add(BlogPost(page_id=other_page.id, slug=slug))
+        await setup_db.commit()
+        env = SimpleNamespace(factory=factory, user_id=user.id, project_id=project.id, page_id=page.id, slug=slug)
+
+    try:
+        yield env
+    finally:
+        async with factory() as cleanup_db:
+            await cleanup_db.execute(delete(WikiPage).where(WikiPage.project_id.in_(project_ids)))
+            await cleanup_db.execute(delete(ProjectMember).where(ProjectMember.project_id.in_(project_ids)))
+            await cleanup_db.execute(delete(Project).where(Project.id.in_(project_ids)))
+            await cleanup_db.execute(delete(User).where(User.id == env.user_id))
+            await cleanup_db.commit()
+
+
+async def _call_committed(env, fn, *args, **kwargs):
+    """Wywołaj funkcję serwisu w osobnej sesji, jak robi to narzędzie MCP albo handler v2."""
+    async with env.factory() as db:
+        user = await db.get(User, env.user_id)
+        project = await db.get(Project, env.project_id)
+        return await fn(db, user, project, env.page_id, *args, **kwargs)
+
+
+async def _committed_state(env) -> tuple[bool, BlogPost | None]:
+    """Stan strony i wpisu odczytany w NOWEJ sesji: widać tylko to, co zostało zatwierdzone."""
+    async with env.factory() as read_db:
+        page = await read_db.get(WikiPage, env.page_id)
+        post = (await read_db.execute(select(BlogPost).where(BlogPost.page_id == env.page_id))).scalar_one_or_none()
+        return page.is_public, post
+
+
+class TestPublishPostPermissionAndLookup:
+    async def test_role_without_wiki_write_gets_exact_message_and_page_stays_private(self, db_session):
+        user, project = await _read_only_member(db_session, "pub-perm")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:write"
+        await db_session.refresh(page)
+        assert page.is_public is False
+
+    async def test_permission_is_checked_before_page_lookup_and_lint(self, db_session):
+        user, project = await _read_only_member(db_session, "pub-perm-first")
+        content_fn = Mock(return_value=_PUB_CLEAN)
+
+        with (
+            patch("monolynx.services.blog_lint.lint_post_by_id", new=AsyncMock()) as lint_mock,
+            pytest.raises(ValueError, match=r"^Brak uprawnienia wiki:write$"),
+        ):
+            await svc.publish_post(db_session, user, project, uuid.uuid4(), content_fn=content_fn)
+
+        lint_mock.assert_not_awaited()
+        content_fn.assert_not_called()
+
+    async def test_permission_is_checked_before_lint_for_existing_failing_page(self, db_session):
+        user, project = await _read_only_member(db_session, "pub-perm-lint")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page)
+        content_fn = Mock(return_value=_PUB_BAD)
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia wiki:write$"):
+            await svc.publish_post(db_session, user, project, page.id, content_fn=content_fn)
+
+        content_fn.assert_not_called()
+
+    async def test_nonexistent_page_rejected_before_lint(self, db_session):
+        user, project = await _setup(db_session, "pub-missing")
+        content_fn = Mock(return_value=_PUB_CLEAN)
+
+        with pytest.raises(ValueError, match=r"^Strona wiki nie istnieje$"):
+            await svc.publish_post(db_session, user, project, uuid.uuid4(), content_fn=content_fn)
+
+        content_fn.assert_not_called()
+
+    async def test_page_from_other_project_rejected_and_stays_private(self, db_session):
+        user, project = await _setup(db_session, "pub-scope")
+        other_project = await _make_project(db_session, "pub-scope-other")
+        foreign_page = await _make_page(db_session, other_project, user)
+
+        with pytest.raises(ValueError, match=r"^Strona wiki nie istnieje$"):
+            await svc.publish_post(db_session, user, project, foreign_page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        await db_session.refresh(foreign_page)
+        assert foreign_page.is_public is False
+        assert await _post_row(db_session, foreign_page.id) is None
+
+
+class TestPublishPostLintGate:
+    async def test_lint_errors_without_force_refuse_with_rules_and_page_stays_private(self, engine):
+        async with _committed_blog(engine, last_verified=False) as env:
+            with pytest.raises(ValueError) as exc_info:
+                await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_BAD)
+
+            # Pełny tekst: liczba błędów, reguły w kolejności (linia, reguła), numer linii przy regule i zakończenie.
+            # Ostrzeżenia i informacje (last-verified-missing, translation-missing) nie wchodzą na listę.
+            assert str(exc_info.value) == (
+                "Publikacja odrzucona: wpis ma błędy lintu (2): tldr-missing (linia 1), heading-multiple-h1 (linia 5). Napraw je albo użyj force."
+            )
+            is_public, post = await _committed_state(env)
+            assert is_public is False
+            assert post is not None
+            assert post.published_at is None
+
+    async def test_refusal_leaves_no_orphan_blog_post_row(self, engine):
+        async with _committed_blog(engine, post=False) as env:
+            with pytest.raises(ValueError, match=_PUB_REFUSAL_PREFIX):
+                await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_CLEAN)
+
+            is_public, post = await _committed_state(env)
+            assert is_public is False
+            assert post is None
+
+    async def test_page_without_post_row_is_linted_with_the_default_row(self, engine):
+        # Wiersz BlogPost powstaje przed lintem (lint_post_by_id wymaga wiersza); bez opisu to błąd lintu.
+        async with _committed_blog(engine, post=False) as env:
+            with pytest.raises(ValueError) as exc_info:
+                await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_CLEAN)
+
+            # Reguła z linią 0 jest wypisana bez numeru linii, a liczba błędów to 1 (reszta to ostrzeżenia).
+            assert str(exc_info.value) == "Publikacja odrzucona: wpis ma błędy lintu (1): description-missing. Napraw je albo użyj force."
+
+    async def test_refusal_lists_rule_without_line_before_rules_with_line(self, engine):
+        # Linia 0 sortuje się pierwsza; reguły z linią mają numer, reguła bez linii go nie ma.
+        async with _committed_blog(engine, post=False) as env:
+            with pytest.raises(ValueError) as exc_info:
+                await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_BAD)
+
+            assert str(exc_info.value) == (
+                "Publikacja odrzucona: wpis ma błędy lintu (3): description-missing, tldr-missing (linia 1), heading-multiple-h1 (linia 5). "
+                "Napraw je albo użyj force."
+            )
+
+    async def test_force_publishes_despite_errors_and_returns_the_lint(self, engine):
+        async with _committed_blog(engine) as env:
+            result = await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_BAD, force=True)
+
+            assert isinstance(result, svc.PublishResult)
+            assert result.lint.has_errors is True
+            assert {i.rule for i in result.lint.issues if i.level == "error"} >= {"tldr-missing", "heading-multiple-h1"}
+            assert result.view.is_public is True
+            is_public, post = await _committed_state(env)
+            assert is_public is True
+            assert post is not None
+            assert post.published_at is not None
+
+    async def test_force_on_page_without_post_row_creates_row_and_publishes(self, engine):
+        async with _committed_blog(engine, post=False) as env:
+            result = await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_CLEAN, force=True)
+
+            assert result.view.slug == env.slug
+            is_public, post = await _committed_state(env)
+            assert is_public is True
+            assert post is not None
+            assert post.slug == env.slug
+
+    async def test_force_defaults_to_false(self, engine):
+        async with _committed_blog(engine) as env:
+            with pytest.raises(ValueError, match=_PUB_REFUSAL_PREFIX):
+                await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_BAD)
+
+            is_public, _ = await _committed_state(env)
+            assert is_public is False
+
+    async def test_post_without_errors_publishes_without_force(self, db_session):
+        user, project = await _setup(db_session, "pub-clean")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION, last_verified_at=date.today())
+
+        result = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert result.lint.has_errors is False
+        assert result.view.is_public is True
+        await db_session.refresh(page)
+        assert page.is_public is True
+
+    async def test_warnings_alone_do_not_block_publication(self, db_session):
+        # Brak last_verified_at to ostrzeżenie, a brak tłumaczenia informacja: nie są powodem odmowy.
+        user, project = await _setup(db_session, "pub-warn")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION, last_verified_at=None)
+
+        result = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert result.lint.error_count == 0
+        assert result.lint.warning_count >= 1
+        assert result.view.is_public is True
+
+    async def test_content_fn_receives_the_page_and_is_called_once(self, db_session):
+        user, project = await _setup(db_session, "pub-content-fn")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+        calls: list[uuid.UUID] = []
+
+        def content_fn(p):
+            calls.append(p.id)
+            return _PUB_CLEAN
+
+        await svc.publish_post(db_session, user, project, page.id, content_fn=content_fn)
+
+        assert calls == [page.id]
+
+    async def test_default_content_fn_reads_wiki_page_content(self, db_session):
+        user, project = await _setup(db_session, "pub-default-fn")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+
+        with patch("monolynx.services.wiki.get_page_content", return_value=_PUB_CLEAN) as mock_content:
+            result = await svc.publish_post(db_session, user, project, page.id)
+
+        mock_content.assert_called_once()
+        assert result.view.is_public is True
+
+
+class TestPublishPostResult:
+    async def test_result_carries_public_and_markdown_urls(self, db_session):
+        user, project = await _setup(db_session, "pub-urls")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+
+        with patch.object(svc.settings, "APP_URL", "https://example.test"):
+            result = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert result.view.public_url == f"https://example.test/blog/{page.slug}"
+        assert result.view.markdown_url == f"https://example.test/blog/{page.slug}.md"
+        assert result.view.page_id == page.id
+        assert result.view.slug == page.slug
+
+    async def test_view_reflects_the_published_state_with_date(self, db_session):
+        user, project = await _setup(db_session, "pub-view")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+
+        result = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert result.view.is_public is True
+        assert result.view.published_at is not None
+
+    async def test_lint_in_result_is_the_lint_of_the_content(self, db_session):
+        user, project = await _setup(db_session, "pub-lint-result")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION, last_verified_at=date.today())
+
+        result = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert [i.rule for i in result.lint.issues] == ["translation-missing"]
+        assert result.lint.score == 100
+
+
+class TestPublishedAtStability:
+    async def test_first_publication_sets_published_at(self, db_session):
+        user, project = await _setup(db_session, "pat-first")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+
+        result = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert result.view.published_at is not None
+        assert (datetime.now(UTC) - result.view.published_at) < timedelta(minutes=5)
+
+    async def test_existing_published_at_survives_publication_of_a_private_page(self, db_session):
+        user, project = await _setup(db_session, "pat-keep")
+        page = await _make_page(db_session, project, user)
+        original = datetime(2024, 3, 1, 12, 0, tzinfo=UTC)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION, published_at=original)
+
+        result = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert result.view.published_at == original
+
+    async def test_second_publication_does_not_change_published_at_or_slug(self, db_session):
+        user, project = await _setup(db_session, "pat-second")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+        first = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        second = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert second.view.published_at == first.view.published_at
+        assert second.view.slug == first.view.slug
+
+    async def test_republication_after_unpublish_keeps_published_at_and_address(self, db_session):
+        user, project = await _setup(db_session, "pat-republish")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+        first = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+        await svc.unpublish_post(db_session, user, project, page.id)
+
+        again = await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        assert again.view.published_at == first.view.published_at
+        assert again.view.slug == first.view.slug
+        assert again.view.public_url == first.view.public_url
+
+
+class TestPublishPostSlugCollision:
+    async def test_public_page_with_same_slug_in_other_project_gives_readable_error(self, engine):
+        async with _committed_blog(engine, collide="public") as env:
+            with pytest.raises(ValueError) as exc_info:
+                await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_CLEAN)
+
+            assert f"'{env.slug}'" in str(exc_info.value)
+            assert "już istnieje w innym projekcie" in str(exc_info.value)
+            is_public, post = await _committed_state(env)
+            assert is_public is False
+            assert post is not None
+            assert post.published_at is None
+
+    async def test_collision_error_is_not_an_integrity_error(self, engine):
+        from sqlalchemy.exc import IntegrityError
+
+        async with _committed_blog(engine, collide="public") as env:
+            try:
+                await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_CLEAN)
+            except IntegrityError:
+                pytest.fail("IntegrityError wyciekł z publish_post")
+            except ValueError:
+                pass
+            else:
+                pytest.fail("publikacja przy kolizji sluga nie została odrzucona")
+
+    async def test_slug_held_by_other_post_gives_readable_error_and_no_orphan(self, engine):
+        async with _committed_blog(engine, post=False, collide="post") as env:
+            with pytest.raises(ValueError, match=r"jest już zajęty przez inny wpis bloga"):
+                await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_CLEAN, force=True)
+
+            is_public, post = await _committed_state(env)
+            assert is_public is False
+            assert post is None
+
+    async def test_slug_held_by_other_post_rolls_back_the_session(self, engine):
+        # Stan w bazie jest taki sam z rollbackiem i bez niego (ensure_post rzuca przed db.add), więc dowodzi go tylko spy.
+        async with _committed_blog(engine, post=False, collide="post") as env, env.factory() as db:
+            user = await db.get(User, env.user_id)
+            project = await db.get(Project, env.project_id)
+            rollback_spy = AsyncMock(wraps=db.rollback)
+
+            with patch.object(db, "rollback", rollback_spy), pytest.raises(ValueError, match=r"jest już zajęty przez inny wpis bloga"):
+                await svc.publish_post(db, user, project, env.page_id, content_fn=lambda p: _PUB_CLEAN, force=True)
+
+            rollback_spy.assert_awaited_once()
+
+
+class TestPublishPostPersistence:
+    async def test_publication_is_visible_in_new_session(self, engine):
+        """Kryterium a5ea606d: commit w serwisie, odczyt w nowej sesji widzi publikację."""
+        async with _committed_blog(engine, last_verified=True) as env:
+            await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_CLEAN)
+
+            is_public, post = await _committed_state(env)
+            assert is_public is True
+            assert post is not None
+            assert post.published_at is not None
+
+    async def test_forced_publication_is_visible_in_new_session(self, engine):
+        async with _committed_blog(engine) as env:
+            await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_BAD, force=True)
+
+            is_public, _ = await _committed_state(env)
+            assert is_public is True
+
+    async def test_commits(self, db_session):
+        """db-commit.md: spy na commit pada na mutancie 'commit -> flush'."""
+        user, project = await _setup(db_session, "pub-commit")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+        spy = AsyncMock(side_effect=db_session.commit)
+
+        with patch.object(db_session, "commit", spy):
+            await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+
+        spy.assert_awaited_once()
+
+
+class TestUnpublishPost:
+    async def test_makes_page_private_and_keeps_published_at_and_slug(self, db_session):
+        user, project = await _setup(db_session, "unpub-basic")
+        page = await _make_page(db_session, project, user, is_public=True)
+        published = datetime(2025, 1, 2, 3, 4, tzinfo=UTC)
+        await _make_post(db_session, page, published_at=published)
+
+        view = await svc.unpublish_post(db_session, user, project, page.id)
+
+        assert isinstance(view, svc.BlogPostView)
+        assert view.is_public is False
+        assert view.published_at == published
+        assert view.slug == page.slug
+        assert view.public_url is None
+        assert view.markdown_url is None
+        await db_session.refresh(page)
+        assert page.is_public is False
+
+    async def test_role_without_wiki_write_gets_exact_message_and_page_stays_public(self, db_session):
+        user, project = await _read_only_member(db_session, "unpub-perm")
+        page = await _make_page(db_session, project, user, is_public=True)
+        await _make_post(db_session, page)
+
+        with pytest.raises(ValueError) as exc_info:
+            await svc.unpublish_post(db_session, user, project, page.id)
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:write"
+        await db_session.refresh(page)
+        assert page.is_public is True
+
+    async def test_permission_is_checked_before_page_lookup(self, db_session):
+        user, project = await _read_only_member(db_session, "unpub-perm-first")
+
+        with pytest.raises(ValueError, match=r"^Brak uprawnienia wiki:write$"):
+            await svc.unpublish_post(db_session, user, project, uuid.uuid4())
+
+    async def test_nonexistent_page_rejected(self, db_session):
+        user, project = await _setup(db_session, "unpub-missing")
+
+        with pytest.raises(ValueError, match=r"^Strona wiki nie istnieje$"):
+            await svc.unpublish_post(db_session, user, project, uuid.uuid4())
+
+    async def test_page_from_other_project_rejected_and_stays_public(self, db_session):
+        user, project = await _setup(db_session, "unpub-scope")
+        other_project = await _make_project(db_session, "unpub-scope-other")
+        foreign_page = await _make_page(db_session, other_project, user, is_public=True)
+        await _make_post(db_session, foreign_page)
+
+        with pytest.raises(ValueError, match=r"^Strona wiki nie istnieje$"):
+            await svc.unpublish_post(db_session, user, project, foreign_page.id)
+
+        await db_session.refresh(foreign_page)
+        assert foreign_page.is_public is True
+
+    async def test_page_without_post_row_gives_post_not_found_and_creates_no_row(self, db_session):
+        user, project = await _setup(db_session, "unpub-nopost")
+        page = await _make_page(db_session, project, user, is_public=True)
+
+        with pytest.raises(ValueError, match=r"^Wpis bloga nie istnieje$"):
+            await svc.unpublish_post(db_session, user, project, page.id)
+
+        assert await _post_row(db_session, page.id) is None
+        await db_session.refresh(page)
+        assert page.is_public is True
+
+    async def test_is_idempotent_for_private_page(self, db_session):
+        user, project = await _setup(db_session, "unpub-idem")
+        page = await _make_page(db_session, project, user, is_public=True)
+        await _make_post(db_session, page, published_at=datetime(2025, 5, 5, tzinfo=UTC))
+        first = await svc.unpublish_post(db_session, user, project, page.id)
+
+        second = await svc.unpublish_post(db_session, user, project, page.id)
+
+        assert second.is_public is False
+        assert second.published_at == first.published_at
+        assert second.slug == first.slug
+
+    async def test_unpublished_post_is_not_found_by_public_lookup_and_returns_after_republish(self, db_session):
+        user, project = await _setup(db_session, "unpub-lookup")
+        page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page, description=_PUB_DESCRIPTION)
+        await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+        assert await svc.get_public_post_by_slug(db_session, page.slug) is not None
+
+        await svc.unpublish_post(db_session, user, project, page.id)
+        assert await svc.get_public_post_by_slug(db_session, page.slug) is None
+
+        await svc.publish_post(db_session, user, project, page.id, content_fn=lambda p: _PUB_CLEAN)
+        lookup = await svc.get_public_post_by_slug(db_session, page.slug)
+        assert lookup is not None
+        assert lookup.post is not None
+        assert lookup.post.page_id == page.id
+
+    async def test_commits(self, db_session):
+        """db-commit.md: spy na commit pada na mutancie 'commit -> flush'."""
+        user, project = await _setup(db_session, "unpub-commit")
+        page = await _make_page(db_session, project, user, is_public=True)
+        await _make_post(db_session, page)
+        spy = AsyncMock(side_effect=db_session.commit)
+
+        with patch.object(db_session, "commit", spy):
+            await svc.unpublish_post(db_session, user, project, page.id)
+
+        spy.assert_awaited_once()
+
+    async def test_unpublish_is_visible_in_new_session(self, engine):
+        async with _committed_blog(engine) as env:
+            await _call_committed(env, svc.publish_post, content_fn=lambda p: _PUB_CLEAN)
+            _, published = await _committed_state(env)
+            assert published is not None
+
+            await _call_committed(env, svc.unpublish_post)
+
+            is_public, post = await _committed_state(env)
+            assert is_public is False
+            assert post is not None
+            assert post.published_at == published.published_at
+            assert post.slug == env.slug

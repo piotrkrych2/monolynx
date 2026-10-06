@@ -1,8 +1,9 @@
-"""Schematy request/response API v2 dla metadanych wpisów bloga (MON-261).
+"""Schematy request/response API v2 dla metadanych, lintu i publikacji wpisów bloga (MON-261, MON-262, MON-263).
 
 Response budowane z `services/blog.py::BlogPostView` przez `from_attributes`.
 Wynik lintu (`BlogLintResponse`) budowany ze slownika `services/blog_lint.py::lint_result_dict`, bez pola `table` (jest tylko w MCP).
 Request PATCH celowo bez `published_at` i `is_public`: data publikacji należy do publikacji.
+Publikacja (`BlogPublishRequest`, `BlogPublishResponse`) to osobna operacja z bramką lintu; cofnięcie publikacji zwraca `BlogPostResponse`.
 """
 
 from __future__ import annotations
@@ -64,3 +65,11 @@ class BlogLintResponse(BaseModel):
     warning_count: int
     info_count: int
     issues: list[BlogLintIssueResponse]
+
+
+class BlogPublishRequest(BaseModel):
+    force: bool = False
+
+
+class BlogPublishResponse(BlogPostResponse):
+    lint: BlogLintResponse

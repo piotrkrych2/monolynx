@@ -3038,6 +3038,56 @@ async def set_blog_post_meta(
         return _blog_view_dict(blog_service.build_post_view(post, page))
 
 
+@mcp.tool(annotations=WRITE)
+async def publish_blog_post(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Opublikuj wpis bloga: lint, a potem strona staje sie publiczna (adres /blog/<slug> i .md).
+
+    Przy bledach lintu publikacja jest odrzucana z lista regul, a strona zostaje prywatna;
+    force=true publikuje mimo bledow. Ponowna publikacja nie zmienia daty ani adresu.
+    Wynik: widok wpisu (public_url, markdown_url) i pole `lint` z ocena. Wymaga wiki:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "write")
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+        published = await blog_service.publish_post(db, user, project, parsed_page_id, force=force, content_fn=get_page_content)
+
+    return {**_blog_view_dict(published.view), "lint": blog_lint_service.lint_result_dict(parsed_page_id, published.lint)}
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def unpublish_blog_post(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Cofnij publikacje wpisu bloga: adres /blog/<slug> i jego .md zwracaja 404.
+
+    Data publikacji i slug zostaja, wiec ponowna publikacja przywraca ten sam adres.
+    Idempotentne dla wpisu juz prywatnego. Wymaga wiki:write.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "write")
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+        view = await blog_service.unpublish_post(db, user, project, parsed_page_id)
+
+    return _blog_view_dict(view)
+
+
 # --- Wiki LLM (gating: project.wiki_llm_enabled) ---
 
 

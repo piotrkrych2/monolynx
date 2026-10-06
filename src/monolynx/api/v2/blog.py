@@ -1,10 +1,11 @@
-"""API v2 -- Blog: 4 endpointy wolajace `services/blog.py` i `services/blog_lint.py` (MON-261, MON-262).
+"""API v2 -- Blog: 6 endpointow wolajacych `services/blog.py` i `services/blog_lint.py` (MON-261, MON-262, MON-263).
 
 Routery cienkie jak toole MCP (`mcp_server.py`, sekcja "--- Blog ---"). Uprawnienia
 sprawdza serwis jako pierwszy krok (`wiki:read` dla odczytow i lintu, `wiki:write` dla
-`set_post_meta`), przed lookupem strony, wiec rola bez uprawnienia dostaje 403, nie 404.
-Commit zapisu robi `set_post_meta`. Szczegoly wpisu i lint czytaja tresc z MinIO, wiec blad storage
-wraca jako 503 problem+json, nie 500.
+`set_post_meta`, `publish_post` i `unpublish_post`), przed lookupem strony, wiec rola bez uprawnienia
+dostaje 403, nie 404. Commit zapisu robi serwis. Szczegoly wpisu, lint i publikacja czytaja tresc
+z MinIO, wiec blad storage wraca jako 503 problem+json, nie 500. Odmowa publikacji przez lint i
+kolizja sluga to `ValueError` serwisu, czyli 422.
 """
 
 from __future__ import annotations
@@ -22,7 +23,14 @@ from monolynx.database import get_db
 from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
-from monolynx.schemas.api_v2.blog import BlogLintResponse, BlogPostDetailResponse, BlogPostMetaUpdateRequest, BlogPostResponse
+from monolynx.schemas.api_v2.blog import (
+    BlogLintResponse,
+    BlogPostDetailResponse,
+    BlogPostMetaUpdateRequest,
+    BlogPostResponse,
+    BlogPublishRequest,
+    BlogPublishResponse,
+)
 from monolynx.schemas.api_v2.pagination import PaginatedResponse
 from monolynx.services import blog as blog_service
 from monolynx.services import blog_lint as blog_lint_service
@@ -98,3 +106,36 @@ async def set_blog_post_meta(
     if page is None:
         raise not_found("Strona wiki nie istnieje")
     return BlogPostResponse.model_validate(blog_service.build_post_view(post, page))
+
+
+@router.post("/projects/{project_slug}/blog/posts/{page_id}/publish", response_model=BlogPublishResponse)
+async def publish_blog_post(
+    page_id: uuid.UUID,
+    body: BlogPublishRequest | None = None,
+    user_and_project: tuple[User, Project] = Depends(get_api_user_and_project),
+    db: AsyncSession = Depends(get_db),
+) -> BlogPublishResponse:
+    user, project = user_and_project
+    force = body.force if body is not None else False
+    try:
+        published = await blog_service.publish_post(db, user, project, page_id, force=force)
+    except ValueError as exc:
+        raise service_error(exc) from exc
+    except Exception as exc:
+        logger.exception("Publikacja wpisu bloga nie powiodla sie (page_id=%s)", page_id)
+        raise ApiV2Error(status=503, title="Service Unavailable", detail="Treść wpisu jest chwilowo niedostępna") from exc
+    return BlogPublishResponse.model_validate({**vars(published.view), "lint": blog_lint_service.lint_result_dict(page_id, published.lint)})
+
+
+@router.post("/projects/{project_slug}/blog/posts/{page_id}/unpublish", response_model=BlogPostResponse)
+async def unpublish_blog_post(
+    page_id: uuid.UUID,
+    user_and_project: tuple[User, Project] = Depends(get_api_user_and_project),
+    db: AsyncSession = Depends(get_db),
+) -> BlogPostResponse:
+    user, project = user_and_project
+    try:
+        view = await blog_service.unpublish_post(db, user, project, page_id)
+    except ValueError as exc:
+        raise service_error(exc) from exc
+    return BlogPostResponse.model_validate(view)

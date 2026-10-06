@@ -35,7 +35,7 @@ So the full first-time sequence a developer runs is:
 4. Ustaw `MONOLYNX_PROJECT_SLUG` w konfiguracji środowiska klienta opisanej powyżej.
 5. Start using the `/monolynx:*` skills.
 
-After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all 123 MCP tools. This is full power.
+After this you have **marketplace + MCP**: the `/monolynx:*` skills (`monolynx:ticket-create`, `monolynx:work`, ...) plus all 125 MCP tools. This is full power.
 
 If you are an agent asked to set this up inside a user's repository, follow the imperative checklist at <https://monolynx.com/agent-bootstrap.md> - it walks you through SETUP, NOTIFY, and COLLABORATE phases, including verifying the connection with `list_projects`.
 
@@ -80,7 +80,7 @@ Claude.ai and ChatGPT cannot install Claude Code plugins, so they cannot get the
 3. Connector URL: `https://your-instance/mcp` (replace `your-instance` with the actual host, e.g. `https://monolynx.com/mcp`).
 4. Authorize with your Monolynx Bearer token (`osk_...`).
 
-This gives you all 123 MCP tools (read/write tickets, sprints, wiki, dependency graph, pipelines) but **no `/monolynx:*` skills**. In this mode you must replicate the skill workflow manually - call the MCP tools in the same order the skills would (see Steps 3 and 4). It works, but the orchestrated, repeatable flow lives in the plugin. For serious development use Claude Code with the plugin.
+This gives you all 125 MCP tools (read/write tickets, sprints, wiki, dependency graph, pipelines) but **no `/monolynx:*` skills**. In this mode you must replicate the skill workflow manually - call the MCP tools in the same order the skills would (see Steps 3 and 4). It works, but the orchestrated, repeatable flow lives in the plugin. For serious development use Claude Code with the plugin.
 
 ---
 

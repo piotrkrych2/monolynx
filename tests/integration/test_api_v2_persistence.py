@@ -711,6 +711,42 @@ async def _set_blog_post_meta(env: _Env) -> None:
     assert (post.description, post.lang, post.tags, post.last_verified_at) == ("Nowy opis", "en", ["c"], date(2026, 8, 9))
 
 
+@_scenario("publish_blog_post")
+async def _publish_blog_post(env: _Env) -> None:
+    actor = await _seed_actor(env, "blogpub")
+    project = await _seed_project(env, actor, "blogpub")
+    page_id = await _seed_wiki_page(env, project, actor, title="Szkic wpisu")
+
+    # Treść z błędami lintu, więc `force` jest potrzebny; lint czyta ją z MinIO.
+    with patch("monolynx.services.wiki.get_markdown", return_value="# Szkic\n\nTreść bez TLDR."):
+        response = await _call(env, "publish_blog_post", actor, body={"force": True}, project_slug=project.slug, page_id=str(page_id))
+
+    assert response.status_code == 200
+    page = await _one(env, select(WikiPage).where(WikiPage.id == page_id))
+    assert page.is_public is True
+    post = await _one(env, select(BlogPost).where(BlogPost.page_id == page_id))
+    assert post is not None
+    assert post.published_at is not None
+
+
+@_scenario("unpublish_blog_post")
+async def _unpublish_blog_post(env: _Env) -> None:
+    actor = await _seed_actor(env, "blogunpub")
+    project = await _seed_project(env, actor, "blogunpub")
+    page_id = await _seed_wiki_page(env, project, actor, title="Opublikowany wpis")
+    async with env.factory() as db:
+        page = await db.get(WikiPage, page_id)
+        page.is_public = True
+        db.add(BlogPost(page_id=page_id, slug=f"blogunpub-{_uid()}"))
+        await db.commit()
+
+    response = await _call(env, "unpublish_blog_post", actor, project_slug=project.slug, page_id=str(page_id))
+
+    assert response.status_code == 200
+    saved = await _one(env, select(WikiPage).where(WikiPage.id == page_id))
+    assert saved.is_public is False
+
+
 _WRITE_TOOLS = sorted(name for name, spec in TOOL_TO_ENDPOINT.items() if spec.is_write)
 
 

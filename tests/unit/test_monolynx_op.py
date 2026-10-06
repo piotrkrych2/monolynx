@@ -38,6 +38,9 @@ Kontrakt wrappera (stdlib, Python 3.10+):
   Blog lint (MON-262): `lint_blog_post` -> `blog lint <page_id>` (odczyt). `blog lint` konczy sie kodem 1, gdy raport zawiera
   blad lintu, PO wypisaniu raportu na stdout: dla tej jednej op kod 1 z poprawnym obiektem JSON z lista `issues` na stdout
   to wynik (stdout przekazany, kod 0); kazdy inny kod 1 zostaje bledem operacji (kod 2).
+  Blog publikacja (MON-263): `publish_blog_post` -> `blog publish <page_id>` z `force=true` -> `--force` (false -> brak flagi),
+  `unpublish_blog_post` -> `blog unpublish <page_id>`; obie to zapisy (poza `READ_OPS`), a kod 1 CLI (odmowa lintu: 422) to blad
+  operacji (kod 2), nawet gdy stdout niesie raport, bo wyjatek kodu 1 dotyczy tylko `lint_blog_post`.
   Listy w jednej wartosci jako tablica JSON.
 - Wartosc parametru `-` = czytaj ze stdin wrappera, `@<sciezka>` = czytaj z pliku (UTF-8).
 - Kody: 0 (stdout = stdout CLI bez zmian); 3 + ostatnia linia stdout `OP-FALLBACK: mcp tool=<op>`
@@ -228,6 +231,10 @@ _RAW_SCENARIOS: list[tuple[str, str, str, str]] = [
     ("list_blog_posts", "--status draft", "blog list --status draft", ""),
     ("get_blog_post", "--page_id P1", "blog get P1", ""),
     ("lint_blog_post", "--page_id P1", "blog lint P1", ""),
+    ("publish_blog_post", "--page_id P1", "blog publish P1", ""),
+    ("publish_blog_post", "--page_id P1 --force true", "blog publish P1 --force", ""),
+    ("publish_blog_post", "--page_id P1 --force false", "blog publish P1", ""),
+    ("unpublish_blog_post", "--page_id P1", "blog unpublish P1", ""),
     (
         "set_blog_post_meta",
         "--page_id P1 --slug nowy --description 'Nowy opis' --author_name 'Ada A' --lang en"
@@ -277,7 +284,8 @@ NO_CLI_OPS = shlex.split(
 
 GRAPH_READ_OPS = frozenset({"list_graph_nodes", "get_graph_node", "query_graph", "find_graph_path", "get_graph_stats"})
 BLOG_READ_OPS = frozenset({"list_blog_posts", "get_blog_post", "lint_blog_post"})
-BLOG_OPS = BLOG_READ_OPS | {"set_blog_post_meta"}
+BLOG_PUBLICATION_OPS = frozenset({"publish_blog_post", "unpublish_blog_post"})
+BLOG_OPS = BLOG_READ_OPS | {"set_blog_post_meta"} | BLOG_PUBLICATION_OPS
 
 # Prefiks nazwy op -> czy odczyt (kontrakt READ_OPS). `lint_` (MON-262): lint wpisu bloga tylko czyta, a hook uznalby go za zapis
 # i pytal o zgode; `lint_wiki` (NO_CLI_OPS) nie jest w READ_OPS, bo nie ma komendy CLI.
@@ -407,6 +415,13 @@ class TestModuleContract:
         assert set(module.OPS) >= BLOG_OPS, sorted(BLOG_OPS - set(module.OPS))
         assert set(module.READ_OPS) >= BLOG_READ_OPS, sorted(BLOG_READ_OPS - set(module.READ_OPS))
         assert "set_blog_post_meta" not in module.READ_OPS
+
+    def test_blog_publication_ops_are_mapped_to_the_cli_and_are_writes(self):
+        module = load_module()
+
+        assert module.OPS["publish_blog_post"][0] == ("blog", "publish")
+        assert module.OPS["unpublish_blog_post"][0] == ("blog", "unpublish")
+        assert BLOG_PUBLICATION_OPS.isdisjoint(module.READ_OPS)
 
     def test_graph_write_ops_are_not_mapped_nor_read_only(self):
         module = load_module()
@@ -726,10 +741,12 @@ class TestExitCodes:
             ("get_blog_post", ["--page_id", "P1"]),
             ("list_blog_posts", []),
             ("set_blog_post_meta", ["--page_id", "P1", "--lang", "en"]),
+            ("publish_blog_post", ["--page_id", "P1"]),
+            ("unpublish_blog_post", ["--page_id", "P1"]),
             ("get_ticket", ["--ticket_id", "MON-1"]),
             ("add_comment", ["--ticket_id", "MON-1", "--content", "x"]),
         ],
-        ids=["get_blog_post", "list_blog_posts", "set_blog_post_meta", "get_ticket", "add_comment"],
+        ids=["get_blog_post", "list_blog_posts", "set_blog_post_meta", "publish_blog_post", "unpublish_blog_post", "get_ticket", "add_comment"],
     )
     def test_cli_exit_1_with_a_lint_like_report_is_exit_2_for_every_other_op(self, sandbox, op, params):
         report = '{"score": 75, "issues": [{"rule": "x", "level": "error", "line": 1, "message": "m"}]}\n'
@@ -799,6 +816,9 @@ USAGE_ERROR_CASES = {
     "create-sprint-missing-name": "create_sprint --project_slug monolynx --start_date 2026-10-05 --end_date 2026-10-19",
     "create-sprint-missing-start-date": "create_sprint --project_slug monolynx --name 'Sprint 1' --end_date 2026-10-19",
     "get-blog-post-missing-page-id": "get_blog_post --project_slug monolynx",
+    "publish-blog-post-missing-page-id": "publish_blog_post --project_slug monolynx --force true",
+    "publish-blog-post-force-invalid": "publish_blog_post --project_slug monolynx --page_id P1 --force maybe",
+    "unpublish-blog-post-missing-page-id": "unpublish_blog_post --project_slug monolynx",
     "set-blog-post-meta-missing-page-id": "set_blog_post_meta --project_slug monolynx --description Opis",
     "set-blog-post-meta-tags-not-a-list": "set_blog_post_meta --project_slug monolynx --page_id P1 --tags '\"alfa\"'",
 }

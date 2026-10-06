@@ -1,11 +1,13 @@
-"""Testy komend monolynx_cli.commands.blog (MON-261, MON-262): list, get, meta, lint.
+"""Testy komend monolynx_cli.commands.blog (MON-261, MON-262, MON-263): list, get, meta, lint, publish, unpublish.
 
 Wszystkie testy przechodza przez root app (`monolynx_cli.main.app`) z flagami globalnymi PRZED grupa
 `blog` (sama komenda bez roota nie dowodzi, ze grupa jest podpieta). Punkt wstrzykniecia HTTP to nazwa
 modulowa `monolynx_cli.commands._common.MonolynxClient` (transport z fixture `mock_transport`, sleep no-op).
 `blog list`, `blog get` i `blog lint` to odczyt (GET), `blog meta` to czesciowy zapis (PATCH): do body trafiaja
 tylko opcje, ktore uzytkownik podal. `blog lint` konczy sie kodem 1, gdy wynik zawiera blad lintu (po wypisaniu
-raportu); same ostrzezenia i informacje to kod 0. Odpowiedz 200 o zlym ksztalcie to blad kontraktu: kod 1 i komunikat
+raportu); same ostrzezenia i informacje to kod 0. `blog publish` i `blog unpublish` to zapisy (POST): publish wysyla
+body `{"force": <bool>}`, unpublish nie wysyla body; odmowa publikacji to 422 (kod 1, powod na stderr), a odpowiedz 200
+z raportem zawierajacym bledy (force) to kod 0. Odpowiedz 200 o zlym ksztalcie to blad kontraktu: kod 1 i komunikat
 "Nieprawidłowa odpowiedź serwera" na stderr, nigdy pusty wynik z kodem 0.
 """
 
@@ -163,6 +165,8 @@ _COMMANDS: list[tuple[str, list[str], str, str, Any]] = [
     ("get", ["get", PAGE_ID], "GET", f"{BASE}/{PAGE_ID}", _detail()),
     ("meta", ["meta", PAGE_ID, "--lang", "en"], "PATCH", f"{BASE}/{PAGE_ID}", _item(lang="en")),
     ("lint", ["lint", PAGE_ID], "GET", f"{BASE}/{PAGE_ID}/lint", _lint([_lint_issue("last-verified-missing", "warning", 0, "Brak daty")], 95)),
+    ("publish", ["publish", PAGE_ID], "POST", f"{BASE}/{PAGE_ID}/publish", {**_published(), "lint": _lint()}),
+    ("unpublish", ["unpublish", PAGE_ID], "POST", f"{BASE}/{PAGE_ID}/unpublish", _item()),
 ]
 _COMMAND_IDS = [case[0] for case in _COMMANDS]
 
@@ -913,3 +917,237 @@ def test_lint_bad_body_in_table_mode_is_contract_error_without_rows(runner, monk
     assert result.exit_code == 1
     assert "Nieprawidłowa odpowiedź serwera" in result.stderr
     assert "tldr-missing" not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# blog publish / blog unpublish (MON-263)
+# ---------------------------------------------------------------------------
+
+
+def _published_with_lint(lint=None, **extra):
+    return {**_published(**extra), "lint": _lint() if lint is None else lint}
+
+
+def test_publish_sends_force_false_in_body_by_default(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_published_with_lint()))
+
+    result = _run(runner, "publish", PAGE_ID)
+
+    assert result.exit_code == 0, result.output
+    assert _body(requests) == {"force": False}
+
+
+def test_publish_force_flag_sends_force_true_in_body(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_published_with_lint()))
+
+    result = _run(runner, "publish", PAGE_ID, "--force")
+
+    assert result.exit_code == 0, result.output
+    assert _body(requests) == {"force": True}
+
+
+def test_publish_force_is_a_flag_not_an_option_with_value(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_published_with_lint()))
+
+    result = _run(runner, "publish", PAGE_ID, "--force", "false")
+
+    assert result.exit_code == 2
+    assert len(requests) == 0
+
+
+def test_publish_emits_published_view_with_lint(runner, monkeypatch, mock_transport):
+    payload = _published_with_lint(_lint([_WARNING_ISSUE, _INFO_ISSUE], 95))
+    _patch_client(monkeypatch, mock_transport, _json(payload))
+
+    result = _run(runner, "publish", PAGE_ID)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == payload
+    assert json.loads(result.stdout)["public_url"] == "https://monolynx.test/blog/wpis"
+
+
+def test_publish_with_force_and_errors_in_the_report_is_success_exit_0_with_the_report_in_output(runner, monkeypatch, mock_transport):
+    payload = _published_with_lint(_lint([_ERROR_ISSUE], 80))
+    _patch_client(monkeypatch, mock_transport, _json(payload))
+
+    result = _run(runner, "publish", PAGE_ID, "--force")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["lint"]["error_count"] == 1
+    assert json.loads(result.stdout)["lint"]["issues"] == [_ERROR_ISSUE]
+
+
+def test_publish_refusal_422_exits_1_with_the_rule_list_on_stderr_and_empty_stdout(runner, monkeypatch, mock_transport):
+    detail = "Publikacja odrzucona: wpis ma błędy lintu (1): tldr-missing (linia 3). Napraw je albo użyj force."
+    _patch_client(monkeypatch, mock_transport, _problem(422, detail))
+
+    result = _run(runner, "publish", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Publikacja odrzucona" in result.stderr
+    assert "tldr-missing" in result.stderr
+    assert result.stdout == ""
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_publish_percent_encodes_the_page_id_in_the_path(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_published_with_lint()))
+
+    result = _run(runner, "publish", "a/b")
+
+    assert result.exit_code == 0, result.output
+    assert requests[0].url.raw_path.decode().split("?")[0] == f"{BASE}/a%2Fb/publish"
+
+
+@pytest.mark.parametrize("page_id", ["..", "."])
+def test_publish_dot_segment_page_id_exits_2_without_http(runner, monkeypatch, mock_transport, page_id):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_published_with_lint()))
+
+    result = _run(runner, "publish", page_id)
+
+    assert result.exit_code == 2
+    assert result.stderr.strip() != ""
+    assert len(requests) == 0
+
+
+def test_publish_requires_page_id_argument(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_published_with_lint()))
+
+    result = _run(runner, "publish")
+
+    assert result.exit_code == 2
+    assert len(requests) == 0
+
+
+@pytest.mark.parametrize("bad", _BAD_ITEMS, ids=_BAD_ITEM_IDS)
+def test_publish_view_with_bad_shape_is_contract_error_exit_1(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json({**bad, "lint": _lint()}))
+
+    result = _run(runner, "publish", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+def test_publish_response_without_the_report_is_contract_error_exit_1(runner, monkeypatch, mock_transport):
+    _patch_client(monkeypatch, mock_transport, _json(_published()))
+
+    result = _run(runner, "publish", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("bad", _BAD_LINT_BODIES, ids=_BAD_LINT_BODY_IDS)
+def test_publish_report_with_bad_shape_is_contract_error_exit_1(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json({**_published(), "lint": bad}))
+
+    result = _run(runner, "publish", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("bad", _BAD_LINT_ISSUES, ids=_BAD_LINT_ISSUE_IDS)
+def test_publish_report_issue_with_bad_shape_is_contract_error_exit_1(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json(_published_with_lint(_lint([_WARNING_ISSUE, bad], 80))))
+
+    result = _run(runner, "publish", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("bad", [None, "tekst", 5, [_published()]], ids=["null", "str", "int", "list"])
+def test_publish_non_object_response_is_contract_error_exit_1(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json(bad))
+
+    result = _run(runner, "publish", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+def test_unpublish_sends_post_without_body(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_item()))
+
+    result = _run(runner, "unpublish", PAGE_ID)
+
+    assert result.exit_code == 0, result.output
+    assert requests[0].content == b""
+
+
+def test_unpublish_emits_the_private_view_without_the_report(runner, monkeypatch, mock_transport):
+    payload = _item(published_at="2026-04-05T06:07:00Z")
+    _patch_client(monkeypatch, mock_transport, _json(payload))
+
+    result = _run(runner, "unpublish", PAGE_ID)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == payload
+    assert "lint" not in json.loads(result.stdout)
+
+
+def test_unpublish_has_no_force_option(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_item()))
+
+    result = _run(runner, "unpublish", PAGE_ID, "--force")
+
+    assert result.exit_code == 2
+    assert len(requests) == 0
+
+
+def test_unpublish_percent_encodes_the_page_id_in_the_path(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_item()))
+
+    result = _run(runner, "unpublish", "a/b")
+
+    assert result.exit_code == 0, result.output
+    assert requests[0].url.raw_path.decode().split("?")[0] == f"{BASE}/a%2Fb/unpublish"
+
+
+@pytest.mark.parametrize("page_id", ["..", "."])
+def test_unpublish_dot_segment_page_id_exits_2_without_http(runner, monkeypatch, mock_transport, page_id):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_item()))
+
+    result = _run(runner, "unpublish", page_id)
+
+    assert result.exit_code == 2
+    assert result.stderr.strip() != ""
+    assert len(requests) == 0
+
+
+def test_unpublish_requires_page_id_argument(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_item()))
+
+    result = _run(runner, "unpublish")
+
+    assert result.exit_code == 2
+    assert len(requests) == 0
+
+
+@pytest.mark.parametrize("bad", _BAD_ITEMS, ids=_BAD_ITEM_IDS)
+def test_unpublish_response_with_bad_shape_is_contract_error_exit_1(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json(bad))
+
+    result = _run(runner, "unpublish", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("bad", [None, "tekst", 5, [_item()]], ids=["null", "str", "int", "list"])
+def test_unpublish_non_object_response_is_contract_error_exit_1(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json(bad))
+
+    result = _run(runner, "unpublish", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""

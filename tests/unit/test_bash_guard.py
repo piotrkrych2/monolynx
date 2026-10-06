@@ -1553,6 +1553,8 @@ WRITE_NO_DECISION_COMMANDS = {
     ),
     "op-update-ticket": f"{OP_SCRIPT} update_ticket --project_slug monolynx --ticket_id MON-1 --status done",
     "op-create-wiki-page": f"{OP_SCRIPT} create_wiki_page --project_slug monolynx --title T --content @/tmp/page.md",
+    "op-publish-blog-post-risky": f'{OP_SCRIPT} publish_blog_post --project_slug monolynx --page_id "git commit pytest" --force true',
+    "op-unpublish-blog-post": f"{OP_SCRIPT} unpublish_blog_post --project_slug monolynx --page_id P1",
     "cli-comment-add-risky": 'monolynx -o json --project monolynx ticket comment add MON-1 --body "git push"',
     "cli-ticket-update": "monolynx -o json --project monolynx ticket update MON-1 --status done",
 }
@@ -1859,6 +1861,13 @@ class TestMonolynxHookMarkerAndReadOps:
         assert blog_read_ops <= set(wrapper.READ_OPS), sorted(blog_read_ops - set(wrapper.READ_OPS))
         assert "set_blog_post_meta" not in hook_read_ops_literal()
         assert "set_blog_post_meta" not in wrapper.READ_OPS
+
+    def test_blog_publication_ops_are_writes_in_neither_hook_nor_wrapper_read_ops(self):
+        publication_ops = {"publish_blog_post", "unpublish_blog_post"}
+        wrapper = load_op_module()
+
+        assert publication_ops.isdisjoint(hook_read_ops_literal()), sorted(publication_ops & set(hook_read_ops_literal()))
+        assert publication_ops.isdisjoint(wrapper.READ_OPS), sorted(publication_ops & set(wrapper.READ_OPS))
 
     def test_hook_read_ops_literal_is_a_non_empty_set_of_strings(self):
         literal = hook_read_ops_literal()

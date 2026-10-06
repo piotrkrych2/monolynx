@@ -8,7 +8,7 @@ w testach, nie u użytkownika. Plik zawiera pięć grup testów:
 1. kompletność mapy `tool_endpoint_map.py` względem narzędzi zarejestrowanych w MCP oraz
    względem tras v2 (`find_coverage_problems`, `find_missing_routes` są sprawdzane także na
    syntetycznych zbiorach, co dowodzi, że test pada przy nowym narzędziu bez wpisu),
-2. parytet 49 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
+2. parytet 51 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
 3. jawne pinowanie znanych różnic kontraktu (`known_differences` w mapie),
 4. odrzucenie pustego tytułu strony wiki przez oba kanały (rozjazd wykryty w MON-131,
    naprawiony guardem w `api/v2/wiki.py`),
@@ -111,6 +111,8 @@ _WRITE_TOOLS = frozenset(
         "delete_wiki_page",
         "set_wiki_config",
         "set_blog_post_meta",
+        "publish_blog_post",
+        "unpublish_blog_post",
     }
 )
 
@@ -170,7 +172,7 @@ class TestMapCompleteness:
         problems = find_coverage_problems([t.name for t in tools], TOOL_TO_ENDPOINT, INTENTIONALLY_UNMAPPED)
 
         assert problems == []
-        assert len(TOOL_TO_ENDPOINT) == 49
+        assert len(TOOL_TO_ENDPOINT) == 51
         assert len(INTENTIONALLY_UNMAPPED) == 74
         assert all(reason.strip() for reason in INTENTIONALLY_UNMAPPED.values())
 
@@ -2293,6 +2295,108 @@ async def scenario_set_blog_post_meta(env: ParityEnv) -> None:
     _assert_problem(await env.v2("set_blog_post_meta", page_id=unknown, json={"description": "x"}), 404, not_found)
 
 
+_PUBLISH_DESCRIPTION = "Opis wpisu bloga o publikacji: sprawdza strukturę, grafiki i metadane tak, żeby agent AI mógł go czytać."
+_PUBLISH_CLEAN = "> [!TLDR]\n> - Pierwszy punkt streszczenia.\n> - Drugi punkt streszczenia.\n\n## Czym jest lint?\n\nLint sprawdza wpis.\n"
+_PUBLISH_BAD = "# Tytuł\n\nWstęp bez streszczenia.\n"
+
+
+async def _publishable(env: ParityEnv, title: str, slug: str, content: str, **fields: Any) -> WikiPage:
+    return await _blog_post(env, title, slug, content=content, description=_PUBLISH_DESCRIPTION, last_verified_at=date.today(), **fields)
+
+
+async def _page_is_public(env: ParityEnv, page_id: uuid.UUID) -> bool:
+    return (await env.db.execute(select(WikiPage.is_public).where(WikiPage.id == page_id))).scalar_one()
+
+
+async def scenario_publish_blog_post(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    page_a = await _publishable(env, "Wpis MCP", f"pub-a-{tag}", _PUBLISH_CLEAN)
+    page_b = await _publishable(env, "Wpis v2", f"pub-b-{tag}", _PUBLISH_CLEAN)
+    a_id, b_id = page_a.id, page_b.id
+
+    mcp_out = await env.mcp("publish_blog_post", env.slug, str(a_id))
+    response = await env.v2("publish_blog_post", page_id=b_id)
+
+    assert response.status_code == 200
+    body = response.json()
+    _assert_blog_view_equal(mcp_out, body, skip=("page_id", "title", "slug", "public_url", "markdown_url", "published_at"))
+    assert (mcp_out["is_public"], body["is_public"]) == (True, True)
+    assert mcp_out["public_url"].endswith(f"/blog/pub-a-{tag}")
+    assert body["public_url"].endswith(f"/blog/pub-b-{tag}")
+    assert (mcp_out["markdown_url"], body["markdown_url"]) == (mcp_out["public_url"] + ".md", body["public_url"] + ".md")
+    # Wynik lintu jest ten sam w obu kanałach; MCP nie dokłada tu tabeli (inaczej niż w lint_blog_post).
+    assert "table" not in mcp_out["lint"]
+    assert {k: v for k, v in mcp_out["lint"].items() if k != "page_id"} == {k: v for k, v in body["lint"].items() if k != "page_id"}
+    assert (mcp_out["lint"]["page_id"], body["lint"]["page_id"]) == (str(a_id), str(b_id))
+    assert mcp_out["lint"]["error_count"] == 0
+    state_a, state_b = await _blog_state(env, a_id), await _blog_state(env, b_id)
+    assert state_a["published_at"] is not None
+    assert state_b["published_at"] is not None
+    assert (await _page_is_public(env, a_id), await _page_is_public(env, b_id)) == (True, True)
+
+    # Druga publikacja nie zmienia daty w żadnym kanale.
+    mcp_again = await env.mcp("publish_blog_post", env.slug, str(a_id))
+    v2_again = await env.v2("publish_blog_post", page_id=b_id)
+    assert _dt(mcp_again["published_at"]) == _dt(mcp_out["published_at"])
+    assert _dt(v2_again.json()["published_at"]) == _dt(body["published_at"])
+
+    # Odmowa lintu: ten sam komunikat, 422 w v2, strona zostaje prywatna. Rollback serwisu cofnąłby
+    # transakcję testu, więc jest podmieniony; to, że został wywołany, sprawdza test jednostkowy.
+    refused_a = await _publishable(env, "Odmowa MCP", f"ref-a-{tag}", _PUBLISH_BAD)
+    refused_b = await _publishable(env, "Odmowa v2", f"ref-b-{tag}", _PUBLISH_BAD)
+    with patch.object(env.db, "rollback", AsyncMock()):
+        message = await env.mcp_error("publish_blog_post", env.slug, str(refused_a.id))
+        refusal = await env.v2("publish_blog_post", page_id=refused_b.id)
+    assert message.startswith("Publikacja odrzucona: wpis ma błędy lintu")
+    assert "tldr-missing" in message
+    _assert_problem(refusal, 422, message)
+    assert (await _page_is_public(env, refused_a.id), await _page_is_public(env, refused_b.id)) == (False, False)
+
+    # force: obie strony publikują się mimo błędów i zwracają tę samą ocenę.
+    forced_a = await _publishable(env, "Force MCP", f"force-a-{tag}", _PUBLISH_BAD)
+    forced_b = await _publishable(env, "Force v2", f"force-b-{tag}", _PUBLISH_BAD)
+    mcp_forced = await env.mcp("publish_blog_post", env.slug, str(forced_a.id), force=True)
+    v2_forced = await env.v2("publish_blog_post", page_id=forced_b.id, json={"force": True})
+    assert v2_forced.status_code == 200
+    assert mcp_forced["lint"]["error_count"] == v2_forced.json()["lint"]["error_count"] == 1
+    assert mcp_forced["lint"]["score"] == v2_forced.json()["lint"]["score"]
+    assert (mcp_forced["is_public"], v2_forced.json()["is_public"]) == (True, True)
+
+    unknown = uuid.uuid4()
+    not_found = await env.mcp_error("publish_blog_post", env.slug, str(unknown))
+    _assert_problem(await env.v2("publish_blog_post", page_id=unknown), 404, not_found)
+
+
+async def scenario_unpublish_blog_post(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    page_a = await _blog_post(env, "Wpis MCP", f"unpub-a-{tag}", is_public=True, published_at=_ts(3))
+    page_b = await _blog_post(env, "Wpis v2", f"unpub-b-{tag}", is_public=True, published_at=_ts(3))
+    a_id, b_id = page_a.id, page_b.id
+
+    mcp_out = await env.mcp("unpublish_blog_post", env.slug, str(a_id))
+    response = await env.v2("unpublish_blog_post", page_id=b_id)
+
+    assert response.status_code == 200
+    body = response.json()
+    _assert_blog_view_equal(mcp_out, body, skip=("page_id", "title", "slug"))
+    assert (mcp_out["is_public"], body["is_public"]) == (False, False)
+    assert (mcp_out["public_url"], body["public_url"]) == (None, None)
+    assert (_dt(mcp_out["published_at"]), _dt(body["published_at"])) == (_ts(3), _ts(3))
+    state_a, state_b = await _blog_state(env, a_id), await _blog_state(env, b_id)
+    assert _without(state_a, "slug", "previous_slugs") == _without(state_b, "slug", "previous_slugs")
+    assert (state_a["slug"], state_b["slug"]) == (f"unpub-a-{tag}", f"unpub-b-{tag}")
+    assert (await _page_is_public(env, a_id), await _page_is_public(env, b_id)) == (False, False)
+
+    unknown = uuid.uuid4()
+    not_found = await env.mcp_error("unpublish_blog_post", env.slug, str(unknown))
+    _assert_problem(await env.v2("unpublish_blog_post", page_id=unknown), 404, not_found)
+
+    no_row = await _blog_post(env, "Strona bez wpisu", f"unpub-norow-{tag}", with_post=False)
+    no_row_message = await env.mcp_error("unpublish_blog_post", env.slug, str(no_row.id))
+    assert no_row_message == "Wpis bloga nie istnieje"
+    _assert_problem(await env.v2("unpublish_blog_post", page_id=no_row.id), 404, no_row_message)
+
+
 # ---------------------------------------------------------------------------
 # Graf Połączeń (MON-248): Neo4j nie działa w testach, oba kanały wołą te same funkcje
 # `monolynx.services.graph`, więc jeden zestaw mocków obsługuje MCP i v2.
@@ -2570,6 +2674,8 @@ SCENARIOS: dict[str, Scenario] = {
     "get_blog_post": scenario_get_blog_post,
     "lint_blog_post": scenario_lint_blog_post,
     "set_blog_post_meta": scenario_set_blog_post_meta,
+    "publish_blog_post": scenario_publish_blog_post,
+    "unpublish_blog_post": scenario_unpublish_blog_post,
     "list_graph_nodes": scenario_list_graph_nodes,
     "get_graph_node": scenario_get_graph_node,
     "query_graph": scenario_query_graph,
@@ -2612,6 +2718,7 @@ class TestKnownDifferences:
             "update_wiki_page",
             "list_blog_posts",
             "set_blog_post_meta",
+            "publish_blog_post",
             "list_graph_nodes",
             "get_graph_node",
             "query_graph",

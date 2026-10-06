@@ -46,6 +46,8 @@ _GRAPH = "/api/v2/projects/{project_slug}/graph"
 _BLOG_POSTS = "/api/v2/projects/{project_slug}/blog/posts"
 _BLOG_POST = "/api/v2/projects/{project_slug}/blog/posts/{page_id}"
 _BLOG_LINT = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/lint"
+_BLOG_PUBLISH = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/publish"
+_BLOG_UNPUBLISH = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/unpublish"
 
 
 TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
@@ -293,7 +295,7 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         is_write=True,
         known_differences="MCP zwraca wiki_llm_enabled i message; v2 zwraca tylko wiki_llm_enabled.",
     ),
-    # --- Blog (4) ---
+    # --- Blog (6) ---
     "list_blog_posts": ToolEndpointSpec(
         "GET",
         _BLOG_POSTS,
@@ -316,6 +318,16 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
             "czyści pole; v2: pole nieobecne w body = bez zmian, null czyści pole."
         ),
     ),
+    "publish_blog_post": ToolEndpointSpec(
+        "POST",
+        _BLOG_PUBLISH,
+        is_write=True,
+        known_differences=(
+            "force to parametr MCP, a w v2 opcjonalne pole body JSON (brak body = false); odmowa przy błędach lintu bez force "
+            "to ValueError z tekstem w MCP i 422 problem+json w v2 (ten sam komunikat w detail)."
+        ),
+    ),
+    "unpublish_blog_post": ToolEndpointSpec("POST", _BLOG_UNPUBLISH, is_write=True),
     # --- Graph (5) ---
     "list_graph_nodes": ToolEndpointSpec(
         "GET",
