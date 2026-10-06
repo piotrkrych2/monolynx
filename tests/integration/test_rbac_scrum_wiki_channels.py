@@ -14,9 +14,11 @@ kryteriach akceptacji, etykietach, czasie pracy, załącznikach i stronach wiki 
   `TestPermissionBeforeInputValidationInMcp`; osobno narzędzia LLM Wiki z włączoną flagą,
 - endpoint v2, który po zapisie czyta zasób (POST/PATCH ticketu, start/complete sprintu), sprawdza `scrum:read`
   przed zapisem, więc rola z `scrum:write` bez `scrum:read` nie zostawia po sobie zapisu,
-- `is_public=true` wymaga tego samego uprawnienia co formularz dashboardu, czyli `wiki:write`.
+- `is_public=true` wymaga tego samego uprawnienia roli co formularz dashboardu, czyli `wiki:write`; dodatkowo konto musi
+  mieć `blog:write` (MON-270), czego ten plik nie sprawdza.
 
-Aktorzy (jeden projekt, osobny użytkownik z tokenem na rolę):
+Aktorzy (jeden projekt, osobny użytkownik z tokenem na rolę; każdy ma `can_edit_blog=True`, żeby ten plik sprawdzał
+wyłącznie role projektu, a bramkę `blog:write` konta pokrywa `test_blog_permission_channels.py`, MON-270):
 - `owner`, `admin`, `member`: role legacy (`DEFAULT_ROLE_PERMISSIONS`), member ma read+write bez delete,
 - `readonly`: rola niestandardowa `{"scrum": ["read"], "wiki": ["read"]}`,
 - `no_scrum_read` (`{"wiki": ["read"]}`), `no_wiki_read` (`{"scrum": ["read"]}`),
@@ -286,7 +288,7 @@ class RbacEnv:
     async def actor(self, role: str) -> ApiV2Actor:
         if role in self.actors:
             return self.actors[role]
-        actor = await make_actor(self.db, f"rbac-{role}")
+        actor = await make_actor(self.db, f"rbac-{role}", can_edit_blog=True)
         if role in _CUSTOM_ROLES:
             role_obj = Role(name=f"rbac-{role}", project_id=self.project.id, permissions=_CUSTOM_ROLES[role], is_system=False)
             self.db.add(role_obj)

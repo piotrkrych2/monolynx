@@ -268,11 +268,13 @@ git log -1 --format=%B | monolynx --project my-project ticket comment add MP-11 
 | `wiki config get` | | Show the LLM Wiki method configuration of the project. |
 | `wiki config set` | `--enabled`/`--disabled` | Turn the LLM Wiki method on or off (requires the `settings:write` permission). |
 
-`--public` publishes the page at `/blog/{slug}`, visible to anyone without signing in. It is the lower level of publishing, without the lint gate: `blog publish` runs the lint first and refuses a post with lint errors, and `blog unpublish` takes a post offline. `wiki delete` has no `-y` short form. `--content -` with an empty standard input, an unreadable or non-UTF-8 `--file`, and a missing project are usage errors (exit code 2, no request sent).
+`--public` publishes the page at `/blog/{slug}`, visible to anyone without signing in. It is the lower level of publishing, without the lint gate: `blog publish` runs the lint first and refuses a post with lint errors, and `blog unpublish` takes a post offline. Publishing needs the blog permission on your account, on top of `wiki:write`: `wiki create --public`, and a `wiki update --public` or `wiki update --no-public` that changes the current state, are refused with a 403 (`Brak uprawnienia blog:write`, exit code 3) for an account without it, and nothing is saved. The permission is described under [`blog`](#blog). `wiki delete` has no `-y` short form. `--content -` with an empty standard input, an unreadable or non-UTF-8 `--file`, and a missing project are usage errors (exit code 2, no request sent).
 
 ### `blog`
 
-Blog posts: metadata, lint, publishing and unpublishing. A blog post is a wiki page that has a blog metadata row; the page content stays in `monolynx wiki`. All `blog` commands work on the project resolved from `--project`, `MONOLYNX_PROJECT` or the profile. `blog list`, `blog get` and `blog lint` need the `wiki:read` permission; `blog meta`, `blog publish` and `blog unpublish` need `wiki:write` (`blog publish` runs the lint, so it needs `wiki:read` as well). There is no separate permission for publishing.
+Blog posts: metadata, lint, publishing and unpublishing. A blog post is a wiki page that has a blog metadata row; the page content stays in `monolynx wiki`. All `blog` commands work on the project resolved from `--project`, `MONOLYNX_PROJECT` or the profile. `blog list`, `blog get` and `blog lint` need the `wiki:read` permission; `blog meta`, `blog publish` and `blog unpublish` need `wiki:write` and the blog permission (`blog publish` runs the lint, so it needs `wiki:read` as well).
+
+The blog permission (`blog:write`) belongs to the user account, not to a role in a project, and is off by default. Only a superuser grants or revokes it, with the switch on the account edit page in the dashboard (`/dashboard/users/{user_id}`); a superuser always has it. A project owner or admin cannot grant it, and the CLI has no command for it. Without it, `blog meta`, `blog publish` and `blog unpublish` end with a 403 (`Brak uprawnienia blog:write`) and exit code 3, before the post is looked up or linted, and nothing is changed. Signing in again does not help: ask a superuser to grant the permission.
 
 | Command | Arguments and options | Description |
 |---|---|---|
@@ -302,7 +304,7 @@ Notes:
 - `published_at` is set by the first publication only. Publishing an already public post, or publishing again after `blog unpublish`, keeps the date, the slug and the address.
 - `blog publish` on a wiki page without a metadata row creates the row (slug taken from the page). A public page with the same slug in another project, or a slug already used by another post, is a 422 with a readable reason (exit code 1); nothing is published.
 - `blog unpublish` sets `is_public` to `false`: `/blog/<slug>` and `/blog/<slug>.md` answer 404, and the result carries `public_url` and `markdown_url` as `null`. The slug and `published_at` stay. On a post that is already private it succeeds without a change; on a wiki page without a metadata row it ends with a 404 (exit code 1).
-- `wiki create --public`, `wiki update --public` and `wiki update --no-public` still work as the lower level, without the lint gate. Use `blog publish` and `blog unpublish` when the lint should decide.
+- `wiki create --public`, `wiki update --public` and `wiki update --no-public` still work as the lower level, without the lint gate, but behind the same blog permission: a change of the public state by an account without it is a 403 (exit code 3). Use `blog publish` and `blog unpublish` when the lint should decide.
 - `blog meta` does not change the title, the content, `is_public` or `published_at`. Use `wiki update` for the title and the content, and `blog publish` / `blog unpublish` for publishing.
 - Every command checks the server response before rendering. A missing required field or a wrong type ends with the error `Nieprawidłowa odpowiedź serwera` and exit code 1, never with an empty result and exit code 0. After `blog meta`, `blog publish` or `blog unpublish` the write may already have reached the server, so check the post with `blog get` before repeating the command.
 
@@ -438,7 +440,7 @@ Resolution order for every setting: command-line option, then environment variab
 | `0` | Success | |
 | `1` | API or local error | 4xx other than 401/403 (for example 404 or 422), 429 or 5xx after all retries; corrupted config file; declined confirmation; `config get` for a key without a value; `blog lint` on a post with at least one lint error (the report is printed first); `blog publish` refused because of lint errors (a 422, the reason on standard error) |
 | `2` | Usage error | Unknown option or bad argument; no project resolved; destructive command without `--yes` outside a terminal; `--timeout` not greater than zero; invalid `config` key; `update` without any field to change; empty stdin for `--content -`; a bare `.` or `..` as an identifier in a URL path |
-| `3` | Authentication error | 401 or 403; failed token refresh; no token stored; OAuth login timeout, denied consent or mismatched `state` |
+| `3` | Authentication error | 401 or 403 (a 403 is a missing permission, for example `Brak uprawnienia blog:write` for publishing without the blog permission); failed token refresh; no token stored; OAuth login timeout, denied consent or mismatched `state` |
 | `4` | Network error | Timeout, connection refused, DNS failure |
 
 Errors are printed on stderr as `Błąd: <status> <title>: <detail>`. `--quiet` does not silence them.

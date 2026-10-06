@@ -189,6 +189,13 @@ class TestGetPageContent:
 class TestCreateWikiPage:
     """Testy tworzenia strony wiki."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_blog_gate(self):
+        """Bramka blog:write (MON-270) czyta User z bazy; atrapa sesji tych testow jej nie obsluguje.
+        Zachowanie bramki sprawdza TestWikiBlogGate."""
+        with patch("monolynx.services.wiki.ensure_blog_permission", new_callable=AsyncMock):
+            yield
+
     @patch("monolynx.services.wiki.sync_backlinks", new_callable=AsyncMock)
     @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
@@ -450,6 +457,12 @@ class TestUpdateWikiPage:
         with patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _stub_blog_gate(self):
+        """Bramka blog:write (MON-270) na atrapie sesji; jej zachowanie sprawdza TestWikiBlogGate."""
+        with patch("monolynx.services.wiki.ensure_blog_permission", new_callable=AsyncMock):
+            yield
+
     @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
     @patch("monolynx.services.wiki.upload_markdown")
     async def test_update_title(self, mock_upload, mock_embeddings):
@@ -667,6 +680,190 @@ class TestUpdateWikiPage:
         )
 
         mock_ensure_post.assert_not_awaited()
+
+
+@pytest.mark.unit
+class TestWikiBlogGate:
+    """MON-270: `is_public` na stronie wiki wymaga `blog:write`, a odmowa poprzedza jakikolwiek zapis."""
+
+    DENIED = "Brak uprawnienia blog:write"
+
+    @pytest.fixture(autouse=True)
+    def blog_gate(self):
+        with patch("monolynx.services.wiki.ensure_blog_permission", new_callable=AsyncMock) as gate:
+            yield gate
+
+    @pytest.fixture(autouse=True)
+    def _stub_ensure_post(self):
+        with patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock) as ensure_post_mock:
+            yield ensure_post_mock
+
+    @staticmethod
+    def _create_db() -> AsyncMock:
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+        return mock_db
+
+    @staticmethod
+    def _update_db() -> AsyncMock:
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+        return mock_db
+
+    @staticmethod
+    def _page(*, is_public: bool) -> MagicMock:
+        page = MagicMock()
+        page.title = "Title"
+        page.slug = "title"
+        page.position = 1
+        page.id = uuid.uuid4()
+        page.project_id = uuid.uuid4()
+        page.is_public = is_public
+        return page
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_public_page_checks_gate_with_session_and_author(self, mock_upload, mock_embeddings, blog_gate):
+        mock_upload.return_value = "proj/id.md"
+        mock_db = self._create_db()
+        user_id = uuid.uuid4()
+
+        await create_wiki_page(
+            project_id=uuid.uuid4(), project_slug="proj", title="Publiczna", content="x", user_id=user_id, is_public=True, db=mock_db
+        )
+
+        blog_gate.assert_awaited_once_with(mock_db, user_id)
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_public_page_denied_writes_nothing(self, mock_upload, mock_embeddings, blog_gate, _stub_ensure_post):
+        blog_gate.side_effect = ValueError(self.DENIED)
+        mock_db = self._create_db()
+
+        with pytest.raises(ValueError) as exc_info:
+            await create_wiki_page(
+                project_id=uuid.uuid4(),
+                project_slug="proj",
+                title="Publiczna",
+                content="x",
+                user_id=uuid.uuid4(),
+                is_public=True,
+                db=mock_db,
+            )
+
+        assert str(exc_info.value) == self.DENIED
+        mock_upload.assert_not_called()
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_awaited()
+        _stub_ensure_post.assert_not_awaited()
+        mock_embeddings.assert_not_awaited()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_private_page_does_not_touch_the_gate(self, mock_upload, mock_embeddings, blog_gate):
+        mock_upload.return_value = "proj/id.md"
+        blog_gate.side_effect = ValueError(self.DENIED)
+        mock_db = self._create_db()
+
+        result = await create_wiki_page(project_id=uuid.uuid4(), project_slug="proj", title="Prywatna", content="x", user_id=uuid.uuid4(), db=mock_db)
+
+        assert result.is_public is False
+        blog_gate.assert_not_awaited()
+        mock_upload.assert_called_once()
+        mock_db.commit.assert_awaited()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_create_explicit_private_page_does_not_touch_the_gate(self, mock_upload, mock_embeddings, blog_gate):
+        mock_upload.return_value = "proj/id.md"
+        mock_db = self._create_db()
+
+        await create_wiki_page(
+            project_id=uuid.uuid4(), project_slug="proj", title="Prywatna", content="x", user_id=uuid.uuid4(), is_public=False, db=mock_db
+        )
+
+        blog_gate.assert_not_awaited()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_update_publishing_checks_gate_with_session_and_editor(self, mock_upload, mock_embeddings, blog_gate):
+        page = self._page(is_public=False)
+        mock_db = self._update_db()
+        user_id = uuid.uuid4()
+
+        await update_wiki_page(page=page, project_slug="proj", is_public=True, user_id=user_id, db=mock_db)
+
+        blog_gate.assert_awaited_once_with(mock_db, user_id)
+        assert page.is_public is True
+
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_update_unpublishing_checks_gate(self, mock_upload, mock_embeddings, blog_gate):
+        page = self._page(is_public=True)
+        mock_db = self._update_db()
+        user_id = uuid.uuid4()
+
+        await update_wiki_page(page=page, project_slug="proj", is_public=False, user_id=user_id, db=mock_db)
+
+        blog_gate.assert_awaited_once_with(mock_db, user_id)
+        assert page.is_public is False
+
+    @pytest.mark.parametrize("current", [False, True], ids=["publish", "unpublish"])
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_update_denied_changes_nothing(self, mock_upload, mock_embeddings, blog_gate, _stub_ensure_post, current):
+        blog_gate.side_effect = ValueError(self.DENIED)
+        page = self._page(is_public=current)
+        mock_db = self._update_db()
+
+        with pytest.raises(ValueError) as exc_info:
+            await update_wiki_page(
+                page=page,
+                project_slug="proj",
+                title="Nowy tytul",
+                content="nowa tresc",
+                position=9,
+                is_public=not current,
+                user_id=uuid.uuid4(),
+                db=mock_db,
+            )
+
+        assert str(exc_info.value) == self.DENIED
+        assert page.is_public is current
+        assert page.title == "Title"
+        assert page.slug == "title"
+        assert page.position == 1
+        mock_upload.assert_not_called()
+        mock_db.commit.assert_not_awaited()
+        _stub_ensure_post.assert_not_awaited()
+        mock_embeddings.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("current", "requested"),
+        [(True, None), (False, None), (True, True), (False, False)],
+        ids=["public-none", "private-none", "public-same", "private-same"],
+    )
+    @patch("monolynx.services.embeddings.update_page_embeddings", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_update_without_visibility_change_does_not_touch_the_gate(self, mock_upload, mock_embeddings, blog_gate, current, requested):
+        blog_gate.side_effect = ValueError(self.DENIED)
+        page = self._page(is_public=current)
+        mock_db = self._update_db()
+
+        await update_wiki_page(
+            page=page, project_slug="proj", title="Nowy tytul", content="nowa tresc", is_public=requested, user_id=uuid.uuid4(), db=mock_db
+        )
+
+        blog_gate.assert_not_awaited()
+        assert page.is_public is current
+        assert page.title == "Nowy tytul"
+        mock_upload.assert_called_once()
+        mock_db.commit.assert_awaited()
 
 
 @pytest.mark.unit

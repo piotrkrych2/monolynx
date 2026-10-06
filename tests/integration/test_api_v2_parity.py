@@ -3,7 +3,7 @@
 Cel: refactor, który wyciągnął logikę do `services/`, pozwala dwóm frontendom (narzędzia
 MCP w `mcp_server.py` i endpointy `/api/v2`) wołać tę samą warstwę, więc rozjazd (pole
 obecne w jednym kanale i brakujące w drugim, inny kod błędu, pominięty commit) ma wychodzić
-w testach, nie u użytkownika. Plik zawiera pięć grup testów:
+w testach, nie u użytkownika. Plik zawiera siedem grup testów:
 
 1. kompletność mapy `tool_endpoint_map.py` względem narzędzi zarejestrowanych w MCP oraz
    względem tras v2 (`find_coverage_problems`, `find_missing_routes` są sprawdzane także na
@@ -19,6 +19,9 @@ w testach, nie u użytkownika. Plik zawiera pięć grup testów:
 6. graf Połączeń (MON-248): 5 odczytów mapowanych na `/graph/*`; Neo4j nie działa w testach,
    więc funkcje `monolynx.services.graph` są podmieniane jednym zestawem mocków (`_graph_backend`)
    dla obu kanałów, a klasa `TestGraphChannelErrors` porównuje wyłączony graf i brak `connections:read`.
+
+7. zapisy bloga (MON-270): scenariusze biegną jako owner Z `blog:write` (`can_edit_blog=True`); owner bez tego
+   uprawnienia dostaje `Brak uprawnienia blog:write` w MCP i 403 w v2 (`TestBlogWriteDeniedWithoutBlogPermission`).
 
 Ten sam token (`UserApiToken` z `generate_api_token()`) obsługuje oba kanały: jako `Bearer`
 w nagłówku v2 i w zamockowanym `Context` MCP. `mcp_server.async_session_factory` jest
@@ -354,7 +357,7 @@ async def call_v2(
 
 @pytest.fixture
 async def env(db_session, client, monkeypatch, side_effects) -> ParityEnv:
-    actor, project = await make_owner_project(db_session, "parity")
+    actor, project = await make_owner_project(db_session, "parity", can_edit_blog=True)
 
     @asynccontextmanager
     async def session_factory():
@@ -2719,6 +2722,7 @@ class TestKnownDifferences:
             "list_blog_posts",
             "set_blog_post_meta",
             "publish_blog_post",
+            "unpublish_blog_post",
             "list_graph_nodes",
             "get_graph_node",
             "query_graph",
@@ -2931,3 +2935,85 @@ class TestNonMemberDenied:
 
         assert message == f"Projekt '{env.slug}' nie istnieje"
         _assert_problem(response, 404, message)
+
+
+# ---------------------------------------------------------------------------
+# Zapisy bloga wymagają blog:write na koncie (MON-270)
+# ---------------------------------------------------------------------------
+
+_BLOG_DENIED = "Brak uprawnienia blog:write"
+_BLOG_WRITE_TOOLS = ("set_blog_post_meta", "publish_blog_post", "unpublish_blog_post")
+
+
+async def _flagless_owner(env: ParityEnv) -> ApiV2Actor:
+    actor = await make_actor(env.db, "noflag")
+    await add_member(env.db, env.project, actor.user, role="owner")
+    return actor
+
+
+class TestBlogWriteDeniedWithoutBlogPermission:
+    @pytest.mark.parametrize("tool", _BLOG_WRITE_TOOLS)
+    async def test_owner_without_flag_is_denied_in_both_channels_and_nothing_changes(self, tool, env):
+        actor = await _flagless_owner(env)
+        tag = uuid.uuid4().hex[:8]
+        starts_public = tool == "unpublish_blog_post"
+        page = await _publishable(env, "Wpis bez prawa", f"deny-{tag}", _PUBLISH_CLEAN, is_public=starts_public)
+        mcp_kwargs = {"set_blog_post_meta": {"description": "Zmieniony opis"}}.get(tool, {})
+        v2_json = {"set_blog_post_meta": {"description": "Zmieniony opis"}}.get(tool)
+        before = await _blog_state(env, page.id)
+
+        message = await call_mcp_error(_token_of(actor), tool, env.slug, str(page.id), **mcp_kwargs)
+        response = await call_v2(env.client, tool, actor.headers, env.slug, json=v2_json, page_id=page.id)
+
+        assert message == _BLOG_DENIED
+        _assert_problem(response, 403, _BLOG_DENIED)
+        assert await _blog_state(env, page.id) == before
+        assert await _page_is_public(env, page.id) is starts_public
+
+    async def test_is_public_on_wiki_create_is_denied_in_both_channels_and_creates_nothing(self, env):
+        actor = await _flagless_owner(env)
+        tag = uuid.uuid4().hex[:8]
+        payload = {"content": "# Tresc", "is_public": True}
+
+        message = await call_mcp_error(_token_of(actor), "create_wiki_page", env.slug, f"Odmowa mcp {tag}", **payload)
+        response = await call_v2(env.client, "create_wiki_page", actor.headers, env.slug, json={"title": f"Odmowa v2 {tag}", **payload})
+
+        assert message == _BLOG_DENIED
+        _assert_problem(response, 403, _BLOG_DENIED)
+        titles = {f"Odmowa mcp {tag}", f"Odmowa v2 {tag}"}
+        assert (await env.db.execute(select(WikiPage.id).where(WikiPage.title.in_(titles)))).first() is None
+
+    async def test_is_public_on_wiki_update_is_denied_in_both_channels_and_page_stays_private(self, env):
+        actor = await _flagless_owner(env)
+        tag = uuid.uuid4().hex[:8]
+        page_a = await _wiki_page(env, "Prywatna mcp", f"prywatna-mcp-{tag}", "stara tresc")
+        page_b = await _wiki_page(env, "Prywatna v2", f"prywatna-v2-{tag}", "stara tresc")
+
+        message = await call_mcp_error(_token_of(actor), "update_wiki_page", env.slug, str(page_a.id), is_public=True)
+        response = await call_v2(env.client, "update_wiki_page", actor.headers, env.slug, json={"is_public": True}, page_id=page_b.id)
+
+        assert message == _BLOG_DENIED
+        _assert_problem(response, 403, _BLOG_DENIED)
+        assert (await _wiki_state(env, page_a.id))["is_public"] is False
+        assert (await _wiki_state(env, page_b.id))["is_public"] is False
+
+    async def test_content_edit_of_wiki_page_without_flag_still_works_in_both_channels(self, env):
+        actor = await _flagless_owner(env)
+        tag = uuid.uuid4().hex[:8]
+        page_a = await _wiki_page(env, "Edycja mcp", f"edycja-mcp-{tag}", "stara tresc")
+        page_b = await _wiki_page(env, "Edycja v2", f"edycja-v2-{tag}", "stara tresc")
+
+        await call_mcp(_token_of(actor), "update_wiki_page", env.slug, str(page_a.id), content="nowa mcp")
+        response = await call_v2(env.client, "update_wiki_page", actor.headers, env.slug, json={"content": "nowa v2"}, page_id=page_b.id)
+
+        assert response.status_code == 200
+        assert (await _wiki_state(env, page_a.id))["content"] == "nowa mcp"
+        assert (await _wiki_state(env, page_b.id))["content"] == "nowa v2"
+
+    @pytest.mark.parametrize("tool", _BLOG_WRITE_TOOLS)
+    def test_map_documents_the_hidden_mcp_listing_and_the_v2_403(self, tool):
+        note = TOOL_TO_ENDPOINT[tool].known_differences
+
+        assert "blog:write" in note
+        assert "403" in note
+        assert "ukrywa to narzędzie na liście" in note

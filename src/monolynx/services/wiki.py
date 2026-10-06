@@ -23,7 +23,7 @@ from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.blog import ensure_post
 from monolynx.services.minio_client import delete_object, get_markdown, upload_markdown
-from monolynx.services.permissions import check_permission, ensure_permission
+from monolynx.services.permissions import check_permission, ensure_blog_permission, ensure_permission
 
 logger = logging.getLogger("monolynx.wiki")
 
@@ -483,7 +483,13 @@ async def create_wiki_page(
     is_public: bool = False,
     db: AsyncSession,
 ) -> WikiPage:
-    """Utworz strone wiki -- zapis metadanych w DB, tresc w MinIO."""
+    """Utworz strone wiki -- zapis metadanych w DB, tresc w MinIO.
+
+    `is_public=True` wymaga uprawnienia `blog:write` konta (MON-270), sprawdzanego przed jakimkolwiek zapisem.
+    """
+    if is_public:
+        await ensure_blog_permission(db, user_id)
+
     slug = generate_slug(title)
 
     # Blokada slugów systemowych - użytkownicy/MCP nie mogą tworzyć stron o zarezerwowanych slugach
@@ -560,7 +566,14 @@ async def update_wiki_page(
     is_public: bool | None = None,
     db: AsyncSession,
 ) -> WikiPage:
-    """Aktualizuj strone wiki."""
+    """Aktualizuj strone wiki.
+
+    Zmiana `is_public` (publikacja i cofniecie) wymaga uprawnienia `blog:write` konta (MON-270),
+    sprawdzanego przed jakimkolwiek zapisem. Wartosc rowna biezacej i `None` nie sa zmiana.
+    """
+    if is_public is not None and is_public != page.is_public:
+        await ensure_blog_permission(db, user_id)
+
     if title is not None and title.strip() != page.title:
         page.title = title.strip()
         new_slug = generate_slug(title)

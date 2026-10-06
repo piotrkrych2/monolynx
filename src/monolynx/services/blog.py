@@ -16,8 +16,11 @@ MON-264: `rewrite_attachment_urls` przepisuje adresy dashboardowe załączników
 (czysta funkcja, wołana przy renderze publicznym).
 
 MON-263: `publish_post` (bramka lintu, potem `is_public=True`) i `unpublish_post`. Oba wymagają
-`wiki:write` i commitują w serwisie. `blog_lint` jest importowany w czasie wywołania, bo sam
+`wiki:write` i `blog:write` i commitują w serwisie. `blog_lint` jest importowany w czasie wywołania, bo sam
 importuje stąd `DESCRIPTION_MAX_LENGTH`.
+
+MON-270: `publish_post`, `unpublish_post` i `set_post_meta` wymagają też uprawnienia kontowego
+`blog:write` (`ensure_blog_permission`, zaraz po `wiki:write`). Odczyty zostają na `wiki:read`.
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_page import WikiPage
-from monolynx.services.permissions import ensure_permission
+from monolynx.services.permissions import ensure_blog_permission, ensure_permission
 
 if TYPE_CHECKING:
     from monolynx.services.blog_lint import LintResult
@@ -556,10 +559,11 @@ async def set_post_meta(
 ) -> BlogPost:
     """Zapisz metadane wpisu (częściowo: `_UNSET` = bez zmian, `None` czyści pole nullable).
 
-    Wymaga `wiki:write`; nie zmienia `is_public`. Brakujący wiersz zakłada przez `ensure_post`.
+    Wymaga `wiki:write` i `blog:write`; nie zmienia `is_public`. Brakujący wiersz zakłada przez `ensure_post`.
     Wszystkie walidacje biegną przed pierwszą mutacją, więc błąd nic nie zapisuje.
     """
     await ensure_permission(db, user.id, project.id, "wiki", "write")
+    await ensure_blog_permission(db, user.id)
 
     page = (await db.execute(select(WikiPage).where(WikiPage.id == page_id, WikiPage.project_id == project.id))).scalar_one_or_none()
     if page is None:
@@ -633,13 +637,14 @@ async def publish_post(
 ) -> PublishResult:
     """Opublikuj wpis: lint, a przy błędach lintu odmowa (chyba że `force`), potem `is_public=True`.
 
-    Wymaga `wiki:write`, sprawdzanego przed wyszukaniem strony i przed lintem. `published_at`
+    Wymaga `wiki:write` i `blog:write`, sprawdzanych przed wyszukaniem strony i przed lintem. `published_at`
     uzupełnia się tylko gdy puste, więc ponowna publikacja nie zmienia daty ani adresu.
     """
     # Import w czasie wywołania: blog_lint importuje stąd DESCRIPTION_MAX_LENGTH (cykl).
     from monolynx.services.blog_lint import lint_post_by_id
 
     await ensure_permission(db, user.id, project.id, "wiki", "write")
+    await ensure_blog_permission(db, user.id)
 
     page = (await db.execute(select(WikiPage).where(WikiPage.id == page_id, WikiPage.project_id == project.id))).scalar_one_or_none()
     if page is None:
@@ -679,9 +684,10 @@ async def publish_post(
 async def unpublish_post(db: AsyncSession, user: User, project: Project, page_id: uuid.UUID) -> BlogPostView:
     """Cofnij publikację: `is_public=False`, `published_at` i slug zostają (powrót pod ten sam adres).
 
-    Wymaga `wiki:write`. Idempotentne dla strony już prywatnej; brak wiersza `BlogPost` to błąd.
+    Wymaga `wiki:write` i `blog:write`. Idempotentne dla strony już prywatnej; brak wiersza `BlogPost` to błąd.
     """
     await ensure_permission(db, user.id, project.id, "wiki", "write")
+    await ensure_blog_permission(db, user.id)
 
     page = (await db.execute(select(WikiPage).where(WikiPage.id == page_id, WikiPage.project_id == project.id))).scalar_one_or_none()
     if page is None:

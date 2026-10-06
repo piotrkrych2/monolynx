@@ -203,6 +203,20 @@ def test_forbidden_403_exits_3_with_detail_on_stderr(runner, monkeypatch, mock_t
     assert result.stdout == ""
 
 
+_BLOG_WRITE_COMMANDS = [case for case in _COMMANDS if case[0] in {"meta", "publish", "unpublish"}]
+
+
+@pytest.mark.parametrize(("_id", "args", "_method", "_path", "_payload"), _BLOG_WRITE_COMMANDS, ids=[case[0] for case in _BLOG_WRITE_COMMANDS])
+def test_missing_blog_write_permission_403_exits_3_with_detail_on_stderr(runner, monkeypatch, mock_transport, _id, args, _method, _path, _payload):
+    _patch_client(monkeypatch, mock_transport, _problem(403, "Brak uprawnienia blog:write"))
+
+    result = _run(runner, *args)
+
+    assert result.exit_code == 3
+    assert "Brak uprawnienia blog:write" in result.stderr
+    assert result.stdout == ""
+
+
 @pytest.mark.parametrize(("_id", "args", "_method", "_path", "_payload"), _COMMANDS, ids=_COMMAND_IDS)
 def test_not_found_404_exits_1_with_detail_on_stderr(runner, monkeypatch, mock_transport, _id, args, _method, _path, _payload):
     _patch_client(monkeypatch, mock_transport, _problem(404, "Wpis bloga nie istnieje"))

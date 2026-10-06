@@ -369,12 +369,14 @@ The same operations are available through three channels over one service layer:
 | --- | --- | --- | --- |
 | `list_blog_posts` | `monolynx blog list [--status published\|draft]` | `GET /api/v2/projects/{slug}/blog/posts` | `wiki:read` |
 | `get_blog_post` | `monolynx blog get <page_id>` | `GET /api/v2/projects/{slug}/blog/posts/{page_id}` | `wiki:read` |
-| `set_blog_post_meta` | `monolynx blog meta <page_id> [options]` | `PATCH /api/v2/projects/{slug}/blog/posts/{page_id}` | `wiki:write` |
+| `set_blog_post_meta` | `monolynx blog meta <page_id> [options]` | `PATCH /api/v2/projects/{slug}/blog/posts/{page_id}` | `wiki:write` and `blog:write` |
 | `lint_blog_post` | `monolynx blog lint <page_id>` | `GET /api/v2/projects/{slug}/blog/posts/{page_id}/lint` | `wiki:read` |
-| `publish_blog_post` | `monolynx blog publish <page_id> [--force]` | `POST /api/v2/projects/{slug}/blog/posts/{page_id}/publish` | `wiki:write` (and `wiki:read` for the lint) |
-| `unpublish_blog_post` | `monolynx blog unpublish <page_id>` | `POST /api/v2/projects/{slug}/blog/posts/{page_id}/unpublish` | `wiki:write` |
-| `create_wiki_page` | `monolynx wiki create --title <title> --file <path> [--parent <page_id>]` | `POST /api/v2/projects/{slug}/wiki/pages` | `wiki:write` |
-| `update_wiki_page` | `monolynx wiki update <page_id> [--title <title>] [--file <path>]` | `PATCH /api/v2/projects/{slug}/wiki/pages/{page_id}` | `wiki:write` |
+| `publish_blog_post` | `monolynx blog publish <page_id> [--force]` | `POST /api/v2/projects/{slug}/blog/posts/{page_id}/publish` | `wiki:write` and `blog:write` (and `wiki:read` for the lint) |
+| `unpublish_blog_post` | `monolynx blog unpublish <page_id>` | `POST /api/v2/projects/{slug}/blog/posts/{page_id}/unpublish` | `wiki:write` and `blog:write` |
+| `create_wiki_page` | `monolynx wiki create --title <title> --file <path> [--parent <page_id>]` | `POST /api/v2/projects/{slug}/wiki/pages` | `wiki:write`; with `is_public=true` also `blog:write` |
+| `update_wiki_page` | `monolynx wiki update <page_id> [--title <title>] [--file <path>]` | `PATCH /api/v2/projects/{slug}/wiki/pages/{page_id}` | `wiki:write`; a change of `is_public` also `blog:write` |
+
+`wiki:read` and `wiki:write` come from the role in the project. `blog:write` is the blog permission of the user account: it is off by default, a superuser always has it, and only a superuser grants or revokes it, on the account edit page of the dashboard (`/dashboard/users/{user_id}`). A project owner or admin cannot grant it, and no MCP tool, REST endpoint or CLI command does. An account without it does not see `set_blog_post_meta`, `publish_blog_post` and `unpublish_blog_post` on the MCP tool list; the other tools in the table stay visible.
 
 In the CLI the project is chosen with the global option `--project <slug>` placed before the command group, for example `monolynx --project my-project blog lint <page_id>`.
 
@@ -393,8 +395,9 @@ Rules for an assistant:
 
 - Publishing is the only step that makes content visible to everyone. Call `publish_blog_post` only after explicit consent of the human in the current turn. Call `unpublish_blog_post` only when the human asks for it.
 - Do not use `force` to get past the lint. Fix the errors. Use `force` only when the human asks for it explicitly after seeing the list of errors.
-- Do not publish by setting `is_public=true` in `create_wiki_page` or `update_wiki_page`. That path has no lint gate.
-- A role without the needed permission gets a refusal ("Brak uprawnienia wiki:write"). Report it to the human; do not look for another path.
+- Do not publish by setting `is_public=true` in `create_wiki_page` or `update_wiki_page`. That path has no lint gate, and it needs the same `blog:write` permission as `publish_blog_post`.
+- A role without the needed permission gets a refusal ("Brak uprawnienia wiki:write"), and an account without the blog permission gets "Brak uprawnienia blog:write" (REST API: status 403; CLI: exit code 3). The check runs before the post is looked up or linted, and a refused call saves nothing. Report it to the human and ask them to have a superuser grant the permission; do not look for another path.
+- When a blog write tool is missing from your MCP tool list, the account has no blog permission. Stop there and say so: without it you can neither set the post metadata nor publish.
 
 ## Discoverability
 

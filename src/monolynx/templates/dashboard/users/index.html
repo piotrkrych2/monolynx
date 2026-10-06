@@ -44,6 +44,9 @@
                         {% if user.is_superuser %}
                         <span class="bg-indigo-600/30 text-indigo-300 text-xs px-2 py-0.5 rounded">Admin</span>
                         {% endif %}
+                        {% if user.can_edit_blog and not user.is_superuser %}
+                        <span class="bg-emerald-600/30 text-emerald-700 dark:text-emerald-300 text-xs px-2 py-0.5 rounded">Blog</span>
+                        {% endif %}
                     </div>
                 </td>
                 <td class="px-4 py-3 text-gray-600 dark:text-gray-400">{{ user.email }}</td>

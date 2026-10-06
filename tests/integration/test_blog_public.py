@@ -75,11 +75,15 @@ async def _create_project(db_session, slug, code=None):
 
 
 async def _create_user(db_session, email):
-    """Helper: tworzy uzytkownika w DB (bez logowania -- endpoint publiczny go nie wymaga)."""
+    """Helper: tworzy uzytkownika w DB (bez logowania -- endpoint publiczny go nie wymaga).
+
+    Konto ma `can_edit_blog=True` (MON-270): helper sluzy do zakladania autorow wpisow, a zapisy
+    publikacji i `is_public` przez serwis wymagaja uprawnienia `blog:write`."""
     user = User(
         email=email,
         password_hash=hash_password("testpass123"),
         is_superuser=False,
+        can_edit_blog=True,
     )
     db_session.add(user)
     await db_session.flush()
@@ -1279,7 +1283,7 @@ async def _mcp_env(engine, monkeypatch, *, private_page_title=None):
     page_id = None
 
     async with factory() as setup_db:
-        user = User(email=f"blog-mcp-{uid}@test.com", is_superuser=False)
+        user = User(email=f"blog-mcp-{uid}@test.com", is_superuser=False, can_edit_blog=True)
         setup_db.add(user)
         await setup_db.flush()
         setup_db.add(UserApiToken(user_id=user.id, token_hash=token_hash, token_prefix=raw_token[:8], name="mon254-mcp"))
@@ -1404,7 +1408,7 @@ class TestPublishCreatesBlogPost:
                 _assert_default_blog_post(await _blog_post_of(check_db, page.id), page.slug)
 
     async def test_api_v2_patch_with_is_public_creates_default_blog_post(self, client, db_session):
-        actor, project = await make_owner_project(db_session, "blogpub-patch")
+        actor, project = await make_owner_project(db_session, "blogpub-patch", can_edit_blog=True)
         page = await _create_wiki_page(db_session, project, actor.user, "API Edycja MON254", is_public=False)
         assert await _blog_post_of(db_session, page.id) is None
 
@@ -1415,7 +1419,7 @@ class TestPublishCreatesBlogPost:
         _assert_default_blog_post(await _blog_post_of(db_session, page.id), page.slug)
 
     async def test_api_v2_post_with_is_public_creates_default_blog_post(self, client, db_session):
-        actor, project = await make_owner_project(db_session, "blogpub-post")
+        actor, project = await make_owner_project(db_session, "blogpub-post", can_edit_blog=True)
 
         with _wiki_side_effects():
             resp = await client.post(
