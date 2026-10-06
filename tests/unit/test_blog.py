@@ -4,7 +4,8 @@ i odczyt publicznych stron wiki (get_public_page_by_slug).
 Dotycza render_markdown_public i get_public_page_by_slug z monolynx.services.wiki.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -338,3 +339,87 @@ class TestLandingLayoutDefaultsUnaffected:
         result = _render_landing_layout()
 
         assert 'rel="canonical"' not in result
+
+
+_OPTIONAL_HOOKS = ("blog-toc", "blog-related", "blog-tags", "blog-cover", "blog-translations", "blog-verified", "blog-author", "hreflang=")
+
+
+@pytest.mark.unit
+class TestBlogPageOptionalContext:
+    """MON-260: klucze kontekstu spoza podstawowego zestawu są opcjonalne - szablon renderuje się bez nich
+    i nie zostawia pustych elementów (spis, tagi, okładka, powiązane, tłumaczenia, autor)."""
+
+    def test_minimal_context_renders_without_optional_elements(self):
+        result = _render_blog_page()
+
+        assert "Tresc testowa." in result
+        for hook in _OPTIONAL_HOOKS:
+            assert hook not in result
+
+    def test_empty_optional_values_render_without_optional_elements(self):
+        result = _render_blog_page(
+            toc=[],
+            related=[],
+            tags=[],
+            translations=[],
+            hreflang_links=[],
+            author_name="",
+            last_verified_at=None,
+            cover_image_url=None,
+            description=None,
+        )
+
+        for hook in _OPTIONAL_HOOKS:
+            assert hook not in result
+
+    def test_full_context_renders_every_optional_element(self):
+        result = _render_blog_page(
+            post_lang="pl",
+            lang="pl",
+            description="Opis wpisu MON260.",
+            author_name="Anna Autorska",
+            last_verified_at=date(2026, 2, 3),
+            tags=["alfa", "beta"],
+            reading_time=7,
+            published_at=datetime(2026, 1, 12, 8, 0, tzinfo=UTC),
+            cover_image_url="http://localhost:8000/blog/testowy-wpis-mon202/attachments/x/okladka.png",
+            toc=[
+                SimpleNamespace(level=2, id="pierwsza", text="Pierwsza sekcja"),
+                SimpleNamespace(level=3, id="druga", text="Druga sekcja"),
+                SimpleNamespace(level=2, id="trzecia", text="Trzecia sekcja"),
+            ],
+            related=[{"title": "Powiązany MON260", "slug": "powiazany-mon260", "description": "Opis", "published_at": None, "tags": ["alfa"]}],
+            translations=[{"lang": "en", "slug": "english-mon260", "title": "English MON260"}],
+            hreflang_links=[
+                {"lang": "pl", "url": "http://localhost:8000/blog/testowy-wpis-mon202"},
+                {"lang": "en", "url": "http://localhost:8000/blog/english-mon260"},
+            ],
+        )
+
+        assert '<nav class="blog-toc' in result
+        assert '<a href="#pierwsza"' in result
+        assert '<a href="#druga"' in result
+        assert 'class="blog-author' in result
+        assert "Anna Autorska" in result
+        assert 'class="blog-reading-time' in result
+        assert "7 min czytania" in result
+        assert '<time class="blog-published' in result
+        assert 'datetime="2026-01-12' in result
+        assert 'class="blog-verified' in result
+        assert 'class="blog-tags' in result
+        assert "/blog/?tag=alfa" in result
+        assert "/blog/?tag=beta" in result
+        assert '<img class="blog-cover' in result
+        assert '<section class="blog-related' in result
+        assert "Powiązany MON260" in result
+        assert 'class="blog-translations' in result
+        assert "/blog/english-mon260" in result
+        assert 'hreflang="pl"' in result
+        assert 'hreflang="en"' in result
+        assert "Opis wpisu MON260." in result
+
+    def test_reading_time_text_is_english_for_english_interface(self):
+        result = _render_blog_page(lang="en", reading_time=7)
+
+        assert "7 min read" in result
+        assert "min czytania" not in result

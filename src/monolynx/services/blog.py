@@ -7,17 +7,24 @@ działa w transakcji `create_wiki_page` / `update_wiki_page`. Ten moduł NIE imp
 
 MON-258: czyste buildery JSON-LD (`build_post_jsonld`, `build_blog_jsonld`, `dump_jsonld`) i odczyt
 publicznych wersji językowych wpisu (`list_public_translations`) dla warstwy AI (`blog_ai.py`).
+
+MON-260: dane szablonów dla ludzi - spis treści z kotwic silnika bloków (`TocEntry`, `extract_toc`),
+czas czytania (`reading_time_minutes`), powiązane wpisy (`list_related_posts`) i adresy okładek
+(`get_cover_urls`). Funkcje tylko czytają: nie zapisują i nie commitują.
 """
 
 from __future__ import annotations
 
+import html
 import json
+import math
 import re
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
+from urllib.parse import quote
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +46,12 @@ AUTHOR_NAME_MAX_LENGTH = 255
 DEFAULT_AUTHOR_NAME = "Zespół Monolynx"
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+TOC_MIN_ENTRIES = 3
+WORDS_PER_MINUTE = 200
+# Tylko H2-H3 z kotwicą: `id` dopisuje `blog_blocks._anchor_headings`, spis go nie liczy drugi raz.
+_TOC_HEADING = re.compile(r"<h([23])\s[^>]*?\bid=\"([^\"]+)\"[^>]*>(.*?)</h\1>", re.DOTALL)
+_HTML_TAG = re.compile(r"<[^>]*>")
 
 _UNSET: Any = object()
 
@@ -272,6 +285,78 @@ async def list_public_translations(db: AsyncSession, post: BlogPost) -> list[Blo
         .order_by(BlogPost.lang.asc(), BlogPost.slug.asc())
     )
     return list(result.scalars().all())
+
+
+@dataclass(frozen=True)
+class TocEntry:
+    level: int
+    id: str
+    text: str
+
+
+def extract_toc(content_html: str) -> list[TocEntry]:
+    """Spis treści z H2 i H3 (z atrybutem `id`) wyrenderowanego HTML wpisu; poniżej `TOC_MIN_ENTRIES` pozycji pusty."""
+    entries = [
+        TocEntry(level=int(match.group(1)), id=match.group(2), text=html.unescape(_HTML_TAG.sub("", match.group(3))).strip())
+        for match in _TOC_HEADING.finditer(content_html)
+    ]
+    return entries if len(entries) >= TOC_MIN_ENTRIES else []
+
+
+def reading_time_minutes(text: str) -> int:
+    """Minuty czytania: `max(1, ceil(słowa / WORDS_PER_MINUTE))`; słowa rozdziela dowolny biały znak."""
+    return max(1, math.ceil(len(text.split()) / WORDS_PER_MINUTE))
+
+
+async def list_related_posts(db: AsyncSession, post: BlogPost, limit: int = 3) -> list[PublicPost]:
+    """Powiązane wpisy: publiczne, w tym samym języku, bez bieżącego.
+
+    Najpierw wpisy ze wspólnymi tagami (więcej wspólnych, potem nowsze `published_at`), reszta
+    miejsca to najnowsze wpisy bez wspólnego tagu. Filtry `is_public` i `lang` są w SQL.
+    """
+    base_conditions: list[Any] = [WikiPage.is_public.is_(True), BlogPost.lang == post.lang, BlogPost.page_id != post.page_id]
+    order = (BlogPost.published_at.desc().nulls_last(), BlogPost.slug.asc())
+    own_tags = set(post.tags or [])
+
+    chosen: list[PublicPost] = []
+    if own_tags:
+        result = await db.execute(
+            select(BlogPost, WikiPage)
+            .join(WikiPage, WikiPage.id == BlogPost.page_id)
+            .where(*base_conditions, or_(*[BlogPost.tags.contains([tag]) for tag in own_tags]))
+            .order_by(*order)
+        )
+        candidates = [PublicPost(post=row[0], page=row[1]) for row in result.all()]
+        # Sort jest stabilny, więc przy równej liczbie wspólnych tagów zostaje kolejność z SQL (nowsze pierwsze).
+        candidates.sort(key=lambda item: -len(own_tags.intersection(item.post.tags or [])))
+        chosen = candidates[:limit]
+
+    missing = limit - len(chosen)
+    if missing > 0:
+        filler_conditions = [*base_conditions, BlogPost.page_id.not_in([item.post.page_id for item in chosen])]
+        result = await db.execute(
+            select(BlogPost, WikiPage).join(WikiPage, WikiPage.id == BlogPost.page_id).where(*filler_conditions).order_by(*order).limit(missing)
+        )
+        chosen.extend(PublicPost(post=row[0], page=row[1]) for row in result.all())
+    return chosen
+
+
+async def get_cover_urls(db: AsyncSession, posts: Sequence[BlogPost]) -> dict[uuid.UUID, str]:
+    """`page_id` wpisu -> ścieżka okładki (`/blog/{slug}/attachments/{id}/{plik}`), jednym zapytaniem.
+
+    Pomija wpisy bez okładki i takie, których okładka nie jest załącznikiem ich własnej strony.
+    """
+    cover_ids = [post.cover_attachment_id for post in posts if post.cover_attachment_id is not None]
+    if not cover_ids:
+        return {}
+    result = await db.execute(select(WikiAttachment.id, WikiAttachment.wiki_page_id, WikiAttachment.filename).where(WikiAttachment.id.in_(cover_ids)))
+    attachments = {row.id: row for row in result.all()}
+    urls: dict[uuid.UUID, str] = {}
+    for post in posts:
+        attachment = attachments.get(post.cover_attachment_id) if post.cover_attachment_id is not None else None
+        if attachment is not None and attachment.wiki_page_id == post.page_id:
+            urls[post.page_id] = f"/blog/{post.slug}/attachments/{attachment.id}/{quote(attachment.filename)}"
+    return urls
 
 
 def build_post_jsonld(

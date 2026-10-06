@@ -803,6 +803,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     ),
                 },
                 {
+                    "title": "Strona wpisu i lista bloga dla czytelnika",
+                    "desc": (
+                        "Wpis ma nagłówek z tagami, autorem, datami, czasem czytania i okładką oraz spis treści z nagłówków H2-H3, "
+                        "który podświetla bieżącą sekcję (od 3 nagłówków). Pod treścią są linki do wersji językowych i do 3 powiązanych wpisów "
+                        "w tym samym języku. Listę /blog/ filtrujesz po tagu i języku (?tag=, ?lang=), a paginacja zachowuje filtry."
+                    ),
+                },
+                {
                     "title": "Blog dla czytników i modeli AI",
                     "desc": (
                         "Blog ma feedy Atom, RSS i JSON Feed z pełną treścią 20 najnowszych wpisów, a czytniki znajdują je w nagłówku strony. "
@@ -930,6 +938,14 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "a collapsible section, a gallery, a CTA button and a glossary. "
                     "YouTube and Vimeo videos load only after a click, so the page sends no request to the video service before that. "
                     "From the FAQ, steps and videos the server prepares structured data for search engines and AI models."
+                ),
+            },
+            {
+                "title": "Post page and blog list for readers",
+                "desc": (
+                    "A post has a header with tags, author, dates, reading time and cover, plus a table of contents built from H2-H3 headings "
+                    "that highlights the current section (from 3 headings up). Below the content are links to the other language versions and "
+                    "up to 3 related posts in the same language. The /blog/ list filters by tag and language (?tag=, ?lang=), and pagination keeps the filters."
                 ),
             },
             {

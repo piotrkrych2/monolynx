@@ -19,6 +19,12 @@ MON-258: `/blog/{slug}` z `Accept: text/markdown` zwraca ten sam dokument co `/b
 (`blog_ai.markdown_twin_response`); odpowiedź HTML niesie `Vary: Accept` i `Link` do bliźniaka,
 a strony dostają JSON-LD (`services/blog.build_post_jsonld` / `build_blog_jsonld`).
 
+MON-260: strony dla ludzi. Lista przyjmuje `?tag=` i `?lang=` (poprawny `lang` filtruje wpisy i ustawia
+język interfejsu), karty niosą okładkę, tagi i czas czytania (treść każdej karty czytana równolegle),
+paginacja zachowuje filtry, a `canonical` / `prev` / `next` wskazują bieżącą stronę. Wpis dostaje spis
+treści, powiązane wpisy, tłumaczenia i `hreflang`; jego interfejs to `?lang=` albo `lang` wpisu. Obie
+odpowiedzi HTML idą przez `blog_ai.conditional_response` (ETag, Last-Modified, 304).
+
 Rejestrowany bezwarunkowo w main.py, niezależnie od flagi SKIP_LANDING_PAGE -- ta flaga
 bramkuje marketingową stronę landing, a blog to treść linkowana z zewnątrz (podobnie jak
 endpointy .md, które też nie są nią bramkowane).
@@ -30,8 +36,9 @@ import asyncio
 import io
 import logging
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
@@ -39,14 +46,28 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monolynx.blog_ai import markdown_twin_response, wants_markdown
+from monolynx.blog_ai import conditional_response, markdown_twin_response, wants_markdown
 from monolynx.config import settings
 from monolynx.database import get_db
 from monolynx.models.blog_post import BlogPost
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
-from monolynx.services.blog import PublicPost, build_blog_jsonld, build_post_jsonld, dump_jsonld, get_public_post_by_slug, list_public_posts
+from monolynx.services.blog import (
+    POST_LANGS,
+    PublicPost,
+    build_blog_jsonld,
+    build_post_jsonld,
+    dump_jsonld,
+    extract_toc,
+    get_cover_urls,
+    get_public_post_by_slug,
+    is_valid_tag,
+    list_public_posts,
+    list_public_translations,
+    list_related_posts,
+    reading_time_minutes,
+)
 from monolynx.services.blog_blocks import extract_structured_data, render_post_html, render_post_markdown, strip_block_markers
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
 from monolynx.services.wiki import extract_summary, get_page_content
@@ -65,23 +86,35 @@ templates.env.globals["ga_measurement_id"] = settings.GA_MEASUREMENT_ID
 _PUBLIC_INLINE_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 
 _PER_PAGE = 20
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-async def _fetch_summary(item: PublicPost) -> str:
-    """Zajawka wpisu: `description`, a gdy pusty - streszczenie treści z MinIO (executor, patrz
-    komentarz w public_page). Przy niepustym opisie MinIO nie jest czytane. Błąd storage dla
-    POJEDYNCZEJ strony nie wywraca całej listy /blog/ (granica systemu) -- wpis ląduje na liście
-    z pustą zajawką."""
-    if item.post.description:
-        return item.post.description
+async def _fetch_card_data(item: PublicPost) -> tuple[str, int | None]:
+    """Zajawka i czas czytania karty z JEDNEJ lektury treści z MinIO (executor, patrz komentarz w
+    public_page). Zajawka to `description`, a gdy pusty - streszczenie treści. Błąd storage dla
+    POJEDYNCZEJ strony nie wywraca całej listy /blog/ (granica systemu) -- karta dostaje
+    `reading_time=None` i zajawkę z `description` albo pustą."""
     page = item.page
     loop = asyncio.get_running_loop()
     try:
         content = await loop.run_in_executor(None, get_page_content, page)
     except Exception:
         logger.exception("Blad pobierania tresci strony wiki z MinIO dla listy /blog/ (page_id=%s)", page.id)
-        return ""
-    return extract_summary(strip_block_markers(content))
+        return item.post.description or "", None
+    summary = item.post.description or extract_summary(strip_block_markers(content))
+    return summary, reading_time_minutes(render_post_markdown(content))
+
+
+def _index_path(tag: str | None, lang: str | None, page: int | None = None) -> str:
+    """Ścieżka listy z query w stałej kolejności `tag`, `lang`, `page`; `page` tylko gdy > 1."""
+    params: list[tuple[str, str]] = []
+    if tag is not None:
+        params.append(("tag", tag))
+    if lang is not None:
+        params.append(("lang", lang))
+    if page is not None and page > 1:
+        params.append(("page", str(page)))
+    return f"/blog/?{urlencode(params)}" if params else "/blog/"
 
 
 async def _public_breadcrumbs(page: WikiPage, post: BlogPost, db: AsyncSession) -> list[dict[str, str]]:
@@ -136,62 +169,83 @@ async def _public_backlinks(page: WikiPage, db: AsyncSession) -> list[dict[str, 
     return [{"slug": row.slug, "title": row.title} for row in result.all()]
 
 
-@router.get("/", response_class=HTMLResponse)
-async def public_index(request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> HTMLResponse:
+@router.get("/", response_class=HTMLResponse, response_model=None)
+async def public_index(request: Request, lang: str | None = None, tag: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
     """Lista publicznych wpisow bloga, najnowsze (`published_at`) najpierw, z paginacja.
 
     `page` z try/except -> 1; clampowanie do <1, total_pages> robi `list_public_posts`.
-    `lang` to jezyk interfejsu, nie filtr wpisow.
+    `lang` (`pl`/`en`) filtruje wpisy po jezyku tresci i ustawia jezyk interfejsu; brak albo inna
+    wartosc = bez filtra, interfejs `en`. `tag`: pusty = bez filtra, niepoprawny (`is_valid_tag`) =
+    pusta lista bez zapytania do bazy (bajt NUL w parametrze wywrocilby PostgreSQL), status 200.
+    Odpowiedz niesie `ETag` i `Last-Modified` (najnowszy `updated_at` wsrod wpisow strony listy).
     """
-    if lang not in ("en", "pl"):
-        lang = "en"
+    filter_lang = lang if lang in POST_LANGS else None
+    ui_lang = filter_lang or "en"
+    filter_tag = tag if tag and is_valid_tag(tag) else None
 
     try:
         page_num = max(1, int(request.query_params.get("page", "1")))
     except (ValueError, TypeError):
         page_num = 1
 
-    listing = await list_public_posts(db, page_num, _PER_PAGE)
+    items: list[PublicPost] = []
+    current_page, total_pages = 1, 1
+    if not tag or filter_tag is not None:
+        listing = await list_public_posts(db, page_num, _PER_PAGE, tag=filter_tag, lang=filter_lang)
+        items, current_page, total_pages = listing.items, listing.page, listing.total_pages
 
-    # Zajawki bez description wymagaja odczytow z MinIO -- rownolegle (asyncio.gather), nie
-    # sekwencyjnie, zeby N wolnych obiektow nie sumowalo sie w czas ladowania listy.
-    summaries = await asyncio.gather(*(_fetch_summary(item) for item in listing.items))
+    # Tresc kazdej karty (zajawka bez description i czas czytania) wymaga odczytu z MinIO --
+    # rownolegle (asyncio.gather), nie sekwencyjnie, zeby N wolnych obiektow nie sumowalo sie w czas ladowania listy.
+    card_data = await asyncio.gather(*(_fetch_card_data(item) for item in items))
+    covers = await get_cover_urls(db, [item.post for item in items])
 
-    return templates.TemplateResponse(
-        request,
-        "blog/index.html",
-        {
-            "lang": lang,
-            "app_url": settings.APP_URL,
-            "posts": [
-                {
-                    "title": item.page.title,
-                    "slug": item.post.slug,
-                    "published_at": item.post.published_at or item.page.created_at,
-                    "summary": s,
-                }
-                for item, s in zip(listing.items, summaries, strict=True)
-            ],
-            "page": listing.page,
-            "total_pages": listing.total_pages,
-            "has_prev": listing.page > 1,
-            "has_next": listing.page < listing.total_pages,
-            "json_ld": dump_jsonld(build_blog_jsonld(listing.items, base_url=settings.APP_URL)),
-        },
-    )
+    has_prev = current_page > 1
+    has_next = current_page < total_pages
+    context = {
+        "request": request,
+        "lang": ui_lang,
+        "app_url": settings.APP_URL,
+        "posts": [
+            {
+                "title": item.page.title,
+                "slug": item.post.slug,
+                "published_at": item.post.published_at or item.page.created_at,
+                "summary": summary,
+                "tags": list(item.post.tags or []),
+                "reading_time": reading_time,
+                "cover_image_url": covers.get(item.post.page_id),
+                "lang": item.post.lang,
+            }
+            for item, (summary, reading_time) in zip(items, card_data, strict=True)
+        ],
+        "page": current_page,
+        "total_pages": total_pages,
+        "has_prev": has_prev,
+        "has_next": has_next,
+        "filter_tag": filter_tag,
+        "filter_lang": filter_lang,
+        "canonical_url": f"{settings.APP_URL.rstrip('/')}{_index_path(filter_tag, filter_lang, current_page)}",
+        "prev_url": _index_path(filter_tag, filter_lang, current_page - 1) if has_prev else None,
+        "next_url": _index_path(filter_tag, filter_lang, current_page + 1) if has_next else None,
+        "lang_switch_url": _index_path(filter_tag, "pl"),
+        "lang_switch_url_en": _index_path(filter_tag, "en"),
+        "json_ld": dump_jsonld(build_blog_jsonld(items, base_url=settings.APP_URL)),
+    }
+    body = templates.get_template("blog/index.html").render(context)
+    last_modified = max((item.page.updated_at for item in items), default=_EPOCH)
+    return conditional_response(request, body, last_modified=last_modified, media_type="text/html; charset=utf-8")
 
 
 @router.get("/{slug}", response_class=HTMLResponse, response_model=None)
-async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> Response:
+async def public_page(slug: str, request: Request, lang: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
     """Publiczny render wpisu po `BlogPost.slug` -- bez sesji, bez RBAC, tylko is_public=True.
 
     Stary slug (`previous_slugs`) -> 301 na aktualny adres z zachowanym query stringiem.
-    `Accept: text/markdown` -> bliźniak markdown (200/304). `Vary: Accept` niosą odpowiedzi 200, 304 i 301; 404
-    (`HTTPException`) jest bez nagłówków.
+    `Accept: text/markdown` -> bliźniak markdown (200/304). Odpowiedź HTML to 200 albo 304
+    (`conditional_response`, `last_modified` = `updated_at` strony). `Vary: Accept` niosą odpowiedzi 200, 304
+    i 301; 404 (`HTTPException`) jest bez nagłówków.
+    Język interfejsu to `?lang=` (`pl`/`en`), a bez niego albo z inną wartością - `lang` wpisu.
     """
-    if lang not in ("en", "pl"):
-        lang = "en"
-
     lookup = await get_public_post_by_slug(db, slug)
     if lookup is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono strony")
@@ -203,6 +257,7 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
     post, page = lookup.post, lookup.page
     if post is None or page is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono strony")
+    ui_lang = lang if lang in POST_LANGS else post.lang
 
     if wants_markdown(request.headers.get("accept")):
         return await markdown_twin_response(request, db, post, page, headers={"Vary": "Accept"})
@@ -252,11 +307,23 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
         )
     )
 
-    response = templates.TemplateResponse(
-        request,
-        "blog/page.html",
+    related = await list_related_posts(db, post)
+    translations = await list_public_translations(db, post)
+    base = settings.APP_URL.rstrip("/")
+    hreflang_links = (
+        [{"lang": post.lang, "url": f"{base}/blog/{post.slug}"}, *({"lang": item.lang, "url": f"{base}/blog/{item.slug}"} for item in translations)]
+        if translations
+        else []
+    )
+    translation_titles: dict[uuid.UUID, str] = {}
+    if translations:
+        title_rows = await db.execute(select(WikiPage.id, WikiPage.title).where(WikiPage.id.in_([item.page_id for item in translations])))
+        translation_titles = {row.id: row.title for row in title_rows.all()}
+
+    body = templates.get_template("blog/page.html").render(
         {
-            "lang": lang,
+            "request": request,
+            "lang": ui_lang,
             "app_url": settings.APP_URL,
             "page_title": page.title,
             "page_slug": post.slug,
@@ -271,11 +338,38 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
             "meta_description": meta_description,
             "md_url": md_url,
             "json_ld": json_ld,
-        },
+            "post_lang": post.lang,
+            "description": post.description,
+            "author_name": post.author_name,
+            "last_verified_at": post.last_verified_at,
+            "tags": list(post.tags or []),
+            "reading_time": reading_time_minutes(render_post_markdown(content)),
+            "toc": extract_toc(content_html),
+            "related": [
+                {
+                    "title": item.page.title,
+                    "slug": item.post.slug,
+                    "description": item.post.description,
+                    "published_at": item.post.published_at or item.page.created_at,
+                    "tags": list(item.post.tags or []),
+                }
+                for item in related
+            ],
+            "translations": [
+                {"lang": item.lang, "slug": item.slug, "title": translation_titles.get(item.page_id, item.slug)} for item in translations
+            ],
+            "hreflang_links": hreflang_links,
+            "lang_switch_url": f"/blog/{post.slug}?lang=pl",
+            "lang_switch_url_en": f"/blog/{post.slug}?lang=en",
+        }
     )
-    response.headers["Vary"] = "Accept"
-    response.headers["Link"] = f'<{md_url}>; rel="alternate"; type="text/markdown"'
-    return response
+    return conditional_response(
+        request,
+        body,
+        last_modified=page.updated_at,
+        media_type="text/html; charset=utf-8",
+        headers={"Vary": "Accept", "Link": f'<{md_url}>; rel="alternate"; type="text/markdown"'},
+    )
 
 
 @router.get("/{slug}/attachments/{attachment_id}/{filename}", response_model=None)
