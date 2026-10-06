@@ -1,6 +1,6 @@
 # command: monolynx --help
-# tool_version: monolynx 0.3.0 (drzewo zrodel, MON-261, niewydane)
-# captured: 2026-10-05
+# tool_version: monolynx 0.3.0 (drzewo zrodel, MON-262, niewydane)
+# captured: 2026-10-06
 # env: NO_COLOR=1 COLUMNS=200 TERM=dumb
 # note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
                                                                                                                                                                                                         
@@ -31,7 +31,7 @@
 │ ticket       Zarządzanie ticketami: backlog, szczegóły, komentarze.                                                                                                                                  │
 │ sprint       Zarządzanie sprintami.                                                                                                                                                                  │
 │ wiki         Strony wiki projektu.                                                                                                                                                                   │
-│ blog         Wpisy bloga projektu: lista, treść i metadane.                                                                                                                                          │
+│ blog         Wpisy bloga projektu: lista, treść, metadane i lint pod AI.                                                                                                                             │
 │ monitoring   Monitorowanie adresów URL (uptime).                                                                                                                                                     │
 │ issues       Śledzenie błędów modułu 500ki.                                                                                                                                                          │
 │ time         Ewidencja czasu pracy (log_time, raporty).                                                                                                                                              │

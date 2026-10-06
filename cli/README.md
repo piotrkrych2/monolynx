@@ -272,13 +272,14 @@ git log -1 --format=%B | monolynx --project my-project ticket comment add MP-11 
 
 ### `blog`
 
-Metadata of blog posts. A blog post is a wiki page that has a blog metadata row; the page content and publishing stay in `monolynx wiki`. All `blog` commands work on the project resolved from `--project`, `MONOLYNX_PROJECT` or the profile. `blog list` and `blog get` need the `wiki:read` permission, `blog meta` needs `wiki:write`.
+Metadata of blog posts. A blog post is a wiki page that has a blog metadata row; the page content and publishing stay in `monolynx wiki`. All `blog` commands work on the project resolved from `--project`, `MONOLYNX_PROJECT` or the profile. `blog list`, `blog get` and `blog lint` need the `wiki:read` permission, `blog meta` needs `wiki:write`.
 
 | Command | Arguments and options | Description |
 |---|---|---|
 | `blog list` | `--status` (`published` or `draft`) | List the blog posts of the project, published ones and drafts, with their metadata and without the content (all pages, flat list). Without `--status` every post is listed. |
 | `blog get` | `<page_id>` | Show a blog post: metadata, public URLs and the markdown content. |
 | `blog meta` | `<page_id>`, `--slug`, `--description`, `--author`, `--tag`, `--no-tags`, `--lang`, `--translation-of`, `--cover`, `--verified` | Change the metadata of a blog post; only the given options are sent. `--tag` can be repeated. |
+| `blog lint` | `<page_id>` | Lint a blog post for AI readers (description, TLDR block, headings, image alt text, graphic blocks, links): a list of problems and a score from 0 to 100. Exit code 1 when at least one problem is an error. |
 
 Notes:
 
@@ -290,7 +291,9 @@ Notes:
 - `--tag` replaces the current tags with the given ones; `--no-tags` removes all tags. Giving both is a usage error.
 - An empty string clears `--translation-of`, `--cover` and `--verified` (the CLI sends `null`), for example `--cover ""`.
 - `blog meta` without any option, or with `--tag` and `--no-tags` together, is a usage error: exit code 2, no request sent.
-- `blog get` reads the post content from object storage. When the storage is unavailable the server answers 503 and the command ends with exit code 1 after the retries; `blog list` and `blog meta` do not read the content.
+- `blog get` and `blog lint` read the post content from object storage. When the storage is unavailable the server answers 503 and the command ends with exit code 1 after the retries; `blog list` and `blog meta` do not read the content.
+- `blog lint` result: `page_id`, `score` (0 to 100: 100 minus 20 for every error and 5 for every warning, never below 0; an info does not lower it), `error_count`, `warning_count`, `info_count` and `issues`, a list of objects with `rule` (the rule name, for example `tldr-missing` or `image-alt-short`), `level` (`error`, `warning` or `info`), `line` (the line of the post source, counted from 1; `0` for a problem with the metadata or with no place in the text) and `message` (in Polish). `-o json` and `-o yaml` print the whole object. `-o table` prints one row per problem with the columns `line`, `level`, `rule` and `message`, and the score as `Ocena: <score>/100` on standard error (`--quiet` hides it).
+- `blog lint` exit codes: 0 when the post has no error (warnings and infos alone are still 0), 1 when at least one problem has the level `error`. The report is printed before the command exits, so with exit code 1 check standard output first: a report there means lint errors, an empty one means an API error (for example a 404 for a page that is not a blog post) or an invalid server response. The lint never changes the post.
 - `blog meta` does not change the title, the content, `is_public` or `published_at`. Use `wiki update` for the title, the content and publishing.
 - Every command checks the server response before rendering. A missing required field or a wrong type ends with the error `Nieprawidłowa odpowiedź serwera` and exit code 1, never with an empty result and exit code 0. After `blog meta` the write may already have reached the server, so check the post with `blog get` before repeating the command.
 
@@ -299,6 +302,8 @@ monolynx --project my-project blog list --status draft
 monolynx -o json --project my-project blog get "<page_id>" | jq -r '.public_url'
 monolynx --project my-project blog meta "<page_id>" --description "How we ship releases" --tag release --tag cli
 monolynx --project my-project blog meta "<page_id>" --no-tags --cover ""
+monolynx --project my-project blog lint "<page_id>"
+monolynx -o json --project my-project blog lint "<page_id>" | jq -r '.issues[] | select(.level == "error") | "\(.line): \(.rule)"'
 ```
 
 ### `graph`
@@ -419,7 +424,7 @@ Resolution order for every setting: command-line option, then environment variab
 | Code | Meaning | Example causes |
 |---|---|---|
 | `0` | Success | |
-| `1` | API or local error | 4xx other than 401/403 (for example 404 or 422), 429 or 5xx after all retries; corrupted config file; declined confirmation; `config get` for a key without a value |
+| `1` | API or local error | 4xx other than 401/403 (for example 404 or 422), 429 or 5xx after all retries; corrupted config file; declined confirmation; `config get` for a key without a value; `blog lint` on a post with at least one lint error (the report is printed first) |
 | `2` | Usage error | Unknown option or bad argument; no project resolved; destructive command without `--yes` outside a terminal; `--timeout` not greater than zero; invalid `config` key; `update` without any field to change; empty stdin for `--content -`; a bare `.` or `..` as an identifier in a URL path |
 | `3` | Authentication error | 401 or 403; failed token refresh; no token stored; OAuth login timeout, denied consent or mismatched `state` |
 | `4` | Network error | Timeout, connection refused, DNS failure |

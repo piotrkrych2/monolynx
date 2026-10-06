@@ -1,12 +1,12 @@
 # command: monolynx blog --help
-# tool_version: monolynx 0.3.0 (drzewo zrodel, MON-261, niewydane)
-# captured: 2026-10-05
+# tool_version: monolynx 0.3.0 (drzewo zrodel, MON-262, niewydane)
+# captured: 2026-10-06
 # env: NO_COLOR=1 COLUMNS=200 TERM=dumb
 # note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
                                                                                                                                                                                                         
  Usage: monolynx blog [OPTIONS] COMMAND [ARGS]...                                                                                                                                                       
                                                                                                                                                                                                         
- Wpisy bloga projektu: lista, treść i metadane.                                                                                                                                                         
+ Wpisy bloga projektu: lista, treść, metadane i lint pod AI.                                                                                                                                            
                                                                                                                                                                                                         
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ --help          Show this message and exit.                                                                                                                                                          │
@@ -15,6 +15,7 @@
 │ list  Wyświetl wpisy bloga projektu (opublikowane i szkice) z metadanymi, bez treści.                                                                                                                │
 │ get   Pokaż wpis bloga: metadane, adresy publiczne i treść markdown.                                                                                                                                 │
 │ meta  Zmień metadane wpisu bloga; do API trafiają tylko podane opcje, pusty tekst czyści pola nullowalne.                                                                                            │
+│ lint  Sprawdź wpis bloga pod kątem AI (TLDR, nagłówki, opis, linki); kod wyjścia 1, gdy jest błąd.                                                                                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 # exit: 0

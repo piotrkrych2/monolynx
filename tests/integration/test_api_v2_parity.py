@@ -8,7 +8,7 @@ w testach, nie u użytkownika. Plik zawiera pięć grup testów:
 1. kompletność mapy `tool_endpoint_map.py` względem narzędzi zarejestrowanych w MCP oraz
    względem tras v2 (`find_coverage_problems`, `find_missing_routes` są sprawdzane także na
    syntetycznych zbiorach, co dowodzi, że test pada przy nowym narzędziu bez wpisu),
-2. parytet 48 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
+2. parytet 49 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
 3. jawne pinowanie znanych różnic kontraktu (`known_differences` w mapie),
 4. odrzucenie pustego tytułu strony wiki przez oba kanały (rozjazd wykryty w MON-131,
    naprawiony guardem w `api/v2/wiki.py`),
@@ -170,7 +170,7 @@ class TestMapCompleteness:
         problems = find_coverage_problems([t.name for t in tools], TOOL_TO_ENDPOINT, INTENTIONALLY_UNMAPPED)
 
         assert problems == []
-        assert len(TOOL_TO_ENDPOINT) == 48
+        assert len(TOOL_TO_ENDPOINT) == 49
         assert len(INTENTIONALLY_UNMAPPED) == 74
         assert all(reason.strip() for reason in INTENTIONALLY_UNMAPPED.values())
 
@@ -2075,7 +2075,7 @@ async def scenario_set_wiki_config(env: ParityEnv) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Blog (MON-261): lista wpisów, szczegóły i częściowy zapis metadanych
+# Blog (MON-261, MON-262): lista wpisów, szczegóły, częściowy zapis metadanych i lint
 # ---------------------------------------------------------------------------
 
 _BLOG_VIEW_KEYS = (
@@ -2201,6 +2201,47 @@ async def scenario_get_blog_post(env: ParityEnv) -> None:
     no_row_message = await env.mcp_error("get_blog_post", env.slug, str(no_row.id))
     assert no_row_message == "Wpis bloga nie istnieje"
     _assert_problem(await env.v2("get_blog_post", page_id=no_row.id), 404, no_row_message)
+
+
+async def scenario_lint_blog_post(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    page = await _blog_post(
+        env,
+        "Wpis do lintu",
+        f"lint-{tag}",
+        content="# Tytuł\n\nWstęp bez streszczenia.\n",
+        description="Za krótki opis",
+    )
+
+    mcp_out = await env.mcp("lint_blog_post", env.slug, str(page.id))
+    response = await env.v2("lint_blog_post", page_id=page.id)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert mcp_out["issues"] == body["issues"]
+    assert mcp_out["score"] == body["score"]
+    assert (mcp_out["error_count"], mcp_out["warning_count"], mcp_out["info_count"]) == (
+        body["error_count"],
+        body["warning_count"],
+        body["info_count"],
+    )
+    assert mcp_out["page_id"] == body["page_id"] == str(page.id)
+    levels = {issue["level"] for issue in body["issues"]}
+    assert {"error", "warning"} <= levels
+    assert {"description-length", "tldr-missing", "last-verified-missing"} <= {issue["rule"] for issue in body["issues"]}
+    assert body["score"] < 100
+    # Różnica kanałów z `known_differences`: tabela jest tylko w MCP.
+    assert "table" in mcp_out
+    assert "table" not in body
+
+    unknown = uuid.uuid4()
+    message = await env.mcp_error("lint_blog_post", env.slug, str(unknown))
+    _assert_problem(await env.v2("lint_blog_post", page_id=unknown), 404, message)
+
+    no_row = await _blog_post(env, "Strona bez wpisu", f"lint-norow-{tag}", with_post=False)
+    no_row_message = await env.mcp_error("lint_blog_post", env.slug, str(no_row.id))
+    assert no_row_message == "Wpis bloga nie istnieje"
+    _assert_problem(await env.v2("lint_blog_post", page_id=no_row.id), 404, no_row_message)
 
 
 async def scenario_set_blog_post_meta(env: ParityEnv) -> None:
@@ -2527,6 +2568,7 @@ SCENARIOS: dict[str, Scenario] = {
     "set_wiki_config": scenario_set_wiki_config,
     "list_blog_posts": scenario_list_blog_posts,
     "get_blog_post": scenario_get_blog_post,
+    "lint_blog_post": scenario_lint_blog_post,
     "set_blog_post_meta": scenario_set_blog_post_meta,
     "list_graph_nodes": scenario_list_graph_nodes,
     "get_graph_node": scenario_get_graph_node,

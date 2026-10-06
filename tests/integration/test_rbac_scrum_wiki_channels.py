@@ -3,7 +3,7 @@
 Kontrakt: samo członkostwo w projekcie nie wystarcza. Operacje na ticketach, sprintach, komentarzach,
 kryteriach akceptacji, etykietach, czasie pracy, załącznikach i stronach wiki sprawdzają uprawnienia roli
 (`scrum:read|write|delete`, `wiki:read|write|delete`; metadane wpisów bloga MON-261: `list_blog_posts` i `get_blog_post` -> `wiki:read`,
-`set_blog_post_meta` -> `wiki:write`) tak samo jak dashboard:
+`set_blog_post_meta` -> `wiki:write`; lint wpisu MON-262: `lint_blog_post` -> `wiki:read`) tak samo jak dashboard:
 
 - odmowa to `ValueError("Brak uprawnienia <moduł>:<akcja>")` w MCP i 403 `application/problem+json` z tym samym
   `detail` w API v2,
@@ -237,6 +237,7 @@ CASES: list[Case] = [
     Case("get_wiki_file", "wiki:read", lambda s: _a(str(uuid.uuid4())), positive=False),
     Case("list_blog_posts", "wiki:read", lambda s: _a(), lambda s: V2Req()),
     Case("get_blog_post", "wiki:read", lambda s: _a(str(s.page_id)), lambda s: V2Req(path={"page_id": s.page_id})),
+    Case("lint_blog_post", "wiki:read", lambda s: _a(str(s.page_id)), lambda s: V2Req(path={"page_id": s.page_id})),
     # --- wiki:write ---
     Case(
         "create_wiki_page",
@@ -1183,6 +1184,10 @@ ORDER_CASES: list[OrderCase] = [
     OrderCase("get_wiki_attachment-malformed-page-id", "get_wiki_attachment", "wiki:read", lambda s: _a(_MALFORMED, "plik.txt")),
     OrderCase("get_wiki_file-malformed-id", "get_wiki_file", "wiki:read", lambda s: _a(_MALFORMED)),
     OrderCase("get_blog_post-malformed-id", "get_blog_post", "wiki:read", lambda s: _a(_MALFORMED)),
+    OrderCase("lint_blog_post-malformed-id", "lint_blog_post", "wiki:read", lambda s: _a(_MALFORMED)),
+    OrderCase(
+        "lint_blog_post-missing-page", "lint_blog_post", "wiki:read", lambda s: _a(_MISSING_UUID), lambda s: V2Req(path={"page_id": _MISSING_UUID})
+    ),
     OrderCase(
         "get_blog_post-missing-page", "get_blog_post", "wiki:read", lambda s: _a(_MISSING_UUID), lambda s: V2Req(path={"page_id": _MISSING_UUID})
     ),

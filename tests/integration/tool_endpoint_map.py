@@ -1,7 +1,7 @@
 """Mapa kontraktu MCP <-> API v2 (MON-131).
 
-`TOOL_TO_ENDPOINT` wiąże 48 narzędzi MCP z endpointami `/api/v2`, które wystawiają
-tę samą operację (Projects, Scrum, Wiki, 5 odczytów grafu Połączeń, MON-248, oraz 3 narzędzia Bloga, MON-261).
+`TOOL_TO_ENDPOINT` wiąże 49 narzędzi MCP z endpointami `/api/v2`, które wystawiają
+tę samą operację (Projects, Scrum, Wiki, 5 odczytów grafu Połączeń, MON-248, oraz 4 narzędzia Bloga, MON-261 i MON-262).
 `INTENTIONALLY_UNMAPPED` opisuje powód,
 dla którego pozostałe narzędzia nie mają odpowiednika w v2. Każde narzędzie
 zarejestrowane w `mcp_server.mcp` musi wystąpić dokładnie w jednym z tych słowników;
@@ -45,6 +45,7 @@ _WIKI_PAGE = "/api/v2/projects/{project_slug}/wiki/pages/{page_id}"
 _GRAPH = "/api/v2/projects/{project_slug}/graph"
 _BLOG_POSTS = "/api/v2/projects/{project_slug}/blog/posts"
 _BLOG_POST = "/api/v2/projects/{project_slug}/blog/posts/{page_id}"
+_BLOG_LINT = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/lint"
 
 
 TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
@@ -292,7 +293,7 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         is_write=True,
         known_differences="MCP zwraca wiki_llm_enabled i message; v2 zwraca tylko wiki_llm_enabled.",
     ),
-    # --- Blog (3) ---
+    # --- Blog (4) ---
     "list_blog_posts": ToolEndpointSpec(
         "GET",
         _BLOG_POSTS,
@@ -300,6 +301,12 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         known_differences="MCP zwraca goły JSON array wpisów; v2 owija go w kopertę paginacji (items, page, per_page, total, total_pages).",
     ),
     "get_blog_post": ToolEndpointSpec("GET", _BLOG_POST, is_write=False),
+    "lint_blog_post": ToolEndpointSpec(
+        "GET",
+        _BLOG_LINT,
+        is_write=False,
+        known_differences="MCP dokłada do wyniku pole table (tabela problemów z linią oceny); v2 zwraca tylko score, liczniki i issues.",
+    ),
     "set_blog_post_meta": ToolEndpointSpec(
         "PATCH",
         _BLOG_POST,

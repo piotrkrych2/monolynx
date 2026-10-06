@@ -54,6 +54,9 @@ Blog (MON-261): `list_blog_posts` (`--status`), `get_blog_post` (`--page_id` poz
 (`--page_id` pozycyjny; `author_name` -> `--author`, `tags` jako tablica JSON -> powtarzane `--tag`, pusta
 tablica -> `--no-tags`, pusty tekst w `translation_of_id`, `cover_attachment_id` i `last_verified_at` czysci
 pole). Pierwsze dwa to odczyty (`READ_OPS`), trzeci to zapis.
+Blog lint (MON-262): `lint_blog_post` (`--page_id` pozycyjny) to odczyt. `monolynx blog lint` konczy sie kodem 1,
+gdy raport zawiera blad lintu; dla tej jednej operacji wrapper traktuje kod 1 ze stdout bedacym obiektem JSON
+z lista `issues` jako wynik (wypisuje stdout, kod 0), a kazdy inny kod 1 zostaje bledem operacji (kod 2).
 `goal` sprintu trafia do argv CLI jako zwykla opcja po rozwinieciu `-` / `@plik`
 przez wrapper, bo CLI nie ma `--goal -` (literal `-` stalby sie celem sprintu).
 
@@ -97,6 +100,7 @@ READ_OPS = frozenset(
         "get_graph_stats",
         "list_blog_posts",
         "get_blog_post",
+        "lint_blog_post",
     }
 )
 
@@ -262,6 +266,7 @@ OPS = {
     "get_graph_stats": (("graph", "stats"), (), {}),
     "list_blog_posts": (("blog", "list"), (), _STATUS),
     "get_blog_post": (("blog", "get"), (("page_id", True),), {}),
+    "lint_blog_post": (("blog", "lint"), (("page_id", True),), {}),
     "set_blog_post_meta": (
         ("blog", "meta"),
         (("page_id", True),),
@@ -428,6 +433,14 @@ def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _is_lint_report(stdout: bytes) -> bool:
+    try:
+        payload = json.loads(_decode(stdout))
+    except ValueError:
+        return False
+    return isinstance(payload, dict) and isinstance(payload.get("issues"), list)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     try:
@@ -466,6 +479,14 @@ def main(argv: list[str] | None = None) -> int:
         return _fallback(op, f"nie mozna uruchomic CLI: {exc}")
 
     if result.returncode == 0:
+        sys.stdout.flush()
+        sys.stdout.buffer.write(result.stdout)
+        sys.stdout.buffer.flush()
+        if result.stderr:
+            sys.stderr.write(_decode(result.stderr))
+        return 0
+    if result.returncode == 1 and op == "lint_blog_post" and _is_lint_report(result.stdout):
+        # Raport z bledami lintu to wynik odczytu, nie awaria: CLI sygnalizuje je kodem 1, ale stdout jest kompletny.
         sys.stdout.flush()
         sys.stdout.buffer.write(result.stdout)
         sys.stdout.buffer.flush()

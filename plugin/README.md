@@ -466,7 +466,7 @@ Wynik z CLI to JSON z API v2, a nie tekst toola MCP. Kopertę `items`, `page`, `
 
 ### Operacje przez CLI i operacje zawsze przez MCP
 
-| Przez wrapper przy `mode=cli` (33) | Zawsze toolem MCP |
+| Przez wrapper przy `mode=cli` (34) | Zawsze toolem MCP |
 |---|---|
 | tickety: `get_ticket`, `list_tickets`, `search_tickets`, `create_ticket`, `update_ticket` | Pipelines (`create_pipeline`, `create_pipeline_job`, `update_pipeline_job`, `append_job_log`, `finish_pipeline`, ...) |
 | komentarze: `add_comment`, `list_comments` | czas pracy: `log_time`, `get_work_report` |
@@ -475,11 +475,13 @@ Wynik z CLI to JSON z API v2, a nie tekst toola MCP. Kopertę `items`, `page`, `
 | etykiety: `list_labels` | każdy inny tool spoza lewej kolumny |
 | wiki: `search_wiki`, `get_wiki_page`, `list_wiki_pages`, `create_wiki_page`, `update_wiki_page`, `get_wiki_config` | |
 | odczyt grafu kodu: `list_graph_nodes`, `get_graph_node`, `query_graph`, `find_graph_path`, `get_graph_stats` | |
-| blog: `list_blog_posts`, `get_blog_post`, `set_blog_post_meta` | |
+| blog: `list_blog_posts`, `get_blog_post`, `set_blog_post_meta`, `lint_blog_post` | |
 
 Graf kodu jest przez CLI wyłącznie do odczytu (MON-248). Zapis grafu nie ma endpointu API v2 ani komendy CLI: robi go tylko synchronizacja `cicd/sync_graph.py` przez MCP (`replace_graph`), więc wrapper kończy narzędzia zapisu kodem 3. `find_graph_path` bez `source_id` albo `target_id` kończy się kodem 64 przed wywołaniem CLI.
 
 Blog (MON-261): `list_blog_posts` i `get_blog_post` to odczyty, `set_blog_post_meta` to zapis metadanych wpisu. Wrapper mapuje je na `blog list`, `blog get` i `blog meta`; `page_id` jest argumentem pozycyjnym, `author_name` idzie jako `--author`, `translation_of_id` jako `--translation-of`, `cover_attachment_id` jako `--cover`, `last_verified_at` jako `--verified`. `tags` podajesz jako tablicę JSON: wrapper zamienia ją na powtarzane `--tag`, a pustą tablicę `[]` na `--no-tags`. Pusty tekst w `translation_of_id`, `cover_attachment_id` i `last_verified_at` czyści pole. `list_blog_posts` daje płaską tablicę JSON wpisów (CLI samo zbiera wszystkie strony), `get_blog_post` obiekt wpisu z polem `content`, a `set_blog_post_meta` obiekt wpisu po zmianie. Treść wpisu i jego publikację zmieniasz dalej operacjami wiki (`update_wiki_page`).
+
+Lint wpisu (MON-262): `lint_blog_post` to odczyt, mapowany na `blog lint` z `page_id` jako argumentem pozycyjnym. Wynik to obiekt JSON z polami `page_id`, `score` (ocena 0-100), `error_count`, `warning_count`, `info_count` i `issues` (lista obiektów `rule`, `level`, `line`, `message`); tool MCP zwraca te same pola i dodatkowo `table` z gotową tabelą markdown. Komenda `blog lint` wypisuje raport i dopiero potem kończy się kodem 1, gdy wpis ma co najmniej jeden błąd lintu. Wrapper traktuje ten przypadek jako wynik, nie awarię: kod 1 z CLI przy stdout będącym obiektem JSON z listą `issues` daje kod 0 wrappera i raport na stdout. Skill sprawdza więc `error_count` (albo poziomy w `issues`), a nie kod wyjścia. Każdy inny kod 1 z CLI, na przykład 404 dla strony bez wpisu bloga, zostaje błędem operacji (kod 2).
 
 Subagenci (`work`, `work-simple`) pracują przez MCP, chyba że Team Manager wklei im do promptu literalną ścieżkę wrappera.
 
@@ -1001,6 +1003,9 @@ W obu trybach błędem jest `### Unreleased` na innej pozycji niż pierwsza, pus
 
 ### Unreleased
 
+- MON-262: **wrapper `monolynx_op.py` obsługuje lint wpisu bloga**: operacja `lint_blog_post` mapowana na `blog lint`, `page_id` jest argumentem pozycyjnym. Wrapper przekazuje przez CLI już 34 operacje, a flagi są sprawdzone wobec fixture `tests/fixtures/monolynx/blog-lint-help.source.txt` (CLI z drzewa źródeł). Wynik to obiekt JSON z polami `page_id`, `score`, `error_count`, `warning_count`, `info_count` i `issues` (`rule`, `level`, `line`, `message`).
+  - Kod 1 z CLI nie zawsze jest tu błędem: `blog lint` wypisuje raport i kończy się kodem 1, gdy wpis ma co najmniej jeden błąd lintu. Gdy stdout jest wtedy obiektem JSON z listą `issues`, wrapper wypisuje go i kończy kodem 0. Każdy inny kod 1 z CLI zostaje błędem operacji (kod 2), jak dotąd.
+- MON-262: `lint_blog_post` jest odczytem: trafił do `READ_OPS` wrappera i do `MONOLYNX_READ_OPS` w `hooks/bash_guard.py` (równość obu zbiorów pilnuje `tests/unit/test_bash_guard.py`). Wobec wydanego CLI bez komendy `blog lint` wrapper kończy operację kodem 3 (`OP-FALLBACK`), a skill wykonuje ją toolem MCP.
 - MON-269: **pole `pełny przebieg: lokalnie|ci` na stronie `toolchain`**. Pole stoi w sekcji `## Test` (zapis `pelny przebieg:` liczy się tak samo, wielkość liter etykiety bez znaczenia) i mówi, gdzie idzie pełny zestaw testów przed zamknięciem ticketu. Brak pola albo `lokalnie` zostawia zachowanie z 1.24.0 bez zmian. Wartość nieznana albo pusta to `lokalnie` z ostrzeżeniem; to samo pole poza `## Test` jest ignorowane.
 - MON-269: **`work` i `work-simple` w trybie `ci` testują lokalnie tylko zmieniony obszar**. Lint idzie w całości, komenda z pełnym zestawem nie jest uruchamiana lokalnie, a `lint-test.md` opisuje wyprowadzenie ścieżek testów z `git diff --name-only <BASELINE_SHA>` i nowych plików z `git status --porcelain --untracked-files=all` (zmienione i nowe pliki testów plus testy odpowiadające zmienionym plikom źródłowym), wpisywanych w komendę `test:` w miejsce domyślnej ścieżki zestawu. Brak pasujących testów nie jest błędem (idzie sam lint, fakt trafia do raportu). Przebiegi zawężone idą przez `test_lock.py` i wyłącznik `izolacja testów: tak` jak dotąd, tryb defektu zostaje lokalny.
   - Wczesna bramka zaraz po ustaleniu trybu: `MONOLYNX_AUTOCOMMIT`, `MONOLYNX_AUTOPUSH` i `MONOLYNX_AUTOMR` na `true` oraz działające `glab`. Niespełniona: w tle `SPRINT-RUN STOP: pełny przebieg ci bez MR`, interaktywnie pytanie (lokalny pełny przebieg albo zatrzymanie). Komenda testów bez miejsca na ścieżki: `SPRINT-RUN STOP: pełny przebieg ci - testów nie da się zawęzić` albo to samo pytanie.

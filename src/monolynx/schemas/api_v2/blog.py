@@ -1,6 +1,7 @@
 """Schematy request/response API v2 dla metadanych wpisów bloga (MON-261).
 
 Response budowane z `services/blog.py::BlogPostView` przez `from_attributes`.
+Wynik lintu (`BlogLintResponse`) budowany ze slownika `services/blog_lint.py::lint_result_dict`, bez pola `table` (jest tylko w MCP).
 Request PATCH celowo bez `published_at` i `is_public`: data publikacji należy do publikacji.
 """
 
@@ -47,3 +48,19 @@ class BlogPostMetaUpdateRequest(BaseModel):
     translation_of_id: uuid.UUID | None = None
     cover_attachment_id: uuid.UUID | None = None
     last_verified_at: date | None = None
+
+
+class BlogLintIssueResponse(BaseModel):
+    rule: str
+    level: str
+    line: int
+    message: str
+
+
+class BlogLintResponse(BaseModel):
+    page_id: str
+    score: int
+    error_count: int
+    warning_count: int
+    info_count: int
+    issues: list[BlogLintIssueResponse]

@@ -114,7 +114,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Your projects.",
         "hero_line2": "AI-first platform.",
         "hero_sub": (
-            "122 AI-ready tools, semantic wiki search, and Claude Code skills"
+            "123 AI-ready tools, semantic wiki search, and Claude Code skills"
             " - Monolynx isn't just another dashboard."
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
@@ -182,7 +182,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Twoje projekty.",
         "hero_line2": "AI-first platforma.",
         "hero_sub": (
-            "122 narzędzia AI, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
+            "123 narzędzia AI, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
             " - Monolynx to nie kolejny dashboard."
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
@@ -472,9 +472,9 @@ def _landing_markdown(lang: str) -> str:
         "```",
         "",
         (
-            "Serwer MCP udostępnia 122 narzędzia we wszystkich modułach (uwierzytelnianie tokenem Bearer)."
+            "Serwer MCP udostępnia 123 narzędzia we wszystkich modułach (uwierzytelnianie tokenem Bearer)."
             if is_pl
-            else "The MCP server exposes 122 tools across all modules (Bearer token authentication)."
+            else "The MCP server exposes 123 tools across all modules (Bearer token authentication)."
         ),
         "",
     ]

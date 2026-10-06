@@ -32,6 +32,7 @@ from monolynx.mcp_server import (
     get_ticket,
     get_work_report,
     invite_member,
+    lint_blog_post,
     list_blog_posts,
     list_comments,
     list_issues,
@@ -235,6 +236,7 @@ EXPECTED_TOOLS = [
     "list_blog_posts",
     "get_blog_post",
     "set_blog_post_meta",
+    "lint_blog_post",
     "create_graph_node",
     "list_graph_nodes",
     "get_graph_node",
@@ -360,11 +362,13 @@ class TestMcpToolRegistration:
                 assert tool.annotations.read_only_hint is True, f"{tool.name} powinien byc read-only"
 
     async def test_blog_tools_carry_expected_annotations(self):
-        """list/get_blog_post(s) sa READ_ONLY, set_blog_post_meta WRITE (nie destrukcyjny)."""
+        """list/get/lint_blog_post(s) sa READ_ONLY, set_blog_post_meta WRITE (nie destrukcyjny)."""
         tools = {t.name: t for t in await mcp.list_tools()}
 
         assert tools["list_blog_posts"].annotations.read_only_hint is True
         assert tools["get_blog_post"].annotations.read_only_hint is True
+        assert tools["lint_blog_post"].annotations.read_only_hint is True
+        assert tools["lint_blog_post"].annotations == tools["get_blog_post"].annotations
         assert tools["set_blog_post_meta"].annotations.read_only_hint is False
         assert tools["set_blog_post_meta"].annotations.destructive_hint is False
 
@@ -8199,7 +8203,7 @@ class TestEmptyRoleDeniedReads:
 
 
 # ---------------------------------------------------------------------------
-# Blog: list_blog_posts, get_blog_post, set_blog_post_meta (MON-261)
+# Blog: list_blog_posts, get_blog_post, set_blog_post_meta (MON-261), lint_blog_post (MON-262)
 # ---------------------------------------------------------------------------
 
 _BLOG_VIEW_KEYS = {
@@ -8357,6 +8361,122 @@ class TestGetBlogPostTool:
             await _blog_call(get_blog_post, mock_factory, AsyncMock(return_value=member), mcp_project.slug, "nie-uuid")
 
         assert str(exc_info.value) == "Brak uprawnienia wiki:read"
+
+
+_LINT_DESCRIPTION = "Opis wpisu bloga o lincie: sprawdza strukturę, grafiki i metadane tak, żeby agent AI mógł go czytać."
+_LINT_CLEAN_CONTENT = "> [!TLDR]\n> - Pierwszy punkt streszczenia.\n> - Drugi punkt streszczenia.\n\n## Czym jest lint?\n\nLint sprawdza wpis.\n"
+_LINT_BAD_CONTENT = "# Tytuł\n\nWstęp bez streszczenia.\n"
+_LINT_RESULT_KEYS = {"page_id", "score", "error_count", "warning_count", "info_count", "issues", "table"}
+
+
+async def _lint_call(mock_factory, verify, content, *args):
+    with (
+        patch("monolynx.mcp_server.async_session_factory", mock_factory),
+        patch("monolynx.mcp_server.verify_mcp_token", verify),
+        patch("monolynx.mcp_server.get_page_content", return_value=content),
+    ):
+        return await lint_blog_post(_make_ctx(), *args)
+
+
+def _table_cells(table: str, rule: str) -> list[str]:
+    row = next(line for line in table.splitlines() if rule in line)
+    return [cell.strip() for cell in row.strip().strip("|").split("|")]
+
+
+@pytest.mark.unit
+class TestLintBlogPostTool:
+    async def test_returns_score_counts_and_issues_for_the_page_content(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        page = await _blog_page(db_session, mcp_project, mcp_user, description=_LINT_DESCRIPTION, last_verified_at=date.today())
+
+        result = await _lint_call(mock_factory, mock_verify, _LINT_BAD_CONTENT, mcp_project.slug, str(page.id))
+
+        assert set(result) == _LINT_RESULT_KEYS
+        assert result["page_id"] == str(page.id)
+        assert result["score"] == 75
+        assert (result["error_count"], result["warning_count"], result["info_count"]) == (1, 1, 1)
+        assert [(i["line"], i["level"], i["rule"]) for i in result["issues"]] == [
+            (0, "warning", "h2-no-question"),
+            (0, "info", "translation-missing"),
+            (3, "error", "tldr-missing"),
+        ]
+        assert all(set(i) == {"rule", "level", "line", "message"} for i in result["issues"])
+        assert all(isinstance(i["message"], str) and i["message"].strip() for i in result["issues"])
+
+    async def test_table_has_header_one_row_per_issue_and_the_score_line(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        page = await _blog_page(db_session, mcp_project, mcp_user, description=_LINT_DESCRIPTION, last_verified_at=date.today())
+
+        result = await _lint_call(mock_factory, mock_verify, _LINT_BAD_CONTENT, mcp_project.slug, str(page.id))
+
+        table = result["table"]
+        lines = table.splitlines()
+        assert "| Linia | Poziom | Reguła | Komunikat |" in lines
+        assert lines[-1] == "Ocena: 75/100"
+        assert _table_cells(table, "tldr-missing")[:3] == ["3", "error", "tldr-missing"]
+        assert _table_cells(table, "h2-no-question")[:3] == ["0", "warning", "h2-no-question"]
+        assert _table_cells(table, "translation-missing")[:3] == ["0", "info", "translation-missing"]
+
+    async def test_clean_post_reports_no_problems_and_full_score(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        original = await _blog_page(db_session, mcp_project, mcp_user)
+        page = await _blog_page(
+            db_session, mcp_project, mcp_user, description=_LINT_DESCRIPTION, last_verified_at=date.today(), translation_of_id=original.id
+        )
+
+        result = await _lint_call(mock_factory, mock_verify, _LINT_CLEAN_CONTENT, mcp_project.slug, str(page.id))
+
+        assert result["issues"] == []
+        assert result["score"] == 100
+        assert (result["error_count"], result["warning_count"], result["info_count"]) == (0, 0, 0)
+        assert result["table"] == "Brak problemów.\n\nOcena: 100/100"
+
+    async def test_page_without_post_row_raises_post_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        page = await _blog_page(db_session, mcp_project, mcp_user, with_post=False)
+
+        with pytest.raises(ValueError) as exc_info:
+            await _lint_call(mock_factory, mock_verify, "x", mcp_project.slug, str(page.id))
+
+        assert str(exc_info.value) == "Wpis bloga nie istnieje"
+
+    async def test_nonexistent_page_raises_page_not_found(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
+        with pytest.raises(ValueError) as exc_info:
+            await _lint_call(mock_factory, mock_verify, "x", mcp_project.slug, str(uuid.uuid4()))
+
+        assert str(exc_info.value) == "Strona wiki nie istnieje"
+
+    async def test_malformed_page_id_raises_uuid_message_for_user_with_permission(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        with pytest.raises(ValueError) as exc_info:
+            await _lint_call(mock_factory, mock_verify, "x", mcp_project.slug, "nie-uuid")
+
+        assert str(exc_info.value) == "Nieprawidlowy page_id (oczekiwany UUID)"
+
+    async def test_role_without_wiki_read_is_refused_even_for_malformed_page_id(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={"scrum": ["read"]})
+
+        with pytest.raises(ValueError) as exc_info:
+            await _lint_call(mock_factory, AsyncMock(return_value=member), "x", mcp_project.slug, "nie-uuid")
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:read"
+
+    async def test_role_without_wiki_read_is_refused_even_for_nonexistent_page(self, db_session, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={"scrum": ["read"]})
+
+        with pytest.raises(ValueError) as exc_info:
+            await _lint_call(mock_factory, AsyncMock(return_value=member), "x", mcp_project.slug, str(uuid.uuid4()))
+
+        assert str(exc_info.value) == "Brak uprawnienia wiki:read"
+
+    async def test_role_with_wiki_read_only_may_lint(self, db_session, mcp_user, mcp_project, mock_factory):
+        member = await _make_member_user(db_session, mcp_project, permissions={"wiki": ["read"]})
+        page = await _blog_page(db_session, mcp_project, mcp_user, description=_LINT_DESCRIPTION)
+
+        result = await _lint_call(mock_factory, AsyncMock(return_value=member), _LINT_CLEAN_CONTENT, mcp_project.slug, str(page.id))
+
+        assert set(result) == _LINT_RESULT_KEYS
 
 
 @pytest.mark.unit

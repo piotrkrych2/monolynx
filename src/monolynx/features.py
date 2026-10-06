@@ -829,6 +829,15 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                         "dostęp do bloga bez dostępu do panelu, API i MCP."
                     ),
                 },
+                {
+                    "title": "Lint wpisu bloga pod AI",
+                    "desc": (
+                        "Lint sprawdza wpis przed publikacją: opis o długości 50-300 znaków, blok TL;DR z 2-5 punktami na początku, "
+                        "tekst alternatywny obrazków, treść bloków graficznych, kolejność nagłówków, opisowe teksty linków, datę weryfikacji i tłumaczenie. "
+                        "Wynik to lista problemów z numerem linii i poziomem (błąd, ostrzeżenie, informacja) oraz ocena 0-100. "
+                        "Ten sam wynik daje narzędzie MCP lint_blog_post, REST API i komenda monolynx blog lint."
+                    ),
+                },
             ],
             "steps": [
                 {"title": "Utwórz stronę główną", "desc": 'Np. "Architektura systemu". Użyj edytora EasyMDE do pisania w Markdown.'},
@@ -843,7 +852,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "desc": "Agent AI może przeczytać dowolną stronę i wyszukać informacje semantycznie — tak jakby był członkiem zespołu.",
                 },
             ],
-            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami i plikami projektu oraz metadanymi wpisów bloga - 16 narzędzi MCP.",
+            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami, plikami projektu i metadanymi wpisów bloga oraz sprawdza wpisy lintem - 17 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_wiki_pages", "desc": "Pełne drzewo hierarchii z parent_id i głębokością"},
                 {"name": "get_wiki_page", "desc": "Treść strony + breadcrumby do nawigacji"},
@@ -861,6 +870,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 {"name": "list_blog_posts", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft"},
                 {"name": "get_blog_post", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown"},
                 {"name": "set_blog_post_meta", "desc": "Metadane wpisu: slug, opis, autor, tagi, język, tłumaczenie, okładka, data weryfikacji"},
+                {"name": "lint_blog_post", "desc": "Lint wpisu pod AI: lista problemów z linią i poziomem oraz ocena 0-100"},
             ],
             "tech_details": [
                 {
@@ -978,6 +988,15 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "in robots.txt without getting into the dashboard, the API or MCP."
                 ),
             },
+            {
+                "title": "Blog post lint for AI",
+                "desc": (
+                    "The lint checks a post before it is published: a description of 50-300 characters, a TL;DR block with 2-5 points at the top, "
+                    "image alt text, the content of graphic blocks, heading order, descriptive link texts, the verified date and the translation. "
+                    "The result is a list of problems with a line number and a level (error, warning, info) and a score from 0 to 100. "
+                    "The lint_blog_post MCP tool, the REST API and the monolynx blog lint command return the same result."
+                ),
+            },
         ],
         "steps": [
             {"title": "Create a root page", "desc": 'E.g., "System Architecture". Use the EasyMDE editor to write in Markdown.'},
@@ -989,7 +1008,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             },
             {"title": "AI searches wiki via MCP", "desc": "Your AI agent can read any page and search semantically — as if it were a team member."},
         ],
-        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments, project files and blog post metadata - 16 MCP tools.",
+        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments, project files and blog post metadata, and lints blog posts - 17 MCP tools.",
         "mcp_tools": [
             {"name": "list_wiki_pages", "desc": "Full hierarchy tree with parent_id and depth"},
             {"name": "get_wiki_page", "desc": "Page content + breadcrumbs for navigation"},
@@ -1007,6 +1026,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             {"name": "list_blog_posts", "desc": "List blog posts with metadata, drafts included; published or draft filter"},
             {"name": "get_blog_post", "desc": "A blog post: metadata, public URLs and markdown content"},
             {"name": "set_blog_post_meta", "desc": "Post metadata: slug, description, author, tags, language, translation, cover, verified date"},
+            {"name": "lint_blog_post", "desc": "Lint a post for AI: a list of problems with line and level, plus a score from 0 to 100"},
         ],
         "tech_details": [
             {
@@ -2012,6 +2032,10 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                 {"name": "monolynx blog list", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft."},
                 {"name": "monolynx blog get", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown."},
                 {"name": "monolynx blog meta", "desc": "Zmień metadane wpisu: slug, opis, autora, tagi, język, okładkę, datę weryfikacji."},
+                {
+                    "name": "monolynx blog lint",
+                    "desc": "Lint wpisu pod AI: problemy z linią i poziomem oraz ocena 0-100; kod wyjścia 1 przy błędzie.",
+                },
             ],
             "tech_details": [
                 {
@@ -2144,6 +2168,10 @@ def _feature_cli(lang: str) -> dict[str, Any]:
             {"name": "monolynx blog list", "desc": "List blog posts with metadata, drafts included; published or draft filter."},
             {"name": "monolynx blog get", "desc": "A blog post: metadata, public URLs and markdown content."},
             {"name": "monolynx blog meta", "desc": "Change post metadata: slug, description, author, tags, language, cover, verified date."},
+            {
+                "name": "monolynx blog lint",
+                "desc": "Lint a post for AI: problems with line and level, plus a score from 0 to 100; exit code 1 on an error.",
+            },
         ],
         "tech_details": [
             {

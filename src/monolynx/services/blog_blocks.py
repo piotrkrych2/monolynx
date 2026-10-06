@@ -5,7 +5,9 @@
 zeby streszczenie wpisu (meta description, zajawka listy) liczylo sie z tresci,
 `extract_structured_data` wyciaga z kontenerow `faq`, `steps` i `video` dane do JSON-LD,
 `collect_block_assets` mowi, jakie zasoby dolaczyc do strony (biblioteka Mermaid, komponenty
-z `BLOG_GRAPHICS`), a `find_block_issues` wskazuje braki w blokach graficznych (lint).
+z `BLOG_GRAPHICS`), `find_block_issues` wskazuje braki w blokach graficznych (lint), a
+`iter_source_lines` oddaje linie zrodla z numerem, informacja o kodzie ogrodzonym i kontenerze
+(lint wpisu, `services/blog_lint.py`).
 Rejestry `TEXT_BLOCKS` i `CONTAINER_BLOCKS` opisuja bloki. Bloki tekstowe (alerty GitHub, cytat
 z autorem, obrazek z podpisem, kod z nazwa pliku, kotwice naglowkow, przypisy) sa zapisane jako
 zwykly, czytelny markdown. Kontenery `:::typ ... :::` (faq, steps, stats, compare, details,
@@ -1069,4 +1071,48 @@ def find_block_issues(markdown_text: str) -> list[BlockIssue]:
         ]
     except Exception:
         logger.exception("Blad lintu blokow graficznych wpisu bloga")
+        return []
+
+
+@dataclass(frozen=True)
+class SourceLine:
+    """Linia zrodla: `number` od 1, `in_code` dla ogrodzenia i jego tresci, `container` to typ domknietego kontenera (takze markery)."""
+
+    number: int
+    text: str
+    in_code: bool
+    container: str | None
+
+
+def iter_source_lines(markdown_text: str) -> list[SourceLine]:
+    """Linie zrodla z numeracja i kontekstem (kod ogrodzony, kontener) wedlug zasad `_split_containers`; nie rzuca."""
+    try:
+        lines = markdown_text.splitlines()
+        out: list[SourceLine] = []
+        number = 0
+
+        def add(span: list[str], container: str | None) -> None:
+            nonlocal number
+            fence: _Fence | None = None
+            for text in span:
+                number += 1
+                in_code = fence is not None
+                if fence is not None:
+                    if _closes_fence(text, fence):
+                        fence = None
+                else:
+                    fence = _open_fence(text)
+                    in_code = fence is not None
+                out.append(SourceLine(number, text, in_code, container))
+
+        for part in _split_containers(lines):
+            if isinstance(part, _Container):
+                add(lines[number : number + 1], part.kind)
+                add(part.inner, part.kind)
+                add(lines[number : number + 1], part.kind)
+            else:
+                add(part, None)
+        return out
+    except Exception:
+        logger.exception("Blad iteracji po liniach zrodla wpisu bloga")
         return []
