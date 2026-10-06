@@ -1,8 +1,8 @@
-"""Testy integracyjne API v2 -- Blog (MON-261).
+"""Testy integracyjne API v2 -- Blog (MON-261, MON-262).
 
-Pokrywa 3 endpointy `src/monolynx/api/v2/blog.py`: lista wpisów (z szkicami), szczegóły wpisu
-z treścią i częściowy PATCH metadanych. Logika w `services/blog.py` (`list_posts`, `get_post`,
-`set_post_meta`); tu sprawdzamy kontrakt HTTP: kształt odpowiedzi, paginację, rozróżnienie
+Pokrywa 4 endpointy `src/monolynx/api/v2/blog.py`: lista wpisów (z szkicami), szczegóły wpisu
+z treścią, częściowy PATCH metadanych i lint wpisu (MON-262). Logika w `services/blog.py` (`list_posts`,
+`get_post`, `set_post_meta`) i `services/blog_lint.py` (`lint_post_by_id`); tu sprawdzamy kontrakt HTTP: kształt odpowiedzi, paginację, rozróżnienie
 "pole nieobecne / null / []" w PATCH, mapowanie błędów na problem+json i uprawnienia `wiki:*`.
 
 MinIO nie działa w testach -- treść wpisu jest mockowana na `monolynx.services.wiki.get_markdown`
@@ -336,6 +336,190 @@ class TestGetBlogPost:
         page = await _page(db_session, project, actor.user)
 
         response = await client.get(f"{_posts_url(project)}/{page.id}")
+
+        assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v2/projects/{slug}/blog/posts/{page_id}/lint (MON-262)
+# ---------------------------------------------------------------------------
+
+_LINT_KEYS = {"page_id", "score", "error_count", "warning_count", "info_count", "issues"}
+_LINT_DESCRIPTION = "Opis wpisu bloga o lincie: sprawdza strukturę, grafiki i metadane tak, żeby agent AI mógł go czytać."
+
+
+def _lint_url(project, page_id) -> str:
+    return f"{_posts_url(project)}/{page_id}/lint"
+
+
+class TestLintBlogPost:
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_returns_shape_score_counts_and_sorted_issues(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "# Tytuł\n\nWstęp bez streszczenia.\n"
+        actor, project = await make_owner_project(db_session, "blog-lint-ok")
+        page = await _page(db_session, project, actor.user, description=_LINT_DESCRIPTION, last_verified_at=date.today())
+
+        response = await client.get(_lint_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == _LINT_KEYS
+        assert body["page_id"] == str(page.id)
+        assert body["score"] == 75
+        assert (body["error_count"], body["warning_count"], body["info_count"]) == (1, 1, 1)
+        assert [(i["line"], i["level"], i["rule"]) for i in body["issues"]] == [
+            (0, "warning", "h2-no-question"),
+            (0, "info", "translation-missing"),
+            (3, "error", "tldr-missing"),
+        ]
+        assert all(set(i) == {"rule", "level", "line", "message"} for i in body["issues"])
+        assert all(isinstance(i["message"], str) and i["message"].strip() for i in body["issues"])
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_clean_post_has_no_issues_and_full_score(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = (
+            "> [!TLDR]\n> - Pierwszy punkt streszczenia.\n> - Drugi punkt streszczenia.\n\n## Czym jest lint?\n\nLint sprawdza wpis.\n"
+        )
+        actor, project = await make_owner_project(db_session, "blog-lint-clean")
+        original = await _page(db_session, project, actor.user)
+        page = await _page(
+            db_session, project, actor.user, description=_LINT_DESCRIPTION, last_verified_at=date.today(), translation_of_id=original.id
+        )
+
+        response = await client.get(_lint_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["issues"] == []
+        assert body["score"] == 100
+        assert (body["error_count"], body["warning_count"], body["info_count"]) == (0, 0, 0)
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_row_metadata_reaches_the_lint(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "> [!TLDR]\n> - Pierwszy.\n> - Drugi.\n\n## Czym jest lint?\n\nTekst.\n"
+        actor, project = await make_owner_project(db_session, "blog-lint-meta")
+        page = await _page(db_session, project, actor.user, description="", last_verified_at=date.today() - timedelta(days=400))
+
+        response = await client.get(_lint_url(project, page.id), headers=actor.headers)
+
+        rules = {i["rule"] for i in response.json()["issues"]}
+        assert {"description-missing", "last-verified-stale"} <= rules
+        assert "last-verified-missing" not in rules
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_lint_does_not_modify_the_post_row(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Wstęp bez streszczenia.\n"
+        actor, project = await make_owner_project(db_session, "blog-lint-readonly")
+        page = await _page(db_session, project, actor.user, description="Bez zmian", tags=["x"])
+
+        await client.get(_lint_url(project, page.id), headers=actor.headers)
+
+        row = await _row(db_session, page.id)
+        assert (row.description, row.tags, row.last_verified_at) == ("Bez zmian", ["x"], None)
+
+    @patch("monolynx.services.wiki.get_page_content", side_effect=RuntimeError("minio down"))
+    async def test_storage_failure_returns_503_problem_json(self, _mock_content, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-lint-storage")
+        page = await _page(db_session, project, actor.user)
+
+        response = await client.get(_lint_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 503
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["title"] == "Service Unavailable"
+
+    @patch("monolynx.services.wiki.get_page_content", side_effect=RuntimeError("minio down"))
+    async def test_missing_post_row_stays_404_when_storage_is_down(self, _mock_content, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-lint-storage-norow")
+        page = await _page(db_session, project, actor.user, with_post=False)
+
+        response = await client.get(_lint_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Wpis bloga nie istnieje"
+
+    @patch("monolynx.services.wiki.get_page_content", side_effect=RuntimeError("minio down"))
+    async def test_role_without_wiki_read_stays_403_when_storage_is_down(self, _mock_content, client, db_session):
+        _owner, project = await make_owner_project(db_session, "blog-lint-storage-perm")
+        actor = await _actor_with_permissions(db_session, project, "blog-lint-storage-perm-a", {"scrum": ["read"]})
+
+        response = await client.get(_lint_url(project, uuid.uuid4()), headers=actor.headers)
+
+        assert response.status_code == 403
+        assert "Brak uprawnienia wiki:read" in response.json()["detail"]
+
+    async def test_nonexistent_page_returns_404_page_detail(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-lint-404")
+
+        response = await client.get(_lint_url(project, uuid.uuid4()), headers=actor.headers)
+
+        assert response.status_code == 404
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == "Strona wiki nie istnieje"
+
+    async def test_page_without_post_row_returns_404_post_detail(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-lint-norow")
+        page = await _page(db_session, project, actor.user, with_post=False)
+
+        response = await client.get(_lint_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 404
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["detail"] == "Wpis bloga nie istnieje"
+
+    async def test_page_from_other_project_returns_404(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-lint-foreign")
+        other = await make_project(db_session, "blog-lint-foreign-other")
+        foreign = await _page(db_session, other, actor.user)
+
+        response = await client.get(_lint_url(project, foreign.id), headers=actor.headers)
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Strona wiki nie istnieje"
+
+    async def test_malformed_page_id_returns_422(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-lint-422")
+
+        response = await client.get(f"{_posts_url(project)}/nie-uuid/lint", headers=actor.headers)
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+
+    async def test_role_without_wiki_read_gets_403_even_for_nonexistent_page(self, client, db_session):
+        _owner, project = await make_owner_project(db_session, "blog-lint-perm")
+        actor = await _actor_with_permissions(db_session, project, "blog-lint-perm-a", {"scrum": ["read"]})
+
+        response = await client.get(_lint_url(project, uuid.uuid4()), headers=actor.headers)
+
+        assert response.status_code == 403
+        assert response.headers["content-type"] == "application/problem+json"
+        assert "Brak uprawnienia wiki:read" in response.json()["detail"]
+
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_read_only_wiki_role_can_lint(self, mock_get_markdown, client, db_session):
+        mock_get_markdown.return_value = "Wstęp.\n"
+        owner, project = await make_owner_project(db_session, "blog-lint-readonly-role")
+        page = await _page(db_session, project, owner.user)
+        actor = await _actor_with_permissions(db_session, project, "blog-lint-readonly-role-a", {"wiki": ["read"]})
+
+        response = await client.get(_lint_url(project, page.id), headers=actor.headers)
+
+        assert response.status_code == 200
+
+    async def test_non_member_returns_403(self, client, db_session):
+        owner, project = await make_owner_project(db_session, "blog-lint-nonmember")
+        page = await _page(db_session, project, owner.user)
+        outsider = await make_actor(db_session, "blog-lint-nonmember-out")
+
+        response = await client.get(_lint_url(project, page.id), headers=outsider.headers)
+
+        assert response.status_code == 403
+
+    async def test_missing_token_returns_401(self, client, db_session):
+        actor, project = await make_owner_project(db_session, "blog-lint-401")
+        page = await _page(db_session, project, actor.user)
+
+        response = await client.get(_lint_url(project, page.id))
 
         assert response.status_code == 401
 

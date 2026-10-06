@@ -375,6 +375,7 @@ MONOLYNX_READ_OPS = frozenset(
         "get_graph_stats",
         "list_blog_posts",
         "get_blog_post",
+        "lint_blog_post",
     }
 )
 _MONOLYNX_SCRIPTS = ("monolynx_op.py", "monolynx_transport.py")

@@ -1,7 +1,7 @@
 """Punkt wejścia CLI monolynx-cli: opcja --version, globalne flagi i szkielet 17 grup podkomend.
 
-`auth`, `config`, `project`, `member`, `ticket`, `sprint`, `wiki`, `blog` (metadane wpisów) i `graph` (tylko odczyt) mają realne komendy (moduły
-monolynx_cli.commands.*). Pozostałe grupy są nadal puste -- kolejne tickety dodadzą do
+`auth`, `config`, `project`, `member`, `ticket`, `sprint`, `wiki`, `blog` (metadane wpisów i lint) i `graph` (tylko odczyt) mają realne
+komendy (moduły monolynx_cli.commands.*). Pozostałe grupy są nadal puste -- kolejne tickety dodadzą do
 nich podkomendy, ewentualnie wynosząc rozrośniętą grupę do własnego modułu. Poza grupami root
 ma samodzielne komendy `completion <shell>` (skrypt uzupełniania na stdout, patrz
 monolynx_cli.commands.completion) i `version [--check]` (wersja CLI i sprawdzenie PyPI, patrz
@@ -142,7 +142,7 @@ app.add_typer(member_app, name="member", help="Zarządzanie członkami projektu.
 app.add_typer(ticket_app, name="ticket", help="Zarządzanie ticketami: backlog, szczegóły, komentarze.")
 app.add_typer(sprint_app, name="sprint", help="Zarządzanie sprintami.")
 app.add_typer(wiki_app, name="wiki", help="Strony wiki projektu.")
-app.add_typer(blog_app, name="blog", help="Wpisy bloga projektu: lista, treść i metadane.")
+app.add_typer(blog_app, name="blog", help="Wpisy bloga projektu: lista, treść, metadane i lint pod AI.")
 app.add_typer(monitoring_app, name="monitoring", help="Monitorowanie adresów URL (uptime).")
 app.add_typer(issues_app, name="issues", help="Śledzenie błędów modułu 500ki.")
 app.add_typer(time_app, name="time", help="Ewidencja czasu pracy (log_time, raporty).")

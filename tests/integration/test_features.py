@@ -70,6 +70,7 @@ ALLOWED_CLI_COMMANDS = {
     "monolynx blog list",
     "monolynx blog get",
     "monolynx blog meta",
+    "monolynx blog lint",
 }
 REQUIRED_CLI_GROUPS = {"project", "member", "ticket", "sprint", "wiki", "graph", "blog"}
 GRAPH_CLI_COMMANDS = {
@@ -83,6 +84,7 @@ BLOG_CLI_COMMANDS = {
     "monolynx blog list",
     "monolynx blog get",
     "monolynx blog meta",
+    "monolynx blog lint",
 }
 TOOLS_LABEL = {"pl": "Dostępne komendy", "en": "Available commands"}
 MCP_LABEL = {"pl": "Dostępne narzędzia MCP", "en": "Available MCP tools"}
@@ -302,6 +304,38 @@ class TestFeatureHttpEndpoints:
         response = await client.get("/features/scrum", params={"lang": "xx"})
 
         assert response.status_code == 200
+
+
+@pytest.mark.unit
+class TestWikiFeatureBlogLint:
+    """MON-262: moduł Wiki wymienia `lint_blog_post`, a licznik narzędzi w `ai_intro` zgadza się z listą."""
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_wiki_mcp_tools_list_lint_blog_post_once(self, lang):
+        content = get_feature_content("wiki", lang)
+
+        assert content is not None
+        names = [t["name"] for t in content["mcp_tools"]]
+        assert names.count("lint_blog_post") == 1
+        assert {"list_blog_posts", "get_blog_post", "set_blog_post_meta"} <= set(names)
+
+    @pytest.mark.parametrize(("lang", "suffix"), [("pl", "narzędzi MCP"), ("en", "MCP tools")])
+    def test_wiki_ai_intro_counter_matches_the_number_of_mcp_tools(self, lang, suffix):
+        content = get_feature_content("wiki", lang)
+
+        assert content is not None
+        count = len(content["mcp_tools"])
+        assert count == 17
+        assert f"{count} {suffix}" in content["ai_intro"]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_lint_blog_post_tool_has_a_non_empty_description(self, lang):
+        content = get_feature_content("wiki", lang)
+
+        assert content is not None
+        tool = next(t for t in content["mcp_tools"] if t["name"] == "lint_blog_post")
+        assert tool["desc"].strip()
+        assert chr(0x2014) not in tool["desc"]
 
 
 @pytest.mark.unit

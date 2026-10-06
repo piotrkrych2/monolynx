@@ -6,7 +6,7 @@ Kontrakt wrappera (stdlib, Python 3.10+):
   flagi to DOKLADNE nazwy parametrow toola MCP z podkresleniami (`--project_slug`, `--ticket_id`).
 - Modul eksponuje: `OPS` (dict: nazwa op -> opis mapowania, struktura wewnetrzna dowolna),
   `READ_OPS` (set/frozenset nazw op tylko-odczyt, podzbior kluczy `OPS`, wylacznie nazwy
-  zaczynajace sie od `get_`, `list_`, `search_`, `query_`, `find_`), `main(argv: list[str] | None = None) -> int`.
+  zaczynajace sie od `get_`, `list_`, `search_`, `query_`, `find_`, `lint_`), `main(argv: list[str] | None = None) -> int`.
 - CLI wolane DOKLADNIE jako `monolynx -o json --project <project_slug> <grupa> <komenda> ...`:
   pozycyjne argumenty zaraz po komendzie, potem flagi w kolejnosci wystepowania parametrow w
   wywolaniu wrappera. Wrapper przekazuje tylko podane parametry (zadnych wartosci domyslnych).
@@ -35,6 +35,9 @@ Kontrakt wrappera (stdlib, Python 3.10+):
   `author_name` -> `--author`, `translation_of_id` -> `--translation-of`, `cover_attachment_id` -> `--cover`,
   `last_verified_at` -> `--verified`, `tags` -> powtarzane `--tag` (pusta lista -> `--no-tags`); pusty tekst w
   `translation_of_id`, `cover_attachment_id` i `last_verified_at` wrapper przekazuje dalej (CLI zamienia go na null).
+  Blog lint (MON-262): `lint_blog_post` -> `blog lint <page_id>` (odczyt). `blog lint` konczy sie kodem 1, gdy raport zawiera
+  blad lintu, PO wypisaniu raportu na stdout: dla tej jednej op kod 1 z poprawnym obiektem JSON z lista `issues` na stdout
+  to wynik (stdout przekazany, kod 0); kazdy inny kod 1 zostaje bledem operacji (kod 2).
   Listy w jednej wartosci jako tablica JSON.
 - Wartosc parametru `-` = czytaj ze stdin wrappera, `@<sciezka>` = czytaj z pliku (UTF-8).
 - Kody: 0 (stdout = stdout CLI bez zmian); 3 + ostatnia linia stdout `OP-FALLBACK: mcp tool=<op>`
@@ -224,6 +227,7 @@ _RAW_SCENARIOS: list[tuple[str, str, str, str]] = [
     ("list_blog_posts", "", "blog list", ""),
     ("list_blog_posts", "--status draft", "blog list --status draft", ""),
     ("get_blog_post", "--page_id P1", "blog get P1", ""),
+    ("lint_blog_post", "--page_id P1", "blog lint P1", ""),
     (
         "set_blog_post_meta",
         "--page_id P1 --slug nowy --description 'Nowy opis' --author_name 'Ada A' --lang en"
@@ -272,11 +276,12 @@ NO_CLI_OPS = shlex.split(
 )
 
 GRAPH_READ_OPS = frozenset({"list_graph_nodes", "get_graph_node", "query_graph", "find_graph_path", "get_graph_stats"})
-BLOG_READ_OPS = frozenset({"list_blog_posts", "get_blog_post"})
+BLOG_READ_OPS = frozenset({"list_blog_posts", "get_blog_post", "lint_blog_post"})
 BLOG_OPS = BLOG_READ_OPS | {"set_blog_post_meta"}
 
-# Prefiks nazwy op -> czy odczyt (kontrakt READ_OPS).
-READ_PREFIXES = ("get_", "list_", "search_", "query_", "find_")
+# Prefiks nazwy op -> czy odczyt (kontrakt READ_OPS). `lint_` (MON-262): lint wpisu bloga tylko czyta, a hook uznalby go za zapis
+# i pytal o zgode; `lint_wiki` (NO_CLI_OPS) nie jest w READ_OPS, bo nie ma komendy CLI.
+READ_PREFIXES = ("get_", "list_", "search_", "query_", "find_", "lint_")
 
 
 class Env:
@@ -396,7 +401,7 @@ class TestModuleContract:
         assert set(module.OPS) >= GRAPH_READ_OPS, sorted(GRAPH_READ_OPS - set(module.OPS))
         assert set(module.READ_OPS) >= GRAPH_READ_OPS, sorted(GRAPH_READ_OPS - set(module.READ_OPS))
 
-    def test_blog_ops_are_mapped_and_only_the_two_reads_are_read_only(self):
+    def test_blog_ops_are_mapped_and_only_the_three_reads_are_read_only(self):
         module = load_module()
 
         assert set(module.OPS) >= BLOG_OPS, sorted(BLOG_OPS - set(module.OPS))
@@ -658,6 +663,83 @@ class TestExitCodes:
         sandbox.run("get_ticket", *SLUG, "--ticket_id", "MON-1")
 
         assert len(sandbox.entries()) == 1
+
+    def test_lint_blog_post_cli_exit_1_with_report_on_stdout_is_a_result_with_exit_0(self, sandbox):
+        report = (
+            '{"page_id": "P1", "score": 75, "error_count": 1, "warning_count": 0, "info_count": 0,\n'
+            ' "issues": [{"rule": "tldr-missing", "level": "error", "line": 3, "message": "Brak TLDR"}]}\n'
+        )
+        sandbox.install_cli(code=1, stdout=report, stderr="")
+
+        result = sandbox.run("lint_blog_post", *SLUG, "--page_id", "P1")
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == report
+        assert "OP-FALLBACK" not in result.stdout + result.stderr
+        assert len(sandbox.entries()) == 1
+
+    @pytest.mark.parametrize(
+        "stdout",
+        [
+            pytest.param("", id="empty-stdout"),
+            pytest.param("   \n", id="blank-stdout"),
+            pytest.param("to nie jest JSON\n", id="not-json"),
+            pytest.param('{"issues": [', id="truncated-json"),
+            pytest.param('{"score": 75}\n', id="object-without-issues"),
+            pytest.param('{"score": 75, "issues": "brak"}\n', id="issues-not-a-list"),
+            pytest.param('{"score": 75, "issues": null}\n', id="issues-null"),
+            pytest.param('[{"rule": "x"}]\n', id="top-level-list"),
+            pytest.param('"tekst"\n', id="top-level-string"),
+        ],
+    )
+    def test_lint_blog_post_cli_exit_1_without_a_valid_report_is_still_exit_2(self, sandbox, stdout):
+        sandbox.install_cli(code=1, stdout=stdout, stderr="Błąd API: 500 serwer padł\n")
+
+        result = sandbox.run("lint_blog_post", *SLUG, "--page_id", "P1")
+
+        assert result.returncode == 2
+        assert "Błąd API: 500 serwer padł" in result.stderr
+        assert result.stdout == ""
+        assert "OP-FALLBACK" not in result.stdout + result.stderr
+
+    @pytest.mark.parametrize("cli_code", [4, 5])
+    def test_lint_blog_post_other_cli_codes_with_a_report_on_stdout_stay_exit_2(self, sandbox, cli_code):
+        sandbox.install_cli(code=cli_code, stdout='{"score": 75, "issues": []}\n', stderr="blad\n")
+
+        result = sandbox.run("lint_blog_post", *SLUG, "--page_id", "P1")
+
+        assert result.returncode == 2
+        assert result.stdout == ""
+
+    @pytest.mark.parametrize("cli_code", [2, 3])
+    def test_lint_blog_post_auth_or_usage_codes_still_give_fallback_exit_3(self, sandbox, cli_code):
+        sandbox.install_cli(code=cli_code, stdout='{"score": 75, "issues": []}\n', stderr="blad\n")
+
+        result = sandbox.run("lint_blog_post", *SLUG, "--page_id", "P1")
+
+        assert result.returncode == 3
+        assert result.stdout.splitlines()[-1] == "OP-FALLBACK: mcp tool=lint_blog_post"
+
+    @pytest.mark.parametrize(
+        ("op", "params"),
+        [
+            ("get_blog_post", ["--page_id", "P1"]),
+            ("list_blog_posts", []),
+            ("set_blog_post_meta", ["--page_id", "P1", "--lang", "en"]),
+            ("get_ticket", ["--ticket_id", "MON-1"]),
+            ("add_comment", ["--ticket_id", "MON-1", "--content", "x"]),
+        ],
+        ids=["get_blog_post", "list_blog_posts", "set_blog_post_meta", "get_ticket", "add_comment"],
+    )
+    def test_cli_exit_1_with_a_lint_like_report_is_exit_2_for_every_other_op(self, sandbox, op, params):
+        report = '{"score": 75, "issues": [{"rule": "x", "level": "error", "line": 1, "message": "m"}]}\n'
+        sandbox.install_cli(code=1, stdout=report, stderr="blad\n")
+
+        result = sandbox.run(op, *SLUG, *params)
+
+        assert result.returncode == 2
+        assert result.stdout == ""
+        assert "blad" in result.stderr
 
     def test_stdout_of_cli_is_passed_through_byte_for_byte(self, sandbox):
         payload = '{\n  "a": [1, 2],\n  "b": "zażółć"\n}\n'

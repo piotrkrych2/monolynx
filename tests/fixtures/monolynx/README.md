@@ -58,6 +58,7 @@ Nazwa pliku: `<komenda z myślnikami>-help.source.txt`. Nagłówek meta i linia 
 | `blog-help.source.txt` | `monolynx blog --help` | grupa `blog` z MON-261: komendy `list`, `get`, `meta` |
 | `blog-list-help.source.txt` | `monolynx blog list --help` | `--status` |
 | `blog-get-help.source.txt` | `monolynx blog get --help` | argument `page_id` |
+| `blog-lint-help.source.txt` | `monolynx blog lint --help` | argument `page_id`; `blog lint` z MON-262, kod wyjścia 1 przy błędzie lintu (przechwycone z drzewa źródeł MON-262) |
 | `blog-meta-help.source.txt` | `monolynx blog meta --help` | argument `page_id`; `--slug`, `--description`, `--author`, `--tag`, `--no-tags`, `--lang`, `--translation-of`, `--cover`, `--verified` |
 
 Pliki `graph-*` mają w nagłówku `# tool_version: monolynx 0.2.0 (drzewo zrodel, MON-248, niewydane)`; komenda

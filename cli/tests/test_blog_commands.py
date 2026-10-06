@@ -1,10 +1,11 @@
-"""Testy komend monolynx_cli.commands.blog (MON-261): list, get, meta.
+"""Testy komend monolynx_cli.commands.blog (MON-261, MON-262): list, get, meta, lint.
 
 Wszystkie testy przechodza przez root app (`monolynx_cli.main.app`) z flagami globalnymi PRZED grupa
 `blog` (sama komenda bez roota nie dowodzi, ze grupa jest podpieta). Punkt wstrzykniecia HTTP to nazwa
 modulowa `monolynx_cli.commands._common.MonolynxClient` (transport z fixture `mock_transport`, sleep no-op).
-`blog list` i `blog get` to odczyt (GET), `blog meta` to czesciowy zapis (PATCH): do body trafiaja tylko
-opcje, ktore uzytkownik podal. Odpowiedz 200 o zlym ksztalcie to blad kontraktu: kod 1 i komunikat
+`blog list`, `blog get` i `blog lint` to odczyt (GET), `blog meta` to czesciowy zapis (PATCH): do body trafiaja
+tylko opcje, ktore uzytkownik podal. `blog lint` konczy sie kodem 1, gdy wynik zawiera blad lintu (po wypisaniu
+raportu); same ostrzezenia i informacje to kod 0. Odpowiedz 200 o zlym ksztalcie to blad kontraktu: kod 1 i komunikat
 "Nieprawidłowa odpowiedź serwera" na stderr, nigdy pusty wynik z kodem 0.
 """
 
@@ -98,6 +99,25 @@ def _detail(**extra):
     return {**_item(), "content": "# Treść wpisu", **extra}
 
 
+def _lint_issue(rule="tldr-missing", level="error", line=3, message="Wpis nie zaczyna sie od TLDR"):
+    return {"rule": rule, "level": level, "line": line, "message": message}
+
+
+def _lint(issues=None, score=100, **extra):
+    issues = [] if issues is None else issues
+    levels = [i.get("level") for i in issues if isinstance(i, dict)]
+    counts = {level: levels.count(level) for level in ("error", "warning", "info")}
+    base = {
+        "page_id": PAGE_ID,
+        "score": score,
+        "error_count": counts["error"],
+        "warning_count": counts["warning"],
+        "info_count": counts["info"],
+        "issues": issues,
+    }
+    return {**base, **extra}
+
+
 def _without(payload: dict[str, Any], key: str) -> dict[str, Any]:
     return {name: value for name, value in payload.items() if name != key}
 
@@ -142,6 +162,7 @@ _COMMANDS: list[tuple[str, list[str], str, str, Any]] = [
     ("list", ["list"], "GET", BASE, _envelope([_item()])),
     ("get", ["get", PAGE_ID], "GET", f"{BASE}/{PAGE_ID}", _detail()),
     ("meta", ["meta", PAGE_ID, "--lang", "en"], "PATCH", f"{BASE}/{PAGE_ID}", _item(lang="en")),
+    ("lint", ["lint", PAGE_ID], "GET", f"{BASE}/{PAGE_ID}/lint", _lint([_lint_issue("last-verified-missing", "warning", 0, "Brak daty")], 95)),
 ]
 _COMMAND_IDS = [case[0] for case in _COMMANDS]
 
@@ -597,3 +618,298 @@ def test_meta_response_with_bad_shape_is_contract_error_exit_1(runner, monkeypat
     assert result.exit_code == 1
     assert "Nieprawidłowa odpowiedź serwera" in result.stderr
     assert result.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# blog lint
+# ---------------------------------------------------------------------------
+
+_ERROR_ISSUE = _lint_issue("tldr-missing", "error", 3, "Wpis nie zaczyna sie od TLDR")
+_WARNING_ISSUE = _lint_issue("h2-no-question", "warning", 0, "Zaden H2 nie jest pytaniem")
+_INFO_ISSUE = _lint_issue("translation-missing", "info", 0, "Brak tlumaczenia")
+
+
+def test_lint_json_is_the_full_object_and_exit_1_when_there_is_an_error(runner, monkeypatch, mock_transport):
+    payload = _lint([_WARNING_ISSUE, _ERROR_ISSUE], 75)
+    _patch_client(monkeypatch, mock_transport, _json(payload))
+
+    result = _run(runner, "lint", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == payload
+    assert isinstance(result.exception, SystemExit)
+
+
+@pytest.mark.parametrize(
+    "issues",
+    [
+        pytest.param([_ERROR_ISSUE, _WARNING_ISSUE, _INFO_ISSUE], id="error-first"),
+        pytest.param([_WARNING_ISSUE, _INFO_ISSUE, _ERROR_ISSUE], id="error-last"),
+        pytest.param([_WARNING_ISSUE, _ERROR_ISSUE, _INFO_ISSUE], id="error-in-the-middle"),
+        pytest.param([_ERROR_ISSUE], id="only-error"),
+    ],
+)
+def test_lint_exits_1_when_at_least_one_issue_is_an_error(runner, monkeypatch, mock_transport, issues):
+    _patch_client(monkeypatch, mock_transport, _json(_lint(issues, 55)))
+
+    result = _run(runner, "lint", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["issues"] == issues
+
+
+@pytest.mark.parametrize(
+    "issues",
+    [
+        pytest.param([], id="no-issues"),
+        pytest.param([_WARNING_ISSUE], id="only-warning"),
+        pytest.param([_INFO_ISSUE], id="only-info"),
+        pytest.param([_WARNING_ISSUE, _INFO_ISSUE, _lint_issue("em-dash", "warning", 9, "Myslnik")], id="warnings-and-info"),
+    ],
+)
+def test_lint_exits_0_without_errors_and_still_prints_the_report(runner, monkeypatch, mock_transport, issues):
+    payload = _lint(issues, 90)
+    _patch_client(monkeypatch, mock_transport, _json(payload))
+
+    result = _run(runner, "lint", PAGE_ID)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == payload
+
+
+def test_lint_error_exit_is_a_controlled_exit_not_an_unhandled_exception(runner, monkeypatch, mock_transport):
+    _patch_client(monkeypatch, mock_transport, _json(_lint([_ERROR_ISSUE], 80)))
+
+    result = _run(runner, "lint", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "Traceback" not in result.output
+    assert "Nieprawidłowa odpowiedź serwera" not in result.stderr
+
+
+def test_lint_percent_encodes_the_page_id_in_the_path(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_lint()))
+
+    result = _run(runner, "lint", "a/b")
+
+    assert result.exit_code == 0, result.output
+    assert requests[0].url.raw_path.decode().split("?")[0] == f"{BASE}/a%2Fb/lint"
+
+
+@pytest.mark.parametrize("page_id", ["..", "."])
+def test_lint_dot_segment_page_id_exits_2_without_http(runner, monkeypatch, mock_transport, page_id):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_lint()))
+
+    result = _run(runner, "lint", page_id)
+
+    assert result.exit_code == 2
+    assert result.stderr.strip() != ""
+    assert len(requests) == 0
+
+
+def test_lint_table_shows_one_row_per_issue_with_the_four_columns_in_order(runner, monkeypatch, mock_transport):
+    monkeypatch.setenv("COLUMNS", "200")
+    issues = [
+        _lint_issue("zulu-rule", "warning", 7, "komunikat-zulu"),
+        _lint_issue("alfa-rule", "error", 3, "komunikat-alfa"),
+    ]
+    _patch_client(monkeypatch, mock_transport, _json(_lint(issues, 75)))
+
+    result = _run(runner, "lint", PAGE_ID, output="table")
+
+    assert result.exit_code == 1
+    header = next(line for line in result.stdout.splitlines() if "rule" in line and "level" in line)
+    positions = [header.index(column) for column in ("line", "level", "rule", "message")]
+    assert positions == sorted(positions)
+    for token in ("zulu-rule", "komunikat-zulu", "alfa-rule", "komunikat-alfa", "warning", "error"):
+        assert token in result.stdout
+    assert result.stdout.index("zulu-rule") < result.stdout.index("alfa-rule")
+    assert "{'rule'" not in result.stdout
+    assert "page_id" not in result.stdout
+
+
+def test_lint_table_prints_the_score_on_stderr_not_on_stdout(runner, monkeypatch, mock_transport):
+    monkeypatch.setenv("COLUMNS", "200")
+    issues = [_lint_issue("alfa-rule", "error", 3, "komunikat"), _lint_issue("beta-rule", "error", 4, "komunikat"), _WARNING_ISSUE]
+    _patch_client(monkeypatch, mock_transport, _json(_lint(issues, 55)))
+
+    result = _run(runner, "lint", PAGE_ID, output="table")
+
+    assert "55" in result.stderr
+    assert "55" not in result.stdout
+
+
+def test_lint_quiet_silences_the_score_line_but_keeps_the_rows_and_exit_code(runner, monkeypatch, mock_transport):
+    monkeypatch.setenv("COLUMNS", "200")
+    issues = [_lint_issue("alfa-rule", "error", 3, "komunikat"), _lint_issue("beta-rule", "error", 4, "komunikat"), _WARNING_ISSUE]
+    _patch_client(monkeypatch, mock_transport, _json(_lint(issues, 55)))
+
+    result = runner.invoke(app, ["-o", "table", "-q", "--project", SLUG, "blog", "lint", PAGE_ID])
+
+    assert result.exit_code == 1
+    assert "55" not in result.stderr
+    assert "alfa-rule" in result.stdout
+
+
+def test_lint_table_without_issues_exits_0_and_reports_the_score_on_stderr(runner, monkeypatch, mock_transport):
+    _patch_client(monkeypatch, mock_transport, _json(_lint([], 100)))
+
+    result = _run(runner, "lint", PAGE_ID, output="table")
+
+    assert result.exit_code == 0, result.output
+    assert "100" in result.stderr
+
+
+def test_lint_yaml_output_is_the_full_object(runner, monkeypatch, mock_transport):
+    import yaml
+
+    payload = _lint([_WARNING_ISSUE], 95)
+    _patch_client(monkeypatch, mock_transport, _json(payload))
+
+    result = _run(runner, "lint", PAGE_ID, output="yaml")
+
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(result.stdout) == payload
+
+
+def test_lint_requires_page_id_argument(runner, monkeypatch, mock_transport):
+    requests = _patch_client(monkeypatch, mock_transport, _json(_lint()))
+
+    result = _run(runner, "lint")
+
+    assert result.exit_code == 2
+    assert len(requests) == 0
+
+
+_BAD_LINT_ISSUES: list[Any] = [
+    "tekst",
+    5,
+    None,
+    ["rule"],
+    _without(_ERROR_ISSUE, "rule"),
+    _without(_ERROR_ISSUE, "level"),
+    _without(_ERROR_ISSUE, "line"),
+    _without(_ERROR_ISSUE, "message"),
+    {**_ERROR_ISSUE, "rule": 7},
+    {**_ERROR_ISSUE, "level": None},
+    {**_ERROR_ISSUE, "message": ["x"]},
+    {**_ERROR_ISSUE, "line": "3"},
+    {**_ERROR_ISSUE, "line": 3.5},
+    {**_ERROR_ISSUE, "line": True},
+    {**_ERROR_ISSUE, "line": None},
+]
+_BAD_LINT_ISSUE_IDS = [
+    "not-dict-str",
+    "not-dict-int",
+    "not-dict-null",
+    "not-dict-list",
+    "no-rule",
+    "no-level",
+    "no-line",
+    "no-message",
+    "rule-int",
+    "level-null",
+    "message-list",
+    "line-str",
+    "line-float",
+    "line-bool",
+    "line-null",
+]
+
+
+@pytest.mark.parametrize("bad", _BAD_LINT_ISSUES, ids=_BAD_LINT_ISSUE_IDS)
+def test_lint_issue_with_bad_shape_is_contract_error_exit_1_with_empty_stdout(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json(_lint([_WARNING_ISSUE, bad], 80)))
+
+    result = _run(runner, "lint", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("bad", _BAD_LINT_ISSUES, ids=_BAD_LINT_ISSUE_IDS)
+def test_lint_bad_issue_is_not_masked_by_an_earlier_error_issue(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json(_lint([_ERROR_ISSUE, bad], 60)))
+
+    result = _run(runner, "lint", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+_BAD_LINT_BODIES: list[Any] = [
+    _without(_lint([_WARNING_ISSUE], 95), "issues"),
+    _without(_lint([_WARNING_ISSUE], 95), "score"),
+    {**_lint([_WARNING_ISSUE], 95), "issues": None},
+    {**_lint([_WARNING_ISSUE], 95), "issues": "brak"},
+    {**_lint([_WARNING_ISSUE], 95), "issues": {"rule": "x"}},
+    {**_lint([_WARNING_ISSUE], 95), "score": True},
+    {**_lint([_WARNING_ISSUE], 95), "score": "95"},
+    {**_lint([_WARNING_ISSUE], 95), "score": None},
+    {**_lint([_WARNING_ISSUE], 95), "score": 95.5},
+    _without(_lint([_WARNING_ISSUE], 95), "page_id"),
+    {**_lint([_WARNING_ISSUE], 95), "page_id": 7},
+    {**_lint([_WARNING_ISSUE], 95), "page_id": None},
+    *[_without(_lint([_WARNING_ISSUE], 95), name) for name in ("error_count", "warning_count", "info_count")],
+    *[{**_lint([_WARNING_ISSUE], 95), name: "1"} for name in ("error_count", "warning_count", "info_count")],
+    *[{**_lint([_WARNING_ISSUE], 95), name: True} for name in ("error_count", "warning_count", "info_count")],
+    *[{**_lint([_WARNING_ISSUE], 95), name: None} for name in ("error_count", "warning_count", "info_count")],
+    "tekst",
+    5,
+    None,
+    [_lint()],
+]
+_BAD_LINT_BODY_IDS = [
+    "no-issues",
+    "no-score",
+    "issues-null",
+    "issues-str",
+    "issues-dict",
+    "score-bool",
+    "score-str",
+    "score-null",
+    "score-float",
+    "no-page-id",
+    "page-id-int",
+    "page-id-null",
+    "no-error-count",
+    "no-warning-count",
+    "no-info-count",
+    "error-count-str",
+    "warning-count-str",
+    "info-count-str",
+    "error-count-bool",
+    "warning-count-bool",
+    "info-count-bool",
+    "error-count-null",
+    "warning-count-null",
+    "info-count-null",
+    "body-str",
+    "body-int",
+    "body-null",
+    "body-list",
+]
+
+
+@pytest.mark.parametrize("bad", _BAD_LINT_BODIES, ids=_BAD_LINT_BODY_IDS)
+def test_lint_bad_response_body_is_contract_error_exit_1_with_empty_stdout(runner, monkeypatch, mock_transport, bad):
+    _patch_client(monkeypatch, mock_transport, _json(bad))
+
+    result = _run(runner, "lint", PAGE_ID)
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+def test_lint_bad_body_in_table_mode_is_contract_error_without_rows(runner, monkeypatch, mock_transport):
+    _patch_client(monkeypatch, mock_transport, _json(_lint([_ERROR_ISSUE, "x"], 60)))
+
+    result = _run(runner, "lint", PAGE_ID, output="table")
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert "tldr-missing" not in result.stdout

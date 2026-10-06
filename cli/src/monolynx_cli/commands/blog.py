@@ -1,12 +1,14 @@
-"""Komendy monolynx_cli.commands.blog: list, get, meta (metadane wpisów bloga zapisanych jako strony wiki).
+"""Komendy monolynx_cli.commands.blog: list, get, meta, lint (wpisy bloga zapisane jako strony wiki).
 
-Komendy biją w /api/v2/projects/{slug}/blog/posts*. `list` i `get` to odczyty, `meta` to częściowy
+Komendy biją w /api/v2/projects/{slug}/blog/posts*. `list`, `get` i `lint` to odczyty, `meta` to częściowy
 zapis (PATCH): do body trafiają tylko opcje podane przez użytkownika, a pusty tekst w polach
 nullowalnych (`--translation-of`, `--cover`, `--verified`) wysyła `null` i czyści pole. Publikacja
 wpisu i jej cofnięcie zostają w `monolynx wiki`. Kształt każdej odpowiedzi jest sprawdzany przed
 `emit()`: brak wymaganego pola albo zły typ to MonolynxAPIError (kod wyjścia 1), nigdy pusty wynik
 z kodem 0. `blog list` w trybie table pokazuje tylko tytuł, slug, status publikacji, język, datę
-publikacji i tagi; pozostałe formaty niosą pełne pola.
+publikacji i tagi; pozostałe formaty niosą pełne pola. `blog lint` wypisuje raport (JSON/YAML pełny
+obiekt, tabela: jeden wiersz na problem, ocena na stderr) i dopiero potem kończy się kodem 1, gdy jest
+choć jeden problem o poziomie `error`; same ostrzeżenia i informacje to kod 0.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import typer
 from monolynx_cli.client import MonolynxAPIError
 from monolynx_cli.commands import _common
 from monolynx_cli.options import OutputFormat, get_options
-from monolynx_cli.output import emit, resolve_format
+from monolynx_cli.output import echo_stderr, emit, resolve_format
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -132,3 +134,48 @@ def set_post_meta(
     with client:
         payload = client.patch(_common.project_path(project_slug, f"/blog/posts/{path_id}"), json=body)
     emit(ctx, _require_post(payload))
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _require_lint(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise _invalid("Odpowiedź nie jest obiektem JSON.")
+    if not isinstance(payload.get("page_id"), str):
+        raise _invalid("Odpowiedź: pole page_id nie jest tekstem.")
+    for name in ("score", "error_count", "warning_count", "info_count"):
+        if not _is_int(payload.get(name)):
+            raise _invalid(f"Odpowiedź: pole {name} nie jest liczbą całkowitą.")
+    issues = payload.get("issues")
+    if not isinstance(issues, list):
+        raise _invalid("Odpowiedź: pole issues nie jest listą.")
+    for index, issue in enumerate(issues):
+        where = f"Element issues[{index}]"
+        if not isinstance(issue, dict):
+            raise _invalid(f"{where} nie jest obiektem JSON.")
+        for name in ("rule", "level", "message"):
+            if not isinstance(issue.get(name), str):
+                raise _invalid(f"{where}: pole {name} nie jest tekstem.")
+        if not _is_int(issue.get("line")):
+            raise _invalid(f"{where}: pole line nie jest liczbą całkowitą.")
+    return payload
+
+
+@app.command("lint")
+def lint_post(ctx: typer.Context, page_id: _POST_ARG) -> None:
+    """Sprawdź wpis bloga pod kątem AI (TLDR, nagłówki, opis, linki); kod wyjścia 1, gdy jest błąd."""
+    path_id = _common.path_segment(page_id)
+    client, slug = _common.open_project(ctx)
+    with client:
+        payload = client.get(_common.project_path(slug, f"/blog/posts/{path_id}/lint"))
+    report = _require_lint(payload)
+    if resolve_format(get_options(ctx).output) is OutputFormat.TABLE:
+        emit(ctx, [{name: issue[name] for name in ("line", "level", "rule", "message")} for issue in report["issues"]])
+        opts = get_options(ctx)
+        echo_stderr(f"Ocena: {report['score']}/100", quiet=opts.quiet, no_color=opts.no_color)
+    else:
+        emit(ctx, report)
+    if any(issue["level"] == "error" for issue in report["issues"]):
+        raise typer.Exit(1)

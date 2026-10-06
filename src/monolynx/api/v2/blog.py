@@ -1,9 +1,9 @@
-"""API v2 -- Blog: 3 endpointy wolajace `services/blog.py` (MON-261).
+"""API v2 -- Blog: 4 endpointy wolajace `services/blog.py` i `services/blog_lint.py` (MON-261, MON-262).
 
 Routery cienkie jak toole MCP (`mcp_server.py`, sekcja "--- Blog ---"). Uprawnienia
-sprawdza serwis jako pierwszy krok (`wiki:read` dla odczytow, `wiki:write` dla
+sprawdza serwis jako pierwszy krok (`wiki:read` dla odczytow i lintu, `wiki:write` dla
 `set_post_meta`), przed lookupem strony, wiec rola bez uprawnienia dostaje 403, nie 404.
-Commit zapisu robi `set_post_meta`. Szczegoly wpisu czytaja tresc z MinIO, wiec blad storage
+Commit zapisu robi `set_post_meta`. Szczegoly wpisu i lint czytaja tresc z MinIO, wiec blad storage
 wraca jako 503 problem+json, nie 500.
 """
 
@@ -22,9 +22,10 @@ from monolynx.database import get_db
 from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
-from monolynx.schemas.api_v2.blog import BlogPostDetailResponse, BlogPostMetaUpdateRequest, BlogPostResponse
+from monolynx.schemas.api_v2.blog import BlogLintResponse, BlogPostDetailResponse, BlogPostMetaUpdateRequest, BlogPostResponse
 from monolynx.schemas.api_v2.pagination import PaginatedResponse
 from monolynx.services import blog as blog_service
+from monolynx.services import blog_lint as blog_lint_service
 
 logger = logging.getLogger("monolynx.api.v2.blog")
 
@@ -62,6 +63,23 @@ async def get_blog_post(
         logger.exception("Odczyt tresci wpisu bloga nie powiodl sie (page_id=%s)", page_id)
         raise ApiV2Error(status=503, title="Service Unavailable", detail="Treść wpisu jest chwilowo niedostępna") from exc
     return BlogPostDetailResponse.model_validate(detail)
+
+
+@router.get("/projects/{project_slug}/blog/posts/{page_id}/lint", response_model=BlogLintResponse)
+async def lint_blog_post(
+    page_id: uuid.UUID,
+    user_and_project: tuple[User, Project] = Depends(get_api_user_and_project),
+    db: AsyncSession = Depends(get_db),
+) -> BlogLintResponse:
+    user, project = user_and_project
+    try:
+        result = await blog_lint_service.lint_post_by_id(db, user, project, page_id)
+    except ValueError as exc:
+        raise service_error(exc) from exc
+    except Exception as exc:
+        logger.exception("Lint wpisu bloga nie powiodl sie (page_id=%s)", page_id)
+        raise ApiV2Error(status=503, title="Service Unavailable", detail="Treść wpisu jest chwilowo niedostępna") from exc
+    return BlogLintResponse.model_validate(blog_lint_service.lint_result_dict(page_id, result))
 
 
 @router.patch("/projects/{project_slug}/blog/posts/{page_id}", response_model=BlogPostResponse)

@@ -63,6 +63,7 @@ from monolynx.schemas.pipelines import build_list_item, build_pipeline_response
 from monolynx.schemas.time_tracking import TimeTrackingEntryResponse, TimeTrackingFilter
 from monolynx.schemas.work_plan import WorkPlanEntryResponse
 from monolynx.services import blog as blog_service
+from monolynx.services import blog_lint as blog_lint_service
 from monolynx.services import graph as graph_service
 from monolynx.services import pipelines as pipelines_service
 from monolynx.services import projects as projects_service
@@ -2954,6 +2955,31 @@ async def get_blog_post(
         detail = await blog_service.get_post(db, user, project, parsed_page_id, content_fn=get_page_content)
 
     return {**_blog_view_dict(detail), "content": detail.content}
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def lint_blog_post(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Lint wpisu bloga pod AI: lista problemow (linia, poziom, regula, komunikat) i ocena 0-100.
+
+    Sprawdza opis, blok TLDR, teksty alternatywne obrazkow, bloki graficzne, naglowki, linki,
+    data weryfikacji i tlumaczenie. Pole `table` to ta sama lista jako tabela markdown z linia
+    oceny. Czysty odczyt, nic nie zapisuje. Wymaga wiki:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "read")
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+        result = await blog_lint_service.lint_post_by_id(db, user, project, parsed_page_id, content_fn=get_page_content)
+
+    return {**blog_lint_service.lint_result_dict(parsed_page_id, result), "table": blog_lint_service.format_lint_table(result)}
 
 
 @mcp.tool(annotations=WRITE)

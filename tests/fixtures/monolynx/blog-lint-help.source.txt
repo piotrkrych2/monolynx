@@ -1,0 +1,18 @@
+# command: monolynx blog lint --help
+# tool_version: monolynx 0.3.0 (drzewo zrodel, MON-262, niewydane)
+# captured: 2026-10-06
+# env: NO_COLOR=1 COLUMNS=200 TERM=dumb
+# note: linie # to meta (testy je pomijaja); ponizej realne wyjscie stdout+stderr, na koncu linia '# exit: <kod>'
+                                                                                                                                                                                                        
+ Usage: monolynx blog lint [OPTIONS] {page_id}                                                                                                                                                          
+                                                                                                                                                                                                        
+ Sprawdź wpis bloga pod kątem AI (TLDR, nagłówki, opis, linki); kod wyjścia 1, gdy jest błąd.                                                                                                           
+                                                                                                                                                                                                        
+╭─ Arguments ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ *    page_id      <str>  UUID strony wiki, która jest wpisem bloga (pole page_id z `blog list`). [required]                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+# exit: 0
