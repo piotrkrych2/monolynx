@@ -117,8 +117,8 @@ def run_json(runner, *args: str):
 # ---------------------------------------------------------------------------
 
 
-def test_package_version_is_0_3_0():
-    assert __version__ == "0.3.0"
+def test_package_version_is_0_4_0():
+    assert __version__ == "0.4.0"
 
 
 def test_version_is_registered_as_standalone_root_command():

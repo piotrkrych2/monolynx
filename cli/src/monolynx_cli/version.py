@@ -6,4 +6,4 @@ istnieje jako pole statyczne. Job `publish-pypi` / `publish-testpypi` w CI
 porównuje tę wartość z tagiem `cli-v<wersja>` przed uploadem na PyPI.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
