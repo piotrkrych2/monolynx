@@ -673,6 +673,20 @@ class TestPatchBlogPost:
         assert body["slug"] == new_slug
         assert body["previous_slugs"] == [old_slug]
 
+    async def test_mon272_slug_with_trailing_newline_returns_422_and_slug_stays(self, client, db_session):
+        """MON-272 pkt 3: slug z końcowym \\n nie przechodzi walidacji formatu, slug w bazie bez zmian."""
+        actor, project = await make_owner_project(db_session, "blog-patch-slug-newline")
+        page = await _page(db_session, project, actor.user)
+        page_id, page_slug = page.id, page.slug
+        url = f"{_posts_url(project)}/{page_id}"
+
+        response = await client.patch(url, headers=actor.headers, json={"slug": "moj-wpis\n"})
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+        row = await _row(db_session, page_id)
+        assert (row.slug, row.previous_slugs) == (page_slug, [])
+
     async def test_slug_taken_by_other_post_returns_422_and_changes_nothing(self, client, db_session):
         actor, project = await make_owner_project(db_session, "blog-patch-slug-taken")
         other = await _page(db_session, project, actor.user)

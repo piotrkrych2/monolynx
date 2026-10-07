@@ -2438,6 +2438,50 @@ class TestWikiPageBlogMetaSave:
         assert "Tresc zlego jezyka MON264" in resp.text
         mock_upload.assert_not_called()
 
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m272-panel-lang/fake.md")
+    async def test_mon272_panel_changing_lang_of_original_to_language_of_its_translation_is_refused(
+        self, mock_upload, mock_embeddings, client, db_session
+    ):
+        """MON-272 pkt 7: formularz oryginału z `blog_lang` języka jego tłumaczenia i pustym oryginałem daje błąd, a język w bazie zostaje."""
+        project = await _create_project(db_session, "m272-panel-lang")
+        user = await _login_and_add_member(client, db_session, project, "m272-panel-lang@test.com")
+        original = await _create_wiki_page(db_session, project, user, title="Oryginal Jezyk M272", is_public=False)
+        await _add_blog_post(db_session, original, slug="oryginal-jezyk-m272", lang="pl")
+        translation = await _create_wiki_page(db_session, project, user, title="Tlumaczenie Jezyk M272", is_public=False)
+        await _add_blog_post(db_session, translation, slug="tlumaczenie-jezyk-m272", lang="en", translation_of_id=original.id)
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{original.id}/edit",
+            data=_default_blog_form(original, blog_slug="oryginal-jezyk-m272", blog_lang="en", blog_translation_of_id=""),
+        )
+
+        assert resp.status_code == 200
+        assert "Tłumaczenie musi być w innym języku niż oryginał" in resp.text
+        post = await _blog_post_of(db_session, original.id)
+        assert post is not None
+        assert post.lang == "pl"
+        mock_upload.assert_not_called()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m272-panel-lang-ok/fake.md")
+    async def test_mon272_panel_changing_lang_of_unlinked_post_is_saved(self, mock_upload, mock_embeddings, client, db_session):
+        """MON-272 pkt 7 (para pozytywna): formularz wpisu bez powiązań z nowym `blog_lang` i pustym oryginałem zapisuje język."""
+        project = await _create_project(db_session, "m272-panel-lang-ok")
+        user = await _login_and_add_member(client, db_session, project, "m272-panel-lang-ok@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Wpis Bez Powiazan M272", is_public=False)
+        await _add_blog_post(db_session, page, slug="wpis-bez-powiazan-m272", lang="pl")
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page.id}/edit",
+            data=_default_blog_form(page, blog_slug="wpis-bez-powiazan-m272", blog_lang="en", blog_translation_of_id=""),
+        )
+
+        assert resp.status_code == 303
+        post = await _blog_post_of(db_session, page.id)
+        assert post is not None
+        assert post.lang == "en"
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [
@@ -3630,3 +3674,85 @@ class TestWikiFormBlogControlsDependOnBlogPermission:
         post = await _blog_post_of(db_session, page_id)
         assert post is not None
         assert post.description == "Nowy opis z prawem"
+
+
+# ---------------------------------------------------------------------------
+# MON-272 pkt 2 i 11: upload do strony publicznej wymaga blog:write; komunikat błędu z polskimi znakami
+# ---------------------------------------------------------------------------
+
+
+async def _post_page_upload(client, slug, page_id, channel):
+    """Wysyła plik do strony kanałem panelu: `editor` (EasyMDE, `/wiki/upload?page_id=`) albo `filepond` (załączniki strony)."""
+    if channel == "editor":
+        return await client.post(f"/dashboard/{slug}/wiki/upload?page_id={page_id}", files={"file": ("obraz.png", _PNG, "image/png")})
+    return await client.post(f"/dashboard/{slug}/wiki/pages/{page_id}/attachments/upload", files={"filepond": ("obraz.png", _PNG, "image/png")})
+
+
+async def _attachments_of(db_session, page_id):
+    return (await db_session.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page_id))).scalars().all()
+
+
+_UPLOAD_CHANNELS = pytest.mark.parametrize("channel", ["editor", "filepond"])
+
+
+@pytest.mark.integration
+class TestMon272PublicPageUploadNeedsBlogPermission:
+    @_UPLOAD_CHANNELS
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_mon272_upload_to_public_page_without_blog_permission_returns_403_and_stores_nothing(
+        self, mock_upload, channel, client, db_session
+    ):
+        """MON-272 pkt 2: konto bez blog:write nie dodaje pliku do strony publicznej (brak zapisu w MinIO i w bazie)."""
+        project = await _create_project(db_session, f"m272-upl-deny-{channel}")
+        user = await _login_plain_member(client, db_session, project, f"m272-upl-deny-{channel}@test.com", can_edit_blog=False)
+        page = await _create_wiki_page(db_session, project, user, title=f"Publiczna Upload Odmowa {channel}", is_public=True)
+        slug, page_id = project.slug, page.id
+
+        resp = await _post_page_upload(client, slug, page_id, channel)
+
+        assert resp.status_code == 403
+        assert await _attachments_of(db_session, page_id) == []
+        mock_upload.assert_not_called()
+
+    @_UPLOAD_CHANNELS
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_mon272_upload_to_public_page_with_blog_permission_succeeds(self, mock_upload, channel, client, db_session):
+        """MON-272 pkt 2: konto z blog:write dodaje plik do strony publicznej."""
+        project = await _create_project(db_session, f"m272-upl-ok-{channel}")
+        user = await _login_plain_member(client, db_session, project, f"m272-upl-ok-{channel}@test.com", can_edit_blog=True)
+        page = await _create_wiki_page(db_session, project, user, title=f"Publiczna Upload Zgoda {channel}", is_public=True)
+        slug, page_id = project.slug, page.id
+
+        resp = await _post_page_upload(client, slug, page_id, channel)
+
+        assert resp.status_code == 200
+        assert len(await _attachments_of(db_session, page_id)) == 1
+        mock_upload.assert_called_once()
+
+    @_UPLOAD_CHANNELS
+    @patch("monolynx.dashboard.wiki.minio_upload_object")
+    async def test_mon272_upload_to_private_page_needs_only_wiki_write(self, mock_upload, channel, client, db_session):
+        """MON-272 pkt 2: strona prywatna bez zmian - wystarczy wiki:write, blog:write nie jest wymagane."""
+        project = await _create_project(db_session, f"m272-upl-priv-{channel}")
+        user = await _login_plain_member(client, db_session, project, f"m272-upl-priv-{channel}@test.com", can_edit_blog=False)
+        page = await _create_wiki_page(db_session, project, user, title=f"Prywatna Upload {channel}", is_public=False)
+        slug, page_id = project.slug, page.id
+
+        resp = await _post_page_upload(client, slug, page_id, channel)
+
+        assert resp.status_code == 200
+        assert len(await _attachments_of(db_session, page_id)) == 1
+        mock_upload.assert_called_once()
+
+    @patch("monolynx.dashboard.wiki.minio_upload_object", side_effect=Exception("MinIO error"))
+    async def test_mon272_editor_upload_storage_error_message_has_polish_diacritics(self, mock_upload, client, db_session):
+        """MON-272 pkt 11: błąd uploadu z edytora zwraca komunikat z polskimi znakami."""
+        project = await _create_project(db_session, "m272-upl-diacritics")
+        user = await _login_and_add_member(client, db_session, project, "m272-upl-diacritics@test.com")
+        page = await _create_wiki_page(db_session, project, user, title="Upload Diakrytyki M272", is_public=False)
+        slug, page_id = project.slug, page.id
+
+        resp = await client.post(f"/dashboard/{slug}/wiki/upload?page_id={page_id}", files={"file": ("obraz.png", _PNG, "image/png")})
+
+        assert resp.status_code == 500
+        assert resp.json()["error"] == "Błąd uploadu pliku"

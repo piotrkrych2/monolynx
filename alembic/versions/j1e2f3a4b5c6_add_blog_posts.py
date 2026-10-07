@@ -19,11 +19,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 # Kazda strona publiczna dostaje wpis z dotychczasowym slugiem (bez normalizacji), zeby kazdy
 # adres /blog/{slug} dzialajacy przed migracja dzialal po niej. Reszta kolumn z server_default.
+# Strona ze slugiem dluzszym niz 255 znakow (wiki_pages.slug ma 512) jest pomijana: zostaje is_public bez
+# wiersza blog_posts, wiec jej publiczny adres daje 404 do czasu skrocenia tytulu. Obciecie sluga grozilo
+# kolizja unikalnego indeksu i zmiana adresu.
 BACKFILL_SQL = """
 INSERT INTO blog_posts (page_id, slug, published_at, lang)
 SELECT id, slug, created_at, 'pl'
 FROM wiki_pages
-WHERE is_public
+WHERE is_public AND char_length(slug) <= 255
 """
 
 

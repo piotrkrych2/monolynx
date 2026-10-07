@@ -8681,6 +8681,19 @@ class TestSetBlogPostMetaTool:
         assert str(exc_info.value) == "Nieprawidłowy page_id (oczekiwany UUID)"
         assert (await _blog_row(db_session, page_id)).description == "Bez zmian"
 
+    async def test_mon272_slug_with_trailing_newline_raises_and_slug_stays(
+        self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify
+    ):
+        """MON-272 pkt 3: slug z końcowym \\n daje błąd formatu i nic nie zapisuje."""
+        page = await _blog_page(db_session, mcp_project, mcp_user)
+        page_id, page_slug = page.id, page.slug
+
+        with pytest.raises(ValueError, match="Slug jest nieprawidłowy"):
+            await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, str(page_id), slug="moj-wpis\n")
+
+        row = await _blog_row(db_session, page_id)
+        assert (row.slug, row.previous_slugs) == (page_slug, [])
+
     async def test_malformed_parameter_messages_are_exact(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         page = await _blog_page(db_session, mcp_project, mcp_user)
         page_id = str(page.id)

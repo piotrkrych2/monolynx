@@ -56,7 +56,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from monolynx.blog_ai import conditional_response, markdown_twin_response, wants_markdown
+from monolynx.blog_ai import conditional_response, load_post_content, markdown_twin_response, wants_markdown
 from monolynx.config import settings
 from monolynx.database import get_db
 from monolynx.models.blog_post import BlogPost
@@ -112,9 +112,8 @@ async def _fetch_card_data(item: PublicPost) -> tuple[str, int | None]:
     POJEDYNCZEJ strony nie wywraca całej listy /blog/ (granica systemu) -- karta dostaje
     `reading_time=None` i zajawkę z `description` albo pustą."""
     page = item.page
-    loop = asyncio.get_running_loop()
     try:
-        content = await loop.run_in_executor(None, get_page_content, page)
+        content = await load_post_content(page)
     except Exception:
         logger.exception("Blad pobierania tresci strony wiki z MinIO dla listy /blog/ (page_id=%s)", page.id)
         return item.post.description or "", None
@@ -256,8 +255,8 @@ async def public_index(
         "filter_en_url": _index_path(filter_tag, "en", ui=ui_param),
         "clear_tag_url": _index_path(None, filter_lang, ui=ui_param),
         "tag_url": lambda card_tag: _index_path(card_tag, filter_lang, ui=ui_param),
-        "lang_switch_url": _index_path(filter_tag, "pl"),
-        "lang_switch_url_en": _index_path(filter_tag, "en"),
+        "lang_switch_url": _index_path(filter_tag, filter_lang, ui="pl"),
+        "lang_switch_url_en": _index_path(filter_tag, filter_lang, ui="en"),
         "json_ld": dump_jsonld(build_blog_jsonld(items, base_url=settings.APP_URL)),
     }
     body = templates.get_template("blog/index.html").render(context)

@@ -15,7 +15,7 @@ udokumentowanym stanie, nie próbuje mockować realnego embeddingu.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -140,6 +140,27 @@ class TestCreateWikiPage:
         assert response.status_code == 422
         assert response.headers["content-type"] == "application/problem+json"
         mock_upload_markdown.assert_not_called()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_mon272_public_page_with_slug_over_255_chars_returns_422_not_500(self, mock_upload_markdown, mock_embeddings, client, db_session):
+        """MON-272 pkt 9: tytuł dający slug ponad limit blog_posts.slug (255) to 422 problem+json z czytelnym komunikatem."""
+        mock_upload_markdown.return_value = "wiki/mock/path.md"
+        actor, project = await make_owner_project(db_session, "create-wiki-longslug", can_edit_blog=True)
+        title = " ".join(["slowo"] * 60)
+
+        with patch.object(db_session, "rollback", AsyncMock()):
+            response = await client.post(
+                f"/api/v2/projects/{project.slug}/wiki/pages",
+                headers=actor.headers,
+                json={"title": title, "content": "x", "is_public": True},
+            )
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+        detail = response.json()["detail"]
+        assert "za długi" in detail
+        assert "255" in detail
 
 
 # ---------------------------------------------------------------------------

@@ -224,6 +224,28 @@ class TestEnsurePost:
         with pytest.raises(ValueError, match=old):
             await svc.ensure_post(db_session, page)
 
+    async def test_mon272_page_slug_longer_than_255_chars_rejected_without_creating_a_row(self, db_session):
+        """MON-272 pkt 9: slug strony ponad limit kolumny BlogPost.slug daje czytelny ValueError zamiast błędu bazy (500)."""
+        user, project = await _setup(db_session, "ens-mon272-long")
+        page = await _make_page(db_session, project, user, slug="a" * 300, is_public=True)
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.ensure_post(db_session, page)
+
+        assert "za długi" in str(excinfo.value)
+        assert "255" in str(excinfo.value)
+        assert await _post_row(db_session, page.id) is None
+
+    async def test_mon272_page_slug_of_exactly_255_chars_creates_the_row(self, db_session):
+        """MON-272 pkt 9 (granica): slug o długości dokładnie 255 przechodzi."""
+        user, project = await _setup(db_session, "ens-mon272-255")
+        page = await _make_page(db_session, project, user, slug="a" * 255, is_public=True)
+
+        post = await svc.ensure_post(db_session, page)
+
+        assert post.slug == "a" * 255
+        assert (await _post_row(db_session, page.id)).slug == "a" * 255
+
     async def test_does_not_commit(self, db_session):
         """Kontrakt: ensure_post działa w transakcji wołającego (create/update_wiki_page commitują po nim)."""
         user, project = await _setup(db_session, "ens-nocommit")
@@ -473,6 +495,25 @@ class TestSetPostMetaValidation:
         with pytest.raises(ValueError):
             await svc.set_post_meta(db_session, user, project, page.id, slug="a" * 256)
 
+    @pytest.mark.parametrize(
+        "bad_slug",
+        ["moj-wpis\n", "moj-wpis\r", "moj-wpis ", "moj\nwpis", "mój-wpis"],
+        ids=["trailing-lf", "trailing-cr", "trailing-space", "inner-lf", "diacritic"],
+    )
+    async def test_mon272_slug_with_whitespace_or_non_ascii_rejected_and_row_unchanged(self, db_session, bad_slug):
+        """MON-272 pkt 3: slug musi pasować do wzorca w całości (końcowy \\n przechodził przez `$`), wiersz zostaje bez zmian."""
+        user, project = await _setup(db_session, "val-mon272-slug")
+        page = await _make_page(db_session, project, user)
+        original_slug = page.slug
+        await _make_post(db_session, page)
+
+        with pytest.raises(ValueError, match="Slug jest nieprawidłowy"):
+            await svc.set_post_meta(db_session, user, project, page.id, slug=bad_slug)
+
+        row = await _post_row(db_session, page.id)
+        assert row.slug == original_slug
+        assert row.previous_slugs == []
+
 
 class TestIsValidTag:
     @pytest.mark.parametrize("value", ["a", "tag", "dwa-slowa", "a1-b2", "0", "a" * 50])
@@ -611,8 +652,10 @@ class TestSetPostMetaBehavior:
         assert post.published_at is None
 
     async def test_slug_change_appends_old_slug_to_previous_slugs(self, db_session):
+        """MON-272 pkt 5: stary adres trafia do previous_slugs tylko dla wpisu, który już ma wiersz (był pod nim dostępny)."""
         user, project = await _setup(db_session, "beh-slug")
         page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page)
         old = page.slug
         new = f"nowy-{_uid()}"
 
@@ -621,9 +664,56 @@ class TestSetPostMetaBehavior:
         assert post.slug == new
         assert post.previous_slugs == [old]
 
+    async def test_mon272_own_slug_for_page_without_post_does_not_add_page_slug_to_previous_slugs(self, db_session):
+        """MON-272 pkt 5: slug strony nigdy nie był opublikowany, więc własny slug nie dopisuje go do previous_slugs."""
+        user, project = await _setup(db_session, "beh-slug-norow")
+        page = await _make_page(db_session, project, user)
+        own = f"moj-wlasny-{_uid()}"
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, slug=own)
+
+        assert post.slug == own
+        assert post.previous_slugs == []
+        assert (await _post_row(db_session, page.id)).previous_slugs == []
+
+    async def test_mon272_own_slug_for_page_without_post_ignores_page_slug_collision(self, db_session):
+        """MON-272 pkt 5: kolizja sluga STRONY z wpisem innego projektu nie blokuje własnego sluga ustawianego od razu."""
+        user, project = await _setup(db_session, "beh-slug-coll")
+        other_user, other_project = await _setup(db_session, "beh-slug-coll-other")
+        page = await _make_page(db_session, project, user)
+        other_page = await _make_page(db_session, other_project, other_user)
+        await _make_post(db_session, other_page, slug=page.slug)
+        own = f"moj-wlasny-{_uid()}"
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, slug=own)
+
+        assert post.slug == own
+        assert (await _post_row(db_session, page.id)).slug == own
+
+    async def test_mon272_own_slug_for_public_page_without_post_sets_published_at(self, db_session):
+        """MON-272 pkt 5: wiersz założony od razu z własnym slugiem dla strony publicznej dostaje `published_at`."""
+        user, project = await _setup(db_session, "beh-slug-pub")
+        page = await _make_page(db_session, project, user, is_public=True)
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, slug=f"moj-publiczny-{_uid()}")
+
+        assert post.published_at is not None
+        assert (await _post_row(db_session, page.id)).published_at is not None
+
+    async def test_mon272_own_slug_for_private_page_without_post_leaves_published_at_empty(self, db_session):
+        """MON-272 pkt 5: wiersz założony od razu z własnym slugiem dla strony prywatnej zostaje bez `published_at`."""
+        user, project = await _setup(db_session, "beh-slug-priv")
+        page = await _make_page(db_session, project, user, is_public=False)
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, slug=f"moj-prywatny-{_uid()}")
+
+        assert post.published_at is None
+        assert (await _post_row(db_session, page.id)).published_at is None
+
     async def test_two_slug_changes_keep_both_old_slugs_in_order(self, db_session):
         user, project = await _setup(db_session, "beh-slug2")
         page = await _make_page(db_session, project, user)
+        await _make_post(db_session, page)
         first = page.slug
         second = f"drugi-{_uid()}"
         third = f"trzeci-{_uid()}"
@@ -983,6 +1073,78 @@ class TestSetPostMetaTranslationOf:
         post = await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original.id)
 
         assert post.translation_of_id == original.id
+
+    async def test_mon272_changing_only_lang_of_a_translation_to_the_originals_language_rejected(self, db_session):
+        """MON-272 pkt 7: zmiana samego `lang` tłumaczenia na język oryginału łamie regułę, więc odmowa i `lang` bez zmian."""
+        user, project, original, page = await self._pair(db_session, "tr-m272-own", original_lang="pl", own_lang="en")
+        (await _post_row(db_session, page.id)).translation_of_id = original.id
+        await db_session.flush()
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, lang="pl")
+
+        assert str(excinfo.value) == self.SAME_LANGUAGE
+        row = await _post_row(db_session, page.id)
+        assert row.lang == "en"
+        assert row.translation_of_id == original.id
+
+    async def test_mon272_changing_lang_of_an_original_to_the_language_of_its_translation_rejected(self, db_session):
+        """MON-272 pkt 7: zmiana `lang` oryginału na język jego tłumaczenia łamie regułę, więc odmowa i `lang` bez zmian."""
+        user, project, original, page = await self._pair(db_session, "tr-m272-orig", original_lang="pl", own_lang="en")
+        (await _post_row(db_session, page.id)).translation_of_id = original.id
+        await db_session.flush()
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, original.id, lang="en")
+
+        assert str(excinfo.value) == self.SAME_LANGUAGE
+        assert (await _post_row(db_session, original.id)).lang == "pl"
+
+    async def test_mon272_lang_of_an_unlinked_post_changes_freely(self, db_session):
+        """MON-272 pkt 7 (charakteryzujący): wpis bez powiązań zmienia `lang` bez ograniczeń."""
+        user, project, _original, page = await self._pair(db_session, "tr-m272-free", original_lang="pl", own_lang="en")
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, lang="pl")
+
+        assert post.lang == "pl"
+
+    async def test_mon272_panel_shape_lang_to_translations_language_with_explicit_none_original_rejected(self, db_session):
+        """MON-272 pkt 7: wywołanie jak z panelu (`lang` + jawne `translation_of_id=None`) nie omija reguły dla oryginału z tłumaczeniem."""
+        user, project, original, page = await self._pair(db_session, "tr-m272-panel-a", original_lang="pl", own_lang="en")
+        (await _post_row(db_session, page.id)).translation_of_id = original.id
+        await db_session.flush()
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, original.id, lang="en", translation_of_id=None)
+
+        assert str(excinfo.value) == self.SAME_LANGUAGE
+        row = await _post_row(db_session, original.id)
+        assert row.lang == "pl"
+        assert (await _post_row(db_session, page.id)).translation_of_id == original.id
+
+    async def test_mon272_panel_shape_lang_to_originals_language_with_unchanged_original_link_rejected(self, db_session):
+        """MON-272 pkt 7: wywołanie jak z panelu (`lang` + ten sam `translation_of_id`) nie pozwala tłumaczeniu przyjąć języka oryginału."""
+        user, project, original, page = await self._pair(db_session, "tr-m272-panel-b", original_lang="pl", own_lang="en")
+        (await _post_row(db_session, page.id)).translation_of_id = original.id
+        await db_session.flush()
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, lang="pl", translation_of_id=original.id)
+
+        assert str(excinfo.value) == self.SAME_LANGUAGE
+        row = await _post_row(db_session, page.id)
+        assert row.lang == "en"
+        assert row.translation_of_id == original.id
+
+    async def test_mon272_panel_shape_lang_without_clashing_translation_and_explicit_none_original_accepted(self, db_session):
+        """MON-272 pkt 7 (para pozytywna): `lang` + jawne `translation_of_id=None` dla wpisu bez powiązań zmienia język."""
+        user, project, _original, page = await self._pair(db_session, "tr-m272-panel-d", original_lang="pl", own_lang="en")
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, lang="pl", translation_of_id=None)
+
+        assert post.lang == "pl"
+        assert post.translation_of_id is None
+        assert (await _post_row(db_session, page.id)).lang == "pl"
 
     async def test_second_translation_of_the_same_original_is_accepted(self, db_session):
         user, project, original, page = await self._pair(db_session, "tr-second", original_lang="pl", own_lang="en")

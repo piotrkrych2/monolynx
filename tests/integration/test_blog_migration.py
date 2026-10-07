@@ -242,6 +242,19 @@ class TestPublicAddressSurvivesMigration:
         assert after.status_code == 200
         assert "Treść sprzed migracji." in after.text
 
+    async def test_mon272_backfill_sql_skips_public_page_with_slug_over_255_chars_and_keeps_the_rest(self, db_session):
+        """MON-272 pkt 9: slug dłuższy niż kolumna blog_posts.slug (255) nie przewraca całego backfillu - ta strona jest pomijana."""
+        owner, project = await _seed_owner_and_project(db_session, "bf-long")
+        tag = uuid.uuid4().hex[:6]
+        short = await _seed_page(db_session, owner, project, f"krotki-{tag}", is_public=True, created_at=_CREATED)
+        long_page = await _seed_page(db_session, owner, project, "d" * 300, is_public=True, created_at=_CREATED)
+
+        await db_session.execute(text(_load_migration().BACKFILL_SQL))
+
+        query = text("SELECT page_id, slug FROM blog_posts WHERE page_id IN (:a, :b)")
+        result = await db_session.execute(query, {"a": short.id, "b": long_page.id})
+        assert {row[0]: row[1] for row in result.all()} == {short.id: short.slug}
+
     async def test_backfill_sql_skips_private_page(self, client, db_session):
         owner, project = await _seed_owner_and_project(db_session, "addr-priv")
         page = await _seed_page(db_session, owner, project, f"prywatna-{uuid.uuid4().hex[:6]}", is_public=False, created_at=_CREATED)

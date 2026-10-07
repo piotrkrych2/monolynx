@@ -1615,6 +1615,9 @@ class TestFeedsConditionalRequests:
 
         first = await _get_feed(client, env, kind)
         env.store[page.minio_path] = "Tresc po edycji."
+        # MON-272: cache treści kluczowany (page_id, updated_at) - edycja przez serwis podbija updated_at, więc test też.
+        page.updated_at = _at(500)
+        await db_session.flush()
         with _minio(env.store):
             resp = await client.get(_FEEDS[kind][0], headers={"If-None-Match": first.headers["etag"]})
 
@@ -2603,3 +2606,119 @@ class TestLlmsFullCache:
         assert "> Truncated:" not in full.text
         assert f"(size limit {small_limit} bytes)" in limited.text
         assert back_to_full.text == full.text
+
+
+@contextmanager
+def _counting_minio(store: dict):
+    """Jak `_minio`, ale zwraca atrapę `get_markdown`, której `call_count` to liczba odczytów treści z MinIO."""
+
+    def _get(path):
+        value = store.get(path, "")
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    with patch("monolynx.services.wiki.get_markdown", side_effect=_get) as mock_get:
+        yield mock_get
+
+
+@pytest.mark.integration
+class TestMon272PostContentCacheLimit:
+    """MON-272 pkt 10: cache treści wpisów ma twardy limit wpisów i przy przepełnieniu wyrzuca najstarszy wstawiony."""
+
+    async def test_mon272_cache_over_limit_evicts_oldest_entry_and_keeps_newer_ones(self, db_session, monkeypatch):
+        """MON-272 pkt 10: limit 2 i trzy wpisy - w cache zostają dwa nowsze, a najstarszy jest czytany z MinIO ponownie."""
+        monkeypatch.setattr(blog_ai, "_POST_CONTENT_CACHE_MAX", 2)
+        env = await _env(db_session, "m272limit")
+        first, _ = await env.post("m272limita", "Tresc A MON272.", published_at=_at(1), updated_at=_OLD_UPDATE)
+        second, _ = await env.post("m272limitb", "Tresc B MON272.", published_at=_at(2), updated_at=_OLD_UPDATE)
+        third, _ = await env.post("m272limitc", "Tresc C MON272.", published_at=_at(3), updated_at=_OLD_UPDATE)
+
+        with _counting_minio(env.store) as mock_get:
+            for page in (first, second, third):
+                await blog_ai.load_post_content(page)
+            reads_after_fill = mock_get.call_count
+            cached_ids = set(blog_ai._post_content_cache)
+
+            newest_content = await blog_ai.load_post_content(third)
+            middle_content = await blog_ai.load_post_content(second)
+            reads_after_hits = mock_get.call_count
+            oldest_content = await blog_ai.load_post_content(first)
+
+        assert reads_after_fill == 3
+        assert cached_ids == {second.id, third.id}
+        assert reads_after_hits == reads_after_fill
+        assert newest_content == "Tresc C MON272."
+        assert middle_content == "Tresc B MON272."
+        assert mock_get.call_count == reads_after_fill + 1
+        assert oldest_content == "Tresc A MON272."
+        assert len(blog_ai._post_content_cache) == 2
+
+
+@pytest.mark.integration
+class TestMon272FeedContentCache:
+    """MON-272 pkt 10: feedy trzymają treść wpisów w pamięci procesu pod kluczem (page_id, updated_at), bez cache'owania błędów storage."""
+
+    async def _feed_content(self, client, kind, slug):
+        resp = await client.get(_FEEDS[kind][0])
+        assert resp.status_code == 200
+        return next((i["content"] for i in _parse_feed(kind, resp.content) if i["url"] == _url(slug)), None)
+
+    @_ALL_KINDS
+    async def test_mon272_second_feed_request_does_not_read_storage_again(self, kind, client, db_session):
+        """MON-272 pkt 10: dwa kolejne żądania bez zmian - drugie nie czyta treści z MinIO."""
+        env = await _env(db_session, "m272feedhit")
+        _page, slug = await env.post("m272feedhit", "Tresc feedu MON272-HIT.", published_at=_at(1), updated_at=_OLD_UPDATE)
+
+        with _counting_minio(env.store) as mock_get:
+            first = await self._feed_content(client, kind, slug)
+            reads_after_first = mock_get.call_count
+            second = await self._feed_content(client, kind, slug)
+
+        assert reads_after_first >= 1
+        assert mock_get.call_count == reads_after_first
+        assert first is not None
+        assert "MON272-HIT" in first
+        assert second == first
+
+    @_ALL_KINDS
+    async def test_mon272_content_edit_with_newer_updated_at_is_read_again_and_served(self, kind, client, db_session):
+        """MON-272 pkt 10: edycja treści przez serwis zmienia updated_at, więc kolejne żądanie czyta MinIO i zwraca nową treść."""
+        env = await _env(db_session, "m272feededit")
+        page, slug = await env.post("m272feededit", "Tresc starego feedu MON272-OLD.", published_at=_at(1), updated_at=_OLD_UPDATE)
+
+        with _counting_minio(env.store) as mock_get:
+            first = await self._feed_content(client, kind, slug)
+            reads_after_first = mock_get.call_count
+            env.store[page.minio_path] = "Tresc nowego feedu MON272-NEW."
+            with _wiki_side_effects():
+                await update_wiki_page(
+                    page=page, project_slug=env.project.slug, content=env.store[page.minio_path], user_id=env.user.id, db=db_session
+                )
+            second = await self._feed_content(client, kind, slug)
+
+        assert first is not None
+        assert "MON272-OLD" in first
+        assert mock_get.call_count > reads_after_first
+        assert second is not None
+        assert "MON272-NEW" in second
+        assert "MON272-OLD" not in second
+
+    @_ALL_KINDS
+    async def test_mon272_storage_error_is_not_cached_and_next_request_retries(self, kind, client, db_session):
+        """MON-272 pkt 10: błąd storage przy pierwszym żądaniu nie jest zapamiętany, drugie próbuje ponownie i zwraca wpis."""
+        env = await _env(db_session, "m272feederr")
+        page, slug = await env.post("m272feederr", "Tresc feedu MON272-FIXED.", published_at=_at(1), updated_at=_OLD_UPDATE)
+        env.store[page.minio_path] = RuntimeError("MinIO niedostepne")
+
+        with _counting_minio(env.store) as mock_get:
+            first = await self._feed_content(client, kind, slug)
+            reads_after_first = mock_get.call_count
+            env.store[page.minio_path] = "Tresc feedu MON272-FIXED."
+            second = await self._feed_content(client, kind, slug)
+
+        assert first is None
+        assert reads_after_first >= 1
+        assert mock_get.call_count > reads_after_first
+        assert second is not None
+        assert "MON272-FIXED" in second

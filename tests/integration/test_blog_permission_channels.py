@@ -12,7 +12,9 @@ superuserem albo ma `can_edit_blog=True`. Rola w projekcie (owner, admin, member
 - edycja tytułu albo treści strony, która jest już publiczna, wymaga tego samego uprawnienia (MON-271); niezmieniony
   tytuł i treść (także różniące się tylko CRLF/LF albo spacjami wokół tytułu) oraz strony prywatne go nie wymagają,
 - uprawnienie jest czytane z konta w chwili wywołania: odebranie flagi blokuje kolejny zapis tym samym tokenem,
-  nadanie go odblokowuje.
+  nadanie go odblokowuje,
+- MON-272: usunięcie strony publicznej albo z publicznym potomkiem (MCP, API v2, panel) oraz dodanie załącznika do strony
+  publicznej przez MCP wymagają tego samego uprawnienia; strony prywatne wystarczy `wiki:delete` / `wiki:write`.
 
 Aktorzy: osobny użytkownik z tokenem na kombinację (rola w projekcie, superuser, flaga). MinIO i embeddingi są
 zamockowane (MinIO jako słownik w pamięci); sesja testowa jest współdzielona przez oba kanały, więc testy nie
@@ -21,6 +23,7 @@ dowodzą commita (`db-commit.md`; commit pokrywają `test_api_v2_persistence.py`
 
 from __future__ import annotations
 
+import base64
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -36,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from monolynx import mcp_server
 from monolynx.models.blog_post import BlogPost
 from monolynx.models.project import Project
+from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_page import WikiPage
 from tests.integration.api_v2.conftest import ApiV2Actor, add_member, make_actor, make_project
 
@@ -125,13 +129,14 @@ class Env:
         await add_member(self.db, self.project, actor.user, role=role)
         return actor
 
-    async def page(self, *, public: bool, title: str | None = None) -> uuid.UUID:
+    async def page(self, *, public: bool, title: str | None = None, parent_id: uuid.UUID | None = None) -> uuid.UUID:
         page_id = uuid.uuid4()
         path = f"{self.project.slug}/{page_id}.md"
         self.minio[path] = _CONTENT
         owner = await make_actor(self.db, "bperm-author")
         page = WikiPage(
             id=page_id,
+            parent_id=parent_id,
             project_id=self.project.id,
             title=title or f"Wpis {page_id.hex[:6]}",
             slug=f"wpis-{page_id.hex[:10]}",
@@ -634,3 +639,168 @@ class TestReadsStayOpenWithoutPermission:
 
         assert str(page_id) in {str(item["page_id"]) for item in listing}
         assert str(detail["page_id"]) == str(page_id)
+
+
+# ---------------------------------------------------------------------------
+# MON-272 pkt 6: usunięcie opublikowanego wpisu (strony publicznej albo z publicznym potomkiem) wymaga blog:write
+# ---------------------------------------------------------------------------
+
+_DELETE_CHANNELS = pytest.mark.parametrize("channel", ["mcp", "v2", "panel"])
+
+
+async def _page_exists(env: Env, page_id: uuid.UUID) -> bool:
+    env.db.expire_all()
+    return (await env.db.execute(select(WikiPage.id).where(WikiPage.id == page_id))).first() is not None
+
+
+async def _post_exists(env: Env, page_id: uuid.UUID) -> bool:
+    env.db.expire_all()
+    return (await env.db.execute(select(BlogPost.page_id).where(BlogPost.page_id == page_id))).first() is not None
+
+
+async def _delete_page(env: Env, actor: ApiV2Actor, page_id: uuid.UUID, channel: str) -> tuple[bool, str]:
+    """Usuwa stronę wybranym kanałem; zwraca (odmowa, treść odmowy). Dla panelu treść to kod statusu."""
+    if channel == "mcp":
+        try:
+            await mcp_server.delete_wiki_page(_mcp_ctx(actor), env.project.slug, str(page_id))
+        except ValueError as exc:
+            return True, str(exc)
+        return False, ""
+    if channel == "v2":
+        response = await env.client.delete(f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}", headers=actor.headers)
+        if response.status_code == 403:
+            assert response.headers["content-type"].startswith(_PROBLEM_JSON)
+            return True, response.json()["detail"]
+        assert response.status_code == 204
+        return False, ""
+    login = await env.client.post("/auth/login", data={"email": actor.user.email, "password": "testpass123"}, follow_redirects=False)
+    assert login.status_code == 303
+    response = await env.client.post(f"/dashboard/{env.project.slug}/wiki/pages/{page_id}/delete", follow_redirects=False)
+    if response.status_code == 403:
+        return True, "403"
+    assert response.status_code == 303
+    return False, ""
+
+
+def _assert_blog_write_refusal(channel: str, detail: str) -> None:
+    if channel == "panel":
+        assert detail == "403"
+    else:
+        assert "Brak uprawnienia blog:write" in detail
+
+
+class TestDeletePublishedPostNeedsBlogPermission:
+    @_DELETE_CHANNELS
+    @pytest.mark.parametrize("role", ["owner", "admin"])
+    async def test_mon272_delete_public_page_without_blog_permission_is_refused_and_removes_nothing(self, env, channel, role):
+        """MON-272 pkt 6: konto z wiki:delete, ale bez blog:write, nie usunie strony publicznej (ani z bazy, ani z MinIO)."""
+        actor = await env.actor(role, superuser=False, flag=False)
+        page_id = await env.page(public=True)
+        storage_before = dict(env.minio)
+
+        denied, detail = await _delete_page(env, actor, page_id, channel)
+
+        assert denied is True
+        _assert_blog_write_refusal(channel, detail)
+        assert await _page_exists(env, page_id)
+        assert await _post_exists(env, page_id)
+        assert env.minio == storage_before
+
+    @_DELETE_CHANNELS
+    async def test_mon272_delete_private_parent_with_public_child_without_blog_permission_removes_nothing(self, env, channel):
+        """MON-272 pkt 6: publiczny potomek też chroni - rodzic prywatny z publicznym dzieckiem nie znika bez blog:write."""
+        actor = await env.actor("owner", superuser=False, flag=False)
+        parent_id = await env.page(public=False, title="Rodzic prywatny M272")
+        child_id = await env.page(public=True, title="Dziecko publiczne M272", parent_id=parent_id)
+        storage_before = dict(env.minio)
+
+        denied, detail = await _delete_page(env, actor, parent_id, channel)
+
+        assert denied is True
+        _assert_blog_write_refusal(channel, detail)
+        assert await _page_exists(env, parent_id)
+        assert await _page_exists(env, child_id)
+        assert await _post_exists(env, child_id)
+        assert env.minio == storage_before
+
+    @_DELETE_CHANNELS
+    async def test_mon272_delete_private_page_needs_only_wiki_delete(self, env, channel):
+        """MON-272 pkt 6: strona prywatna (bez publicznych potomków) usuwa się przy samym wiki:delete."""
+        actor = await env.actor("owner", superuser=False, flag=False)
+        page_id = await env.page(public=False)
+        path = f"{env.project.slug}/{page_id}.md"
+
+        denied, _detail = await _delete_page(env, actor, page_id, channel)
+
+        assert denied is False
+        assert not await _page_exists(env, page_id)
+        assert path not in env.minio
+
+    @_DELETE_CHANNELS
+    async def test_mon272_delete_public_page_with_blog_permission_removes_page_and_post(self, env, channel):
+        """MON-272 pkt 6: konto z blog:write usuwa stronę publiczną razem z wierszem BlogPost i obiektem w MinIO."""
+        actor = await env.actor("owner", superuser=False, flag=True)
+        page_id = await env.page(public=True)
+        path = f"{env.project.slug}/{page_id}.md"
+
+        denied, _detail = await _delete_page(env, actor, page_id, channel)
+
+        assert denied is False
+        assert not await _page_exists(env, page_id)
+        assert not await _post_exists(env, page_id)
+        assert path not in env.minio
+
+
+# ---------------------------------------------------------------------------
+# MON-272 pkt 2 (kanał MCP): załącznik do strony publicznej wymaga blog:write
+# ---------------------------------------------------------------------------
+
+
+class TestMcpPageAttachmentToPublicPageNeedsBlogPermission:
+    @staticmethod
+    async def _attachments(env: Env, page_id: uuid.UUID) -> list[WikiAttachment]:
+        return list((await env.db.execute(select(WikiAttachment).where(WikiAttachment.wiki_page_id == page_id))).scalars().all())
+
+    async def _add(self, env: Env, actor: ApiV2Actor, page_id: uuid.UUID) -> Any:
+        return await mcp_server.add_wiki_page_attachment(
+            _mcp_ctx(actor), env.project.slug, str(page_id), base64.b64encode(b"obraz MON272").decode(), "obraz.png", "image/png"
+        )
+
+    async def test_mon272_public_page_without_blog_permission_is_refused_and_uploads_nothing(self, env, monkeypatch):
+        """MON-272 pkt 2: odmowa `Brak uprawnienia blog:write`, MinIO niewołane, brak wiersza załącznika."""
+        upload = MagicMock()
+        monkeypatch.setattr("monolynx.mcp_server.minio_upload_object", upload)
+        actor = await env.actor("owner", superuser=False, flag=False)
+        page_id = await env.page(public=True)
+
+        with pytest.raises(ValueError) as info:
+            await self._add(env, actor, page_id)
+
+        assert str(info.value) == _DENIED
+        upload.assert_not_called()
+        assert await self._attachments(env, page_id) == []
+
+    async def test_mon272_public_page_with_blog_permission_stores_the_attachment(self, env, monkeypatch):
+        """MON-272 pkt 2: konto z blog:write dodaje załącznik do strony publicznej."""
+        upload = MagicMock()
+        monkeypatch.setattr("monolynx.mcp_server.minio_upload_object", upload)
+        actor = await env.actor("owner", superuser=False, flag=True)
+        page_id = await env.page(public=True)
+
+        result = await self._add(env, actor, page_id)
+
+        assert result["filename"] == "obraz.png"
+        upload.assert_called_once()
+        assert len(await self._attachments(env, page_id)) == 1
+
+    async def test_mon272_private_page_needs_only_wiki_write(self, env, monkeypatch):
+        """MON-272 pkt 2: strona prywatna bez zmian - wystarczy wiki:write."""
+        upload = MagicMock()
+        monkeypatch.setattr("monolynx.mcp_server.minio_upload_object", upload)
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=False)
+
+        await self._add(env, actor, page_id)
+
+        upload.assert_called_once()
+        assert len(await self._attachments(env, page_id)) == 1
