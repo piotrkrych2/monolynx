@@ -1007,7 +1007,7 @@ W obu trybach błędem jest `### Unreleased` na innej pozycji niż pierwsza, pus
 
 ## Changelog
 
-### Unreleased
+### 1.25.0
 
 - MON-271: skill `/monolynx:blog-post` ma całą prozę z pełnymi polskimi znakami (opis we frontmatterze, kroki, sekcja "WAŻNE ZASADY"), także w kopii dystrybucyjnej w `src/monolynx/static/skills/` (generowanej przez `scripts/sync_skills.py`). Znaczenie instrukcji, wywołania operacji, parametry i komendy się nie zmieniły. Bez zmian zostają blok `shared:transport` (generowany z `plugin/references/transport.md`) oraz placeholdery w blokach kodu.
   - Zmiana po stronie serwera, którą skill napotka przy edycji opublikowanego wpisu: zmiana treści albo tytułu strony z `is_public` równym `true` wymaga uprawnienia do edycji bloga (`blog:write`) w panelu, MCP, REST API i CLI, a nie tylko zmiana `is_public`. Odmowa ma ten sam tekst `Brak uprawnienia blog:write` i niczego nie zapisuje; skill zatrzymuje się na niej według sekcji "Uprawnienie do edycji bloga".
