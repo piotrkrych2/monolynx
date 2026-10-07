@@ -4,41 +4,77 @@
 
 {% block meta_description %}{% if lang == "pl" %}Publiczne wpisy z wiki projektu Monolynx.{% else %}Public posts from the Monolynx project wiki.{% endif %}{% endblock %}
 
-{% block canonical %}<link rel="canonical" href="{{ app_url }}/blog/">{% endblock %}
+{% block canonical %}<link rel="canonical" href="{{ canonical_url or (app_url ~ '/blog/') }}">{% endblock %}
 {% block og_title %}{% if lang == "pl" %}Blog - Monolynx{% else %}Blog - Monolynx{% endif %}{% endblock %}
 {% block og_description %}{% if lang == "pl" %}Publiczne wpisy z wiki projektu Monolynx.{% else %}Public posts from the Monolynx project wiki.{% endif %}{% endblock %}
-{% block og_url %}{{ app_url }}/blog/{% endblock %}
+{% block og_url %}{{ canonical_url or (app_url ~ '/blog/') }}{% endblock %}
+
+{% block head %}
+{% if prev_url %}<link rel="prev" href="{{ app_url ~ prev_url }}">{% endif %}
+{% if next_url %}<link rel="next" href="{{ app_url ~ next_url }}">{% endif %}
+{% if json_ld %}<script type="application/ld+json">{{ json_ld|safe }}</script>{% endif %}
+<link rel="stylesheet" href="/static/blog/blog.css">
+{% endblock %}
 
 {% block content %}
 <section class="pt-32 pb-20">
-    <div class="max-w-3xl mx-auto px-6">
+    <div class="blog-shell">
 
-        <header class="mb-10 animate-fade-in-up">
+        <header class="mb-6 animate-fade-in-up">
             <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight text-gray-900 dark:text-white">
                 {% if lang == "pl" %}Blog{% else %}Blog{% endif %}
             </h1>
         </header>
 
+        <!-- Filtry -->
+        <div class="blog-filters">
+            <div class="blog-filter-group" role="group" aria-label="{% if lang == 'pl' %}Język wpisów{% else %}Post language{% endif %}">
+                <a href="{{ all_langs_url }}"{% if not filter_lang %} aria-current="true"{% endif %}>{% if lang == "pl" %}Wszystkie{% else %}All{% endif %}</a>
+                <a href="{{ filter_pl_url }}"{% if filter_lang == 'pl' %} aria-current="true"{% endif %}>PL</a>
+                <a href="{{ filter_en_url }}"{% if filter_lang == 'en' %} aria-current="true"{% endif %}>EN</a>
+            </div>
+            {% if filter_tag %}
+            <div class="blog-filter-active">
+                <span>{% if lang == "pl" %}Tag:{% else %}Tag:{% endif %} <strong>{{ filter_tag }}</strong></span>
+                <a href="{{ clear_tag_url }}">{% if lang == "pl" %}wyczyść filtr{% else %}clear filter{% endif %}</a>
+            </div>
+            {% endif %}
+        </div>
+
         {% if posts %}
         <div class="space-y-6 animate-fade-in-up animate-fade-in-up-delay-1">
             {% for post in posts %}
-            <a href="/blog/{{ post.slug }}"
-               class="block px-5 py-4 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-lg hover:border-indigo-500/50 transition-colors">
-                <h2 class="text-lg font-bold text-gray-900 dark:text-white">{{ post.title }}</h2>
-                {% if post.updated_at %}
-                <p class="mt-1 text-xs text-gray-500">{{ post.updated_at.strftime('%Y-%m-%d') }}</p>
+            <article class="blog-card">
+                {% if post.cover_image_url %}
+                <a href="/blog/{{ post.slug }}" tabindex="-1" aria-hidden="true">
+                    <img class="blog-card-cover" src="{{ post.cover_image_url }}" alt="" loading="lazy">
+                </a>
                 {% endif %}
-                {% if post.summary %}
-                <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{{ post.summary }}</p>
-                {% endif %}
-            </a>
+                <div class="blog-card-body">
+                    <h2 class="blog-card-title"><a href="/blog/{{ post.slug }}">{{ post.title }}</a></h2>
+                    {% if post.published_at or post.reading_time %}
+                    <p class="blog-card-meta">
+                        {% if post.published_at %}<time datetime="{{ post.published_at.isoformat() }}">{{ post.published_at.strftime('%Y-%m-%d') }}</time>{% endif %}
+                        {% if post.reading_time %}<span class="blog-reading-time">{% if lang == "pl" %}{{ post.reading_time }} min czytania{% else %}{{ post.reading_time }} min read{% endif %}</span>{% endif %}
+                    </p>
+                    {% endif %}
+                    {% if post.summary %}
+                    <p class="blog-card-summary">{{ post.summary }}</p>
+                    {% endif %}
+                    {% if post.tags %}
+                    <div class="blog-tags">
+                        {% for tag in post.tags %}<a class="blog-tag" href="{{ tag_url(tag) }}">{{ tag }}</a>{% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </article>
             {% endfor %}
         </div>
 
         {% if total_pages > 1 %}
         <nav class="mt-10 flex items-center justify-between text-sm" aria-label="{% if lang == 'pl' %}Paginacja{% else %}Pagination{% endif %}">
-            {% if has_prev %}
-            <a href="/blog/?page={{ page - 1 }}&amp;lang={{ lang }}" class="text-indigo-600 dark:text-indigo-400 hover:underline">
+            {% if has_prev and prev_url %}
+            <a href="{{ prev_url }}" class="text-indigo-600 dark:text-indigo-400 hover:underline">
                 {% if lang == "pl" %}&larr; Poprzednia{% else %}&larr; Previous{% endif %}
             </a>
             {% else %}
@@ -49,8 +85,8 @@
                 {% if lang == "pl" %}Strona {{ page }} z {{ total_pages }}{% else %}Page {{ page }} of {{ total_pages }}{% endif %}
             </span>
 
-            {% if has_next %}
-            <a href="/blog/?page={{ page + 1 }}&amp;lang={{ lang }}" class="text-indigo-600 dark:text-indigo-400 hover:underline">
+            {% if has_next and next_url %}
+            <a href="{{ next_url }}" class="text-indigo-600 dark:text-indigo-400 hover:underline">
                 {% if lang == "pl" %}Następna &rarr;{% else %}Next &rarr;{% endif %}
             </a>
             {% else %}

@@ -21,8 +21,9 @@ from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
+from monolynx.services.blog import ensure_post
 from monolynx.services.minio_client import delete_object, get_markdown, upload_markdown
-from monolynx.services.permissions import check_permission, ensure_permission
+from monolynx.services.permissions import check_permission, ensure_blog_permission, ensure_permission, has_blog_permission
 
 logger = logging.getLogger("monolynx.wiki")
 
@@ -72,9 +73,10 @@ def render_markdown_html(raw: str) -> str:
     return result
 
 
-# Biala lista tagow/atrybutow dla publicznego wyjscia (/blog/{slug}) -- w odroznieniu od
-# render_markdown_html() (dashboard, chroniony sesja + RBAC), treść trafia do nieautoryzowanego
-# czytelnika, wiec sanityzacja jest jedyna linia obrony przed XSS.
+# Biala lista tagow/atrybutow dla publicznego wyjscia -- w odroznieniu od render_markdown_html()
+# (dashboard, chroniony sesja + RBAC), treść trafia do nieautoryzowanego czytelnika, wiec
+# sanityzacja jest jedyna linia obrony przed XSS. Uzywa jej `render_markdown_public` oraz
+# (tagi i schematy URL) `services/blog_blocks.py`, ktory renderuje wpisy /blog/{slug}.
 _PUBLIC_ALLOWED_TAGS = {
     "h1",
     "h2",
@@ -118,7 +120,9 @@ _PUBLIC_URL_SCHEMES = {"http", "https", "mailto"}
 
 
 def render_markdown_public(raw: str) -> str:
-    """Renderuj markdown do bezpiecznego HTML dla publicznego /blog/{slug}.
+    """Renderuj markdown do bezpiecznego HTML (bez blokow wpisu bloga).
+
+    Strona /blog/{slug} renderuje przez `blog_blocks.render_post_html`, nie przez te funkcje.
 
     Markdown -> HTML (te same rozszerzenia co render_markdown_html) -> nh3.clean().
     Usuwa <script> (wraz z zawartoscia), atrybuty zdarzen (onerror/onclick/onload/...)
@@ -479,7 +483,13 @@ async def create_wiki_page(
     is_public: bool = False,
     db: AsyncSession,
 ) -> WikiPage:
-    """Utworz strone wiki -- zapis metadanych w DB, tresc w MinIO."""
+    """Utworz strone wiki -- zapis metadanych w DB, tresc w MinIO.
+
+    `is_public=True` wymaga uprawnienia `blog:write` konta (MON-270), sprawdzanego przed jakimkolwiek zapisem.
+    """
+    if is_public:
+        await ensure_blog_permission(db, user_id)
+
     slug = generate_slug(title)
 
     # Blokada slugów systemowych - użytkownicy/MCP nie mogą tworzyć stron o zarezerwowanych slugach
@@ -513,12 +523,21 @@ async def create_wiki_page(
     db.add(page)
     # uq_wiki_public_slug jest partial unique index GLOBALNY (bez project_id) -- per-projektowe
     # dedupowanie slugów w _ensure_unique_slug go nie łapie. Kolizja slugu publicznego z innym
-    # projektem musi się skończyć czytelnym błędem, nie 500 (MON-201).
+    # projektem musi się skończyć czytelnym błędem, nie 500 (MON-201). ensure_post (MON-254) stoi
+    # w tym samym try: jego zapytania autoflushują stronę, więc IntegrityError może wyjść już stąd.
     try:
+        if is_public:
+            await ensure_post(db, page)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
+        delete_object(minio_path)
         raise ValueError(f"Strona publiczna o slugu '{slug}' już istnieje w innym projekcie. Zmień tytuł strony.") from exc
+    except ValueError:
+        await db.rollback()
+        # Strona nie powstała, więc obiekt wgrany wcześniej (klucz zależy od page_id) zostałby osierocony (MON-272).
+        delete_object(minio_path)
+        raise
     await db.refresh(page)
 
     # Best-effort embedding generation
@@ -538,6 +557,10 @@ async def create_wiki_page(
     return page
 
 
+def _normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n")
+
+
 async def update_wiki_page(
     *,
     page: WikiPage,
@@ -550,14 +573,28 @@ async def update_wiki_page(
     is_public: bool | None = None,
     db: AsyncSession,
 ) -> WikiPage:
-    """Aktualizuj strone wiki."""
+    """Aktualizuj strone wiki.
+
+    Zmiana `is_public` (publikacja i cofniecie) oraz zmiana tytulu albo tresci strony, ktora jest juz publiczna,
+    wymagaja uprawnienia `blog:write` konta (MON-270, MON-271), sprawdzanego przed jakimkolwiek zapisem.
+    Wartosc `is_public` rowna biezacej i `None` nie sa zmiana; niezmieniony tytul i tresc (np. sama pozycja)
+    przechodza bez uprawnienia. Zapisana tresc czytamy tylko dla konta bez uprawnienia.
+    """
+    if is_public is not None and is_public != page.is_public:
+        await ensure_blog_permission(db, user_id)
+    elif page.is_public and not await has_blog_permission(db, user_id):
+        title_changed = title is not None and title.strip() != page.title
+        if title_changed or (content is not None and _normalize_newlines(content) != _normalize_newlines(get_markdown(page.minio_path))):
+            await ensure_blog_permission(db, user_id)
+
     if title is not None and title.strip() != page.title:
         page.title = title.strip()
         new_slug = generate_slug(title)
         page.slug = await _ensure_unique_slug(page.project_id, new_slug, db, exclude_id=page.id)
 
     if content is not None:
-        upload_markdown(project_slug, page.id, content)
+        # Edycja tresci tym samym uzytkownikiem nie zmienia zadnej kolumny, wiec bez jawnej daty nie byloby UPDATE
+        page.updated_at = func.now()
 
     if position is not None:
         page.position = position
@@ -573,10 +610,19 @@ async def update_wiki_page(
     # globalny, oznaczenie strony jako is_public=True może kolidować ze slugiem z innego
     # projektu -- czytelny błąd zamiast 500 (MON-201).
     try:
+        if page.is_public:
+            await ensure_post(db, page)
+        # Upload po walidacji: klucz obiektu jest stały, więc zapis przed błędem sluga podmieniłby treść,
+        # której baza po rollbacku nie zna (MON-272).
+        if content is not None:
+            upload_markdown(project_slug, page.id, content)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
         raise ValueError(f"Strona publiczna o slugu '{page.slug}' już istnieje w innym projekcie. Zmień tytuł strony przed publikacją.") from exc
+    except ValueError:
+        await db.rollback()
+        raise
     await db.refresh(page)
 
     # Best-effort embedding update
@@ -607,6 +653,17 @@ async def delete_wiki_page(page: WikiPage, db: AsyncSession) -> None:
 
     await db.delete(page)
     await db.commit()
+
+
+async def ensure_can_delete_page(db: AsyncSession, user_id: uuid.UUID, page: WikiPage) -> None:
+    """Usuniecie strony publicznej albo strony z publicznym potomkiem wymaga `blog:write` konta (MON-272).
+
+    Wolac po `wiki:delete` i przed `delete_wiki_page`, ktore kasuje obiekty MinIO jeszcze przed commitem.
+    """
+    if await has_blog_permission(db, user_id):
+        return
+    if page.is_public or any(d.is_public for d in await _collect_descendants(page.id, db, page.project_id)):
+        raise ValueError("Brak uprawnienia blog:write")
 
 
 async def _collect_descendants(page_id: uuid.UUID, db: AsyncSession, project_id: uuid.UUID | None = None) -> list[WikiPage]:
@@ -676,9 +733,9 @@ async def get_public_page_by_slug(slug: str, db: AsyncSession) -> WikiPage | Non
     """Pobierz publiczną stronę wiki po slugu, niezależnie od projektu.
 
     Filtruje WikiPage.is_public.is_(True) na poziomie SQL -- prywatna strona nigdy
-    nie trafia do wyniku SELECT. Używane przez GET /blog/{slug} (brak sesji, brak
-    project_slug w URL); nigdy nie rzuca, zwraca None dla strony prywatnej i
-    nieistniejącego sluga (endpoint mapuje None na 404).
+    nie trafia do wyniku SELECT. Szuka po slugu STRONY wiki; publiczny blog adresuje wpisy po
+    `BlogPost.slug` (`services/blog.py::get_public_post_by_slug`, MON-254) i tej funkcji już nie woła.
+    Nigdy nie rzuca, zwraca None dla strony prywatnej i nieistniejącego sluga.
     """
     result = await db.execute(select(WikiPage).where(WikiPage.slug == slug, WikiPage.is_public.is_(True)))
     return result.scalar_one_or_none()

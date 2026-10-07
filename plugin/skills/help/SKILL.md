@@ -60,6 +60,7 @@ Wszystkie poniższe skille stosują [wspólny kontrakt runtime](references/runti
 - `/monolynx:search` - wyszukiwanie semantyczne w wiki; zwykle bez wpisywania komendy, skill włącza się sam przy pytaniach o dokumentację projektu
 - `/monolynx:wiki-ingest [sciezka pliku / URL / temat zrodla]` - włącza nowe źródło do wiki (wymaga LLM Wiki)
 - `/monolynx:wiki-lint` - audyt wiki: sieroty, martwe linki, sprzeczności, luki
+- `/monolynx:blog-post [temat | page_id szkicu]` - wpis na blog: brief, konspekt, szkic jako strona wiki, lint do zera błędów, podgląd; publikacja tylko po jawnej zgodzie
 
 ---
 

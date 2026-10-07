@@ -22,7 +22,7 @@ from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_file import WikiFile
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.minio_client import get_attachment, upload_object
-from monolynx.services.permissions import ensure_permission
+from monolynx.services.permissions import ensure_blog_permission, ensure_permission
 
 MAX_WIKI_UPLOAD_SIZE = 200 * 1024 * 1024
 
@@ -145,7 +145,7 @@ async def add_wiki_page_attachment(
     *,
     upload_object: ObjectUploader | None = None,
 ) -> WikiAttachment:
-    """Dodaj zalacznik do strony wiki. Wymaga wiki:write. Plik zakodowany w base64, limit MAX_WIKI_UPLOAD_SIZE.
+    """Dodaj zalacznik do strony wiki. Wymaga wiki:write (dla strony publicznej tez blog:write). Plik zakodowany w base64, limit MAX_WIKI_UPLOAD_SIZE.
 
     Walidacje (nazwa, base64, rozmiar, mime_type) wspolne z add_wiki_file -- patrz prywatne
     helpery modulu powyzej.
@@ -156,8 +156,12 @@ async def add_wiki_page_attachment(
     mime_type = _validate_mime_type(mime_type)
 
     page_result = await db.execute(select(WikiPage).where(WikiPage.id == uuid.UUID(page_id), WikiPage.project_id == project.id))
-    if page_result.scalar_one_or_none() is None:
+    page = page_result.scalar_one_or_none()
+    if page is None:
         raise ValueError("Strona wiki nie istnieje")
+    # Plik strony publicznej jest serwowany anonimowo pod /blog/..., wiec wymaga tego samego uprawnienia co edycja (MON-272)
+    if page.is_public:
+        await ensure_blog_permission(db, user.id)
 
     storage_path = _build_storage_path(f"{project.slug}/wiki-attachments/{page_id}", filename)
     fn = _resolve_uploader(upload_object)

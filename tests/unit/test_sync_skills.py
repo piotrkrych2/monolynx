@@ -75,10 +75,11 @@ def test_sync_check_detects_nested_drift_and_sync_removes_stale_resource(source_
 
 
 def _write_test_lock_stub(skills_dir: Path) -> None:
-    """`work` i `work-simple` pakuja `scripts/test_lock.py` (MON-251) - sztuczne drzewo musi go miec obok `references/`."""
+    """`work` i `work-simple` pakuja `scripts/test_lock.py` (MON-251) i `toolchain_fields.py` (MON-269) - drzewo musi je miec obok `references/`."""
     scripts = skills_dir.parent / "scripts"
     scripts.mkdir(exist_ok=True)
     (scripts / "test_lock.py").write_text("# test_lock stub\n", encoding="utf-8")
+    (scripts / "toolchain_fields.py").write_text("# toolchain_fields stub\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize("check_only", [False, True])
@@ -540,3 +541,183 @@ def test_skill_ships_byte_identical_test_lock_copies(skill):
 
     assert (ROOT / "plugin" / "skills" / skill / "scripts" / "test_lock.py").read_bytes() == source
     assert (ROOT / "src" / "monolynx" / "static" / "skills" / f"monolynx-{skill}" / "scripts" / "test_lock.py").read_bytes() == source
+
+
+# MON-269: `toolchain_fields.py` jedzie tylko z `work`, `work-simple` i `setup` (normalizacja pola `pełny przebieg`).
+TOOLCHAIN_FIELDS_SKILLS = ("work", "work-simple", "setup")
+NON_TOOLCHAIN_FIELDS_SKILLS = sorted(
+    path.parent.name for path in (ROOT / "plugin" / "skills").glob("*/SKILL.md") if path.parent.name not in TOOLCHAIN_FIELDS_SKILLS
+)
+TOOLCHAIN_FIELDS_SOURCE = ROOT / "plugin" / "scripts" / "toolchain_fields.py"
+
+
+@pytest.mark.parametrize("skill", TOOLCHAIN_FIELDS_SKILLS)
+def test_skills_bundle_toolchain_fields_script(skill):
+    resources = sync_skills.bundled_resources(skill)
+
+    assert resources["scripts/toolchain_fields.py"] == TOOLCHAIN_FIELDS_SOURCE.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("skill", NON_TOOLCHAIN_FIELDS_SKILLS)
+def test_other_skills_do_not_bundle_toolchain_fields_script(skill):
+    assert "scripts/toolchain_fields.py" not in sync_skills.bundled_resources(skill)
+
+
+@pytest.mark.parametrize("skill", TOOLCHAIN_FIELDS_SKILLS)
+def test_skill_ships_byte_identical_toolchain_fields_copies(skill):
+    source = TOOLCHAIN_FIELDS_SOURCE.read_bytes()
+
+    assert (ROOT / "plugin" / "skills" / skill / "scripts" / "toolchain_fields.py").read_bytes() == source
+    assert (ROOT / "src" / "monolynx" / "static" / "skills" / f"monolynx-{skill}" / "scripts" / "toolchain_fields.py").read_bytes() == source
+
+
+@pytest.mark.parametrize("skill", TEST_LOCK_SKILLS)
+def test_work_skills_keep_test_lock_next_to_toolchain_fields(skill):
+    resources = sync_skills.bundled_resources(skill)
+
+    assert {"scripts/test_lock.py", "scripts/toolchain_fields.py"} <= set(resources)
+
+
+def test_setup_skill_gets_toolchain_fields_but_not_test_lock():
+    resources = sync_skills.bundled_resources("setup")
+
+    assert "scripts/toolchain_fields.py" in resources
+    assert "scripts/test_lock.py" not in resources
+
+
+# ---------------------------------------------------------------------------
+# MON-265: `references/bloki.md` skilla blog-post to sekcja `## Block catalog` publicznego przewodnika
+# (`sync_skills.BLOG_GUIDE_PATH`), generowana jak pozostale zasoby (zrodlo skilla + kopia standalone).
+# ---------------------------------------------------------------------------
+
+GUIDE_CATALOG = "## Block catalog\n\n### `faq`\nOpis faq.\n\n```\n:::faq\n:::\n```\n\n### `steps`\nOpis steps.\n"
+GUIDE_TEXT = f"# Guide\n\nWstep.\n\n## Other section\nInne.\n\n{GUIDE_CATALOG}\n\n\n## Lint rules\n| `x` | error | y |\n"
+
+
+@pytest.fixture
+def blog_tree(tmp_path, monkeypatch):
+    skills = tmp_path / "plugin/skills"
+    skill = skills / "blog-post"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: blog-post\ndescription: Blog\n---\nBlog\n", encoding="utf-8")
+    (skills.parent / "references").mkdir()
+    (skills.parent / "references/runtime.md").write_text("# Runtime\n", encoding="utf-8")
+    guide = tmp_path / "static/blog-authoring.md"
+    guide.parent.mkdir()
+    guide.write_text(GUIDE_TEXT, encoding="utf-8")
+    monkeypatch.setattr(sync_skills, "SOURCE_DIR", skills)
+    monkeypatch.setattr(sync_skills, "TARGET_DIR", tmp_path / "target")
+    monkeypatch.setattr(sync_skills, "BLOG_GUIDE_PATH", guide)
+    return skills
+
+
+def test_bloki_reference_is_the_block_catalog_section_only(blog_tree):
+    resources = sync_skills.bundled_resources("blog-post")
+
+    assert resources["references/bloki.md"] == GUIDE_CATALOG
+
+
+def test_bloki_reference_runs_to_end_of_file_when_catalog_is_last_section(blog_tree):
+    sync_skills.BLOG_GUIDE_PATH.write_text("# Guide\n\n## Block catalog\n\n### `faq`\nOpis.\n\n\n", encoding="utf-8")
+
+    assert sync_skills.bundled_resources("blog-post")["references/bloki.md"] == "## Block catalog\n\n### `faq`\nOpis.\n"
+
+
+def test_other_skills_do_not_get_bloki_reference(blog_tree):
+    assert "references/bloki.md" not in sync_skills.bundled_resources("sample")
+
+
+def test_bloki_reference_requires_block_catalog_section(blog_tree):
+    sync_skills.BLOG_GUIDE_PATH.write_text("# Guide\n\n## Block catalogue\nbrak\n\n### Block catalog\nteż nie\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Block catalog"):
+        sync_skills.bundled_resources("blog-post")
+
+
+def test_bloki_reference_requires_non_empty_block_catalog_section(blog_tree):
+    sync_skills.BLOG_GUIDE_PATH.write_text("# Guide\n\n## Block catalog\n\n\n## Lint rules\nx\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Block catalog"):
+        sync_skills.bundled_resources("blog-post")
+
+
+def test_bloki_reference_requires_guide_file(blog_tree):
+    sync_skills.BLOG_GUIDE_PATH.unlink()
+
+    with pytest.raises(FileNotFoundError) as error:
+        sync_skills.bundled_resources("blog-post")
+
+    assert Path(error.value.filename) == sync_skills.BLOG_GUIDE_PATH
+
+
+@pytest.mark.parametrize("check_only", [False, True])
+def test_sync_fails_loudly_and_writes_no_bloki_file_when_guide_has_no_catalog(blog_tree, tmp_path, monkeypatch, check_only):
+    sync_skills.BLOG_GUIDE_PATH.write_text("# Guide\n\n## Lint rules\nx\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Block catalog"):
+        _run_sync(monkeypatch, *(["--check"] if check_only else []))
+
+    assert not (blog_tree / "blog-post/references/bloki.md").exists()
+    assert not (tmp_path / "target/monolynx-blog-post/references/bloki.md").exists()
+
+
+def test_sync_writes_bloki_reference_to_source_and_standalone_copy(blog_tree, tmp_path, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+
+    assert (blog_tree / "blog-post/references/bloki.md").read_text(encoding="utf-8") == GUIDE_CATALOG
+    assert (tmp_path / "target/monolynx-blog-post/references/bloki.md").read_text(encoding="utf-8") == GUIDE_CATALOG
+    assert _run_sync(monkeypatch, "--check") == 0
+
+
+def test_check_detects_catalog_change_in_guide_and_sync_restores_bloki(blog_tree, tmp_path, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+    sync_skills.BLOG_GUIDE_PATH.write_text(GUIDE_TEXT.replace("Opis steps.", "Opis steps zmieniony."), encoding="utf-8")
+
+    assert _run_sync(monkeypatch, "--check") == 1
+    assert "Opis steps.\n" in (blog_tree / "blog-post/references/bloki.md").read_text(encoding="utf-8")
+
+    assert _run_sync(monkeypatch) == 0
+    assert "Opis steps zmieniony." in (blog_tree / "blog-post/references/bloki.md").read_text(encoding="utf-8")
+    assert "Opis steps zmieniony." in (tmp_path / "target/monolynx-blog-post/references/bloki.md").read_text(encoding="utf-8")
+    assert _run_sync(monkeypatch, "--check") == 0
+
+
+@pytest.mark.parametrize("where", ["source", "static"])
+def test_check_detects_hand_edited_bloki_copy_and_sync_restores_it(blog_tree, tmp_path, monkeypatch, where):
+    assert _run_sync(monkeypatch) == 0
+    copy = (blog_tree / "blog-post" if where == "source" else tmp_path / "target/monolynx-blog-post") / "references/bloki.md"
+    copy.write_text("recznie zmieniona tresc", encoding="utf-8")
+
+    assert _run_sync(monkeypatch, "--check") == 1
+    assert copy.read_text(encoding="utf-8") == "recznie zmieniona tresc"
+
+    assert _run_sync(monkeypatch) == 0
+    assert copy.read_text(encoding="utf-8") == GUIDE_CATALOG
+
+
+def test_check_detects_missing_bloki_source_file_and_sync_restores_it(blog_tree, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+    generated = blog_tree / "blog-post/references/bloki.md"
+    generated.unlink()
+
+    assert _run_sync(monkeypatch, "--check") == 1
+    assert not generated.exists()
+
+    assert _run_sync(monkeypatch) == 0
+    assert generated.read_text(encoding="utf-8") == GUIDE_CATALOG
+
+
+def test_guide_change_outside_block_catalog_is_not_drift(blog_tree, monkeypatch):
+    assert _run_sync(monkeypatch) == 0
+    sync_skills.BLOG_GUIDE_PATH.write_text(GUIDE_TEXT.replace("| `x` | error | y |", "| `x` | warning | zmienione |"), encoding="utf-8")
+
+    assert _run_sync(monkeypatch, "--check") == 0
+
+
+def test_real_blog_post_skill_ships_the_guide_catalog_as_bloki_reference():
+    resources = sync_skills.bundled_resources("blog-post")
+    guide = sync_skills.BLOG_GUIDE_PATH.read_text(encoding="utf-8")
+    start = guide.index("## Block catalog")
+    end = guide.find("\n## ", start + 1)
+
+    assert resources["references/bloki.md"] == guide[start : end if end != -1 else len(guide)].rstrip() + "\n"

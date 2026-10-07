@@ -49,7 +49,9 @@
 
         <div>
             <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                {# Wyłączony checkbox nie jest wysyłany: konto bez uprawnienia nie zmienia publikacji, a edycja treści zostawia stan strony. #}
                 <input type="checkbox" name="is_public" {% if form_data and form_data.is_public %}checked{% endif %}
+                       {% if not can_edit_blog %}disabled{% endif %}
                        class="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500">
                 Strona publiczna
             </label>
@@ -57,12 +59,93 @@
                 Treść tej strony będzie widoczna w internecie bez logowania, pod adresem
                 <code>/blog/{slug}</code>.
             </p>
+            {% if not can_edit_blog %}
+            <p class="text-xs text-gray-500 mt-1">Publikację na blogu nadaje administrator.</p>
+            {% endif %}
         </div>
 
         <div>
             <label class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Treść (Markdown)</label>
             <textarea id="wiki-content" name="content" rows="20">{{ form_data.content if form_data else '' }}</textarea>
         </div>
+
+        {% if blog_meta and can_edit_blog %}
+        {% set field_class = "w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500" %}
+        <details id="blog-meta-section" {% if blog_is_post %}open{% endif %}
+                 class="border border-gray-300 dark:border-gray-600 rounded">
+            <summary class="cursor-pointer select-none px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">
+                Wpis na blogu
+            </summary>
+            <div class="p-4 space-y-4 border-t border-gray-300 dark:border-gray-600">
+                <input type="hidden" name="blog_meta" value="1">
+
+                <div>
+                    <label for="blog-slug" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Adres wpisu (slug)</label>
+                    <input type="text" id="blog-slug" name="blog_slug" value="{{ blog_meta.slug }}"
+                           class="{{ field_class }}">
+                    <p class="text-xs text-gray-500 mt-1">Wpis jest dostępny pod adresem <code>/blog/{slug}</code>.</p>
+                </div>
+
+                <div>
+                    <label for="blog-description" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Opis (meta description)</label>
+                    <textarea id="blog-description" name="blog_description" rows="3" maxlength="300"
+                              class="{{ field_class }}">{{ blog_meta.description }}</textarea>
+                    <p class="text-xs text-gray-500 mt-1"><span id="blog-description-counter">{{ blog_meta.description|length }}</span> / 300 znaków</p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label for="blog-author-name" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Autor</label>
+                        <input type="text" id="blog-author-name" name="blog_author_name" value="{{ blog_meta.author_name }}"
+                               class="{{ field_class }}">
+                    </div>
+                    <div>
+                        <label for="blog-lang" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Język</label>
+                        <select id="blog-lang" name="blog_lang" class="{{ field_class }}">
+                            <option value="pl" {% if blog_meta.lang == 'pl' %}selected{% endif %}>Polski</option>
+                            <option value="en" {% if blog_meta.lang == 'en' %}selected{% endif %}>English</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label for="blog-tags" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Tagi</label>
+                    <input type="text" id="blog-tags" name="blog_tags" value="{{ blog_meta.tags }}"
+                           placeholder="np. scrum, wiki, ai"
+                           class="{{ field_class }}">
+                    <p class="text-xs text-gray-500 mt-1">Oddzielone przecinkami.</p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label for="blog-translation-of-id" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Tłumaczenie wpisu</label>
+                        <select id="blog-translation-of-id" name="blog_translation_of_id" class="{{ field_class }}">
+                            <option value="" {% if not blog_meta.translation_of_id %}selected{% endif %}>Brak (oryginał)</option>
+                            {% for candidate in blog_translation_candidates or [] %}
+                            <option value="{{ candidate.page_id }}" {% if blog_meta.translation_of_id == candidate.page_id|string %}selected{% endif %}>{{ candidate.title }} ({{ candidate.lang|upper }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="blog-cover-attachment-id" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Okładka</label>
+                        <select id="blog-cover-attachment-id" name="blog_cover_attachment_id" class="{{ field_class }}">
+                            <option value="" {% if not blog_meta.cover_attachment_id %}selected{% endif %}>Brak okładki</option>
+                            {% for att in attachments or [] %}
+                            <option value="{{ att.id }}" {% if blog_meta.cover_attachment_id == att.id|string %}selected{% endif %}>{{ att.filename }}</option>
+                            {% endfor %}
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">Wybierz spośród załączników tej strony.</p>
+                    </div>
+                </div>
+
+                <div>
+                    <label for="blog-last-verified-at" class="block text-sm text-gray-600 dark:text-gray-400 mb-1">Data weryfikacji treści</label>
+                    <input type="date" id="blog-last-verified-at" name="blog_last_verified_at" value="{{ blog_meta.last_verified_at }}"
+                           class="w-48 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500">
+                </div>
+            </div>
+        </details>
+        {% endif %}
 
         <button type="submit"
                 class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded transition">
@@ -85,25 +168,91 @@
 {% endif %}
 
 <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+<script type="application/json" id="blog-block-templates">{{ (block_templates or [])|tojson }}</script>
 <script>
-var easyMDE = new EasyMDE({
+var blockTemplates = JSON.parse(document.getElementById('blog-block-templates').textContent);
+var easyMDE;
+
+function toggleBlockMenu() {
+    var menu = document.getElementById('blog-block-menu');
+    if (menu) { menu.hidden = !menu.hidden; }
+}
+
+function insertBlockTemplate(template) {
+    var cm = easyMDE.codemirror;
+    var atLineStart = cm.getCursor('from').ch === 0;
+    cm.replaceSelection((atLineStart ? '' : '\n\n') + template + '\n');
+    cm.focus();
+}
+
+function buildBlockMenu() {
+    var container = document.querySelector('.EasyMDEContainer');
+    var button = container.querySelector('.editor-toolbar .insert-block-btn');
+    if (!button) { return; }
+    var menu = document.createElement('div');
+    menu.id = 'blog-block-menu';
+    menu.hidden = true;
+    menu.className = 'absolute z-50 mt-1 max-h-72 overflow-y-auto min-w-40 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow-lg py-1';
+    blockTemplates.forEach(function (block) {
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.textContent = block.name;
+        item.className = 'block w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-indigo-600 hover:text-white';
+        item.addEventListener('click', function () {
+            menu.hidden = true;
+            insertBlockTemplate(block.template);
+        });
+        menu.appendChild(item);
+    });
+    container.style.position = 'relative';
+    container.appendChild(menu);
+    menu.style.left = (button.getBoundingClientRect().left - container.getBoundingClientRect().left) + 'px';
+    menu.style.top = container.querySelector('.editor-toolbar').offsetHeight + 'px';
+    document.addEventListener('click', function (event) {
+        if (!menu.hidden && !menu.contains(event.target) && !button.contains(event.target)) { menu.hidden = true; }
+    });
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') { menu.hidden = true; }
+    });
+}
+
+var toolbar = [
+    "bold", "italic", "heading", "|",
+    "quote", "unordered-list", "ordered-list", "|",
+    "link", "image", "table", "code", "|"
+];
+if (blockTemplates.length) {
+    toolbar.push({
+        name: "insert-block",
+        action: toggleBlockMenu,
+        className: "insert-block-btn",
+        text: "Wstaw blok ▾",
+        title: "Wstaw blok"
+    }, "|");
+}
+toolbar.push("preview", "side-by-side", "fullscreen", "|", "guide");
+
+easyMDE = new EasyMDE({
     element: document.getElementById('wiki-content'),
     spellChecker: false,
     autofocus: false,
     status: ["lines", "words"],
     uploadImage: true,
-    imageUploadEndpoint: '/dashboard/{{ project.slug }}/wiki/upload',
+    imageUploadEndpoint: {{ (image_upload_url or '/dashboard/' ~ project.slug ~ '/wiki/upload')|tojson }},
     imagePathAbsolute: true,
     imageMaxSize: 200 * 1024 * 1024,
-    toolbar: [
-        "bold", "italic", "heading", "|",
-        "quote", "unordered-list", "ordered-list", "|",
-        "link", "image", "table", "code", "|",
-        "preview", "side-by-side", "fullscreen", "|",
-        "guide"
-    ],
+    toolbar: toolbar,
     minHeight: "400px",
 });
+buildBlockMenu();
+
+var blogDescription = document.getElementById('blog-description');
+var blogDescriptionCounter = document.getElementById('blog-description-counter');
+if (blogDescription && blogDescriptionCounter) {
+    blogDescription.addEventListener('input', function () {
+        blogDescriptionCounter.textContent = blogDescription.value.length;
+    });
+}
 </script>
 
 {% if page %}

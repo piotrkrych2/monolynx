@@ -7,6 +7,9 @@ Besides copying, the script injects the shared transport block: in every ``.md``
 the text between ``<!-- shared:transport -->`` and ``<!-- /shared:transport -->`` is replaced with
 ``plugin/references/transport.md``. A skill whose SKILL.md carries the marker also gets
 ``monolynx_transport.py`` and ``monolynx_op.py`` in ``scripts/`` (MON-232).
+
+The ``blog-post`` skill also gets ``references/bloki.md``: the ``## Block catalog`` section of the public
+guide ``src/monolynx/static/blog-authoring.md`` (MON-265), so the skill and the guide share one source.
 """
 
 from __future__ import annotations
@@ -21,8 +24,9 @@ SOURCE_DIR = ROOT / "plugin" / "skills"
 TARGET_DIR = ROOT / "src" / "monolynx" / "static" / "skills"
 TARGET_PREFIX = "monolynx-"
 SCRIPT_RESOURCES = {
-    "work": ("test_lock.py",),
-    "work-simple": ("test_lock.py",),
+    "work": ("test_lock.py", "toolchain_fields.py"),
+    "work-simple": ("test_lock.py", "toolchain_fields.py"),
+    "setup": ("toolchain_fields.py",),
     "next": ("sprint_run_state.py", "mr_queue_state.py"),
     "sprint-run": ("sprint_run_state.py", "sprint_run.sh", "sprint_run_tick.py", "sprint_run_backend.py"),
     "mr-queue": ("mr_queue_state.py",),
@@ -38,7 +42,9 @@ REFERENCE_RESOURCES = {
 WHOLE_FILE_RESOURCES = {
     "work-simple": (("work/review-rubric.md", "review-rubric.md"), ("work/lint-test.md", "lint-test.md"), ("work/commit-mr.md", "commit-mr.md")),
 }
-
+BLOG_GUIDE_PATH = ROOT / "src" / "monolynx" / "static" / "blog-authoring.md"
+BLOCK_CATALOG_HEADING = re.compile(r"^## Block catalog(?!\w)", re.MULTILINE)
+NEXT_H2 = re.compile(r"^## ", re.MULTILINE)
 
 TRANSPORT_OPEN = "<!-- shared:transport -->"
 TRANSPORT_CLOSE = "<!-- /shared:transport -->"
@@ -100,6 +106,18 @@ def build(skill_dir: Path) -> dict[str, str]:
     return {name: render(content, skill_dir.name, name == "SKILL.md") if name.endswith(".md") else content for name, content in files.items()}
 
 
+def block_catalog(guide: str) -> str:
+    """Wytnij sekcje `## Block catalog` przewodnika: od jej naglowka do nastepnego `## ` albo konca pliku."""
+    start = BLOCK_CATALOG_HEADING.search(guide)
+    if start is None:
+        raise ValueError(f"Missing '## Block catalog' section in {BLOG_GUIDE_PATH}")
+    end = NEXT_H2.search(guide, start.end())
+    section = guide[start.start() : end.start() if end else len(guide)]
+    if not section[start.end() - start.start() :].strip():
+        raise ValueError(f"Empty '## Block catalog' section in {BLOG_GUIDE_PATH}")
+    return section.rstrip() + "\n"
+
+
 def bundled_resources(name: str) -> dict[str, str]:
     resources = {}
     skill_md = SOURCE_DIR / name / "SKILL.md"
@@ -117,6 +135,8 @@ def bundled_resources(name: str) -> dict[str, str]:
         resources[f"references/{filename}"] = inject_transport(match.group().rstrip() + "\n")
     for source_rel, target_name in WHOLE_FILE_RESOURCES.get(name, ()):
         resources[target_name] = inject_transport((SOURCE_DIR / source_rel).read_text(encoding="utf-8"))
+    if name == "blog-post":
+        resources["references/bloki.md"] = block_catalog(BLOG_GUIDE_PATH.read_text(encoding="utf-8"))
     resources["references/runtime.md"] = (SOURCE_DIR.parent / "references" / "runtime.md").read_text(encoding="utf-8")
     return resources
 

@@ -23,7 +23,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from monolynx.config import settings as app_settings
 from monolynx.constants import (
@@ -62,6 +62,8 @@ from monolynx.models.work_plan import WorkPlanEntry
 from monolynx.schemas.pipelines import build_list_item, build_pipeline_response
 from monolynx.schemas.time_tracking import TimeTrackingEntryResponse, TimeTrackingFilter
 from monolynx.schemas.work_plan import WorkPlanEntryResponse
+from monolynx.services import blog as blog_service
+from monolynx.services import blog_lint as blog_lint_service
 from monolynx.services import graph as graph_service
 from monolynx.services import pipelines as pipelines_service
 from monolynx.services import projects as projects_service
@@ -123,6 +125,9 @@ from monolynx.services.wiki import (
 )
 from monolynx.services.wiki import (
     delete_wiki_page as svc_delete_wiki_page,
+)
+from monolynx.services.wiki import (
+    ensure_can_delete_page as svc_ensure_can_delete_wiki_page,
 )
 from monolynx.services.wiki import (
     get_backlinks as svc_get_wiki_backlinks,
@@ -237,6 +242,117 @@ async def _verify_token(raw_token: str) -> User:
     return user
 
 
+BLOG_WRITE_TOOLS = frozenset({"set_blog_post_meta", "publish_blog_post", "unpublish_blog_post"})
+
+
+def _strip_blog_write_tools(element: object) -> bool:
+    """Usun toole zapisu bloga z `result.tools` jednej odpowiedzi JSON-RPC; zwroc, czy cos usunieto."""
+    if not isinstance(element, dict):
+        return False
+    result = element.get("result")
+    if not isinstance(result, dict):
+        return False
+    tools = result.get("tools")
+    if not isinstance(tools, list):
+        return False
+    visible = [t for t in tools if not (isinstance(t, dict) and t.get("name") in BLOG_WRITE_TOOLS)]
+    if len(visible) == len(tools):
+        return False
+    result["tools"] = visible
+    return True
+
+
+def _hide_blog_write_tools(body: bytes) -> bytes:
+    """Usun toole zapisu bloga z odpowiedzi JSON-RPC `tools/list` (takze z kazdego elementu odpowiedzi wsadowej); reszte zwroc bez zmian."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return body
+    elements = data if isinstance(data, list) else [data]
+    changed = [_strip_blog_write_tools(element) for element in elements]
+    if not any(changed):
+        return body
+    return json.dumps(data).encode()
+
+
+# Podglad ciala zadania, z ktorego middleware czyta `method` JSON-RPC; wieksze cialo idzie dalej bez decyzji.
+_REQUEST_PREVIEW_LIMIT = 64 * 1024
+
+
+async def _preview_request(receive: Receive) -> tuple[bool, Receive]:
+    """Przeczytaj cialo zadania (do limitu) i zwroc: czy odpowiedz trzeba filtrowac, oraz `receive` odtwarzajacy cialo.
+
+    Filtrujemy, gdy zadanie zawiera `tools/list` albo nie da sie ustalic metody (ciało ponad limit,
+    niepoprawny JSON, brak ciała) - bezpieczny domyslny, bo ukrycie tooli ma dzialac bez wyjatkow.
+    """
+    messages: list[Message] = []
+    body = b""
+    complete = False
+    while True:
+        message = await receive()
+        messages.append(message)
+        if message["type"] != "http.request":
+            break
+        body += message.get("body", b"")
+        if len(body) > _REQUEST_PREVIEW_LIMIT:
+            break
+        if not message.get("more_body", False):
+            complete = True
+            break
+
+    queue = iter(messages)
+
+    async def replay() -> Message:
+        # Po odtworzeniu przeczytanych komunikatow reszte ciala (i disconnect) daje oryginalny `receive`
+        return next(queue, None) or await receive()
+
+    return (_should_filter(body) if complete else True), replay
+
+
+def _should_filter(body: bytes) -> bool:
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return True
+    if isinstance(data, dict):
+        return data.get("method") == "tools/list"
+    if isinstance(data, list):
+        return any(isinstance(item, dict) and item.get("method") == "tools/list" for item in data)
+    return True
+
+
+def _filtering_send(send: Send) -> Send:
+    """Opakuj `send`: buforuj odpowiedz JSON, przepusc cialo przez _hide_blog_write_tools, popraw content-length.
+
+    Odpowiedzi innego typu niz application/json (np. strumien SSE) leca dalej bez buforowania.
+    """
+    start: Message | None = None
+    chunks: list[bytes] = []
+
+    async def wrapped(message: Message) -> None:
+        nonlocal start
+        if message["type"] == "http.response.start":
+            content_type = dict((k.lower(), v) for k, v in message.get("headers", [])).get(b"content-type", b"")
+            if content_type.startswith(b"application/json"):
+                start = message
+            else:
+                await send(message)
+            return
+        if start is None or message["type"] != "http.response.body":
+            await send(message)
+            return
+        chunks.append(message.get("body", b""))
+        if message.get("more_body", False):
+            return
+        body = _hide_blog_write_tools(b"".join(chunks))
+        headers = [(k, v) for k, v in start["headers"] if k.lower() != b"content-length"]
+        headers.append((b"content-length", str(len(body)).encode()))
+        await send({**start, "headers": headers})
+        await send({"type": "http.response.body", "body": body})
+
+    return wrapped
+
+
 class _MCPBearerAuthMiddleware:
     """Lekki ASGI middleware wymuszajacy Bearer auth na calym mountcie /mcp.
 
@@ -249,6 +365,11 @@ class _MCPBearerAuthMiddleware:
 
     Middleware reuzywac _verify_token (OAuth + legacy osk_*) bez zmian w
     116 toolach. Per-tool _auth(ctx) pozostaje jako defense-in-depth.
+
+    MON-270: konto bez uprawnienia `blog:write` (nie superuser, bez `can_edit_blog`) dostaje na
+    zadanie `tools/list` odpowiedz JSON przepuszczona przez _hide_blog_write_tools, wiec nie widzi
+    tooli zapisu bloga na liscie narzedzi (MON-271: inne zadania, np. `tools/call`, nie sa buforowane).
+    To ukrycie, nie zabezpieczenie: odmowe przy wywolaniu daje serwis bloga.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -274,12 +395,17 @@ class _MCPBearerAuthMiddleware:
             return
 
         try:
-            await _verify_token(raw_token)
+            user = await _verify_token(raw_token)
         except Exception:
             await _send_401(send, scope)
             return
 
-        await self.app(scope, receive, send)
+        if user.is_superuser or user.can_edit_blog:
+            await self.app(scope, receive, send)
+            return
+
+        filter_response, replay = await _preview_request(receive)
+        await self.app(scope, replay, _filtering_send(send) if filter_response else send)
 
 
 def _resource_metadata_url(scope: Scope) -> str:
@@ -2762,7 +2888,8 @@ async def create_wiki_page(
 
     parent_id -- UUID strony nadrzednej (opcjonalnie, dla podstron).
     is_public -- czy strona ma byc dostepna publicznie pod /blog/{slug} (bez logowania).
-    Wymaga wiki:write (rowniez dla is_public=True, jak w dashboardzie).
+    Wymaga wiki:write; is_public=True wymaga dodatkowo uprawnienia konta do edycji bloga (blog:write,
+    nadawanego przez superusera), inaczej "Brak uprawnienia blog:write" i nic nie jest zapisywane.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -2809,7 +2936,9 @@ async def update_wiki_page(
 
     Podaj tylko pola do zmiany. is_public=True/False publikuje/wycofuje strone z /blog/{slug};
     None (domyslnie) nie zmienia flagi.
-    Wymaga wiki:write (rowniez dla zmiany is_public, jak w dashboardzie).
+    Wymaga wiki:write; zmiana is_public (publikacja i cofniecie) oraz zmiana tytulu albo tresci strony
+    publicznej wymagaja dodatkowo uprawnienia konta do edycji bloga (blog:write, nadawanego przez
+    superusera), inaczej "Brak uprawnienia blog:write". Zmiana samej pozycji publicznej strony go nie wymaga.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -2876,7 +3005,7 @@ async def delete_wiki_page(
     project_slug: str,
     page_id: str,
 ) -> dict[str, Any]:
-    """Usun strone wiki wraz z podstronami. Wymaga wiki:delete."""
+    """Usun strone wiki wraz z podstronami. Wymaga wiki:delete (dla strony publicznej lub z publicznym potomkiem tez blog:write)."""
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
@@ -2887,10 +3016,205 @@ async def delete_wiki_page(
         if page is None:
             raise ValueError("Strona wiki nie istnieje")
 
+        await svc_ensure_can_delete_wiki_page(db, user.id, page)
+
         title = page.title
         await svc_delete_wiki_page(page, db)
 
     return {"message": f"Strona wiki '{title}' usunieta"}
+
+
+# --- Blog (metadane wpisow bloga na stronach wiki, MON-261) ---
+
+
+def _blog_view_dict(view: blog_service.BlogPostView) -> dict[str, Any]:
+    return {
+        "page_id": str(view.page_id),
+        "title": view.title,
+        "slug": view.slug,
+        "previous_slugs": view.previous_slugs,
+        "description": view.description,
+        "published_at": view.published_at.isoformat() if view.published_at else None,
+        "author_name": view.author_name,
+        "tags": view.tags,
+        "lang": view.lang,
+        "translation_of_id": str(view.translation_of_id) if view.translation_of_id else None,
+        "cover_attachment_id": str(view.cover_attachment_id) if view.cover_attachment_id else None,
+        "last_verified_at": view.last_verified_at.isoformat() if view.last_verified_at else None,
+        "is_public": view.is_public,
+        "public_url": view.public_url,
+        "markdown_url": view.markdown_url,
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def list_blog_posts(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """Lista wpisow bloga projektu (strony wiki z metadanymi bloga), takze szkice.
+
+    status -- published (tylko publiczne) lub draft (tylko niepubliczne); brak = wszystkie.
+    public_url i markdown_url sa wypelnione tylko dla wpisu publicznego. Wymaga wiki:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        posts = await blog_service.list_posts(db, user, project, status=status)
+
+    return [_blog_view_dict(p) for p in posts]
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_blog_post(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Wpis bloga z metadanymi i pelna trescia markdown. Wymaga wiki:read."""
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "read")
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
+        detail = await blog_service.get_post(db, user, project, parsed_page_id, content_fn=get_page_content)
+
+    return {**_blog_view_dict(detail), "content": detail.content}
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def lint_blog_post(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Lint wpisu bloga pod AI: lista problemow (linia, poziom, regula, komunikat) i ocena 0-100.
+
+    Sprawdza opis, blok TLDR, teksty alternatywne obrazkow, bloki graficzne, naglowki, linki,
+    data weryfikacji i tlumaczenie. Pole `table` to ta sama lista jako tabela markdown z linia
+    oceny. Czysty odczyt, nic nie zapisuje. Wymaga wiki:read.
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "read")
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
+        result = await blog_lint_service.lint_post_by_id(db, user, project, parsed_page_id, content_fn=get_page_content)
+
+    return {**blog_lint_service.lint_result_dict(parsed_page_id, result), "table": blog_lint_service.format_lint_table(result)}
+
+
+@mcp.tool(annotations=WRITE)
+async def set_blog_post_meta(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+    slug: str | None = None,
+    description: str | None = None,
+    author_name: str | None = None,
+    tags: list[str] | None = None,
+    lang: str | None = None,
+    translation_of_id: str | None = None,
+    cover_attachment_id: str | None = None,
+    last_verified_at: str | None = None,
+) -> dict[str, Any]:
+    """Ustaw metadane wpisu bloga. Parametr nie podany (None) = bez zmian.
+
+    tags -- lista tagow (male litery, cyfry, myslniki); pusta lista czyści tagi.
+    translation_of_id, cover_attachment_id (UUID) i last_verified_at (YYYY-MM-DD) --
+    pusty tekst czysci pole. lang: pl lub en. Zmiana sluga zachowuje stary adres jako
+    przekierowanie. Nie zmienia is_public ani daty publikacji. Wymaga wiki:write i uprawnienia konta do edycji bloga (blog:write).
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "write")
+
+        fields: dict[str, Any] = {
+            name: value
+            for name, value in (("slug", slug), ("description", description), ("author_name", author_name), ("tags", tags), ("lang", lang))
+            if value is not None
+        }
+        for name, raw in (("translation_of_id", translation_of_id), ("cover_attachment_id", cover_attachment_id)):
+            if raw is None:
+                continue
+            try:
+                fields[name] = uuid.UUID(raw) if raw else None
+            except ValueError:
+                raise ValueError(f"Nieprawidłowy {name} (oczekiwany UUID)") from None
+        if last_verified_at is not None:
+            try:
+                fields["last_verified_at"] = date.fromisoformat(last_verified_at) if last_verified_at else None
+            except ValueError:
+                raise ValueError("Nieprawidłowy last_verified_at (oczekiwany format YYYY-MM-DD)") from None
+
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
+
+        post = await blog_service.set_post_meta(db, user, project, parsed_page_id, **fields)
+        page = await db.get(WikiPage, post.page_id)
+        if page is None:
+            raise ValueError("Strona wiki nie istnieje")
+        return _blog_view_dict(blog_service.build_post_view(post, page))
+
+
+@mcp.tool(annotations=WRITE)
+async def publish_blog_post(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Opublikuj wpis bloga: lint, a potem strona staje sie publiczna (adres /blog/<slug> i .md).
+
+    Przy bledach lintu publikacja jest odrzucana z lista regul, a strona zostaje prywatna;
+    force=true publikuje mimo bledow. Ponowna publikacja nie zmienia daty ani adresu.
+    Wynik: widok wpisu (public_url, markdown_url) i pole `lint` z ocena. Wymaga wiki:write i uprawnienia konta do edycji bloga (blog:write).
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "write")
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
+        published = await blog_service.publish_post(db, user, project, parsed_page_id, force=force, content_fn=get_page_content)
+
+    return {**_blog_view_dict(published.view), "lint": blog_lint_service.lint_result_dict(parsed_page_id, published.lint)}
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def unpublish_blog_post(
+    ctx: Context[Any, Any],
+    project_slug: str,
+    page_id: str,
+) -> dict[str, Any]:
+    """Cofnij publikacje wpisu bloga: adres /blog/<slug> i jego .md zwracaja 404.
+
+    Data publikacji i slug zostaja, wiec ponowna publikacja przywraca ten sam adres.
+    Idempotentne dla wpisu juz prywatnego. Wymaga wiki:write i uprawnienia konta do edycji bloga (blog:write).
+    """
+    user, project = await _get_user_and_project(ctx, project_slug)
+
+    async with async_session_factory() as db:
+        await _require(db, user, project, "wiki", "write")
+        try:
+            parsed_page_id = uuid.UUID(page_id)
+        except ValueError:
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
+        view = await blog_service.unpublish_post(db, user, project, parsed_page_id)
+
+    return _blog_view_dict(view)
 
 
 # --- Wiki LLM (gating: project.wiki_llm_enabled) ---

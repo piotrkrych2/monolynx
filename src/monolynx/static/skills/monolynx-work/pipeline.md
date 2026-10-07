@@ -190,7 +190,12 @@ mcp__monolynx__update_pipeline_job(project_slug="<PROJECT-SLUG>", job_id="<lint_
 
 Status:
 - `success` - wszystko, co projekt MA (lint i/lub testy), przeszlo na zielono;
-  projekt z samym lintem bez testow -> status wg wyniku lintu
+  projekt z samym lintem bez testow -> status wg wyniku lintu. W trybie
+  `pełny przebieg: ci` (pole strony `toolchain`, `lint-test.md`) `success`
+  znaczy: lint zielony i testy ZAWEZONE do zmienionego obszaru zielone (albo
+  brak pasujacych testow). Pelnego zestawu ten job wtedy nie potwierdza -
+  weryfikuje go pipeline merge requesta, a w logu joba zapisujesz tryb i liste
+  uruchomionych sciezek
 - `failed` - cokolwiek czerwone (to SKILL w KROK 6.5 blokuje `in_review` -
   sam pipeline niczego nie blokuje, tylko raportuje)
 - `skipped` - brak strony wiki `toolchain`, projekt nie ma ANI lintu ANI testow,

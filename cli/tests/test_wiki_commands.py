@@ -614,6 +614,18 @@ def test_delete_forbidden_exits_3(runner, monkeypatch, mock_transport):
     assert result.exit_code == 3
 
 
+def test_mon272_delete_published_post_without_blog_permission_exits_3_and_shows_the_reason(runner, monkeypatch, mock_transport):
+    """MON-272 pkt 6 (charakteryzujący, zielony od razu): 403 z blog:write daje kod 3 i powód odmowy w komunikacie."""
+    _set_tty(monkeypatch, False)
+    requests = _patch_client(monkeypatch, mock_transport, _problem(403, "Brak uprawnien", "Brak uprawnienia blog:write"))
+
+    result = _run(runner, "delete", PAGE_ID, "--yes")
+
+    assert result.exit_code == 3
+    assert [(r.method, r.url.path) for r in requests] == [("DELETE", f"{BASE}/pages/{PAGE_ID}")]
+    assert "Brak uprawnienia blog:write" in result.output
+
+
 # ---------------------------------------------------------------------------
 # wiki search
 # ---------------------------------------------------------------------------

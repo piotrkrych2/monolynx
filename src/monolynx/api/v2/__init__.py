@@ -4,7 +4,7 @@ Fundament pod endpointy domenowe Projects/Scrum/Wiki (MON-142). `router`
 (prefix /api/v2) niesie placeholder korzenia (z i bez koncowego slasha),
 wlasna dokumentacje OpenAPI/Swagger, dolaczony router `GET /me` (MON-125,
 `api/v2/me.py`), routery domenowe (w tym odczyt grafu Polaczen, MON-248,
-`api/v2/graph.py`) i catch-all 404; `register_api_v2(app)` rejestruje
+`api/v2/graph.py`, metadane wpisow bloga, MON-261, `api/v2/blog.py`) i catch-all 404; `register_api_v2(app)` rejestruje
 middleware X-Request-Id oraz handlery bledow problem+json (RFC 7807) na
 GLOWNEJ aplikacji FastAPI, ograniczone do sciezek /api/v2 (granica
 sprawdzana przez `_is_v2_path`, nie goly `str.startswith`, zeby
@@ -30,6 +30,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from monolynx.api.v2.blog import router as blog_router
 from monolynx.api.v2.errors import ApiV2Error
 from monolynx.api.v2.graph import router as graph_router
 from monolynx.api.v2.me import router as me_router
@@ -88,6 +89,7 @@ router.include_router(tickets_router)
 router.include_router(sprints_router)
 router.include_router(wiki_router)
 router.include_router(graph_router)
+router.include_router(blog_router)
 
 
 # Catch-all MUSI byc rejestrowany jako OSTATNI w tym pliku: Router Starlette

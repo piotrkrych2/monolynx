@@ -55,6 +55,11 @@ clean-code:
     - docker run --rm "$CI_REGISTRY_IMAGE:dev" mypy src/
     - docker rm -f "$TEST_DB" "$TEST_RUNNER" 2>/dev/null || true
     - docker network rm "$TEST_NET" 2>/dev/null || true
+    # Sieci test-net-* po jobach przerwanych przed sprzataniem wyczerpuja pule
+    # adresow Dockera ("could not find an available, non-overlapping IPv4
+    # address pool"). Sieci z podpietym kontenerem Docker nie usunie, wiec
+    # trwajacy job nie ucierpi.
+    - docker network ls --filter "name=test-net-" -q | xargs -r docker network rm 2>/dev/null || true
     - docker network create "$TEST_NET"
     - docker run -d --name "$TEST_DB" --network "$TEST_NET" --network-alias db
         -e POSTGRES_USER=sentry
@@ -62,15 +67,22 @@ clean-code:
         pgvector/pgvector:pg16
     - sleep 5
     - TEST_EXIT=0
+    # Obraz dev nie zawiera alembic/, a testy migracji laduja plik migracji po
+    # sciezce. Montowanie tylko do odczytu: root w kontenerze nie zostawi
+    # __pycache__ w build dirze, na ktorym padlby `git clean` runnera.
     - docker run --name "$TEST_RUNNER" --network "$TEST_NET"
+        -v "$CI_PROJECT_DIR/alembic:/app/alembic:ro"
         -e DATABASE_URL="postgresql+asyncpg://sentry:sentry_ci@db:5432/open_sentry"
         "$CI_REGISTRY_IMAGE:dev"
         pytest tests/ --cov=src/monolynx --cov-report=term --cov-report=xml:coverage.xml
         || TEST_EXIT=$?
     - docker cp "$TEST_RUNNER:/app/coverage.xml" coverage.xml || true
+    - exit $TEST_EXIT
+  # after_script, nie koniec script: wykonuje sie takze po bledzie i po
+  # anulowaniu joba, wiec kontenery i siec nie zostaja na runnerze.
+  after_script:
     - docker rm -f "$TEST_DB" "$TEST_RUNNER" 2>/dev/null || true
     - docker network rm "$TEST_NET" 2>/dev/null || true
-    - exit $TEST_EXIT
   coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
     reports:
@@ -139,6 +151,19 @@ trivy-scan:
 
 # Runner jest shell executorem (`image:` jest ignorowane, na hoście nie ma apk),
 # więc dockle startuje jako kontener z hosta i czyta obraz przez socket dockera.
+# Dwa wyjątki, oba sprawdzone na obrazie runtime (dockle 0.4.14 i 0.4.15 dają
+# ten sam wynik, więc wersji nie podbijamy):
+# - `-af settings.py` (CIS-DI-0010): fałszywy alarm po nazwie pliku, w obrazie
+#   to monolynx/dashboard/settings.py (router FastAPI) i mcp/server/auth/settings.py
+#   (model pydantic biblioteki mcp), żaden nie zawiera sekretów. Dopasowanie jest
+#   po nazwie bazowej, więc obejmuje każdy `settings.py`; nowy plik o tej nazwie
+#   trzeba sprawdzić ręcznie. Sam check CIS-DI-0010 zostaje włączony.
+# - `-i DKL-DI-0005`: zgłaszana jest warstwa obrazu bazowego python:3.12-slim
+#   (`apt-get dist-clean`, którego dockle nie rozpoznaje), a własne `RUN` w
+#   Dockerfile czyszczą `/var/lib/apt/lists`. Check jest wyłączony dla całego
+#   obrazu; do zdjęcia, gdy dockle zacznie rozpoznawać `dist-clean`.
+# `.gitlab-ci.yml` w `changes`, bo zmiana wyjątków ma uruchamiać skan, inaczej
+# błąd w konfiguracji wychodzi dopiero przy następnej zmianie Dockerfile.
 dockle-scan:
   stage: test
   extends: .docker-dind
@@ -148,11 +173,12 @@ dockle-scan:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
     - docker pull "$CI_REGISTRY_IMAGE:test"
-    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock goodwithtech/dockle:v${DOCKLE_VERSION} --exit-code 1 "$CI_REGISTRY_IMAGE:test"
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock goodwithtech/dockle:v${DOCKLE_VERSION} --exit-code 1 -af settings.py -i DKL-DI-0005 "$CI_REGISTRY_IMAGE:test"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - Dockerfile
+        - .gitlab-ci.yml
 
 # CLI jest samodzielna paczka (requires-python >=3.10), wiec sprawdzamy ja na
 # calym zakresie wersji, bez bazy. Runner jest shell executorem (`image:` jest

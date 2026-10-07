@@ -144,6 +144,53 @@ mcp__monolynx__get_wiki_page(project_slug="<PROJECT_SLUG>", page_id="<id>")
     testów w ## Worktree)`. Skill naprawczy: `/monolynx:project-toolchain`.
     Gdy brakuje i nagłówka, i pola, wymień oba w jednym nawiasie.
 
+**Pole `pełny przebieg` (informacja, nie stan do naprawienia).** Gdy strona
+została znaleziona, odczytaj w sekcji `## Test` (od tego nagłówka do
+następnego nagłówka `## `) linię z etykietą `pełny przebieg:` (zapis
+`pelny przebieg:` liczy się tak samo, wielkość liter etykiety nie ma
+znaczenia). To samo pole w innej sekcji pomijasz. Wartość pola mówi, gdzie
+`work` i `work-simple` uruchamiają pełny zestaw testów: `lokalnie` albo `ci`
+(lokalnie tylko testy zmienionego obszaru, pełny zestaw w pipeline merge
+requesta).
+
+- **Brak linii** - to stan **OK**, nie BRAK: obowiązuje wartość domyślna.
+  Raportujesz `pełny przebieg: lokalnie (domyślna)`. Skryptu nie wołasz
+  i niczego nie proponujesz do naprawy - strona bez tego pola działa jak
+  dotąd.
+- **Linia jest, a wartość składa się wyłącznie z liter** - normalizuje ją
+  skrypt z katalogu tego skilla (`<katalog skilla>` wpisany literalnie, jak
+  przy skryptach transportu):
+
+  ```bash
+  python3 <katalog skilla>/scripts/toolchain_fields.py --value <wartość pola>
+  ```
+
+  Ostatnia linia stdout to jeden obiekt JSON z kluczami `pelny_przebieg`
+  (`lokalnie` albo `ci`), `zrodlo` (`pole`, `domyslna`, `nieznana`)
+  i `ostrzezenia` (lista napisów). Kod 0 i `zrodlo` równe `pole` -
+  raportujesz `pełny przebieg: <pelny_przebieg>`. Kod 0 i `zrodlo` równe
+  `nieznana` - raportujesz `pełny przebieg: lokalnie` z **ostrzeżeniem**
+  o treści z `ostrzezenia` (ta sama treść idzie na stderr jako
+  `toolchain_fields: ostrzezenie: <treść>`).
+- **Linia jest, a wartość jest pusta albo zawiera cokolwiek poza literami**
+  (spacje, cyfry, interpunkcja) - taka wartość nie może być ani `lokalnie`,
+  ani `ci`, więc skryptu nie wołasz: raportujesz `pełny przebieg: lokalnie`
+  z **ostrzeżeniem** `nieznana wartość pola: <wartość>`. `setup` nie zapisuje
+  plików, dlatego nie używa tu opcji `--file` skryptu.
+- **Kod skryptu inny niż 0** (64 to błąd użycia, z komunikatem
+  `toolchain_fields: ...` na stderr i pustym stdout; kod 2 dotyczy tylko
+  opcji `--file`) albo skryptu nie da się uruchomić - raportujesz
+  `pełny przebieg: nie sprawdzono (<komunikat>)`. Stan punktu 2 się od tego
+  nie zmienia.
+
+Ostrzeżenie nie zmienia stanu punktu 2 na BRAK: `work` i `work-simple`
+traktują nieznaną wartość jak `lokalnie`, więc projekt działa. Wskaż przy nim
+`/monolynx:project-toolchain` jako sposób poprawienia pola, bez dodawania
+opcji w KROK 8. Przy wartości `ci` dopisz jedną linię: tryb wymaga
+`MONOLYNX_AUTOCOMMIT`, `MONOLYNX_AUTOPUSH` i `MONOLYNX_AUTOMR` ustawionych na
+`true` oraz działającego `glab`; stan flag pokazuje punkt 6, a `setup` ich nie
+ustawia.
+
 Błąd operacji (kod 2 wrappera albo błąd wywołania MCP, np. projekt bez
 członkostwa) - stan **BŁĄD: <treść błędu>**, bez skilla naprawczego i bez opcji w KROK 8 (proponowanie zapisu
 strony po błędzie odczytu grozi duplikatem). Reszta checklisty biegnie dalej.
@@ -423,7 +470,7 @@ Wypisz dokładnie siedem wierszy:
 | Punkt | Stan | Skill naprawczy |
 |---|---|---|
 | 1. Slug projektu | OK (`<slug>`, źródło: ...) / BRAK | - |
-| 2. Strona wiki `toolchain` | OK / BRAK (brakuje: <nagłówki i/albo pole `izolacja testów`>) / nie sprawdzono / BŁĄD: <treść> | `/monolynx:project-toolchain` |
+| 2. Strona wiki `toolchain` | OK / BRAK (brakuje: <nagłówki i/albo pole `izolacja testów`>) / nie sprawdzono / BŁĄD: <treść>; przy znalezionej stronie dopisek `pełny przebieg: lokalnie (domyślna)` / `lokalnie` / `ci` / `lokalnie, ostrzeżenie: <treść>` | `/monolynx:project-toolchain` |
 | 3. LLM Wiki (`wiki_llm_enabled`) | OK / BRAK / nie sprawdzono / BŁĄD: <treść> | `/monolynx:wiki-init` |
 | 4. Graf zależności w CI | OK / BRAK | `/monolynx:create-graph-ci-script` |
 | 5. Testy mutacyjne w CI | OK / BRAK / BRAK (bez opcji w KROK 8) | `/monolynx:create-mutation-ci-script` |
@@ -434,6 +481,8 @@ Zaraz pod tabelą, przed wykazem flag: uwagi z KROK 4 (alternatywa
 `/monolynx:graph-sync` przy stanie BRAK) i z KROK 5 (wskazanie narzędzia
 mutacyjnego przez `/monolynx:project-toolchain` przy stanie BRAK bez opcji w
 KROK 8) - jedna uwaga na punkt, tylko gdy dotyczy, w kolejności punktów.
+Przy punkcie 2 dopisz tu ostrzeżenie o nieznanej wartości pola
+`pełny przebieg` albo linię o wymaganiach trybu `ci` (KROK 2), gdy dotyczy.
 Przy punkcie 7 w stanie BRAK dopisz jedną linię na brakujący podpunkt
 z komendą z KROK 9 (instalacja, logowanie, aktualizacja) albo z listą
 brakujących wzorców allowlisty - także w trybie sesji w tle, gdzie na tym

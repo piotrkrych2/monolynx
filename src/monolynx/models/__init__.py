@@ -2,6 +2,7 @@
 
 from monolynx.models.activity_log import ActivityLog
 from monolynx.models.base import Base
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.event import Event
 from monolynx.models.heartbeat import Heartbeat
 from monolynx.models.issue import Issue
@@ -41,6 +42,7 @@ from monolynx.models.work_plan import WorkPlanEntry
 __all__ = [
     "ActivityLog",
     "Base",
+    "BlogPost",
     "Event",
     "Heartbeat",
     "Issue",

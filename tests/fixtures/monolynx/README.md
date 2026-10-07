@@ -54,12 +54,23 @@ Nazwa pliku: `<komenda z myślnikami>-help.source.txt`. Nagłówek meta i linia 
 | `graph-query-help.source.txt` | `monolynx graph query --help` | `--node-type`, `--search`, `--limit` |
 | `graph-path-help.source.txt` | `monolynx graph path --help` | wymagane `--source-id` i `--target-id` |
 | `graph-stats-help.source.txt` | `monolynx graph stats --help` | bez opcji |
+| `root-help.source.txt` | `monolynx --help` | lista grup z grupą `blog` z MON-261 (wydanie 0.1.0 jej nie ma); przechwycone ponownie w MON-263, bo opis grupy `blog` wymienia publikację i jej cofnięcie |
+| `blog-help.source.txt` | `monolynx blog --help` | grupa `blog` z MON-261: komendy `list`, `get`, `meta`, `lint` (MON-262), `publish` i `unpublish` (MON-263); przechwycone ponownie w MON-263 |
+| `blog-list-help.source.txt` | `monolynx blog list --help` | `--status` |
+| `blog-get-help.source.txt` | `monolynx blog get --help` | argument `page_id` |
+| `blog-lint-help.source.txt` | `monolynx blog lint --help` | argument `page_id`; `blog lint` z MON-262, kod wyjścia 1 przy błędzie lintu (przechwycone z drzewa źródeł MON-262) |
+| `blog-meta-help.source.txt` | `monolynx blog meta --help` | argument `page_id`; `--slug`, `--description`, `--author`, `--tag`, `--no-tags`, `--lang`, `--translation-of`, `--cover`, `--verified` |
+| `blog-publish-help.source.txt` | `monolynx blog publish --help` | argument `page_id`; przełącznik `--force` (bez wartości); `blog publish` z MON-263, kod wyjścia 1 przy odmowie przez lint |
+| `blog-unpublish-help.source.txt` | `monolynx blog unpublish --help` | argument `page_id`, bez opcji; `blog unpublish` z MON-263 |
 
 Pliki `graph-*` mają w nagłówku `# tool_version: monolynx 0.2.0 (drzewo zrodel, MON-248, niewydane)`; komenda
 przechwycenia jest ta sama, z `monolynx graph <komenda> --help` (albo `monolynx graph --help`) na końcu.
 
+Pliki `blog-list-help`, `blog-get-help` i `blog-meta-help` mają w nagłówku `# tool_version: monolynx 0.3.0 (drzewo zrodel, MON-261, niewydane)`, `blog-lint-help` ten sam z `MON-262`, a `blog-publish-help`, `blog-unpublish-help`, `blog-help` i `root-help.source.txt` z `MON-263` (dwa ostatnie przechwycone ponownie po dodaniu komend publikacji);
+komenda przechwycenia jest ta sama, z `monolynx blog <komenda> --help`, `monolynx blog --help` albo `monolynx --help` na końcu.
+
 Pierwszeństwo: `fixture_text(name)` w `tests/unit/test_monolynx_op.py` bierze `<name>-help.source.txt`, gdy taki plik
-istnieje, a w przeciwnym razie `<name>-help.0.1.0.txt`. Pliki `ticket-list-help.0.1.0.txt`, `ticket-create-help.0.1.0.txt`
+istnieje, a w przeciwnym razie `<name>-help.0.1.0.txt`; dla `root` oznacza to `root-help.source.txt` przed `root-help.0.1.0.txt`. Pliki `ticket-list-help.0.1.0.txt`, `ticket-create-help.0.1.0.txt`
 i `ticket-update-help.0.1.0.txt` zostają bez zmian jako zapis wydania 0.1.0. Plik `.source.txt` zmieniasz tylko przez
 ponowne przechwycenie tą komendą, nigdy ręcznie.
 

@@ -1,7 +1,7 @@
 """Mapa kontraktu MCP <-> API v2 (MON-131).
 
-`TOOL_TO_ENDPOINT` wiąże 45 narzędzi MCP z endpointami `/api/v2`, które wystawiają
-tę samą operację (Projects, Scrum, Wiki oraz 5 odczytów grafu Połączeń, MON-248).
+`TOOL_TO_ENDPOINT` wiąże 49 narzędzi MCP z endpointami `/api/v2`, które wystawiają
+tę samą operację (Projects, Scrum, Wiki, 5 odczytów grafu Połączeń, MON-248, oraz 4 narzędzia Bloga, MON-261 i MON-262).
 `INTENTIONALLY_UNMAPPED` opisuje powód,
 dla którego pozostałe narzędzia nie mają odpowiednika w v2. Każde narzędzie
 zarejestrowane w `mcp_server.mcp` musi wystąpić dokładnie w jednym z tych słowników;
@@ -43,6 +43,15 @@ _SPRINT = "/api/v2/projects/{project_slug}/sprints/{sprint_id}"
 _WIKI_PAGES = "/api/v2/projects/{project_slug}/wiki/pages"
 _WIKI_PAGE = "/api/v2/projects/{project_slug}/wiki/pages/{page_id}"
 _GRAPH = "/api/v2/projects/{project_slug}/graph"
+_BLOG_POSTS = "/api/v2/projects/{project_slug}/blog/posts"
+_BLOG_POST = "/api/v2/projects/{project_slug}/blog/posts/{page_id}"
+_BLOG_LINT = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/lint"
+_BLOG_PUBLISH = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/publish"
+_BLOG_UNPUBLISH = "/api/v2/projects/{project_slug}/blog/posts/{page_id}/unpublish"
+_BLOG_WRITE_NOTE = (
+    "Zapis wymaga uprawnienia blog:write na koncie (MON-270): MCP ukrywa to narzędzie na liście dla konta bez uprawnienia "
+    "(wywołanie wprost zwraca Brak uprawnienia blog:write), v2 zwraca 403 problem+json z tym samym tekstem w detail."
+)
 
 
 TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
@@ -290,6 +299,39 @@ TOOL_TO_ENDPOINT: dict[str, ToolEndpointSpec] = {
         is_write=True,
         known_differences="MCP zwraca wiki_llm_enabled i message; v2 zwraca tylko wiki_llm_enabled.",
     ),
+    # --- Blog (6) ---
+    "list_blog_posts": ToolEndpointSpec(
+        "GET",
+        _BLOG_POSTS,
+        is_write=False,
+        known_differences="MCP zwraca goły JSON array wpisów; v2 owija go w kopertę paginacji (items, page, per_page, total, total_pages).",
+    ),
+    "get_blog_post": ToolEndpointSpec("GET", _BLOG_POST, is_write=False),
+    "lint_blog_post": ToolEndpointSpec(
+        "GET",
+        _BLOG_LINT,
+        is_write=False,
+        known_differences="MCP dokłada do wyniku pole table (tabela problemów z linią oceny); v2 zwraca tylko score, liczniki i issues.",
+    ),
+    "set_blog_post_meta": ToolEndpointSpec(
+        "PATCH",
+        _BLOG_POST,
+        is_write=True,
+        known_differences=(
+            "MCP: pominięty parametr (None) = bez zmian, pusty tekst w translation_of_id, cover_attachment_id i last_verified_at "
+            "czyści pole; v2: pole nieobecne w body = bez zmian, null czyści pole. " + _BLOG_WRITE_NOTE
+        ),
+    ),
+    "publish_blog_post": ToolEndpointSpec(
+        "POST",
+        _BLOG_PUBLISH,
+        is_write=True,
+        known_differences=(
+            "force to parametr MCP, a w v2 opcjonalne pole body JSON (brak body = false); odmowa przy błędach lintu bez force "
+            "to ValueError z tekstem w MCP i 422 problem+json w v2 (ten sam komunikat w detail). " + _BLOG_WRITE_NOTE
+        ),
+    ),
+    "unpublish_blog_post": ToolEndpointSpec("POST", _BLOG_UNPUBLISH, is_write=True, known_differences=_BLOG_WRITE_NOTE),
     # --- Graph (5) ---
     "list_graph_nodes": ToolEndpointSpec(
         "GET",

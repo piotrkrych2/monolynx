@@ -4,8 +4,10 @@
 Routery cienkie jak toole MCP (`mcp_server.py`, sekcja "--- Wiki ---") -- zadnej
 logiki biznesowej tutaj. Uprawnienia roli (MON-241): odczyty (lista, szczegoly, config)
 sprawdza serwis (`wiki:read`), a router jawnie `require_permission` dla funkcji serwisu
-bez uzytkownika: create/update strony `wiki:write` (pokrywa tez `is_public`), delete
-`wiki:delete`, search `wiki:read`, `set_wiki_config` `settings:write`. Check idzie przed
+bez uzytkownika: create/update strony `wiki:write` (`is_public` wymaga dodatkowo uprawnienia konta `blog:write`,
+MON-270: serwis rzuca `ValueError`, `service_error` daje 403), delete
+`wiki:delete` (strona publiczna albo z publicznym potomkiem wymaga tez `blog:write`, MON-272),
+search `wiki:read`, `set_wiki_config` `settings:write`. Check idzie przed
 lookupem strony, wiec rola bez uprawnienia dostaje 403, nie 404.
 `get_api_user_and_project` sprawdza tylko czlonkostwo."""
 
@@ -142,6 +144,10 @@ async def delete_wiki_page(
     user, project = user_and_project
     await require_permission(db, user, project, "wiki", "delete")
     page = await _get_page_or_404(db, project, page_id)
+    try:
+        await wiki_service.ensure_can_delete_page(db, user.id, page)
+    except ValueError as exc:
+        raise service_error(exc) from exc
     await wiki_service.delete_wiki_page(page, db)
     return Response(status_code=204)
 

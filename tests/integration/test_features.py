@@ -10,6 +10,7 @@ from monolynx.features import (
     get_feature_content,
 )
 from monolynx.main import _LANDING_I18N
+from monolynx.mcp_server import mcp
 
 ALL_SLUGS = list(_FEATURES.keys())
 
@@ -67,8 +68,14 @@ ALLOWED_CLI_COMMANDS = {
     "monolynx graph query",
     "monolynx graph path",
     "monolynx graph stats",
+    "monolynx blog list",
+    "monolynx blog get",
+    "monolynx blog meta",
+    "monolynx blog lint",
+    "monolynx blog publish",
+    "monolynx blog unpublish",
 }
-REQUIRED_CLI_GROUPS = {"project", "member", "ticket", "sprint", "wiki", "graph"}
+REQUIRED_CLI_GROUPS = {"project", "member", "ticket", "sprint", "wiki", "graph", "blog"}
 GRAPH_CLI_COMMANDS = {
     "monolynx graph nodes",
     "monolynx graph node",
@@ -76,6 +83,23 @@ GRAPH_CLI_COMMANDS = {
     "monolynx graph path",
     "monolynx graph stats",
 }
+BLOG_CLI_COMMANDS = {
+    "monolynx blog list",
+    "monolynx blog get",
+    "monolynx blog meta",
+    "monolynx blog lint",
+    "monolynx blog publish",
+    "monolynx blog unpublish",
+}
+# MON-266: jedyne miejsce z narzędziami bloga w features.py to moduł `blog`; zbiór porównywany także z rejestrem MCP.
+BLOG_MCP_TOOLS = (
+    "list_blog_posts",
+    "get_blog_post",
+    "set_blog_post_meta",
+    "lint_blog_post",
+    "publish_blog_post",
+    "unpublish_blog_post",
+)
 TOOLS_LABEL = {"pl": "Dostępne komendy", "en": "Available commands"}
 MCP_LABEL = {"pl": "Dostępne narzędzia MCP", "en": "Available MCP tools"}
 
@@ -297,6 +321,271 @@ class TestFeatureHttpEndpoints:
 
 
 @pytest.mark.unit
+class TestWikiFeatureHasNoBlogTools:
+    """MON-266: narzędzia bloga przeniesiono z modułu Wiki do modułu Blog, a licznik `ai_intro` Wiki zgadza się z listą."""
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_wiki_mcp_tools_contain_no_blog_tool(self, lang):
+        content = get_feature_content("wiki", lang)
+
+        assert content is not None
+        names = [t["name"] for t in content["mcp_tools"]]
+        assert [n for n in names if "blog_post" in n] == []
+
+    @pytest.mark.parametrize(("lang", "suffix"), [("pl", "narzędzi MCP"), ("en", "MCP tools")])
+    def test_wiki_ai_intro_counter_matches_the_number_of_mcp_tools(self, lang, suffix):
+        content = get_feature_content("wiki", lang)
+
+        assert content is not None
+        count = len(content["mcp_tools"])
+        assert count == 13
+        assert f"{count} {suffix}" in content["ai_intro"]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_wiki_ai_intro_does_not_mention_blog_operations(self, lang):
+        content = get_feature_content("wiki", lang)
+
+        assert content is not None
+        assert "blog" not in content["ai_intro"].lower()
+
+
+async def _registered_blog_tool_names() -> set[str]:
+    tools = await mcp.list_tools()
+    return {t.name for t in tools if "blog_post" in t.name}
+
+
+def _tool_names_across_modules(lang: str) -> list[str]:
+    names: list[str] = []
+    for slug in ALL_SLUGS:
+        content = get_feature_content(slug, lang)
+        assert content is not None
+        names.extend(t["name"] for t in content.get("mcp_tools", []))
+    return names
+
+
+@pytest.mark.unit
+class TestBlogFeatureContent:
+    """MON-266: moduł Blog w `features.py` (PL + EN) z sześcioma narzędziami MCP przeniesionymi z Wiki."""
+
+    def test_blog_registered_in_features(self):
+        assert "blog" in _FEATURES
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_builder_returns_complete_content(self, lang):
+        content = get_feature_content("blog", lang)
+
+        assert content is not None
+        for key in ("title", "color", "icon", "badge", "headline", "description", "features", "steps", "mcp_tools", "tech_details", "other_modules"):
+            assert content.get(key), key
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_color_is_rose(self, lang):
+        content = get_feature_content("blog", lang)
+
+        assert content is not None
+        assert content["color"] == "rose"
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_title_is_blog(self, lang):
+        content = get_feature_content("blog", lang)
+
+        assert content is not None
+        assert "Blog" in content["title"]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_mcp_tools_equal_the_blog_tools_registered_in_the_mcp_server(self, lang):
+        content = get_feature_content("blog", lang)
+
+        assert content is not None
+        names = [t["name"] for t in content["mcp_tools"]]
+        registered = await _registered_blog_tool_names()
+        assert set(names) == registered
+        assert set(names) == set(BLOG_MCP_TOOLS)
+        assert len(names) == len(BLOG_MCP_TOOLS)
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    @pytest.mark.parametrize("name", BLOG_MCP_TOOLS)
+    def test_every_blog_tool_appears_exactly_once_across_all_modules(self, lang, name):
+        assert _tool_names_across_modules(lang).count(name) == 1
+
+    @pytest.mark.parametrize(("lang", "suffix"), [("pl", "narzędzi MCP"), ("en", "MCP tools")])
+    def test_ai_intro_counter_matches_the_number_of_mcp_tools(self, lang, suffix):
+        content = get_feature_content("blog", lang)
+
+        assert content is not None
+        count = len(content["mcp_tools"])
+        assert count == 6
+        assert f"{count} {suffix}" in content["ai_intro"]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_tool_descriptions_are_non_empty_without_em_dash(self, lang):
+        content = get_feature_content("blog", lang)
+
+        assert content is not None
+        for tool in content["mcp_tools"]:
+            assert tool["desc"].strip(), tool["name"]
+            assert chr(0x2014) not in tool["desc"], tool["name"]
+
+    @pytest.mark.parametrize("name", BLOG_MCP_TOOLS)
+    def test_tool_descriptions_differ_between_languages(self, name):
+        desc = {}
+        for lang in ("pl", "en"):
+            content = get_feature_content("blog", lang)
+            assert content is not None
+            desc[lang] = next(t["desc"] for t in content["mcp_tools"] if t["name"] == name)
+
+        assert desc["pl"] != desc["en"]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_text_has_no_em_dash(self, lang):
+        content = get_feature_content("blog", lang)
+
+        assert content is not None
+        assert chr(0x2014) not in "\n".join(_all_strings(content))
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_other_modules_of_blog_exclude_blog(self, lang):
+        content = get_feature_content("blog", lang)
+
+        assert content is not None
+        assert all(m["slug"] != "blog" for m in content["other_modules"])
+
+    @pytest.mark.parametrize("slug", [s for s in ALL_SLUGS if s != "blog"])
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_other_modules_of_every_module_list_blog_rose(self, slug, lang):
+        content = get_feature_content(slug, lang)
+
+        assert content is not None
+        entries = [m for m in content["other_modules"] if m["slug"] == "blog"]
+        assert len(entries) == 1
+        assert entries[0]["name"] == "Blog"
+        assert entries[0]["color"] == "rose"
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_other_modules_helper_includes_blog(self, lang):
+        result = _other_modules("scrum", lang)
+
+        assert any(m["slug"] == "blog" and m["color"] == "rose" and m["name"] == "Blog" for m in result)
+
+    def test_there_are_twelve_modules(self):
+        assert len(ALL_SLUGS) == 12
+        assert len(_other_modules("nonexistent-slug", "pl")) == 12
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_markdown_lists_every_blog_tool_under_the_ai_and_mcp_heading(self, lang):
+        md = feature_markdown("blog", lang)
+
+        assert md is not None
+        heading = "## AI i MCP" if lang == "pl" else "## AI and MCP"
+        assert heading in md
+        section = md[md.index(heading) :]
+        for name in BLOG_MCP_TOOLS:
+            assert f"- `{name}`: " in section
+        assert TOOLS_LABEL[lang] not in md
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_blog_feature_page_uses_mcp_label(self, client, monkeypatch, lang):
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        response = await client.get("/features/blog", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert MCP_LABEL[lang] in response.text
+        assert TOOLS_LABEL[lang] not in response.text
+
+
+@pytest.mark.integration
+class TestBlogHttpAndLanding:
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_blog_feature_page_returns_200(self, client, monkeypatch, lang):
+        monkeypatch.setattr("monolynx.main.settings.SKIP_LANDING_PAGE", False)
+
+        response = await client.get("/features/blog", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_blog_markdown_endpoint_returns_200(self, client, lang):
+        response = await client.get("/features/blog.md", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/markdown")
+        assert "`publish_blog_post`" in response.text
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_landing_i18n_has_non_empty_blog_keys(self, lang):
+        for key in ("m_blog", "blog_latest_title", "blog_latest_all"):
+            assert _LANDING_I18N[lang][key].strip(), key
+
+    @pytest.mark.parametrize("key", ["m_blog", "blog_latest_title"])
+    def test_landing_i18n_blog_texts_differ_between_languages(self, key):
+        assert _LANDING_I18N["pl"][key] != _LANDING_I18N["en"][key]
+
+    def test_landing_i18n_blog_latest_all_is_exact_per_language(self):
+        assert _LANDING_I18N["en"]["blog_latest_all"] == "All posts"
+        assert _LANDING_I18N["pl"]["blog_latest_all"] == "Wszystkie wpisy"
+
+    def test_landing_i18n_blog_latest_title_is_exact_per_language(self):
+        assert _LANDING_I18N["en"]["blog_latest_title"] == "Latest from the blog"
+        assert _LANDING_I18N["pl"]["blog_latest_title"] == "Najnowsze na blogu"
+
+    @pytest.mark.parametrize(("lang", "prefix"), [("en", "Twelve"), ("pl", "Dwanaście")])
+    def test_landing_i18n_modules_sub_says_twelve(self, lang, prefix):
+        assert _LANDING_I18N[lang]["modules_sub"].startswith(prefix)
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_index_markdown_links_blog_module(self, client, lang):
+        response = await client.get("/index.md", params={"lang": lang})
+
+        assert response.status_code == 200
+        assert f"[Blog](https://monolynx.com/features/blog.md?lang={lang}): {_LANDING_I18N[lang]['m_blog']}" in response.text
+
+
+@pytest.mark.integration
+class TestModuleCountConsistency:
+    """MON-266, kryterium 61af5921: liczba modułów jest ta sama w `llms.txt`, `how-to-use-monolynx.md` i `agent-explain.md`."""
+
+    async def test_llms_txt_says_twelve_not_eleven(self, client):
+        response = await client.get("/llms.txt")
+
+        assert response.status_code == 200
+        text = response.text.lower()
+        assert "twelve" in text
+        assert "eleven" not in text
+
+    async def test_llms_txt_modules_section_links_blog(self, client):
+        response = await client.get("/llms.txt")
+
+        assert "- [Blog](https://monolynx.com/features/blog?lang=en): " in response.text
+
+    async def test_llms_txt_modules_section_has_one_entry_per_module(self, client):
+        response = await client.get("/llms.txt")
+
+        section = response.text.split("## Modules", 1)[1].split("\n## ", 1)[0]
+        entries = [line for line in section.splitlines() if line.startswith("- [")]
+        assert len(entries) == len(_FEATURES)
+        for slug in ALL_SLUGS:
+            assert f"https://monolynx.com/features/{slug}?lang=en" in section
+
+    async def test_llms_txt_intro_counts_twelve_modules(self, client):
+        response = await client.get("/llms.txt")
+
+        intro = next(line for line in response.text.splitlines() if line.startswith("> "))
+        assert "twelve integrated modules" in intro
+
+    @pytest.mark.parametrize("path", ["/how-to-use-monolynx.md", "/agent-explain.md"])
+    async def test_module_enumeration_line_names_the_blog(self, client, path):
+        # Oba pliki wspominają blog gdzie indziej (skill blog-post), więc asercja celuje w linię z wyliczanką modułów.
+        response = await client.get(path)
+
+        assert response.status_code == 200
+        lines = [line for line in response.text.splitlines() if "scrum" in line.lower() and "pipelines" in line.lower()]
+        assert lines, "brak linii z wyliczanką modułów"
+        assert "blog" in lines[0].lower()
+
+
+@pytest.mark.unit
 class TestCliFeatureContent:
     def test_cli_registered_in_features(self):
         assert "cli" in _FEATURES
@@ -371,6 +660,14 @@ class TestCliFeatureContent:
         assert content is not None
         names = {t["name"] for t in content["mcp_tools"]}
         assert names >= GRAPH_CLI_COMMANDS, sorted(GRAPH_CLI_COMMANDS - names)
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    def test_mcp_tools_list_every_blog_command(self, lang):
+        content = get_feature_content("cli", lang)
+
+        assert content is not None
+        names = {t["name"] for t in content["mcp_tools"]}
+        assert names >= BLOG_CLI_COMMANDS, sorted(BLOG_CLI_COMMANDS - names)
 
     @pytest.mark.parametrize("lang", ["pl", "en"])
     def test_text_has_required_facts(self, lang):

@@ -1,8 +1,39 @@
-"""Publiczny blog -- GET /blog/{slug}.
+"""Publiczny blog -- GET /blog/ (lista), GET /blog/{slug} (wpis), GET /blog/{slug}/attachments/....
+
+Bliźniaki markdown (`/blog/index.md`, `/blog/{slug}.md`) obsługuje `blog_ai.py` (MON-258).
 
 MON-201: router działa BEZ sesji i BEZ RBAC (w odróżnieniu od dashboard/wiki.py).
 Renderuje wyłącznie strony wiki z is_public=True; wszystko inne (strona prywatna,
 nieistniejący slug) mapuje na 404 -- nigdy 403, żeby nie potwierdzać istnienia zasobu.
+
+MON-254: wpis adresuje stabilny `BlogPost.slug` (nie slug strony wiki, który zmienia się wraz
+z tytułem). Stary slug z `previous_slugs` daje 301 na aktualny adres
+(także na trasie załączników, MON-271). Strona publiczna bez wiersza BlogPost to 404 -- wiersz zakładają
+`ensure_post` i migracja. Lista sortuje po `published_at`, zajawka to `description` z fallbackiem na streszczenie
+treści.
+
+MON-255: treść wpisu renderuje `services/blog_blocks.render_post_html` (bloki + sanityzacja nh3);
+streszczenie (zajawka, meta description) liczy się ze źródła bez znaczników bloków (`strip_block_markers`).
+
+MON-257: `public_page` liczy `collect_block_assets(content)` i przekazuje szablonowi `has_diagram` (biblioteka
+Mermaid ładowana tylko wpisowi z diagramem) oraz `graphics` (nazwy komponentów z `BLOG_GRAPHICS`, których
+skrypt i styl dołącza `page.html` tylko wpisowi, który ich używa).
+
+MON-258: `/blog/{slug}` z `Accept: text/markdown` zwraca ten sam dokument co `/blog/{slug}.md`
+(`blog_ai.markdown_twin_response`); odpowiedź HTML niesie `Vary: Accept` i `Link` do bliźniaka,
+a strony dostają JSON-LD (`services/blog.build_post_jsonld` / `build_blog_jsonld`).
+
+MON-260: strony dla ludzi. Lista przyjmuje `?tag=` i `?lang=` (poprawny `lang` filtruje wpisy; interfejs: patrz
+MON-271), karty niosą okładkę, tagi i czas czytania (treść każdej karty czytana równolegle),
+paginacja zachowuje filtry, a `canonical` / `prev` / `next` wskazują bieżącą stronę. Wpis dostaje spis
+treści, powiązane wpisy, tłumaczenia i `hreflang`; jego interfejs to `?lang=` albo `lang` wpisu. Obie
+odpowiedzi HTML idą przez `blog_ai.conditional_response` (ETag, Last-Modified, 304).
+
+MON-271: `/blog/?ui=` to wyłącznie język interfejsu listy (`lang` zostaje filtrem wpisów), stary slug załącznika
+opublikowanego wpisu daje 301, a `public_page` renderuje tekst wpisu raz na żądanie.
+
+MON-264: `public_page` przepisuje dashboardowe adresy załączników strony na publiczne
+(`rewrite_attachment_urls`), zanim treść trafi do renderera.
 
 Rejestrowany bezwarunkowo w main.py, niezależnie od flagi SKIP_LANDING_PAGE -- ta flaga
 bramkuje marketingową stronę landing, a blog to treść linkowana z zewnątrz (podobnie jak
@@ -15,21 +46,48 @@ import asyncio
 import io
 import logging
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from monolynx.blog_ai import conditional_response, load_post_content, markdown_twin_response, wants_markdown
 from monolynx.config import settings
 from monolynx.database import get_db
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.wiki_attachment import WikiAttachment
 from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
+from monolynx.services.blog import (
+    POST_LANGS,
+    PublicPost,
+    build_blog_jsonld,
+    build_post_jsonld,
+    dump_jsonld,
+    extract_toc,
+    get_cover_urls,
+    get_public_post_by_slug,
+    is_valid_tag,
+    list_public_posts,
+    list_public_translations,
+    list_related_posts,
+    reading_time_minutes,
+    rewrite_attachment_urls,
+)
+from monolynx.services.blog_blocks import (
+    collect_block_assets,
+    extract_structured_data,
+    render_post_html,
+    render_post_markdown,
+    strip_block_markers,
+)
 from monolynx.services.minio_client import get_attachment as minio_get_attachment
-from monolynx.services.wiki import extract_summary, get_page_content, get_public_page_by_slug, render_markdown_public
+from monolynx.services.wiki import extract_summary, get_page_content
 
 logger = logging.getLogger("monolynx.blog")
 
@@ -45,27 +103,44 @@ templates.env.globals["ga_measurement_id"] = settings.GA_MEASUREMENT_ID
 _PUBLIC_INLINE_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 
 _PER_PAGE = 20
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-async def _fetch_summary(page: WikiPage) -> str:
-    """Pobierz treść strony z MinIO (executor, patrz komentarz w public_page) i wyciągnij
-    streszczenie. Błąd storage dla POJEDYNCZEJ strony nie wywraca całej listy /blog/
-    (granica systemu) -- strona ląduje na liście z pustym streszczeniem."""
-    loop = asyncio.get_running_loop()
+async def _fetch_card_data(item: PublicPost) -> tuple[str, int | None]:
+    """Zajawka i czas czytania karty z JEDNEJ lektury treści z MinIO (executor, patrz komentarz w
+    public_page). Zajawka to `description`, a gdy pusty - streszczenie treści. Błąd storage dla
+    POJEDYNCZEJ strony nie wywraca całej listy /blog/ (granica systemu) -- karta dostaje
+    `reading_time=None` i zajawkę z `description` albo pustą."""
+    page = item.page
     try:
-        content = await loop.run_in_executor(None, get_page_content, page)
+        content = await load_post_content(page)
     except Exception:
         logger.exception("Blad pobierania tresci strony wiki z MinIO dla listy /blog/ (page_id=%s)", page.id)
-        return ""
-    return extract_summary(content)
+        return item.post.description or "", None
+    summary = item.post.description or extract_summary(strip_block_markers(content))
+    return summary, reading_time_minutes(render_post_markdown(content))
 
 
-async def _public_breadcrumbs(page: WikiPage, db: AsyncSession) -> list[dict[str, str]]:
-    """Breadcrumbs od korzenia do strony, wyłącznie is_public=True.
+def _index_path(tag: str | None, lang: str | None, page: int | None = None, ui: str | None = None) -> str:
+    """Ścieżka listy z query w stałej kolejności `tag`, `lang`, `ui`, `page`; `page` tylko gdy > 1."""
+    params: list[tuple[str, str]] = []
+    if tag is not None:
+        params.append(("tag", tag))
+    if lang is not None:
+        params.append(("lang", lang))
+    if ui is not None:
+        params.append(("ui", ui))
+    if page is not None and page > 1:
+        params.append(("page", str(page)))
+    return f"/blog/?{urlencode(params)}" if params else "/blog/"
+
+
+async def _public_breadcrumbs(page: WikiPage, post: BlogPost, db: AsyncSession) -> list[dict[str, str]]:
+    """Breadcrumbs od korzenia do strony, wyłącznie is_public=True, linki po BlogPost.slug.
 
     Filtr is_public.is_(True) jest w WHERE (SQL, nie w szablonie). Jeśli rodzic jest
-    prywatny, zapytanie zwraca None i łańcuch się przerywa -- nie przeskakujemy
-    prywatnego rodzica do jego przodków.
+    prywatny (albo nie ma wpisu BlogPost), zapytanie zwraca None i łańcuch się przerywa --
+    nie przeskakujemy takiego rodzica do jego przodków.
 
     Ostatni element listy to BIEŻĄCA strona (page) -- ten sam kształt co
     get_breadcrumbs() w services/wiki.py (tam `crumbs = [page]` na starcie).
@@ -75,20 +150,26 @@ async def _public_breadcrumbs(page: WikiPage, db: AsyncSession) -> list[dict[str
     crumbs: list[dict[str, str]] = []
     parent_id = page.parent_id
     while parent_id is not None:
-        result = await db.execute(select(WikiPage).where(WikiPage.id == parent_id, WikiPage.is_public.is_(True)))
-        parent = result.scalar_one_or_none()
-        if parent is None:
+        result = await db.execute(
+            select(WikiPage, BlogPost.slug)
+            .join(BlogPost, BlogPost.page_id == WikiPage.id)
+            .where(WikiPage.id == parent_id, WikiPage.is_public.is_(True))
+        )
+        row = result.first()
+        if row is None:
             break
-        crumbs.insert(0, {"slug": parent.slug, "title": parent.title})
+        parent, parent_slug = row[0], row[1]
+        crumbs.insert(0, {"slug": parent_slug, "title": parent.title})
         parent_id = parent.parent_id
-    crumbs.append({"slug": page.slug, "title": page.title})
+    crumbs.append({"slug": post.slug, "title": page.title})
     return crumbs
 
 
 async def _public_children(page: WikiPage, db: AsyncSession) -> list[dict[str, str]]:
-    """Bezpośrednie dzieci strony, wyłącznie is_public=True (filtr w SQL)."""
+    """Bezpośrednie dzieci strony będące publicznymi wpisami (slug = BlogPost.slug, filtr w SQL)."""
     result = await db.execute(
-        select(WikiPage.slug, WikiPage.title)
+        select(BlogPost.slug, WikiPage.title)
+        .join(WikiPage, WikiPage.id == BlogPost.page_id)
         .where(WikiPage.parent_id == page.id, WikiPage.is_public.is_(True))
         .order_by(WikiPage.position, WikiPage.title)
     )
@@ -96,67 +177,118 @@ async def _public_children(page: WikiPage, db: AsyncSession) -> list[dict[str, s
 
 
 async def _public_backlinks(page: WikiPage, db: AsyncSession) -> list[dict[str, str]]:
-    """Strony źródłowe backlinków wskazujących na tę stronę, wyłącznie is_public=True (filtr w SQL)."""
+    """Publiczne wpisy źródłowe backlinków wskazujących na tę stronę (slug = BlogPost.slug, filtr w SQL)."""
     result = await db.execute(
-        select(WikiPage.slug, WikiPage.title)
+        select(BlogPost.slug, WikiPage.title)
+        .join(WikiPage, WikiPage.id == BlogPost.page_id)
         .join(WikiBacklink, WikiBacklink.source_page_id == WikiPage.id)
         .where(WikiBacklink.target_page_id == page.id, WikiPage.is_public.is_(True))
     )
     return [{"slug": row.slug, "title": row.title} for row in result.all()]
 
 
-@router.get("/", response_class=HTMLResponse)
-async def public_index(request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> HTMLResponse:
-    """Lista publicznych wpisow bloga (is_public=True), najnowsze najpierw, z paginacja.
+@router.get("/", response_class=HTMLResponse, response_model=None)
+async def public_index(
+    request: Request, lang: str | None = None, tag: str | None = None, ui: str | None = None, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """Lista publicznych wpisow bloga, najnowsze (`published_at`) najpierw, z paginacja.
 
-    Wzorzec paginacji projektu (dashboard/scrum.py): `page` z try/except -> 1,
-    stala per_page, func.count() + limit/offset, page clampowany do <1, total_pages>.
+    `page` z try/except -> 1; clampowanie do <1, total_pages> robi `list_public_posts`.
+    `lang` (`pl`/`en`) filtruje wpisy po jezyku tresci; brak albo inna wartosc = bez filtra. `ui` (`pl`/`en`)
+    ustawia WYLACZNIE jezyk interfejsu (link z landingu nie zawęża listy); bez poprawnego `ui` interfejs to
+    poprawny `lang` (stare linki `?lang=pl`), a bez niego `en`. Linki listy zachowują `ui`, gdy go podano.
+    `tag`: pusty = bez filtra, niepoprawny (`is_valid_tag`) =
+    pusta lista bez zapytania do bazy (bajt NUL w parametrze wywrocilby PostgreSQL), status 200.
+    Odpowiedz niesie `ETag` i `Last-Modified` (najnowszy `updated_at` wsrod wpisow strony listy).
     """
-    if lang not in ("en", "pl"):
-        lang = "en"
+    filter_lang = lang if lang in POST_LANGS else None
+    ui_param = ui if ui in POST_LANGS else None
+    ui_lang = ui_param or filter_lang or "en"
+    filter_tag = tag if tag and is_valid_tag(tag) else None
 
     try:
         page_num = max(1, int(request.query_params.get("page", "1")))
     except (ValueError, TypeError):
         page_num = 1
 
-    total_count = (await db.execute(select(func.count(WikiPage.id)).where(WikiPage.is_public.is_(True)))).scalar() or 0
-    total_pages = max(1, (total_count + _PER_PAGE - 1) // _PER_PAGE)
-    page_num = min(page_num, total_pages)
+    items: list[PublicPost] = []
+    current_page, total_pages = 1, 1
+    if not tag or filter_tag is not None:
+        listing = await list_public_posts(db, page_num, _PER_PAGE, tag=filter_tag, lang=filter_lang)
+        items, current_page, total_pages = listing.items, listing.page, listing.total_pages
 
-    result = await db.execute(
-        select(WikiPage).where(WikiPage.is_public.is_(True)).order_by(WikiPage.updated_at.desc()).limit(_PER_PAGE).offset((page_num - 1) * _PER_PAGE)
-    )
-    pages = list(result.scalars().all())
+    # Tresc kazdej karty (zajawka bez description i czas czytania) wymaga odczytu z MinIO --
+    # rownolegle (asyncio.gather), nie sekwencyjnie, zeby N wolnych obiektow nie sumowalo sie w czas ladowania listy.
+    card_data = await asyncio.gather(*(_fetch_card_data(item) for item in items))
+    covers = await get_cover_urls(db, [item.post for item in items])
 
-    # Streszczenia wymagaja N odczytow z MinIO -- rownolegle (asyncio.gather), nie
-    # sekwencyjnie, zeby N wolnych obiektow nie sumowalo sie w czas ladowania listy.
-    summaries = await asyncio.gather(*(_fetch_summary(page) for page in pages))
+    has_prev = current_page > 1
+    has_next = current_page < total_pages
+    context = {
+        "request": request,
+        "lang": ui_lang,
+        "app_url": settings.APP_URL,
+        "posts": [
+            {
+                "title": item.page.title,
+                "slug": item.post.slug,
+                "published_at": item.post.published_at or item.page.created_at,
+                "summary": summary,
+                "tags": list(item.post.tags or []),
+                "reading_time": reading_time,
+                "cover_image_url": covers.get(item.post.page_id),
+                "lang": item.post.lang,
+            }
+            for item, (summary, reading_time) in zip(items, card_data, strict=True)
+        ],
+        "page": current_page,
+        "total_pages": total_pages,
+        "has_prev": has_prev,
+        "has_next": has_next,
+        "filter_tag": filter_tag,
+        "filter_lang": filter_lang,
+        "canonical_url": f"{settings.APP_URL.rstrip('/')}{_index_path(filter_tag, filter_lang, current_page)}",
+        "prev_url": _index_path(filter_tag, filter_lang, current_page - 1, ui_param) if has_prev else None,
+        "next_url": _index_path(filter_tag, filter_lang, current_page + 1, ui_param) if has_next else None,
+        "all_langs_url": _index_path(filter_tag, None, ui=ui_param),
+        "filter_pl_url": _index_path(filter_tag, "pl", ui=ui_param),
+        "filter_en_url": _index_path(filter_tag, "en", ui=ui_param),
+        "clear_tag_url": _index_path(None, filter_lang, ui=ui_param),
+        "tag_url": lambda card_tag: _index_path(card_tag, filter_lang, ui=ui_param),
+        "lang_switch_url": _index_path(filter_tag, filter_lang, ui="pl"),
+        "lang_switch_url_en": _index_path(filter_tag, filter_lang, ui="en"),
+        "json_ld": dump_jsonld(build_blog_jsonld(items, base_url=settings.APP_URL)),
+    }
+    body = templates.get_template("blog/index.html").render(context)
+    last_modified = max((item.page.updated_at for item in items), default=_EPOCH)
+    return conditional_response(request, body, last_modified=last_modified, media_type="text/html; charset=utf-8")
 
-    return templates.TemplateResponse(
-        request,
-        "blog/index.html",
-        {
-            "lang": lang,
-            "app_url": settings.APP_URL,
-            "posts": [{"title": p.title, "slug": p.slug, "updated_at": p.updated_at, "summary": s} for p, s in zip(pages, summaries, strict=True)],
-            "page": page_num,
-            "total_pages": total_pages,
-            "has_prev": page_num > 1,
-            "has_next": page_num < total_pages,
-        },
-    )
 
+@router.get("/{slug}", response_class=HTMLResponse, response_model=None)
+async def public_page(slug: str, request: Request, lang: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
+    """Publiczny render wpisu po `BlogPost.slug` -- bez sesji, bez RBAC, tylko is_public=True.
 
-@router.get("/{slug}", response_class=HTMLResponse)
-async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> HTMLResponse:
-    """Publiczny render strony wiki -- bez sesji, bez RBAC, tylko is_public=True."""
-    if lang not in ("en", "pl"):
-        lang = "en"
-
-    page = await get_public_page_by_slug(slug, db)
-    if page is None:
+    Stary slug (`previous_slugs`) -> 301 na aktualny adres z zachowanym query stringiem.
+    `Accept: text/markdown` -> bliźniak markdown (200/304). Odpowiedź HTML to 200 albo 304
+    (`conditional_response`, `last_modified` = `updated_at` strony). `Vary: Accept` niosą odpowiedzi 200, 304
+    i 301; 404 (`HTTPException`) jest bez nagłówków.
+    Język interfejsu to `?lang=` (`pl`/`en`), a bez niego albo z inną wartością - `lang` wpisu.
+    """
+    lookup = await get_public_post_by_slug(db, slug)
+    if lookup is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono strony")
+    if lookup.redirect_slug is not None:
+        target = f"/blog/{lookup.redirect_slug}"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(url=target, status_code=301, headers={"Vary": "Accept"})
+    post, page = lookup.post, lookup.page
+    if post is None or page is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono strony")
+    ui_lang = lang if lang in POST_LANGS else post.lang
+
+    if wants_markdown(request.headers.get("accept")):
+        return await markdown_twin_response(request, db, post, page, headers={"Vary": "Accept"})
 
     # get_page_content() woła get_markdown() rozwiązywane w globalsach monolynx.services.wiki
     # -- treść MUSI przechodzić przez tę ścieżkę (nie wolać minio_client.get_markdown wprost tutaj),
@@ -171,29 +303,105 @@ async def public_page(slug: str, request: Request, lang: str = "en", db: AsyncSe
     except Exception:
         logger.exception("Blad pobierania tresci strony wiki z MinIO (page_id=%s)", page.id)
         raise HTTPException(status_code=404, detail="Nie znaleziono strony") from None
-    content_html = render_markdown_public(content)
-    meta_description = extract_summary(content)
+    content = rewrite_attachment_urls(content, page_id=page.id, post_slug=post.slug)
+    content_html = render_post_html(content)
+    plain_text = render_post_markdown(content)
+    assets = collect_block_assets(content)
+    meta_description = post.description or extract_summary(strip_block_markers(content))
 
-    breadcrumbs = await _public_breadcrumbs(page, db)
+    # Okladka musi nalezec do tej strony (set_post_meta to pilnuje, ale zalacznik mogl byc potem
+    # przeniesiony/usuniety) -- brak wiersza = domyslny og:image layoutu.
+    cover_image_url = None
+    if post.cover_attachment_id is not None:
+        cover = (
+            await db.execute(
+                select(WikiAttachment.filename).where(WikiAttachment.id == post.cover_attachment_id, WikiAttachment.wiki_page_id == page.id)
+            )
+        ).scalar_one_or_none()
+        if cover is not None:
+            cover_image_url = f"{settings.APP_URL.rstrip('/')}/blog/{post.slug}/attachments/{post.cover_attachment_id}/{quote(cover)}"
+
+    breadcrumbs = await _public_breadcrumbs(page, post, db)
     children = await _public_children(page, db)
     backlinks = await _public_backlinks(page, db)
 
-    return templates.TemplateResponse(
-        request,
-        "blog/page.html",
+    md_url = f"{settings.APP_URL.rstrip('/')}/blog/{post.slug}.md"
+    json_ld = dump_jsonld(
+        build_post_jsonld(
+            post,
+            page,
+            base_url=settings.APP_URL,
+            description=meta_description,
+            word_count=len(plain_text.split()),
+            image_url=cover_image_url,
+            structured=extract_structured_data(content),
+        )
+    )
+
+    related = await list_related_posts(db, post)
+    translations = await list_public_translations(db, post)
+    base = settings.APP_URL.rstrip("/")
+    hreflang_links = (
+        [{"lang": post.lang, "url": f"{base}/blog/{post.slug}"}, *({"lang": item.lang, "url": f"{base}/blog/{item.slug}"} for item in translations)]
+        if translations
+        else []
+    )
+    translation_titles: dict[uuid.UUID, str] = {}
+    if translations:
+        title_rows = await db.execute(select(WikiPage.id, WikiPage.title).where(WikiPage.id.in_([item.page_id for item in translations])))
+        translation_titles = {row.id: row.title for row in title_rows.all()}
+
+    body = templates.get_template("blog/page.html").render(
         {
-            "lang": lang,
+            "request": request,
+            "lang": ui_lang,
             "app_url": settings.APP_URL,
             "page_title": page.title,
-            "page_slug": page.slug,
+            "page_slug": post.slug,
             "content_html": content_html,
+            "has_diagram": assets.has_diagram,
+            "graphics": list(assets.graphics),
             "breadcrumbs": breadcrumbs,
             "children": children,
             "backlinks": backlinks,
             "updated_at": page.updated_at,
             "created_at": page.created_at,
+            "published_at": post.published_at,
+            "cover_image_url": cover_image_url,
             "meta_description": meta_description,
-        },
+            "md_url": md_url,
+            "json_ld": json_ld,
+            "post_lang": post.lang,
+            "description": post.description,
+            "author_name": post.author_name,
+            "last_verified_at": post.last_verified_at,
+            "tags": list(post.tags or []),
+            "reading_time": reading_time_minutes(plain_text),
+            "toc": extract_toc(content_html),
+            "related": [
+                {
+                    "title": item.page.title,
+                    "slug": item.post.slug,
+                    "description": item.post.description,
+                    "published_at": item.post.published_at or item.page.created_at,
+                    "tags": list(item.post.tags or []),
+                }
+                for item in related
+            ],
+            "translations": [
+                {"lang": item.lang, "slug": item.slug, "title": translation_titles.get(item.page_id, item.slug)} for item in translations
+            ],
+            "hreflang_links": hreflang_links,
+            "lang_switch_url": f"/blog/{post.slug}?lang=pl",
+            "lang_switch_url_en": f"/blog/{post.slug}?lang=en",
+        }
+    )
+    return conditional_response(
+        request,
+        body,
+        last_modified=page.updated_at,
+        media_type="text/html; charset=utf-8",
+        headers={"Vary": "Accept", "Link": f'<{md_url}>; rel="alternate"; type="text/markdown"'},
     )
 
 
@@ -203,11 +411,14 @@ async def public_attachment(
     attachment_id: uuid.UUID,
     filename: str,
     db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
+) -> Response:
     """Publiczny zalacznik strony wiki -- bez sesji, tylko is_public=True (MON-203).
 
-    Zapytanie wiaze attachment_id z page.id (page samo jest juz przefiltrowane po
-    is_public=True przez get_public_page_by_slug) -- sam attachment_id nie wystarcza,
+    Wpis wyszukiwany po AKTUALNYM `BlogPost.slug` (MON-254); stary slug opublikowanego wpisu daje 301 na
+    adres pod aktualnym slugiem (MON-271: obraz wstawiony przed zmianą sluga nie może się wysypać), a stary
+    slug wpisu niepublicznego 404. Zapytanie wiaze
+    attachment_id z page.id (page samo jest juz przefiltrowane po is_public=True przez
+    get_public_post_by_slug) -- sam attachment_id nie wystarcza,
     inaczej kazdy zalacznik w systemie stalby sie publiczny pod tym adresem. Zalacznik
     nalezacy do INNEJ strony niz {slug} w URL rowniez konczy sie 404 (filtr wiki_page_id).
 
@@ -216,9 +427,13 @@ async def public_attachment(
     """
     nosniff = {"X-Content-Type-Options": "nosniff"}
 
-    page = await get_public_page_by_slug(slug, db)
-    if page is None:
+    lookup = await get_public_post_by_slug(db, slug)
+    if lookup is not None and lookup.redirect_slug is not None:
+        target = f"/blog/{lookup.redirect_slug}/attachments/{attachment_id}/{quote(filename, safe='')}"
+        return RedirectResponse(url=target, status_code=301, headers=nosniff)
+    if lookup is None or lookup.page is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono strony", headers=nosniff)
+    page = lookup.page
 
     result = await db.execute(
         select(WikiAttachment).where(

@@ -15,6 +15,7 @@ _ICON_REPORTS = '<svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentC
 _ICON_SETTLEMENTS = '<svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V12Zm-12 0h.008v.008H6V12Z"/></svg>'
 _ICON_WORK_PLAN = '<svg class="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"/></svg>'
 _ICON_PIPELINES = '<svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg>'
+_ICON_BLOG = '<svg class="w-6 h-6 text-rose-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"/></svg>'
 _ICON_CLI = '<svg class="w-6 h-6 text-teal-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>'
 
 
@@ -71,6 +72,12 @@ def _other_modules(exclude: str, lang: str) -> list[dict[str, str]]:
             "color": "teal",
             "name": "CLI",
             "short": "Work from the terminal" if lang == "en" else "Praca z terminala",
+        },
+        {
+            "slug": "blog",
+            "color": "rose",
+            "name": "Blog",
+            "short": "Public blog readable by people and AI" if lang == "en" else "Publiczny blog dla ludzi i modeli AI",
         },
     ]
     return [m for m in all_modules if m["slug"] != exclude]
@@ -773,8 +780,117 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "title": "Publikacja publiczna (blog)",
                     "desc": (
                         "Checkbox „strona publiczna” w formularzu wiki wystawia treść bez logowania pod /blog/{slug}. "
+                        "Zmienia go tylko konto z uprawnieniem do edycji bloga, które nadaje superuser; pozostałe konta widzą stan strony bez możliwości zmiany. "
                         "Załączniki wpisu (obrazy, PDF) serwowane bezpiecznie — allow-lista MIME dla inline (PNG/JPEG/GIF/WebP), "
                         "reszta jako attachment z nagłówkiem X-Content-Type-Options: nosniff."
+                    ),
+                },
+                {
+                    "title": "Stabilne adresy i daty wpisów bloga",
+                    "desc": (
+                        "Adres wpisu nie zmienia się po zmianie tytułu strony, a poprzedni adres przekierowuje (301) na aktualny. "
+                        "Lista /blog/ sortuje wpisy po dacie publikacji, więc edycja starszego wpisu nie przestawia kolejności. "
+                        "Zajawka na liście i opis w meta pochodzą z opisu wpisu, a gdy go brak - ze streszczenia treści."
+                    ),
+                },
+                {
+                    "title": "Bloki wpisu bloga",
+                    "desc": (
+                        "Wpis piszesz zwykłym markdownem, a strona dostaje gotowe bloki: wyróżnienia (uwaga, wskazówka, ostrzeżenie) i TL;DR, "
+                        "cytat z autorem, obrazek z podpisem, kod z nazwą pliku i przyciskiem kopiowania, kotwice nagłówków oraz przypisy. "
+                        "HTML bloków generuje serwer, a treść autora jest sanityzowana, więc własne skrypty, klasy i identyfikatory nie trafią na stronę."
+                    ),
+                },
+                {
+                    "title": "Bloki strukturalne wpisu bloga",
+                    "desc": (
+                        "Kilka linii markdownu wystarczy, żeby wpis dostał FAQ w formie akordeonu, kroki, statystyki, tabelę porównawczą "
+                        "z wyróżnioną kolumną, sekcję zwijaną, galerię, przycisk CTA i słownik pojęć. "
+                        "Wideo z YouTube i Vimeo ładuje się dopiero po kliknięciu, więc wcześniej strona nie wysyła żadnych żądań do serwisu wideo. "
+                        "Z FAQ, kroków i wideo serwer przygotowuje dane strukturalne dla wyszukiwarek i modeli AI."
+                    ),
+                },
+                {
+                    "title": "Bloki graficzne wpisu bloga",
+                    "desc": (
+                        "Tabela markdown staje się wykresem słupkowym, liniowym albo kołowym, który serwer rysuje jako SVG, "
+                        "opis z kodem Mermaid staje się diagramem, a blok konsoli oknem terminala z animacją pisania. "
+                        "Animowane schematy pochodzą z zamkniętej listy komponentów w repozytorium, więc treść wpisu nie zawiera skryptów ani stylów. "
+                        "Źródłem każdej grafiki jest tekst: dane, opis albo kod widzi model AI w wersji markdown i czytelnik z wyłączonym JS. "
+                        "Wykresy i schematy działają w jasnym i ciemnym motywie, a animacje wyłączają się przy ograniczeniu ruchu w systemie."
+                    ),
+                },
+                {
+                    "title": "Strona wpisu i lista bloga dla czytelnika",
+                    "desc": (
+                        "Wpis ma nagłówek z tagami, autorem, datami, czasem czytania i okładką oraz spis treści z nagłówków H2-H3, "
+                        "który podświetla bieżącą sekcję (od 3 nagłówków). Pod treścią są linki do wersji językowych i do 3 powiązanych wpisów "
+                        "w tym samym języku. Listę /blog/ filtrujesz po tagu i języku (?tag=, ?lang=), a paginacja zachowuje filtry."
+                    ),
+                },
+                {
+                    "title": "Blog dla czytników i modeli AI",
+                    "desc": (
+                        "Blog ma feedy Atom, RSS i JSON Feed z pełną treścią 20 najnowszych wpisów, a czytniki znajdują je w nagłówku strony. "
+                        "Plik /llms.txt zawiera na żywo listę najnowszych wpisów z adresami markdown, a /llms-full.txt całą publiczną treść bloga w jednym dokumencie. "
+                        "Wersje językowe wpisów są powiązane w mapie strony, a roboty AI (GPTBot, ClaudeBot, PerplexityBot i inne) mają w robots.txt "
+                        "dostęp do bloga bez dostępu do panelu, API i MCP."
+                    ),
+                },
+                {
+                    "title": "Lint wpisu bloga pod AI",
+                    "desc": (
+                        "Lint sprawdza wpis przed publikacją: opis o długości 50-300 znaków, blok TL;DR z 2-5 punktami na początku, "
+                        "tekst alternatywny obrazków, treść bloków graficznych, kolejność nagłówków, opisowe teksty linków, datę weryfikacji i tłumaczenie. "
+                        "Wynik to lista problemów z numerem linii i poziomem (błąd, ostrzeżenie, informacja) oraz ocena 0-100. "
+                        "Ten sam wynik daje narzędzie MCP lint_blog_post, REST API i komenda monolynx blog lint."
+                    ),
+                },
+                {
+                    "title": "Publikacja wpisu z bramką lintu",
+                    "desc": (
+                        "Publikacja wpisu to osobna operacja: najpierw lint, potem strona staje się publiczna pod /blog/{slug}. "
+                        "Wpis z błędami lintu zostaje prywatny, a odmowa wymienia reguły do poprawy; parametr force publikuje mimo błędów. "
+                        "Cofnięcie publikacji zdejmuje wpis i jego wersję markdown z sieci (404), a data publikacji i slug zostają, "
+                        "więc ponowna publikacja wraca pod ten sam adres. "
+                        "Robią to narzędzia MCP publish_blog_post i unpublish_blog_post, REST API "
+                        "oraz komendy monolynx blog publish i monolynx blog unpublish. "
+                        "Publikacja, jej cofnięcie i zmiana metadanych wymagają uprawnienia do edycji bloga na koncie użytkownika: "
+                        "nadaje je wyłącznie superuser, a sama rola w projekcie, także właściciela, nie wystarcza."
+                    ),
+                },
+                {
+                    "title": "Metadane wpisu w formularzu wiki",
+                    "desc": (
+                        "Sekcja „Wpis na blogu” w formularzu edycji strony ustawia adres (slug), opis z licznikiem znaków, autora, tagi, język, "
+                        "powiązanie z tłumaczeniem, okładkę wybraną z załączników strony i datę weryfikacji. "
+                        "Błąd walidacji pokazuje komunikat i zachowuje wpisane wartości, a zwykła strona wiki z pustą sekcją nie staje się wpisem. "
+                        "Sekcję widzi tylko konto z uprawnieniem do edycji bloga."
+                    ),
+                },
+                {
+                    "title": "Podgląd szkicu przed publikacją",
+                    "desc": (
+                        "Przycisk „Podgląd wpisu” na stronie wiki otwiera szkic w wyglądzie publicznego bloga, z blokami, spisem treści "
+                        "i czasem czytania, zanim zaznaczysz „strona publiczna”. Podgląd widzi tylko zalogowany użytkownik z prawem odczytu wiki, "
+                        "a jego adres ma nagłówek noindex i nie trafia do mapy strony, feedów ani /llms.txt."
+                    ),
+                },
+                {
+                    "title": "Skill blog-post i przewodnik dla każdego modelu",
+                    "desc": (
+                        "Skill /monolynx:blog-post prowadzi wpis od briefu przez konspekt, szkic i lint do podglądu, "
+                        "a publikuje dopiero po Twojej jawnej zgodzie; w sesji w tle kończy na szkicu. "
+                        "Publiczny przewodnik /blog-authoring.md opisuje składnię bloków, reguły lintu i operacje connectorów, "
+                        "więc wpis w tym formacie napisze też model bez pluginu."
+                    ),
+                },
+                {
+                    "title": "Wstawianie bloków i obrazków w edytorze",
+                    "desc": (
+                        "Menu „Wstaw blok” w pasku edytora wstawia w miejscu kursora gotowy szablon składni każdego bloku wpisu, "
+                        "a lista bloków pochodzi z rejestru na serwerze. "
+                        "Obrazek wgrany w edytorze zostaje załącznikiem strony i po publikacji wyświetla się czytelnikowi bez logowania."
                     ),
                 },
             ],
@@ -791,7 +907,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                     "desc": "Agent AI może przeczytać dowolną stronę i wyszukać informacje semantycznie — tak jakby był członkiem zespołu.",
                 },
             ],
-            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami i plikami projektu — 13 narzędzi MCP.",
+            "ai_intro": "Wiki to serce AI-first podejścia Monolynx. Agent AI przeszukuje dokumentację, zarządza załącznikami i plikami projektu - 13 narzędzi MCP.",
             "mcp_tools": [
                 {"name": "list_wiki_pages", "desc": "Pełne drzewo hierarchii z parent_id i głębokością"},
                 {"name": "get_wiki_page", "desc": "Treść strony + breadcrumby do nawigacji"},
@@ -866,8 +982,118 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
                 "title": "Public publishing (blog)",
                 "desc": (
                     'A "public page" checkbox on the wiki form exposes content without login at /blog/{slug}. '
+                    "Only an account with the blog permission, granted by a superuser, can change it; other accounts see the state read-only. "
                     "Page attachments (images, PDFs) are served safely — MIME allow-list for inline (PNG/JPEG/GIF/WebP), "
                     "everything else as attachment with an X-Content-Type-Options: nosniff header."
+                ),
+            },
+            {
+                "title": "Stable blog post URLs and dates",
+                "desc": (
+                    "A post's URL does not change when the page title changes, and a previous URL redirects (301) to the current one. "
+                    "The /blog/ list orders posts by publication date, so editing an older post does not reshuffle it. "
+                    "The list teaser and the meta description come from the post description, or from a content summary when there is none."
+                ),
+            },
+            {
+                "title": "Blog post blocks",
+                "desc": (
+                    "You write a post in plain markdown and the page gets ready-made blocks: callouts (note, tip, warning) and TL;DR, "
+                    "a quote with its author, an image with a caption, code with a file name and a copy button, heading anchors and footnotes. "
+                    "The server generates the block HTML and sanitizes the author's content, so custom scripts, classes and ids never reach the page."
+                ),
+            },
+            {
+                "title": "Structural blog post blocks",
+                "desc": (
+                    "A few lines of markdown give a post an accordion FAQ, steps, statistics, a comparison table with a highlighted column, "
+                    "a collapsible section, a gallery, a CTA button and a glossary. "
+                    "YouTube and Vimeo videos load only after a click, so the page sends no request to the video service before that. "
+                    "From the FAQ, steps and videos the server prepares structured data for search engines and AI models."
+                ),
+            },
+            {
+                "title": "Graphic blog post blocks",
+                "desc": (
+                    "A markdown table becomes a bar, line or pie chart that the server draws as SVG, "
+                    "a description with Mermaid code becomes a diagram, and a console block becomes a terminal window with a typing animation. "
+                    "Animated schematics come from a closed list of components kept in the repository, so a post never contains scripts or styles. "
+                    "The source of every graphic is text: an AI model reading the markdown version and a reader with JS turned off get the data, "
+                    "the description or the code. "
+                    "Charts and schematics work in the light and the dark theme, and animations turn off when the system asks for reduced motion."
+                ),
+            },
+            {
+                "title": "Post page and blog list for readers",
+                "desc": (
+                    "A post has a header with tags, author, dates, reading time and cover, plus a table of contents built from H2-H3 headings "
+                    "that highlights the current section (from 3 headings up). Below the content are links to the other language versions and "
+                    "up to 3 related posts in the same language. The /blog/ list filters by tag and language (?tag=, ?lang=), and pagination keeps the filters."
+                ),
+            },
+            {
+                "title": "Blog for feed readers and AI models",
+                "desc": (
+                    "The blog has Atom, RSS and JSON Feed feeds with the full content of the 20 newest posts, and readers find them in the page head. "
+                    "The /llms.txt file lists the newest posts live with markdown addresses, and /llms-full.txt holds all public blog content in one document. "
+                    "Post translations are linked in the sitemap, and AI crawlers (GPTBot, ClaudeBot, PerplexityBot and others) may read the blog "
+                    "in robots.txt without getting into the dashboard, the API or MCP."
+                ),
+            },
+            {
+                "title": "Blog post lint for AI",
+                "desc": (
+                    "The lint checks a post before it is published: a description of 50-300 characters, a TL;DR block with 2-5 points at the top, "
+                    "image alt text, the content of graphic blocks, heading order, descriptive link texts, the verified date and the translation. "
+                    "The result is a list of problems with a line number and a level (error, warning, info) and a score from 0 to 100. "
+                    "The lint_blog_post MCP tool, the REST API and the monolynx blog lint command return the same result."
+                ),
+            },
+            {
+                "title": "Publishing a post behind the lint gate",
+                "desc": (
+                    "Publishing a post is a separate operation: the lint runs first, then the page goes public at /blog/{slug}. "
+                    "A post with lint errors stays private and the refusal names the rules to fix; the force parameter publishes anyway. "
+                    "Unpublishing takes the post and its markdown version offline (404), while the publication date and the slug stay, "
+                    "so publishing again restores the same address. "
+                    "The publish_blog_post and unpublish_blog_post MCP tools, the REST API "
+                    "and the monolynx blog publish and monolynx blog unpublish commands do it. "
+                    "Publishing, unpublishing and changing the metadata need the blog permission on the user account: "
+                    "only a superuser grants it, and a role in the project, the owner's included, is not enough."
+                ),
+            },
+            {
+                "title": "Post metadata on the wiki form",
+                "desc": (
+                    'A "Blog post" section on the page edit form sets the address (slug), a description with a character counter, the author, tags, '
+                    "language, the link to a translation, a cover picked from the page attachments and the verified date. "
+                    "A validation error shows a message and keeps the values you typed, and a regular wiki page with an empty section does not become a post. "
+                    "Only an account with the blog permission sees the section."
+                ),
+            },
+            {
+                "title": "Draft preview before publishing",
+                "desc": (
+                    'A "Post preview" button on the wiki page opens the draft in the look of the public blog, with blocks, the table of contents '
+                    'and reading time, before you tick "public page". Only a signed-in user with wiki read permission sees the preview, '
+                    "and its address carries a noindex header and never appears in the sitemap, the feeds or /llms.txt."
+                ),
+            },
+            {
+                "title": "The blog-post skill and a guide for any model",
+                "desc": (
+                    "The /monolynx:blog-post skill takes a post from the brief through the outline, the draft and the lint to the preview, "
+                    "and publishes only after your explicit consent; in a background session it ends at the draft. "
+                    "The public guide /blog-authoring.md describes the block syntax, the lint rules and the connector operations, "
+                    "so a model without the plugin can write a post in this format too."
+                ),
+            },
+            {
+                "title": "Inserting blocks and images in the editor",
+                "desc": (
+                    'An "Insert block" menu in the editor toolbar inserts a ready syntax template of every post block at the cursor, '
+                    "and the list of blocks comes from the registry on the server. "
+                    "An image uploaded in the editor becomes a page attachment and, once the post is published, shows to a reader without login."
                 ),
             },
         ],
@@ -881,7 +1107,7 @@ def _feature_wiki(lang: str) -> dict[str, Any]:
             },
             {"title": "AI searches wiki via MCP", "desc": "Your AI agent can read any page and search semantically — as if it were a team member."},
         ],
-        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments and project files — 13 MCP tools.",
+        "ai_intro": "Wiki is the heart of Monolynx's AI-first approach. Your AI agent searches documentation, manages attachments and project files - 13 MCP tools.",
         "mcp_tools": [
             {"name": "list_wiki_pages", "desc": "Full hierarchy tree with parent_id and depth"},
             {"name": "get_wiki_page", "desc": "Page content + breadcrumbs for navigation"},
@@ -1898,6 +2124,21 @@ def _feature_cli(lang: str) -> dict[str, Any]:
                 {"name": "monolynx graph query", "desc": "Graf albo podgraf projektu (node'y i krawędzie), opcjonalnie po typie i frazie."},
                 {"name": "monolynx graph path", "desc": "Najkrótsza ścieżka między dwoma node'ami."},
                 {"name": "monolynx graph stats", "desc": "Statystyki grafu: liczba node'ów i krawędzi, także per typ."},
+                {"name": "monolynx blog list", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft."},
+                {"name": "monolynx blog get", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown."},
+                {"name": "monolynx blog meta", "desc": "Zmień metadane wpisu: slug, opis, autora, tagi, język, okładkę, datę weryfikacji."},
+                {
+                    "name": "monolynx blog lint",
+                    "desc": "Lint wpisu pod AI: problemy z linią i poziomem oraz ocena 0-100; kod wyjścia 1 przy błędzie.",
+                },
+                {
+                    "name": "monolynx blog publish",
+                    "desc": (
+                        "Opublikuj wpis po lincie; błędy lintu to odmowa i kod wyjścia 1, chyba że --force. "
+                        "Komendy meta, publish i unpublish wymagają uprawnienia do edycji bloga (bez niego 403 i kod wyjścia 3)."
+                    ),
+                },
+                {"name": "monolynx blog unpublish", "desc": "Cofnij publikację wpisu: adres i wersja .md dają 404, data i slug zostają."},
             ],
             "tech_details": [
                 {
@@ -2027,6 +2268,21 @@ def _feature_cli(lang: str) -> dict[str, Any]:
             {"name": "monolynx graph query", "desc": "The project's graph or a subgraph (nodes and edges), optionally by type and phrase."},
             {"name": "monolynx graph path", "desc": "Shortest path between two nodes."},
             {"name": "monolynx graph stats", "desc": "Graph statistics: node and edge counts, also per type."},
+            {"name": "monolynx blog list", "desc": "List blog posts with metadata, drafts included; published or draft filter."},
+            {"name": "monolynx blog get", "desc": "A blog post: metadata, public URLs and markdown content."},
+            {"name": "monolynx blog meta", "desc": "Change post metadata: slug, description, author, tags, language, cover, verified date."},
+            {
+                "name": "monolynx blog lint",
+                "desc": "Lint a post for AI: problems with line and level, plus a score from 0 to 100; exit code 1 on an error.",
+            },
+            {
+                "name": "monolynx blog publish",
+                "desc": (
+                    "Publish a post after the lint; lint errors mean a refusal and exit code 1, unless --force. "
+                    "The meta, publish and unpublish commands need the blog permission (without it a 403 and exit code 3)."
+                ),
+            },
+            {"name": "monolynx blog unpublish", "desc": "Unpublish a post: its address and its .md version answer 404, the date and the slug stay."},
         ],
         "tech_details": [
             {
@@ -2058,6 +2314,329 @@ def _feature_cli(lang: str) -> dict[str, Any]:
     }
 
 
+def _feature_blog(lang: str) -> dict[str, Any]:
+    if lang == "pl":
+        return {
+            "title": "Blog - Treści dla ludzi i modeli AI",
+            "color": "rose",
+            "icon": _ICON_BLOG,
+            "screenshot": None,
+            "screenshot_2": None,
+            "badge": "Public Blog",
+            "headline": "Blog, który czyta człowiek i cytuje model AI",
+            "description": (
+                "Wpis to strona wiki z metadanymi. Piszesz zwykły markdown, a serwer składa z niego stronę z gotowymi blokami, "
+                "wersję markdown dla modeli AI, dane strukturalne i feedy. Lint sprawdza wpis przed publikacją."
+            ),
+            "screenshot_hint": "Lista wpisów publicznego bloga",
+            "screenshot_hint_2": "Wpis z blokami, spisem treści i czasem czytania",
+            "features": [
+                {
+                    "title": "Wpis to strona wiki z metadanymi",
+                    "desc": (
+                        "Treść wpisu żyje w wiki, a osobny wiersz metadanych trzyma adres (slug), opis, autora, tagi, język, powiązanie z tłumaczeniem, "
+                        "okładkę i datę weryfikacji. Strona wiki bez tych metadanych nie jest wpisem. Opublikowany wpis jest dostępny bez logowania pod /blog/{slug}."
+                    ),
+                },
+                {
+                    "title": "Bloki wpisu",
+                    "desc": (
+                        "Zwykły markdown wystarcza na wyróżnienia, TL;DR, cytat z autorem, obrazek z podpisem, kod z przyciskiem kopiowania, FAQ, kroki, "
+                        "tabelę porównawczą, wykresy z tabeli, diagramy Mermaid i okno terminala. HTML bloków generuje serwer, a treść autora jest sanityzowana, "
+                        "więc własne skrypty, klasy i identyfikatory nie trafią na stronę."
+                    ),
+                },
+                {
+                    "title": "Bliźniak markdown dla modeli AI",
+                    "desc": (
+                        "Każdy wpis ma wersję markdown pod adresem /blog/{slug}.md, a lista bloga pod /blog/index.md. "
+                        "Ten sam dokument dostaje klient, który prosi o Accept: text/markdown. Źródłem każdej grafiki jest tekst, "
+                        "więc model widzi dane wykresu i opis diagramu, nie tylko obrazek."
+                    ),
+                },
+                {
+                    "title": "Dane strukturalne JSON-LD",
+                    "desc": (
+                        "Strona wpisu niesie BlogPosting i BreadcrumbList w formacie JSON-LD. Z bloków FAQ, kroków i wideo serwer dokłada FAQPage, HowTo i VideoObject, "
+                        "a wersje językowe wpisów są powiązane w mapie strony."
+                    ),
+                },
+                {
+                    "title": "Feedy Atom, RSS i JSON",
+                    "desc": (
+                        "Blog ma feedy /blog/feed.xml (Atom), /blog/rss.xml (RSS) i /blog/feed.json (JSON Feed) z pełną treścią 20 najnowszych wpisów, "
+                        "a czytniki znajdują je w nagłówku strony. Plik /llms.txt zawiera na żywo listę najnowszych wpisów z adresami markdown."
+                    ),
+                },
+                {
+                    "title": "Lint wpisu pod AI",
+                    "desc": (
+                        "Lint sprawdza opis, blok TL;DR, tekst alternatywny obrazków, kolejność nagłówków, opisowe teksty linków, datę weryfikacji i tłumaczenie. "
+                        "Wynik to lista problemów z numerem linii i poziomem (błąd, ostrzeżenie, informacja) oraz ocena 0-100. "
+                        "Ten sam wynik daje narzędzie MCP lint_blog_post, REST API i komenda monolynx blog lint."
+                    ),
+                },
+                {
+                    "title": "Publikacja z bramką lintu",
+                    "desc": (
+                        "Publikacja to osobna operacja: najpierw lint, potem wpis staje się publiczny. Wpis z błędami lintu zostaje prywatny, a odmowa wymienia reguły do poprawy; "
+                        "parametr force publikuje mimo błędów. Cofnięcie publikacji zdejmuje wpis i jego wersję markdown z sieci, a slug i data zostają, "
+                        "więc ponowna publikacja wraca pod ten sam adres."
+                    ),
+                },
+                {
+                    "title": "Uprawnienie do edycji bloga",
+                    "desc": (
+                        "Publikować, cofać publikację i zmieniać metadane wpisu może tylko konto z uprawnieniem do edycji bloga. "
+                        "Uprawnienie należy do konta, nie do roli w projekcie, jest domyślnie wyłączone, a nadaje je i odbiera wyłącznie superuser "
+                        "na stronie edycji konta; właściciel ani admin projektu go nie nada. Ta sama reguła obowiązuje w panelu, MCP, REST API i CLI, "
+                        "także przy oznaczaniu strony wiki jako publicznej. Konto bez uprawnienia dostaje odmowę (403 w REST API), nic nie jest zapisywane, "
+                        "a narzędzia zapisu bloga nie pojawiają się na jego liście narzędzi MCP. Czytanie wpisów i lint wymagają tylko prawa odczytu wiki."
+                    ),
+                },
+                {
+                    "title": "Podgląd szkicu",
+                    "desc": (
+                        "Przycisk „Podgląd wpisu” na stronie wiki otwiera szkic w wyglądzie publicznego bloga, zanim zaznaczysz „strona publiczna”. "
+                        "Podgląd widzi tylko zalogowany użytkownik z prawem odczytu wiki, a jego adres ma nagłówek noindex i nie trafia do mapy strony ani do feedów."
+                    ),
+                },
+                {
+                    "title": "Skill blog-post i przewodnik dla każdego modelu",
+                    "desc": (
+                        "Skill /monolynx:blog-post prowadzi wpis od briefu przez szkic i lint do podglądu, a publikuje dopiero po Twojej jawnej zgodzie. "
+                        "Publiczny przewodnik /blog-authoring.md opisuje składnię bloków, reguły lintu i operacje connectorów, "
+                        "więc wpis w tym formacie napisze też model bez pluginu."
+                    ),
+                },
+                {
+                    "title": "Dostęp z terminala",
+                    "desc": (
+                        "Grupa komend monolynx blog (list, get, meta, lint, publish, unpublish) działa na tych samych operacjach co narzędzia MCP, "
+                        "więc wpisy obsłużysz ze skryptu i z CI."
+                    ),
+                },
+            ],
+            "steps": [
+                {
+                    "title": "Napisz szkic w wiki",
+                    "desc": "Utwórz prywatną stronę wiki z treścią w markdownie i blokami wpisu. Podgląd szkicu pokaże ją w wyglądzie bloga.",
+                },
+                {
+                    "title": "Ustaw metadane",
+                    "desc": "Podaj opis, język, tagi i datę weryfikacji. Pierwszy zapis metadanych zamienia stronę wiki we wpis.",
+                },
+                {"title": "Uruchom lint", "desc": "Popraw błędy z listy, aż nie zostanie żaden poziomu „błąd”. Ostrzeżenia nie blokują publikacji."},
+                {"title": "Opublikuj", "desc": "Wpis trafia pod /blog/{slug} razem z wersją markdown, danymi strukturalnymi i feedami."},
+                {
+                    "title": "AI pisze i publikuje przez MCP",
+                    "desc": (
+                        "Agent AI przechodzi te same kroki connectorami, a publikację wykonuje dopiero po Twojej zgodzie. "
+                        "Konto, na którym pracuje agent, potrzebuje uprawnienia do edycji bloga."
+                    ),
+                },
+            ],
+            "ai_intro": "Blog jest zbudowany tak, żeby agent AI mógł go i pisać, i czytać. Agent ustawia metadane wpisu, sprawdza go lintem, publikuje i cofa publikację - 6 narzędzi MCP.",
+            "mcp_tools": [
+                {"name": "list_blog_posts", "desc": "Lista wpisów bloga z metadanymi, także szkice; filtr published albo draft"},
+                {"name": "get_blog_post", "desc": "Wpis bloga: metadane, adresy publiczne i treść markdown"},
+                {
+                    "name": "set_blog_post_meta",
+                    "desc": "Metadane wpisu: slug, opis, autor, tagi, język, tłumaczenie, okładka, data weryfikacji; wymaga uprawnienia do edycji bloga",
+                },
+                {"name": "lint_blog_post", "desc": "Lint wpisu pod AI: lista problemów z linią i poziomem oraz ocena 0-100"},
+                {
+                    "name": "publish_blog_post",
+                    "desc": "Publikacja wpisu po lincie: odmowa przy błędach, chyba że force; zwraca adresy i ocenę lintu; wymaga uprawnienia do edycji bloga",
+                },
+                {
+                    "name": "unpublish_blog_post",
+                    "desc": "Cofnięcie publikacji: adres wpisu i jego .md dają 404, data i slug zostają; wymaga uprawnienia do edycji bloga",
+                },
+            ],
+            "tech_details": [
+                {
+                    "label": "Przechowywanie",
+                    "value": "Treść wpisu to markdown strony wiki w MinIO, metadane (slug, opis, tagi, język, data publikacji) w PostgreSQL.",
+                },
+                {
+                    "label": "Renderowanie",
+                    "value": "Markdown, a potem sanityzacja nh3 bez atrybutów class i id. Wykresy rysuje serwer jako SVG, animowane schematy pochodzą z zamkniętej listy komponentów.",
+                },
+                {
+                    "label": "Publiczne adresy",
+                    "value": "/blog/, /blog/{slug}, /blog/{slug}.md, /blog/index.md oraz /blog/feed.xml, /blog/rss.xml i /blog/feed.json. Bez sesji i bez logowania.",
+                },
+                {
+                    "label": "Stabilność adresów",
+                    "value": "Zmiana tytułu nie zmienia adresu, a poprzedni adres przekierowuje (301). Lista sortuje wpisy po dacie publikacji.",
+                },
+            ],
+            "other_modules": _other_modules("blog", lang),
+        }
+    return {
+        "title": "Blog - Content for People and AI Models",
+        "color": "rose",
+        "icon": _ICON_BLOG,
+        "screenshot": None,
+        "screenshot_2": None,
+        "badge": "Public Blog",
+        "headline": "A blog people read and AI models quote",
+        "description": (
+            "A post is a wiki page with metadata. You write plain markdown, and the server builds a page with ready-made blocks, "
+            "a markdown version for AI models, structured data and feeds. A lint checks the post before publication."
+        ),
+        "screenshot_hint": "The public blog post list",
+        "screenshot_hint_2": "A post with blocks, a table of contents and reading time",
+        "features": [
+            {
+                "title": "A post is a wiki page with metadata",
+                "desc": (
+                    "The content lives in the wiki, and a separate metadata row holds the slug, description, author, tags, language, translation link, "
+                    "cover and the verification date. A wiki page without that metadata is not a post. A published post is available without signing in at /blog/{slug}."
+                ),
+            },
+            {
+                "title": "Post blocks",
+                "desc": (
+                    "Plain markdown is enough for callouts, a TL;DR, a quote with an author, a captioned image, code with a copy button, an FAQ, steps, "
+                    "a comparison table, charts from a table, Mermaid diagrams and a terminal window. The server generates the block HTML and sanitizes the author's text, "
+                    "so custom scripts, classes and identifiers never reach the page."
+                ),
+            },
+            {
+                "title": "A markdown twin for AI models",
+                "desc": (
+                    "Every post has a markdown version at /blog/{slug}.md, and the blog list is at /blog/index.md. "
+                    "A client that sends Accept: text/markdown gets the same document. Every graphic has a text source, "
+                    "so a model sees the chart data and the diagram description, not just a picture."
+                ),
+            },
+            {
+                "title": "JSON-LD structured data",
+                "desc": (
+                    "A post page carries BlogPosting and BreadcrumbList as JSON-LD. From the FAQ, steps and video blocks the server adds FAQPage, HowTo and VideoObject, "
+                    "and the language versions of a post are linked in the sitemap."
+                ),
+            },
+            {
+                "title": "Atom, RSS and JSON feeds",
+                "desc": (
+                    "The blog has /blog/feed.xml (Atom), /blog/rss.xml (RSS) and /blog/feed.json (JSON Feed) with the full text of the 20 newest posts, "
+                    "and readers find them in the page header. The /llms.txt file lists the newest posts live, with markdown addresses."
+                ),
+            },
+            {
+                "title": "A post lint for AI readers",
+                "desc": (
+                    "The lint checks the description, the TL;DR block, image alt text, heading order, descriptive link text, the verification date and the translation. "
+                    "The result is a list of problems with a line number and a level (error, warning, info) and a score from 0 to 100. "
+                    "The lint_blog_post MCP tool, the REST API and the monolynx blog lint command return the same result."
+                ),
+            },
+            {
+                "title": "Publication behind a lint gate",
+                "desc": (
+                    "Publishing is a separate operation: the lint runs first, then the post becomes public. A post with lint errors stays private, and the refusal names the rules to fix; "
+                    "the force parameter publishes anyway. Unpublishing takes the post and its markdown version off the web, while the slug and the date stay, "
+                    "so publishing again returns to the same address."
+                ),
+            },
+            {
+                "title": "Blog permission",
+                "desc": (
+                    "Only an account with the blog permission can publish a post, unpublish it or change its metadata. "
+                    "The permission belongs to the account, not to a role in a project, is off by default, and only a superuser grants or revokes it "
+                    "on the account edit page; a project owner or admin cannot. The same rule holds in the dashboard, MCP, the REST API and the CLI, "
+                    "also when a wiki page is marked public. An account without it gets a refusal (403 in the REST API), nothing is saved, "
+                    "and the blog write tools do not appear on its MCP tool list. Reading posts and the lint need only wiki read permission."
+                ),
+            },
+            {
+                "title": "Draft preview",
+                "desc": (
+                    'The "Post preview" button on a wiki page opens the draft in the look of the public blog before you tick "public page". '
+                    "Only a signed-in user with wiki read permission sees the preview, and its address carries a noindex header and stays out of the sitemap and the feeds."
+                ),
+            },
+            {
+                "title": "The blog-post skill and a guide for any model",
+                "desc": (
+                    "The /monolynx:blog-post skill leads a post from the brief through the draft and the lint to the preview, and publishes only after your explicit consent. "
+                    "The public guide /blog-authoring.md describes the block syntax, the lint rules and the connector operations, "
+                    "so a model without the plugin can write a post in this format too."
+                ),
+            },
+            {
+                "title": "Access from the terminal",
+                "desc": (
+                    "The monolynx blog command group (list, get, meta, lint, publish, unpublish) runs the same operations as the MCP tools, "
+                    "so you can handle posts from a script and from CI."
+                ),
+            },
+        ],
+        "steps": [
+            {
+                "title": "Write a draft in the wiki",
+                "desc": "Create a private wiki page with markdown content and post blocks. The draft preview shows it in the look of the blog.",
+            },
+            {
+                "title": "Set the metadata",
+                "desc": "Give a description, a language, tags and a verification date. The first metadata save turns the wiki page into a post.",
+            },
+            {
+                "title": "Run the lint",
+                "desc": "Fix the errors on the list until no problem of the level error is left. Warnings do not block publication.",
+            },
+            {"title": "Publish", "desc": "The post goes live at /blog/{slug} together with its markdown version, structured data and feeds."},
+            {
+                "title": "AI writes and publishes via MCP",
+                "desc": (
+                    "Your AI agent goes through the same steps with the connectors and publishes only after you agree. "
+                    "The account the agent runs under needs the blog permission."
+                ),
+            },
+        ],
+        "ai_intro": "The blog is built so that an AI agent can both write and read it. The agent sets post metadata, lints a post, publishes it and unpublishes it - 6 MCP tools.",
+        "mcp_tools": [
+            {"name": "list_blog_posts", "desc": "List blog posts with metadata, drafts included; published or draft filter"},
+            {"name": "get_blog_post", "desc": "A blog post: metadata, public URLs and markdown content"},
+            {
+                "name": "set_blog_post_meta",
+                "desc": "Post metadata: slug, description, author, tags, language, translation, cover, verified date; needs the blog permission",
+            },
+            {"name": "lint_blog_post", "desc": "Lint a post for AI: a list of problems with line and level, plus a score from 0 to 100"},
+            {
+                "name": "publish_blog_post",
+                "desc": "Publish a post after the lint: refused on errors unless force; returns URLs and the lint score; needs the blog permission",
+            },
+            {
+                "name": "unpublish_blog_post",
+                "desc": "Unpublish a post: its address and its .md answer 404, the date and the slug stay; needs the blog permission",
+            },
+        ],
+        "tech_details": [
+            {
+                "label": "Storage",
+                "value": "The post content is the markdown of a wiki page in MinIO, the metadata (slug, description, tags, language, publication date) is in PostgreSQL.",
+            },
+            {
+                "label": "Rendering",
+                "value": "Markdown, then nh3 sanitization without class and id attributes. The server draws charts as SVG, and animated diagrams come from a closed list of components.",
+            },
+            {
+                "label": "Public addresses",
+                "value": "/blog/, /blog/{slug}, /blog/{slug}.md, /blog/index.md and /blog/feed.xml, /blog/rss.xml and /blog/feed.json. No session, no sign-in.",
+            },
+            {
+                "label": "Stable addresses",
+                "value": "Renaming a post does not change its address, and the previous address redirects (301). The list sorts posts by publication date.",
+            },
+        ],
+        "other_modules": _other_modules("blog", lang),
+    }
+
+
 def feature_slugs() -> list[str]:
     """Public list of feature-page slugs (used by the sitemap)."""
     return list(_FEATURES)
@@ -2075,4 +2654,5 @@ _FEATURES: dict[str, Any] = {
     "work_plan": _feature_work_plan,
     "pipelines": _feature_pipelines,
     "cli": _feature_cli,
+    "blog": _feature_blog,
 }

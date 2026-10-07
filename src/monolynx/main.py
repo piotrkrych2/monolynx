@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import xml.etree.ElementTree as ET
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -19,6 +21,7 @@ from starlette.responses import Response
 
 from monolynx.config import settings
 from monolynx.database import get_db
+from monolynx.services.blog import list_public_posts
 
 logger = logging.getLogger("monolynx")
 
@@ -113,12 +116,12 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Your projects.",
         "hero_line2": "AI-first platform.",
         "hero_sub": (
-            "117 AI-ready tools, semantic wiki search, and Claude Code skills"
+            "125 AI-ready tools, semantic wiki search, and Claude Code skills"
             " - Monolynx isn't just another dashboard."
             " It's a knowledge base your AI agent works with as if it were a team member."
         ),
         "modules_title": "Everything you need",
-        "modules_sub": "Eleven integrated modules that cover the full project lifecycle.",
+        "modules_sub": "Twelve integrated modules that cover the full project lifecycle.",
         "m_500ki": "Error tracking with smart fingerprinting. Catch exceptions from your apps with a lightweight SDK.",
         "m_scrum": "Backlog, Kanban board, sprints, and story points. Everything for agile project management.",
         "m_monitoring": "URL health checks with uptime tracking, response time history, and instant alerts.",
@@ -130,6 +133,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_work_plan": "Personal cross-project scheduling on a Gantt chart and monthly calendar, independent of sprint assignment.",
         "m_pipelines": "Observability for AI agent work - pipeline, step and job hierarchy with logs, durations and upward status propagation.",
         "m_cli": "Command-line client (monolynx, alias mnx) with the same operations as MCP and pipeline-ready JSON output.",
+        "m_blog": "Public blog with ready-made blocks, a markdown twin for AI models, structured data, feeds and a lint before publication.",
+        "blog_latest_title": "Latest from the blog",
+        "blog_latest_all": "All posts",
         "mcp_title": "Connect to Claude",
         "mcp_desc": (
             "Give your AI assistant direct access to Monolynx: add it to Claude.ai as a custom"
@@ -139,7 +145,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Claude Code skills - one prompt, zero setup",
         "skills_sub": (
-            "The flagship AI tool install_monolynx_skills drops all 23 ticket and wiki"
+            "The flagship AI tool install_monolynx_skills drops all 24 ticket and wiki"
             " skills into any project connected to Monolynx - Claude Code, Codex or Cursor."
             " No ZIPs, no manual placeholder replacement."
         ),
@@ -153,7 +159,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " /monolynx:mr-queue walks MRs and PRs to merge in order: green CI, no conflict, approval, then merge"
         ),
         "skills_what_2": (
-            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG"
+            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - LLM Wiki method + RAG;"
+            " /monolynx:blog-post takes a topic (or a draft page_id) through brief, outline, draft, lint and preview"
+            " to a blog post, and publishes only after your explicit consent"
         ),
         "skills_what_3": (
             "/monolynx:next, /monolynx:setup, /monolynx:project-toolchain, /monolynx:mutation-check,"
@@ -181,12 +189,12 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "hero_line1": "Twoje projekty.",
         "hero_line2": "AI-first platforma.",
         "hero_sub": (
-            "117 narzędzi AI, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
+            "125 narzędzi AI, semantyczne wyszukiwanie w wiki i umiejętności Claude Code"
             " - Monolynx to nie kolejny dashboard."
             " To baza wiedzy, z którą Twój agent AI pracuje tak, jakby był członkiem zespołu."
         ),
         "modules_title": "Wszystko, czego potrzebujesz",
-        "modules_sub": "Jedenaście zintegrowanych modułów obejmujących cały cykl życia projektu.",
+        "modules_sub": "Dwanaście zintegrowanych modułów obejmujących cały cykl życia projektu.",
         "m_500ki": "Śledzenie błędów z inteligentnym fingerprintingiem. Przechwytuj wyjątki z aplikacji za pomocą lekkiego SDK.",
         "m_scrum": "Backlog, tablica Kanban, sprinty i story pointy. Wszystko do zwinnego zarządzania projektami.",
         "m_monitoring": "Monitorowanie URL z historią uptimeu, czasami odpowiedzi i natychmiastowymi alertami.",
@@ -200,6 +208,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         "m_work_plan": "Osobiste planowanie cross-project na wykresie Gantta i kalendarzu, niezależne od przypisania do sprintu.",
         "m_pipelines": "Obserwowalność pracy agentów AI - hierarchia pipeline, step i job z logami, czasami i propagacją statusu w górę.",
         "m_cli": "Klient wiersza poleceń (monolynx, alias mnx) z tymi samymi operacjami co MCP i wyjściem JSON gotowym do potoku.",
+        "m_blog": "Publiczny blog z gotowymi blokami, wersją markdown dla modeli AI, danymi strukturalnymi, feedami i lintem przed publikacją.",
+        "blog_latest_title": "Najnowsze na blogu",
+        "blog_latest_all": "Wszystkie wpisy",
         "mcp_title": "Połącz z Claude",
         "mcp_desc": (
             "Daj swojemu asystentowi AI bezpośredni dostęp do Monolynx: dodaj go do Claude.ai"
@@ -209,7 +220,7 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
         ),
         "skills_title": "Skille Claude Code - jeden prompt, zero konfiguracji",
         "skills_sub": (
-            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 23 skilli"
+            "Flagowe narzędzie AI install_monolynx_skills dorzuca wszystkie 24 skilli"
             " (tickety i wiki) do dowolnego projektu podłączonego do Monolynx - w Claude Code,"
             " Codeksie lub Cursorze. Bez ZIP-ów i ręcznego podmieniania placeholderów."
         ),
@@ -223,7 +234,9 @@ _LANDING_I18N: dict[str, dict[str, str]] = {
             " /monolynx:mr-queue prowadzi MR-y i PR-y do merge po kolei: zielone CI, brak konfliktu, approve, merge"
         ),
         "skills_what_2": (
-            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG"
+            "/monolynx:wiki-init, /monolynx:wiki-ingest, /monolynx:wiki-lint, /monolynx:wiki-sync-merge, /monolynx:search - metoda LLM Wiki + RAG;"
+            " /monolynx:blog-post prowadzi od tematu (albo page_id szkicu) przez brief, konspekt, szkic, lint i podgląd"
+            " do wpisu na blogu, a publikuje dopiero po Twojej jawnej zgodzie"
         ),
         "skills_what_3": (
             "/monolynx:next, /monolynx:setup, /monolynx:project-toolchain, /monolynx:mutation-check,"
@@ -254,31 +267,58 @@ def _landing_redirect() -> RedirectResponse:
 
 
 @app.get("/llms.txt", include_in_schema=False)
-async def llms_txt() -> Response:
-    """Serve llms.txt at site root for LLM consumption (llmstxt.org standard)."""
+async def llms_txt(db: AsyncSession = Depends(get_db)) -> Response:
+    """Serve llms.txt at site root for LLM consumption (llmstxt.org standard), with a live `## Blog` section.
+
+    The section is best-effort: any failure while building it leaves the static content alone (200, no section).
+    """
+    from monolynx.blog_ai import build_llms_blog_section
+
     llms_path = _STATIC_DIR / "llms.txt"
     if not llms_path.is_file():
         return Response(status_code=404, content="Not Found")
-    return Response(content=llms_path.read_text(encoding="utf-8"), media_type="text/plain; charset=utf-8")
+    content = llms_path.read_text(encoding="utf-8")
+    try:
+        section = await build_llms_blog_section(db)
+    except Exception:
+        logger.exception("Nie udalo sie zbudowac sekcji bloga w llms.txt")
+        section = ""
+    if section:
+        content = content.rstrip() + "\n\n" + section
+    return Response(content=content, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/llms-full.txt", include_in_schema=False)
+async def llms_full_txt(db: AsyncSession = Depends(get_db)) -> Response:
+    """Full markdown of all public blog posts in one document (size-capped), for LLM ingestion."""
+    from monolynx.blog_ai import build_llms_full
+
+    return Response(content=await build_llms_full(db), media_type="text/plain; charset=utf-8")
+
+
+# Jedna lista dla grupy `*` i grup botow AI: grupa nazwanego bota nie dziedziczy regul z `*` (RFC 9309),
+# wiec bez wlasnych Disallow samo `Allow: /blog/` otworzyloby botom AI panel, logowanie, API i MCP.
+_ROBOTS_DISALLOW = ("/dashboard/", "/auth/", "/api/", "/mcp")
+_ROBOTS_AI_BOTS = ("GPTBot", "ClaudeBot", "Claude-User", "PerplexityBot", "Google-Extended", "CCBot")
 
 
 @app.get("/robots.txt", include_in_schema=False)
 async def robots_txt() -> Response:
     """Robots policy for crawlers and AI agents; points to the sitemap and llms.txt."""
     base = settings.APP_URL.rstrip("/")
+    disallow = "".join(f"Disallow: {path}\n" for path in _ROBOTS_DISALLOW)
+    groups = ["User-agent: *\nAllow: /\nAllow: /blog/\n" + disallow]
+    groups += [f"User-agent: {bot}\nAllow: /blog/\n{disallow}" for bot in _ROBOTS_AI_BOTS]
     content = (
-        "User-agent: *\n"
-        "Allow: /\n"
-        "Allow: /blog/\n"
-        "Disallow: /dashboard/\n"
-        "Disallow: /auth/\n"
-        "Disallow: /api/\n"
-        "Disallow: /mcp\n"
-        "\n"
-        f"Sitemap: {base}/sitemap.xml\n"
-        "\n"
-        f"# AI assistants: machine-readable overview at {base}/llms.txt\n"
-        f"# Usage guide for AI agents: {base}/how-to-use-monolynx.md\n"
+        "\n".join(groups)
+        + "\n"
+        + f"Sitemap: {base}/sitemap.xml\n"
+        + "\n"
+        + f"# AI assistants: machine-readable overview at {base}/llms.txt\n"
+        + f"# Full blog content for AI assistants: {base}/llms-full.txt\n"
+        + f"# Blog feed (Atom): {base}/blog/feed.xml\n"
+        + f"# Usage guide for AI agents: {base}/how-to-use-monolynx.md\n"
+        + f"# Blog authoring guide for AI agents: {base}/blog-authoring.md\n"
     )
     return Response(content=content, media_type="text/plain; charset=utf-8")
 
@@ -289,6 +329,7 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
     from sqlalchemy import select
 
     from monolynx.features import feature_slugs
+    from monolynx.models.blog_post import BlogPost
     from monolynx.models.wiki_page import WikiPage
 
     base = settings.APP_URL.rstrip("/")
@@ -300,20 +341,49 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
     urls += [
         f"{base}/llms.txt",
         f"{base}/how-to-use-monolynx.md",
+        f"{base}/blog-authoring.md",
         f"{base}/agent-bootstrap.md",
         f"{base}/agent-explain.md",
         f"{base}/index.md",
     ]
-    entries = [f"  <url><loc>{url.replace('&', '&amp;')}</loc></url>" for url in urls]
+    # Namespace'y jako atrybuty literalne, bez ET.register_namespace (rejestr jest wspolny dla calego procesu).
+    urlset = ET.Element("urlset", {"xmlns": "http://www.sitemaps.org/schemas/sitemap/0.9", "xmlns:xhtml": "http://www.w3.org/1999/xhtml"})
+    for url in urls:
+        ET.SubElement(ET.SubElement(urlset, "url"), "loc").text = url
 
-    # Wpisy bloga z bazy (is_public=True) -- filtr w SQL, nigdy w petli Pythona (MON-202).
-    result = await db.execute(select(WikiPage.slug, WikiPage.updated_at).where(WikiPage.is_public.is_(True)))
-    for slug, updated_at in result.all():
-        loc = f"{base}/blog/{slug}".replace("&", "&amp;")
-        entries.append(f"  <url><loc>{loc}</loc><lastmod>{updated_at.isoformat()}</lastmod></url>")
+    # Lista bloga bez lastmod, potem wpisy z bazy (is_public=True) pod BlogPost.slug -- filtr w SQL,
+    # nigdy w petli Pythona (MON-202, MON-254). lastmod: pozniejsza z dat updated_at strony i last_verified_at (MON-271).
+    ET.SubElement(ET.SubElement(urlset, "url"), "loc").text = f"{base}/blog/"
+    result = await db.execute(
+        select(
+            BlogPost.slug,
+            BlogPost.lang,
+            BlogPost.page_id,
+            BlogPost.translation_of_id,
+            BlogPost.last_verified_at,
+            WikiPage.updated_at,
+        )
+        .join(WikiPage, WikiPage.id == BlogPost.page_id)
+        .where(WikiPage.is_public.is_(True))
+    )
+    rows = result.all()
+    # Grupa tlumaczen = publiczne wpisy o wspolnym korzeniu; hreflang tylko gdy grupa ma >= 2 publiczne wpisy.
+    groups: dict[object, list[tuple[str, str]]] = {}
+    for row in rows:
+        groups.setdefault(row.translation_of_id or row.page_id, []).append((row.lang, row.slug))
+    for row in rows:
+        url_el = ET.SubElement(urlset, "url")
+        ET.SubElement(url_el, "loc").text = f"{base}/blog/{row.slug}"
+        # last_verified_at to data bez godziny: wygrywa tylko gdy jest pozniejszym dniem niz updated_at,
+        # inaczej zostaje pelny znacznik czasu edycji.
+        verified_later = row.last_verified_at is not None and row.last_verified_at > row.updated_at.date()
+        ET.SubElement(url_el, "lastmod").text = (row.last_verified_at if verified_later else row.updated_at).isoformat()
+        versions = groups[row.translation_of_id or row.page_id]
+        if len(versions) > 1:
+            for lang, slug in sorted(versions):
+                ET.SubElement(url_el, "xhtml:link", {"rel": "alternate", "hreflang": lang, "href": f"{base}/blog/{slug}"})
 
-    body = "\n".join(entries)
-    content = f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{body}\n</urlset>\n'
+    content = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(urlset, encoding="unicode") + "\n"
     return Response(content=content, media_type="application/xml; charset=utf-8")
 
 
@@ -321,6 +391,15 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
 async def how_to_use_monolynx() -> Response:
     """Serve the AI-assistant usage guide as markdown for LLM consumption."""
     guide_path = _STATIC_DIR / "how-to-use-monolynx.md"
+    if not guide_path.is_file():
+        return Response(status_code=404, content="Not Found")
+    return _markdown_response(guide_path.read_text(encoding="utf-8"))
+
+
+@app.get("/blog-authoring.md", include_in_schema=False)
+async def blog_authoring() -> Response:
+    """Serve the blog authoring guide (block syntax, lint rules, markdown twin) as markdown."""
+    guide_path = _STATIC_DIR / "blog-authoring.md"
     if not guide_path.is_file():
         return Response(status_code=404, content="Not Found")
     return _markdown_response(guide_path.read_text(encoding="utf-8"))
@@ -348,7 +427,27 @@ def _markdown_response(content: str) -> Response:
     return Response(content=content, media_type="text/markdown; charset=utf-8")
 
 
-def _landing_markdown(lang: str) -> str:
+async def _latest_blog_posts(db: AsyncSession, lang: str) -> list[dict[str, Any]]:
+    """Trzy najnowsze publiczne wpisy w języku strony; błąd bazy daje pustą listę, bo landing nie może od niego zależeć."""
+    try:
+        items = (await list_public_posts(db, 1, 3, lang=lang)).items
+        return [
+            {
+                "title": item.page.title,
+                "slug": item.post.slug,
+                "description": item.post.description,
+                "published": item.post.published_at or item.page.created_at,
+            }
+            for item in items
+        ]
+    except Exception:
+        logger.exception("Nie udalo sie pobrac najnowszych wpisow bloga dla landingu")
+        return []
+
+
+def _landing_markdown(lang: str, latest_posts: list[dict[str, Any]]) -> str:
+    from monolynx.blog_ai import _escape_link_text
+
     t = _LANDING_I18N[lang]
     base = "https://monolynx.com"
     modules = [
@@ -363,12 +462,16 @@ def _landing_markdown(lang: str) -> str:
         ("work_plan", "Work Plan / Gantt" if lang == "en" else "Plan pracy / Gantt", t["m_work_plan"]),
         ("pipelines", "Pipelines", t["m_pipelines"]),
         ("cli", "CLI", t["m_cli"]),
+        ("blog", "Blog", t["m_blog"]),
     ]
     mcp_desc = t["mcp_desc"].replace("<mcp_link>", "").replace("</mcp_link>", "")
     is_pl = lang == "pl"
     lines = ["# Monolynx", "", f"> {t['hero_sub']}", "", f"## {t['modules_title']}", "", t["modules_sub"], ""]
     for slug, name, desc in modules:
         lines.append(f"- [{name}]({base}/features/{slug}.md?lang={lang}): {desc}")
+    if latest_posts:
+        lines += ["", "## Najnowsze wpisy" if lang == "pl" else "## Latest posts", ""]
+        lines += [f"- [{_escape_link_text(post['title'])}]({base}/blog/{post['slug']}.md)" for post in latest_posts]
     lines += ["", f"## {t['mcp_title']}", "", mcp_desc, ""]
 
     lines.append("### Custom Connector")
@@ -418,9 +521,9 @@ def _landing_markdown(lang: str) -> str:
         "```",
         "",
         (
-            "Serwer MCP udostępnia 117 narzędzi we wszystkich modułach (uwierzytelnianie tokenem Bearer)."
+            "Serwer MCP udostępnia 125 narzędzi we wszystkich modułach (uwierzytelnianie tokenem Bearer)."
             if is_pl
-            else "The MCP server exposes 117 tools across all modules (Bearer token authentication)."
+            else "The MCP server exposes 125 tools across all modules (Bearer token authentication)."
         ),
         "",
     ]
@@ -465,27 +568,33 @@ def _landing_markdown(lang: str) -> str:
             f"- [Jak używać Monolynx (przewodnik dla asystentów AI)]({base}/how-to-use-monolynx.md):"
             " pełny workflow - instalacja marketplace'u i pluginu, konfiguracja MCP, wiki jako źródło prawdy,"
             " tworzenie ticketów i praca przez skille.",
+            f"- [Pisanie wpisów bloga]({base}/blog-authoring.md): składnia bloków, reguły lintu, bliźniak markdown"
+            " i operacje connectorów - przewodnik dla dowolnego modelu.",
             f"- [Bootstrap projektu]({base}/agent-bootstrap.md): instrukcja krok po kroku dla agenta,"
             " który ma skonfigurować połączenie z Monolynx w repozytorium użytkownika.",
             f"- [llms.txt]({base}/llms.txt): maszynowy przegląd platformy - wszystkie moduły i punkty wejścia.",
+            f"- [Blog]({base}/blog/index.md): lista publicznych wpisów jako markdown; pełna treść w [llms-full.txt]({base}/llms-full.txt).",
         ]
     else:
         lines += [
             f"- [How to use Monolynx (guide for AI assistants)]({base}/how-to-use-monolynx.md):"
             " the full workflow - installing the marketplace and plugin, configuring MCP, the wiki as the"
             " source of truth, creating tickets and working through the skills.",
+            f"- [Writing blog posts]({base}/blog-authoring.md): block syntax, lint rules, the markdown twin"
+            " and connector operations - a guide for any model.",
             f"- [Project bootstrap]({base}/agent-bootstrap.md): step-by-step instructions for an agent"
             " configuring the Monolynx connection inside a user's repository.",
             f"- [llms.txt]({base}/llms.txt): machine-readable overview of the platform - all modules and entry points.",
+            f"- [Blog]({base}/blog/index.md): the public post list as markdown; full content in [llms-full.txt]({base}/llms-full.txt).",
         ]
     return "\n".join(lines).rstrip() + "\n"
 
 
 @app.get("/index.md", include_in_schema=False)
-async def landing_markdown(lang: str = "en") -> Response:
+async def landing_markdown(lang: str = "en", db: AsyncSession = Depends(get_db)) -> Response:
     if lang not in _LANDING_I18N:
         lang = "en"
-    return _markdown_response(_landing_markdown(lang))
+    return _markdown_response(_landing_markdown(lang, await _latest_blog_posts(db, lang)))
 
 
 @app.get("/features/{slug}.md", include_in_schema=False)
@@ -501,7 +610,7 @@ async def feature_markdown_page(slug: str, lang: str = "en") -> Response:
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def landing_page(request: Request, lang: str = "en") -> Response:
+async def landing_page(request: Request, lang: str = "en", db: AsyncSession = Depends(get_db)) -> Response:
     if settings.SKIP_LANDING_PAGE:
         return _landing_redirect()
     if lang not in _LANDING_I18N:
@@ -511,6 +620,7 @@ async def landing_page(request: Request, lang: str = "en") -> Response:
         "landing.html",
         {
             "t": _LANDING_I18N[lang],
+            "latest_posts": await _latest_blog_posts(db, lang),
             "lang": lang,
             "active_page": "home",
             "lang_switch_url": "/?lang=pl",
@@ -582,6 +692,7 @@ def _register_routers() -> None:
     from monolynx.api.v2 import register_api_v2
     from monolynx.api.v2 import router as api_v2_router
     from monolynx.blog import router as blog_router
+    from monolynx.blog_ai import router as blog_ai_router
     from monolynx.dashboard import router as dashboard_router
 
     app.include_router(oauth_router)
@@ -590,6 +701,8 @@ def _register_routers() -> None:
     app.include_router(heartbeat_router)
     # /blog/{slug} jest niezależny od SKIP_LANDING_PAGE -- ta flaga bramkuje tylko
     # marketingową stronę landing, blog to treść linkowana z zewnątrz (MON-201).
+    # Trasy .md PRZED blog_router: /blog/{slug} pasuje do "x.md" i zasłoniłoby bliźniaki (MON-258).
+    app.include_router(blog_ai_router)
     app.include_router(blog_router)
     app.include_router(dashboard_router)
     # api_v2_router PRZED mountem "/" (MCP) -- inaczej mount empty-prefix

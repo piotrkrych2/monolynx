@@ -3,12 +3,12 @@
 Cel: refactor, który wyciągnął logikę do `services/`, pozwala dwóm frontendom (narzędzia
 MCP w `mcp_server.py` i endpointy `/api/v2`) wołać tę samą warstwę, więc rozjazd (pole
 obecne w jednym kanale i brakujące w drugim, inny kod błędu, pominięty commit) ma wychodzić
-w testach, nie u użytkownika. Plik zawiera pięć grup testów:
+w testach, nie u użytkownika. Plik zawiera siedem grup testów:
 
 1. kompletność mapy `tool_endpoint_map.py` względem narzędzi zarejestrowanych w MCP oraz
    względem tras v2 (`find_coverage_problems`, `find_missing_routes` są sprawdzane także na
    syntetycznych zbiorach, co dowodzi, że test pada przy nowym narzędziu bez wpisu),
-2. parytet 45 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
+2. parytet 51 zmapowanych narzędzi (`SCENARIOS`, jeden scenariusz na narzędzie),
 3. jawne pinowanie znanych różnic kontraktu (`known_differences` w mapie),
 4. odrzucenie pustego tytułu strony wiki przez oba kanały (rozjazd wykryty w MON-131,
    naprawiony guardem w `api/v2/wiki.py`),
@@ -19,6 +19,9 @@ w testach, nie u użytkownika. Plik zawiera pięć grup testów:
 6. graf Połączeń (MON-248): 5 odczytów mapowanych na `/graph/*`; Neo4j nie działa w testach,
    więc funkcje `monolynx.services.graph` są podmieniane jednym zestawem mocków (`_graph_backend`)
    dla obu kanałów, a klasa `TestGraphChannelErrors` porównuje wyłączony graf i brak `connections:read`.
+
+7. zapisy bloga (MON-270): scenariusze biegną jako owner Z `blog:write` (`can_edit_blog=True`); owner bez tego
+   uprawnienia dostaje `Brak uprawnienia blog:write` w MCP i 403 w v2 (`TestBlogWriteDeniedWithoutBlogPermission`).
 
 Ten sam token (`UserApiToken` z `generate_api_token()`) obsługuje oba kanały: jako `Bearer`
 w nagłówku v2 i w zamockowanym `Context` MCP. `mcp_server.async_session_factory` jest
@@ -58,6 +61,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx import mcp_server
 from monolynx.constants import LABEL_COLOR_PALETTE
+from monolynx.models.blog_post import BlogPost
 from monolynx.models.issue import Issue
 from monolynx.models.label import Label, TicketLabel
 from monolynx.models.project import Project
@@ -109,6 +113,9 @@ _WRITE_TOOLS = frozenset(
         "update_wiki_page",
         "delete_wiki_page",
         "set_wiki_config",
+        "set_blog_post_meta",
+        "publish_blog_post",
+        "unpublish_blog_post",
     }
 )
 
@@ -168,7 +175,7 @@ class TestMapCompleteness:
         problems = find_coverage_problems([t.name for t in tools], TOOL_TO_ENDPOINT, INTENTIONALLY_UNMAPPED)
 
         assert problems == []
-        assert len(TOOL_TO_ENDPOINT) == 45
+        assert len(TOOL_TO_ENDPOINT) == 51
         assert len(INTENTIONALLY_UNMAPPED) == 74
         assert all(reason.strip() for reason in INTENTIONALLY_UNMAPPED.values())
 
@@ -350,7 +357,7 @@ async def call_v2(
 
 @pytest.fixture
 async def env(db_session, client, monkeypatch, side_effects) -> ParityEnv:
-    actor, project = await make_owner_project(db_session, "parity")
+    actor, project = await make_owner_project(db_session, "parity", can_edit_blog=True)
 
     @asynccontextmanager
     async def session_factory():
@@ -2073,6 +2080,327 @@ async def scenario_set_wiki_config(env: ParityEnv) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Blog (MON-261, MON-262): lista wpisów, szczegóły, częściowy zapis metadanych i lint
+# ---------------------------------------------------------------------------
+
+_BLOG_VIEW_KEYS = (
+    "page_id",
+    "title",
+    "slug",
+    "previous_slugs",
+    "description",
+    "published_at",
+    "author_name",
+    "tags",
+    "lang",
+    "translation_of_id",
+    "cover_attachment_id",
+    "last_verified_at",
+    "is_public",
+    "public_url",
+    "markdown_url",
+)
+
+
+async def _blog_post(
+    env: ParityEnv, title: str, slug: str, *, is_public: bool = False, with_post: bool = True, content: str = "# Tresc wpisu", **fields: Any
+) -> WikiPage:
+    page = await _wiki_page(env, title, slug, content)
+    if is_public:
+        page.is_public = True
+    if with_post:
+        env.db.add(BlogPost(page_id=page.id, slug=slug, **fields))
+    await env.db.flush()
+    return page
+
+
+async def _blog_state(env: ParityEnv, page_id: uuid.UUID | str) -> dict[str, Any]:
+    row = (
+        await env.db.execute(
+            select(
+                BlogPost.slug,
+                BlogPost.previous_slugs,
+                BlogPost.description,
+                BlogPost.published_at,
+                BlogPost.author_name,
+                BlogPost.tags,
+                BlogPost.lang,
+                BlogPost.translation_of_id,
+                BlogPost.cover_attachment_id,
+                BlogPost.last_verified_at,
+            ).where(BlogPost.page_id == uuid.UUID(str(page_id)))
+        )
+    ).one()
+    return dict(row._mapping)
+
+
+def _assert_blog_view_equal(mcp_item: dict[str, Any], v2_item: dict[str, Any], *, skip: tuple[str, ...] = ()) -> None:
+    """Pola widoku wpisu są identyczne w obu kanałach; data publikacji porównywana jako moment (inny zapis offsetu)."""
+    assert set(mcp_item) >= set(_BLOG_VIEW_KEYS)
+    assert set(v2_item) >= set(_BLOG_VIEW_KEYS)
+    for key in _BLOG_VIEW_KEYS:
+        if key in skip:
+            continue
+        if key == "published_at" and mcp_item[key] is not None:
+            assert _dt(mcp_item[key]) == _dt(v2_item[key]), key
+        else:
+            assert mcp_item[key] == v2_item[key], key
+
+
+async def scenario_list_blog_posts(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    published = await _blog_post(
+        env, "Wpis publiczny", f"pub-{tag}", is_public=True, published_at=_ts(10), tags=["a"], description="Opis", last_verified_at=date(2026, 8, 1)
+    )
+    draft = await _blog_post(env, "Szkic wpisu", f"draft-{tag}", is_public=False)
+    await _blog_post(env, "Strona bez wpisu", f"norow-{tag}", with_post=False)
+
+    mcp_out = await env.mcp("list_blog_posts", env.slug)
+    response = await env.v2("list_blog_posts")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["total"], body["page"]) == (2, 1)
+    assert [i["page_id"] for i in mcp_out] == [i["page_id"] for i in body["items"]] == [str(published.id), str(draft.id)]
+    for mcp_item, v2_item in zip(mcp_out, body["items"], strict=True):
+        _assert_blog_view_equal(mcp_item, v2_item)
+    assert mcp_out[0]["public_url"] is not None
+    assert mcp_out[1]["public_url"] is None
+
+    mcp_draft = await env.mcp("list_blog_posts", env.slug, status="draft")
+    v2_draft = await env.v2("list_blog_posts", params={"status": "draft"})
+    assert [i["page_id"] for i in mcp_draft] == [i["page_id"] for i in v2_draft.json()["items"]] == [str(draft.id)]
+
+    message = await env.mcp_error("list_blog_posts", env.slug, status="archived")
+    _assert_problem(await env.v2("list_blog_posts", params={"status": "archived"}), 422, message)
+
+
+async def scenario_get_blog_post(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    page = await _blog_post(
+        env,
+        "Wpis ze szczegółami",
+        f"detail-{tag}",
+        is_public=True,
+        content="# Treść szczegółów",
+        published_at=_ts(5),
+        tags=["x", "y"],
+        lang="en",
+        last_verified_at=date(2026, 8, 2),
+    )
+
+    mcp_out = await env.mcp("get_blog_post", env.slug, str(page.id))
+    response = await env.v2("get_blog_post", page_id=page.id)
+
+    assert response.status_code == 200
+    body = response.json()
+    _assert_blog_view_equal(mcp_out, body)
+    assert (mcp_out["content"], body["content"]) == ("# Treść szczegółów", "# Treść szczegółów")
+    assert (body["lang"], body["tags"], body["is_public"]) == ("en", ["x", "y"], True)
+
+    unknown = uuid.uuid4()
+    message = await env.mcp_error("get_blog_post", env.slug, str(unknown))
+    _assert_problem(await env.v2("get_blog_post", page_id=unknown), 404, message)
+
+    no_row = await _blog_post(env, "Strona bez wpisu", f"norow-{tag}", with_post=False)
+    no_row_message = await env.mcp_error("get_blog_post", env.slug, str(no_row.id))
+    assert no_row_message == "Wpis bloga nie istnieje"
+    _assert_problem(await env.v2("get_blog_post", page_id=no_row.id), 404, no_row_message)
+
+
+async def scenario_lint_blog_post(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    page = await _blog_post(
+        env,
+        "Wpis do lintu",
+        f"lint-{tag}",
+        content="# Tytuł\n\nWstęp bez streszczenia.\n",
+        description="Za krótki opis",
+    )
+
+    mcp_out = await env.mcp("lint_blog_post", env.slug, str(page.id))
+    response = await env.v2("lint_blog_post", page_id=page.id)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert mcp_out["issues"] == body["issues"]
+    assert mcp_out["score"] == body["score"]
+    assert (mcp_out["error_count"], mcp_out["warning_count"], mcp_out["info_count"]) == (
+        body["error_count"],
+        body["warning_count"],
+        body["info_count"],
+    )
+    assert mcp_out["page_id"] == body["page_id"] == str(page.id)
+    levels = {issue["level"] for issue in body["issues"]}
+    assert {"error", "warning"} <= levels
+    assert {"description-length", "tldr-missing", "last-verified-missing"} <= {issue["rule"] for issue in body["issues"]}
+    assert body["score"] < 100
+    # Różnica kanałów z `known_differences`: tabela jest tylko w MCP.
+    assert "table" in mcp_out
+    assert "table" not in body
+
+    unknown = uuid.uuid4()
+    message = await env.mcp_error("lint_blog_post", env.slug, str(unknown))
+    _assert_problem(await env.v2("lint_blog_post", page_id=unknown), 404, message)
+
+    no_row = await _blog_post(env, "Strona bez wpisu", f"lint-norow-{tag}", with_post=False)
+    no_row_message = await env.mcp_error("lint_blog_post", env.slug, str(no_row.id))
+    assert no_row_message == "Wpis bloga nie istnieje"
+    _assert_problem(await env.v2("lint_blog_post", page_id=no_row.id), 404, no_row_message)
+
+
+async def scenario_set_blog_post_meta(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    original = await _blog_post(env, "Oryginał", f"orig-{tag}")
+    page_a = await _blog_post(env, "Wpis MCP", f"a-{tag}", description="Stary", tags=["x"], last_verified_at=date(2026, 7, 1))
+    page_b = await _blog_post(env, "Wpis v2", f"b-{tag}", description="Stary", tags=["x"], last_verified_at=date(2026, 7, 1))
+    original_id, a_id, b_id = original.id, page_a.id, page_b.id
+    payload = {
+        "description": "Nowy opis",
+        "author_name": "Ada",
+        "tags": ["t1", "t2"],
+        "lang": "en",
+        "translation_of_id": str(original_id),
+        "last_verified_at": "2026-08-09",
+    }
+
+    mcp_out = await env.mcp("set_blog_post_meta", env.slug, str(a_id), slug=f"mcp-{tag}", **payload)
+    response = await env.v2("set_blog_post_meta", page_id=b_id, json={"slug": f"v2-{tag}", **payload})
+
+    assert response.status_code == 200
+    body = response.json()
+    _assert_blog_view_equal(mcp_out, body, skip=("page_id", "title", "slug", "previous_slugs", "public_url", "markdown_url"))
+    assert (mcp_out["slug"], body["slug"]) == (f"mcp-{tag}", f"v2-{tag}")
+    assert (mcp_out["previous_slugs"], body["previous_slugs"]) == ([f"a-{tag}"], [f"b-{tag}"])
+    state_a, state_b = await _blog_state(env, a_id), await _blog_state(env, b_id)
+    assert _without(state_a, "slug", "previous_slugs") == _without(state_b, "slug", "previous_slugs")
+    assert (state_a["description"], state_a["tags"], state_a["lang"], state_a["translation_of_id"]) == ("Nowy opis", ["t1", "t2"], "en", original_id)
+    assert state_a["last_verified_at"] == date(2026, 8, 9)
+
+    # Czyszczenie: MCP pustym tekstem, v2 wartością null; tags=[] czyści w obu kanałach.
+    mcp_clear = await env.mcp("set_blog_post_meta", env.slug, str(a_id), translation_of_id="", last_verified_at="", tags=[])
+    v2_clear = await env.v2("set_blog_post_meta", page_id=b_id, json={"translation_of_id": None, "last_verified_at": None, "tags": []})
+
+    assert v2_clear.status_code == 200
+    for key in ("translation_of_id", "last_verified_at"):
+        assert (mcp_clear[key], v2_clear.json()[key]) == (None, None)
+    assert (mcp_clear["tags"], v2_clear.json()["tags"]) == ([], [])
+    cleared_a, cleared_b = await _blog_state(env, a_id), await _blog_state(env, b_id)
+    assert _without(cleared_a, "slug", "previous_slugs") == _without(cleared_b, "slug", "previous_slugs")
+    assert (cleared_a["translation_of_id"], cleared_a["last_verified_at"], cleared_a["tags"]) == (None, None, [])
+    assert cleared_a["description"] == "Nowy opis"
+
+    # Błędy: ta sama treść komunikatu, w v2 jako problem+json z właściwym kodem.
+    bad_lang = await env.mcp_error("set_blog_post_meta", env.slug, str(a_id), lang="de")
+    _assert_problem(await env.v2("set_blog_post_meta", page_id=b_id, json={"lang": "de"}), 422, bad_lang)
+    unknown = uuid.uuid4()
+    not_found = await env.mcp_error("set_blog_post_meta", env.slug, str(unknown), description="x")
+    _assert_problem(await env.v2("set_blog_post_meta", page_id=unknown, json={"description": "x"}), 404, not_found)
+
+
+_PUBLISH_DESCRIPTION = "Opis wpisu bloga o publikacji: sprawdza strukturę, grafiki i metadane tak, żeby agent AI mógł go czytać."
+_PUBLISH_CLEAN = "> [!TLDR]\n> - Pierwszy punkt streszczenia.\n> - Drugi punkt streszczenia.\n\n## Czym jest lint?\n\nLint sprawdza wpis.\n"
+_PUBLISH_BAD = "# Tytuł\n\nWstęp bez streszczenia.\n"
+
+
+async def _publishable(env: ParityEnv, title: str, slug: str, content: str, **fields: Any) -> WikiPage:
+    return await _blog_post(env, title, slug, content=content, description=_PUBLISH_DESCRIPTION, last_verified_at=date.today(), **fields)
+
+
+async def _page_is_public(env: ParityEnv, page_id: uuid.UUID) -> bool:
+    return (await env.db.execute(select(WikiPage.is_public).where(WikiPage.id == page_id))).scalar_one()
+
+
+async def scenario_publish_blog_post(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    page_a = await _publishable(env, "Wpis MCP", f"pub-a-{tag}", _PUBLISH_CLEAN)
+    page_b = await _publishable(env, "Wpis v2", f"pub-b-{tag}", _PUBLISH_CLEAN)
+    a_id, b_id = page_a.id, page_b.id
+
+    mcp_out = await env.mcp("publish_blog_post", env.slug, str(a_id))
+    response = await env.v2("publish_blog_post", page_id=b_id)
+
+    assert response.status_code == 200
+    body = response.json()
+    _assert_blog_view_equal(mcp_out, body, skip=("page_id", "title", "slug", "public_url", "markdown_url", "published_at"))
+    assert (mcp_out["is_public"], body["is_public"]) == (True, True)
+    assert mcp_out["public_url"].endswith(f"/blog/pub-a-{tag}")
+    assert body["public_url"].endswith(f"/blog/pub-b-{tag}")
+    assert (mcp_out["markdown_url"], body["markdown_url"]) == (mcp_out["public_url"] + ".md", body["public_url"] + ".md")
+    # Wynik lintu jest ten sam w obu kanałach; MCP nie dokłada tu tabeli (inaczej niż w lint_blog_post).
+    assert "table" not in mcp_out["lint"]
+    assert {k: v for k, v in mcp_out["lint"].items() if k != "page_id"} == {k: v for k, v in body["lint"].items() if k != "page_id"}
+    assert (mcp_out["lint"]["page_id"], body["lint"]["page_id"]) == (str(a_id), str(b_id))
+    assert mcp_out["lint"]["error_count"] == 0
+    state_a, state_b = await _blog_state(env, a_id), await _blog_state(env, b_id)
+    assert state_a["published_at"] is not None
+    assert state_b["published_at"] is not None
+    assert (await _page_is_public(env, a_id), await _page_is_public(env, b_id)) == (True, True)
+
+    # Druga publikacja nie zmienia daty w żadnym kanale.
+    mcp_again = await env.mcp("publish_blog_post", env.slug, str(a_id))
+    v2_again = await env.v2("publish_blog_post", page_id=b_id)
+    assert _dt(mcp_again["published_at"]) == _dt(mcp_out["published_at"])
+    assert _dt(v2_again.json()["published_at"]) == _dt(body["published_at"])
+
+    # Odmowa lintu: ten sam komunikat, 422 w v2, strona zostaje prywatna. Rollback serwisu cofnąłby
+    # transakcję testu, więc jest podmieniony; to, że został wywołany, sprawdza test jednostkowy.
+    refused_a = await _publishable(env, "Odmowa MCP", f"ref-a-{tag}", _PUBLISH_BAD)
+    refused_b = await _publishable(env, "Odmowa v2", f"ref-b-{tag}", _PUBLISH_BAD)
+    with patch.object(env.db, "rollback", AsyncMock()):
+        message = await env.mcp_error("publish_blog_post", env.slug, str(refused_a.id))
+        refusal = await env.v2("publish_blog_post", page_id=refused_b.id)
+    assert message.startswith("Publikacja odrzucona: wpis ma błędy lintu")
+    assert "tldr-missing" in message
+    _assert_problem(refusal, 422, message)
+    assert (await _page_is_public(env, refused_a.id), await _page_is_public(env, refused_b.id)) == (False, False)
+
+    # force: obie strony publikują się mimo błędów i zwracają tę samą ocenę.
+    forced_a = await _publishable(env, "Force MCP", f"force-a-{tag}", _PUBLISH_BAD)
+    forced_b = await _publishable(env, "Force v2", f"force-b-{tag}", _PUBLISH_BAD)
+    mcp_forced = await env.mcp("publish_blog_post", env.slug, str(forced_a.id), force=True)
+    v2_forced = await env.v2("publish_blog_post", page_id=forced_b.id, json={"force": True})
+    assert v2_forced.status_code == 200
+    assert mcp_forced["lint"]["error_count"] == v2_forced.json()["lint"]["error_count"] == 1
+    assert mcp_forced["lint"]["score"] == v2_forced.json()["lint"]["score"]
+    assert (mcp_forced["is_public"], v2_forced.json()["is_public"]) == (True, True)
+
+    unknown = uuid.uuid4()
+    not_found = await env.mcp_error("publish_blog_post", env.slug, str(unknown))
+    _assert_problem(await env.v2("publish_blog_post", page_id=unknown), 404, not_found)
+
+
+async def scenario_unpublish_blog_post(env: ParityEnv) -> None:
+    tag = uuid.uuid4().hex[:8]
+    page_a = await _blog_post(env, "Wpis MCP", f"unpub-a-{tag}", is_public=True, published_at=_ts(3))
+    page_b = await _blog_post(env, "Wpis v2", f"unpub-b-{tag}", is_public=True, published_at=_ts(3))
+    a_id, b_id = page_a.id, page_b.id
+
+    mcp_out = await env.mcp("unpublish_blog_post", env.slug, str(a_id))
+    response = await env.v2("unpublish_blog_post", page_id=b_id)
+
+    assert response.status_code == 200
+    body = response.json()
+    _assert_blog_view_equal(mcp_out, body, skip=("page_id", "title", "slug"))
+    assert (mcp_out["is_public"], body["is_public"]) == (False, False)
+    assert (mcp_out["public_url"], body["public_url"]) == (None, None)
+    assert (_dt(mcp_out["published_at"]), _dt(body["published_at"])) == (_ts(3), _ts(3))
+    state_a, state_b = await _blog_state(env, a_id), await _blog_state(env, b_id)
+    assert _without(state_a, "slug", "previous_slugs") == _without(state_b, "slug", "previous_slugs")
+    assert (state_a["slug"], state_b["slug"]) == (f"unpub-a-{tag}", f"unpub-b-{tag}")
+    assert (await _page_is_public(env, a_id), await _page_is_public(env, b_id)) == (False, False)
+
+    unknown = uuid.uuid4()
+    not_found = await env.mcp_error("unpublish_blog_post", env.slug, str(unknown))
+    _assert_problem(await env.v2("unpublish_blog_post", page_id=unknown), 404, not_found)
+
+    no_row = await _blog_post(env, "Strona bez wpisu", f"unpub-norow-{tag}", with_post=False)
+    no_row_message = await env.mcp_error("unpublish_blog_post", env.slug, str(no_row.id))
+    assert no_row_message == "Wpis bloga nie istnieje"
+    _assert_problem(await env.v2("unpublish_blog_post", page_id=no_row.id), 404, no_row_message)
+
+
+# ---------------------------------------------------------------------------
 # Graf Połączeń (MON-248): Neo4j nie działa w testach, oba kanały wołą te same funkcje
 # `monolynx.services.graph`, więc jeden zestaw mocków obsługuje MCP i v2.
 # ---------------------------------------------------------------------------
@@ -2345,6 +2673,12 @@ SCENARIOS: dict[str, Scenario] = {
     "search_wiki": scenario_search_wiki,
     "get_wiki_config": scenario_get_wiki_config,
     "set_wiki_config": scenario_set_wiki_config,
+    "list_blog_posts": scenario_list_blog_posts,
+    "get_blog_post": scenario_get_blog_post,
+    "lint_blog_post": scenario_lint_blog_post,
+    "set_blog_post_meta": scenario_set_blog_post_meta,
+    "publish_blog_post": scenario_publish_blog_post,
+    "unpublish_blog_post": scenario_unpublish_blog_post,
     "list_graph_nodes": scenario_list_graph_nodes,
     "get_graph_node": scenario_get_graph_node,
     "query_graph": scenario_query_graph,
@@ -2385,6 +2719,10 @@ class TestKnownDifferences:
             "get_sprint",
             "create_wiki_page",
             "update_wiki_page",
+            "list_blog_posts",
+            "set_blog_post_meta",
+            "publish_blog_post",
+            "unpublish_blog_post",
             "list_graph_nodes",
             "get_graph_node",
             "query_graph",
@@ -2597,3 +2935,85 @@ class TestNonMemberDenied:
 
         assert message == f"Projekt '{env.slug}' nie istnieje"
         _assert_problem(response, 404, message)
+
+
+# ---------------------------------------------------------------------------
+# Zapisy bloga wymagają blog:write na koncie (MON-270)
+# ---------------------------------------------------------------------------
+
+_BLOG_DENIED = "Brak uprawnienia blog:write"
+_BLOG_WRITE_TOOLS = ("set_blog_post_meta", "publish_blog_post", "unpublish_blog_post")
+
+
+async def _flagless_owner(env: ParityEnv) -> ApiV2Actor:
+    actor = await make_actor(env.db, "noflag")
+    await add_member(env.db, env.project, actor.user, role="owner")
+    return actor
+
+
+class TestBlogWriteDeniedWithoutBlogPermission:
+    @pytest.mark.parametrize("tool", _BLOG_WRITE_TOOLS)
+    async def test_owner_without_flag_is_denied_in_both_channels_and_nothing_changes(self, tool, env):
+        actor = await _flagless_owner(env)
+        tag = uuid.uuid4().hex[:8]
+        starts_public = tool == "unpublish_blog_post"
+        page = await _publishable(env, "Wpis bez prawa", f"deny-{tag}", _PUBLISH_CLEAN, is_public=starts_public)
+        mcp_kwargs = {"set_blog_post_meta": {"description": "Zmieniony opis"}}.get(tool, {})
+        v2_json = {"set_blog_post_meta": {"description": "Zmieniony opis"}}.get(tool)
+        before = await _blog_state(env, page.id)
+
+        message = await call_mcp_error(_token_of(actor), tool, env.slug, str(page.id), **mcp_kwargs)
+        response = await call_v2(env.client, tool, actor.headers, env.slug, json=v2_json, page_id=page.id)
+
+        assert message == _BLOG_DENIED
+        _assert_problem(response, 403, _BLOG_DENIED)
+        assert await _blog_state(env, page.id) == before
+        assert await _page_is_public(env, page.id) is starts_public
+
+    async def test_is_public_on_wiki_create_is_denied_in_both_channels_and_creates_nothing(self, env):
+        actor = await _flagless_owner(env)
+        tag = uuid.uuid4().hex[:8]
+        payload = {"content": "# Tresc", "is_public": True}
+
+        message = await call_mcp_error(_token_of(actor), "create_wiki_page", env.slug, f"Odmowa mcp {tag}", **payload)
+        response = await call_v2(env.client, "create_wiki_page", actor.headers, env.slug, json={"title": f"Odmowa v2 {tag}", **payload})
+
+        assert message == _BLOG_DENIED
+        _assert_problem(response, 403, _BLOG_DENIED)
+        titles = {f"Odmowa mcp {tag}", f"Odmowa v2 {tag}"}
+        assert (await env.db.execute(select(WikiPage.id).where(WikiPage.title.in_(titles)))).first() is None
+
+    async def test_is_public_on_wiki_update_is_denied_in_both_channels_and_page_stays_private(self, env):
+        actor = await _flagless_owner(env)
+        tag = uuid.uuid4().hex[:8]
+        page_a = await _wiki_page(env, "Prywatna mcp", f"prywatna-mcp-{tag}", "stara tresc")
+        page_b = await _wiki_page(env, "Prywatna v2", f"prywatna-v2-{tag}", "stara tresc")
+
+        message = await call_mcp_error(_token_of(actor), "update_wiki_page", env.slug, str(page_a.id), is_public=True)
+        response = await call_v2(env.client, "update_wiki_page", actor.headers, env.slug, json={"is_public": True}, page_id=page_b.id)
+
+        assert message == _BLOG_DENIED
+        _assert_problem(response, 403, _BLOG_DENIED)
+        assert (await _wiki_state(env, page_a.id))["is_public"] is False
+        assert (await _wiki_state(env, page_b.id))["is_public"] is False
+
+    async def test_content_edit_of_wiki_page_without_flag_still_works_in_both_channels(self, env):
+        actor = await _flagless_owner(env)
+        tag = uuid.uuid4().hex[:8]
+        page_a = await _wiki_page(env, "Edycja mcp", f"edycja-mcp-{tag}", "stara tresc")
+        page_b = await _wiki_page(env, "Edycja v2", f"edycja-v2-{tag}", "stara tresc")
+
+        await call_mcp(_token_of(actor), "update_wiki_page", env.slug, str(page_a.id), content="nowa mcp")
+        response = await call_v2(env.client, "update_wiki_page", actor.headers, env.slug, json={"content": "nowa v2"}, page_id=page_b.id)
+
+        assert response.status_code == 200
+        assert (await _wiki_state(env, page_a.id))["content"] == "nowa mcp"
+        assert (await _wiki_state(env, page_b.id))["content"] == "nowa v2"
+
+    @pytest.mark.parametrize("tool", _BLOG_WRITE_TOOLS)
+    def test_map_documents_the_hidden_mcp_listing_and_the_v2_403(self, tool):
+        note = TOOL_TO_ENDPOINT[tool].known_differences
+
+        assert "blog:write" in note
+        assert "403" in note
+        assert "ukrywa to narzędzie na liście" in note
