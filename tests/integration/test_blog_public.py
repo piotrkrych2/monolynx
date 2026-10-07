@@ -1836,6 +1836,38 @@ class TestBlogGraphicBlocks:
         assert resp.text.count(f"{_GRAPHICS_DIR}agent-loop.js") == 1
         assert resp.text.count(f"{_GRAPHICS_DIR}agent-loop.css") == 1
 
+    @patch("monolynx.services.wiki.get_markdown")
+    async def test_mon272_blocks_script_runs_after_mermaid_and_graphic_scripts(self, mock_get_markdown, client, db_session):
+        """MON-272 pkt 1: skrypty defer wykonują się w kolejności dokumentu, więc blocks.js stoi PO mermaid i grafice."""
+        mock_get_markdown.return_value = f"Tekst MON272.\n\n{_DIAGRAM_BLOCK}\n\n{_GRAPHIC_BLOCK}"
+        page = await _published_post(db_session, "mon272-script-order")
+
+        resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        blocks_tag = re.findall(r'<script\b[^>]*\bsrc="/static/blog/blocks\.js"[^>]*>', resp.text)
+        graphic_tag = re.findall(rf'<script\b[^>]*\bsrc="{re.escape(_GRAPHICS_DIR)}agent-loop\.js"[^>]*>', resp.text)
+        mermaid_tag = _MERMAID_SCRIPT.findall(resp.text)
+        assert len(blocks_tag) == 1
+        assert len(graphic_tag) == 1
+        assert len(mermaid_tag) == 1
+        assert all("defer" in tag for tag in (blocks_tag[0], graphic_tag[0], mermaid_tag[0]))
+        blocks_pos = resp.text.index(blocks_tag[0])
+        assert blocks_pos > resp.text.index(mermaid_tag[0])
+        assert blocks_pos > resp.text.index(graphic_tag[0])
+
+    def test_mon272_blocks_init_waits_for_dom_content_loaded_unless_document_is_complete(self):
+        """MON-272 pkt 1 (uzupełniający, tekstowy): initBlocks rusza od razu tylko w stanie "complete", nie w "interactive"."""
+        script = (Path(__file__).resolve().parents[2] / "src" / "monolynx" / "static" / "blog" / "blocks.js").read_text(encoding="utf-8")
+
+        windows = [script[match.start() : match.start() + 220] for match in re.finditer(r"document\.readyState", script)]
+        guards = [window for window in windows if "initBlocks" in window]
+
+        assert guards
+        for guard in guards:
+            assert '"loading"' not in guard
+            assert '"complete"' in guard
+
     @pytest.mark.parametrize(
         ("tag", "name"),
         [("unknown", "no-such-component"), ("traversal", "../../../etc/passwd"), ("case", "Agent-Loop")],
@@ -2451,12 +2483,14 @@ class TestBlogIndexFilters:
         resp = await client.get("/blog/", params={"tag": "x"})
         forced = await client.get("/blog/", params={"tag": "x", "lang": "pl"})
 
-        hrefs = _hrefs(resp.text)
-        assert "/blog/?tag=x&lang=pl" in hrefs
-        assert "/blog/?tag=x&lang=en" in hrefs
         # Navbar (interfejs en) niesie link do PL z kontekstu; domyślny `/?lang=pl` layoutu oznaczałby brak `lang_switch_url`.
-        assert "/?lang=pl" not in hrefs
+        assert "/?lang=pl" not in _hrefs(resp.text)
         assert "/?lang=en" not in _hrefs(forced.text)
+        # MON-272 pkt 4: przełącznik zmienia tylko język interfejsu (`ui`), filtr tagu zostaje, filtra języka wpisów nie ma.
+        [pl_link] = _navbar_switch_hrefs(resp.text)
+        assert _query_of(pl_link) == {"tag": ["x"], "ui": ["pl"]}
+        [en_link] = _navbar_switch_hrefs(forced.text)
+        assert _query_of(en_link) == {"tag": ["x"], "lang": ["pl"], "ui": ["en"]}
 
     @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON260.")
     async def test_second_page_with_tag_keeps_filter_in_links_and_canonical_points_to_itself(self, mock_get_markdown, client, db_session):
@@ -2554,9 +2588,117 @@ def _anchor_hrefs(text, label):
     return [html.unescape(href) for href in re.findall(rf'<a href="([^"]*)"[^>]*>\s*{label}\s*</a>', text)]
 
 
+_MON272_OLD_UPDATE = datetime(2020, 1, 1, 8, 0, tzinfo=UTC)
+
+
+def _mon272_counting_storage(store):
+    """Atrapa `get_markdown` czytająca z `store` (ścieżka -> treść albo wyjątek); `call_count` to liczba odczytów z MinIO."""
+
+    def _get(path):
+        value = store[path]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    return patch("monolynx.services.wiki.get_markdown", side_effect=_get)
+
+
+@pytest.mark.integration
+class TestMon272IndexContentCache:
+    """MON-272 pkt 10: lista /blog/ czyta treść karty z MinIO raz na (page_id, updated_at), błędów storage nie zapamiętuje."""
+
+    async def test_mon272_second_index_request_does_not_read_storage_again(self, client, db_session):
+        """MON-272 pkt 10: dwa kolejne żądania listy bez zmian - drugie nie czyta treści z MinIO."""
+        project, user = await _scene(db_session, "m272-idx-hit")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Cache Listy MON272", is_public=True, updated_at=_MON272_OLD_UPDATE)
+
+        with _mon272_counting_storage({page.minio_path: "Tresc karty MON272-HIT."}) as mock_get:
+            first = await client.get("/blog/")
+            reads_after_first = mock_get.call_count
+            second = await client.get("/blog/")
+
+        assert first.status_code == 200
+        assert "Wpis Cache Listy MON272" in first.text
+        assert reads_after_first >= 1
+        assert mock_get.call_count == reads_after_first
+        assert "MON272-HIT" in second.text
+
+    async def test_mon272_content_edit_invalidates_the_index_cache(self, client, db_session):
+        """MON-272 pkt 10: edycja treści przez serwis zmienia updated_at, więc lista czyta MinIO ponownie i pokazuje nową zajawkę."""
+        project, user = await _scene(db_session, "m272-idx-edit")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Edycja Listy MON272", is_public=True, updated_at=_MON272_OLD_UPDATE)
+        store = {page.minio_path: "Tresc karty MON272-OLD."}
+
+        with _mon272_counting_storage(store) as mock_get:
+            first = await client.get("/blog/")
+            reads_after_first = mock_get.call_count
+            store[page.minio_path] = "Tresc karty MON272-NEW."
+            with _wiki_side_effects():
+                await update_wiki_page(page=page, project_slug=project.slug, content=store[page.minio_path], user_id=user.id, db=db_session)
+            second = await client.get("/blog/")
+
+        assert "MON272-OLD" in first.text
+        assert mock_get.call_count > reads_after_first
+        assert "MON272-NEW" in second.text
+        assert "MON272-OLD" not in second.text
+
+    async def test_mon272_storage_error_is_not_cached_for_the_index(self, client, db_session):
+        """MON-272 pkt 10: błąd storage przy pierwszym żądaniu nie jest zapamiętany, drugie próbuje ponownie i pokazuje zajawkę."""
+        project, user = await _scene(db_session, "m272-idx-err")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Blad Listy MON272", is_public=True, updated_at=_MON272_OLD_UPDATE)
+        store = {page.minio_path: RuntimeError("MinIO niedostepne")}
+
+        with _mon272_counting_storage(store) as mock_get:
+            first = await client.get("/blog/")
+            reads_after_first = mock_get.call_count
+            store[page.minio_path] = "Tresc karty MON272-FIXED."
+            second = await client.get("/blog/")
+
+        assert first.status_code == 200
+        assert "MON272-FIXED" not in first.text
+        assert reads_after_first >= 1
+        assert mock_get.call_count > reads_after_first
+        assert "MON272-FIXED" in second.text
+
+
+def _navbar_switch_hrefs(text):
+    """Adresy kotwic przełącznika języka interfejsu w navbarze (blok po komentarzu `Language switcher`), odescapowane."""
+    start = text.index("<!-- Language switcher -->")
+    block = text[start : text.index("</div>", start)]
+    return [html.unescape(href) for href in re.findall(r'<a href="([^"]*)"', block)]
+
+
 @pytest.mark.integration
 class TestBlogIndexInterfaceParam:
     """MON-271: `?ui=` to wyłącznie język interfejsu listy, `?lang=` zostaje wyłącznie filtrem języka wpisów."""
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON272.")
+    async def test_mon272_navbar_pl_link_sets_ui_and_keeps_tag_and_language_filter(self, mock_get_markdown, client, db_session):
+        """MON-272 pkt 4: link PL w navbarze (interfejs en) niesie tag i lang z filtra oraz ui=pl."""
+        resp = await client.get("/blog/", params={"tag": "x", "lang": "pl", "ui": "en"})
+
+        assert resp.status_code == 200
+        [pl_link] = _navbar_switch_hrefs(resp.text)
+        assert urlsplit(pl_link).path == "/blog/"
+        assert _query_of(pl_link) == {"tag": ["x"], "lang": ["pl"], "ui": ["pl"]}
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON272.")
+    async def test_mon272_navbar_en_link_sets_ui_and_keeps_tag_and_language_filter(self, mock_get_markdown, client, db_session):
+        """MON-272 pkt 4: link EN w navbarze (interfejs pl) niesie tag i lang z filtra oraz ui=en."""
+        resp = await client.get("/blog/", params={"tag": "x", "lang": "pl", "ui": "pl"})
+
+        assert resp.status_code == 200
+        [en_link] = _navbar_switch_hrefs(resp.text)
+        assert urlsplit(en_link).path == "/blog/"
+        assert _query_of(en_link) == {"tag": ["x"], "lang": ["pl"], "ui": ["en"]}
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON272.")
+    async def test_mon272_navbar_pl_link_without_language_filter_has_no_lang_param(self, mock_get_markdown, client, db_session):
+        """MON-272 pkt 4: bez filtra języka przełącznik nie wprowadza `lang=` (nie zawęża listy)."""
+        resp = await client.get("/blog/", params={"ui": "en"})
+
+        assert resp.status_code == 200
+        assert _navbar_switch_hrefs(resp.text) == ["/blog/?ui=pl"]
 
     async def _seed_both_languages(self, db_session, tag):
         project, user = await _scene(db_session, f"ui-{tag}")

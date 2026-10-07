@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import re
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -277,6 +278,35 @@ async def post_markdown(slug: str, request: Request, db: AsyncSession = Depends(
     return await markdown_twin_response(request, db, lookup.post, lookup.page)
 
 
+# Treść wpisu w pamięci procesu: page_id -> (updated_at, treść). Feedy i lista /blog/ czytają ją z MinIO przy każdym
+# GET, a ETag liczony z gotowego ciała tej pracy nie oszczędza. `updated_at` zmienia się przy każdym zapisie treści
+# (services/wiki.py ustawia go jawnie), więc nowszy zapis unieważnia wpis; jeden wpis na page_id.
+_POST_CONTENT_CACHE_MAX = 256
+_post_content_cache: dict[uuid.UUID, tuple[datetime, str]] = {}
+
+
+def clear_post_content_cache() -> None:
+    """Czyści cache treści wpisów (testy; produkcyjnie unieważnia go `updated_at`)."""
+    _post_content_cache.clear()
+
+
+async def load_post_content(page: WikiPage) -> str:
+    """Treść wpisu z cache'u po `(page_id, updated_at)`, inaczej z MinIO (executor).
+
+    Błąd storage propaguje się do wywołującego i nie trafia do cache'u: następne żądanie próbuje ponownie.
+    """
+    cached = _post_content_cache.get(page.id)
+    if cached is not None and cached[0] == page.updated_at:
+        return cached[1]
+    loop = asyncio.get_running_loop()
+    content = await loop.run_in_executor(None, get_page_content, page)
+    _post_content_cache.pop(page.id, None)
+    if len(_post_content_cache) >= _POST_CONTENT_CACHE_MAX:
+        del _post_content_cache[next(iter(_post_content_cache))]
+    _post_content_cache[page.id] = (page.updated_at, content)
+    return content
+
+
 @dataclass
 class _FeedEntry:
     post: BlogPost
@@ -309,8 +339,7 @@ async def _load_feed_entries(db: AsyncSession, lang: str | None) -> tuple[list[_
     if lang is None or lang in POST_LANGS:
         items = (await list_public_posts(db, 1, FEED_LIMIT, lang=lang)).items
 
-    loop = asyncio.get_running_loop()
-    results = await asyncio.gather(*(loop.run_in_executor(None, get_page_content, item.page) for item in items), return_exceptions=True)
+    results = await asyncio.gather(*(load_post_content(item.page) for item in items), return_exceptions=True)
     entries: list[_FeedEntry] = []
     for item, result in zip(items, results, strict=True):
         if isinstance(result, BaseException):

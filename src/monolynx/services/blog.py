@@ -232,6 +232,10 @@ async def ensure_post(db: AsyncSession, page: WikiPage) -> BlogPost:
             await db.flush()
         return post
 
+    # WikiPage.slug ma 512 znaków, BlogPost.slug 255: bez odmowy INSERT kończy się błędem bazy (500).
+    if len(page.slug) > SLUG_MAX_LENGTH:
+        raise ValueError(f"Slug strony jest za długi dla wpisu bloga (max {SLUG_MAX_LENGTH} znaków). Skróć tytuł strony.")
+
     if await _slug_holder(db, page.slug, page.id) is not None:
         raise ValueError(f"Slug '{page.slug}' jest już zajęty przez inny wpis bloga. Zmień tytuł strony.")
 
@@ -543,7 +547,7 @@ def _validate_tags(value: Any) -> list[str]:
 
 
 def _validate_slug_format(value: Any) -> str:
-    if not isinstance(value, str) or len(value) > SLUG_MAX_LENGTH or not _SLUG_PATTERN.match(value):
+    if not isinstance(value, str) or len(value) > SLUG_MAX_LENGTH or _SLUG_PATTERN.fullmatch(value) is None:
         raise ValueError(f"Slug jest nieprawidłowy: małe litery, cyfry i myślniki, maksymalnie {SLUG_MAX_LENGTH} znaków")
     return value
 
@@ -566,9 +570,13 @@ async def set_post_meta(
 ) -> BlogPost:
     """Zapisz metadane wpisu (częściowo: `_UNSET` = bez zmian, `None` czyści pole nullable).
 
-    Wymaga `wiki:write` i `blog:write`; nie zmienia `is_public`. Brakujący wiersz zakłada przez `ensure_post`.
+    Wymaga `wiki:write` i `blog:write`; nie zmienia `is_public`. Brakujący wiersz powstaje wprost z `slug`
+    z wywołania (bez `previous_slugs`), a bez niego przez `ensure_post`.
     `translation_of_id` sprawdzane w kolejności: oryginał istnieje w tym projekcie, nie jest tłumaczeniem, ma inny
     język niż edytowany wpis (po zmianie `lang` z tego samego wywołania), a edytowany wpis nie ma własnych tłumaczeń.
+    Reguła języka obowiązuje przy każdej efektywnej zmianie `lang` istniejącego wpisu, także gdy `translation_of_id`
+    jest pominięte albo jawnie `None`: zmiana na język oryginału (przy zachowanym powiązaniu) albo na język własnego
+    tłumaczenia wpisu jest odrzucana tym samym komunikatem co przy `translation_of_id`.
     Wszystkie walidacje biegną przed pierwszą mutacją, więc błąd nic nie zapisuje.
     """
     await ensure_permission(db, user.id, project.id, "wiki", "write")
@@ -581,6 +589,8 @@ async def set_post_meta(
     post = (await db.execute(select(BlogPost).where(BlogPost.page_id == page.id))).scalar_one_or_none()
     current_slug = post.slug if post is not None else page.slug
     previous = list(post.previous_slugs) if post is not None else []
+    # Strona bez wiersza: slug z wywołania staje się pierwszym adresem wpisu (page.slug nigdy nie był opublikowany).
+    initial_slug: str | None = None
 
     changes: dict[str, Any] = {}
     if description is not _UNSET:
@@ -598,7 +608,11 @@ async def set_post_meta(
 
     if slug is not _UNSET:
         new_slug = _validate_slug_format(slug)
-        if new_slug != current_slug:
+        if post is None:
+            if await _slug_holder(db, new_slug, page.id) is not None:
+                raise ValueError(f"Slug '{new_slug}' jest już zajęty przez inny wpis bloga")
+            initial_slug = new_slug
+        elif new_slug != current_slug:
             if await _slug_holder(db, new_slug, page.id) is not None:
                 raise ValueError(f"Slug '{new_slug}' jest już zajęty przez inny wpis bloga")
             if current_slug not in previous:
@@ -615,6 +629,22 @@ async def set_post_meta(
             if attachment is None:
                 raise ValueError("Okładka musi być załącznikiem tej strony")
         changes["cover_attachment_id"] = cover_attachment_id
+
+    # Niezmiennik języka uruchamia efektywna zmiana `lang`, nie kształt wywołania: panel zawsze przekazuje też
+    # `translation_of_id` (None dla pustego pola), a v2/MCP/CLI mogą przekazać jawny null.
+    if post is not None and "lang" in changes and changes["lang"] != post.lang:
+        keeps_link = translation_of_id is _UNSET or (translation_of_id is not None and translation_of_id == post.translation_of_id)
+        if keeps_link and post.translation_of_id is not None:
+            original_lang = (await db.execute(select(BlogPost.lang).where(BlogPost.page_id == post.translation_of_id))).scalar_one_or_none()
+            if original_lang == changes["lang"]:
+                raise ValueError("Tłumaczenie musi być w innym języku niż oryginał")
+        # Nowe powiązanie z wartością ma własną regułę niżej (w tym "wpis ma tłumaczenia").
+        if translation_of_id is _UNSET or translation_of_id is None:
+            clashing_translation = (
+                await db.execute(select(BlogPost.page_id).where(BlogPost.translation_of_id == page.id, BlogPost.lang == changes["lang"]).limit(1))
+            ).scalar_one_or_none()
+            if clashing_translation is not None:
+                raise ValueError("Tłumaczenie musi być w innym języku niż oryginał")
 
     if translation_of_id is not _UNSET:
         if translation_of_id is not None:
@@ -641,7 +671,12 @@ async def set_post_meta(
         changes["translation_of_id"] = translation_of_id
 
     if post is None:
-        post = await ensure_post(db, page)
+        if initial_slug is None:
+            post = await ensure_post(db, page)
+        else:
+            post = BlogPost(page_id=page.id, slug=initial_slug, published_at=datetime.now(UTC) if page.is_public else None)
+            db.add(post)
+            await db.flush()
     for field, value in changes.items():
         setattr(post, field, value)
 

@@ -531,9 +531,12 @@ async def create_wiki_page(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
+        delete_object(minio_path)
         raise ValueError(f"Strona publiczna o slugu '{slug}' już istnieje w innym projekcie. Zmień tytuł strony.") from exc
     except ValueError:
         await db.rollback()
+        # Strona nie powstała, więc obiekt wgrany wcześniej (klucz zależy od page_id) zostałby osierocony (MON-272).
+        delete_object(minio_path)
         raise
     await db.refresh(page)
 
@@ -590,7 +593,6 @@ async def update_wiki_page(
         page.slug = await _ensure_unique_slug(page.project_id, new_slug, db, exclude_id=page.id)
 
     if content is not None:
-        upload_markdown(project_slug, page.id, content)
         # Edycja tresci tym samym uzytkownikiem nie zmienia zadnej kolumny, wiec bez jawnej daty nie byloby UPDATE
         page.updated_at = func.now()
 
@@ -610,6 +612,10 @@ async def update_wiki_page(
     try:
         if page.is_public:
             await ensure_post(db, page)
+        # Upload po walidacji: klucz obiektu jest stały, więc zapis przed błędem sluga podmieniłby treść,
+        # której baza po rollbacku nie zna (MON-272).
+        if content is not None:
+            upload_markdown(project_slug, page.id, content)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -647,6 +653,17 @@ async def delete_wiki_page(page: WikiPage, db: AsyncSession) -> None:
 
     await db.delete(page)
     await db.commit()
+
+
+async def ensure_can_delete_page(db: AsyncSession, user_id: uuid.UUID, page: WikiPage) -> None:
+    """Usuniecie strony publicznej albo strony z publicznym potomkiem wymaga `blog:write` konta (MON-272).
+
+    Wolac po `wiki:delete` i przed `delete_wiki_page`, ktore kasuje obiekty MinIO jeszcze przed commitem.
+    """
+    if await has_blog_permission(db, user_id):
+        return
+    if page.is_public or any(d.is_public for d in await _collect_descendants(page.id, db, page.project_id)):
+        raise ValueError("Brak uprawnienia blog:write")
 
 
 async def _collect_descendants(page_id: uuid.UUID, db: AsyncSession, project_id: uuid.UUID | None = None) -> list[WikiPage]:

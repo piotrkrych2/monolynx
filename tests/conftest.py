@@ -67,7 +67,10 @@ def _clear_llms_full_cache():
     clear = getattr(blog_ai, "clear_llms_full_cache", None)
     if clear is not None:
         clear()
+    # MON-272: cache treści wpisów (feedy i lista /blog/) też żyje w pamięci procesu.
+    blog_ai.clear_post_content_cache()
     yield
+    blog_ai.clear_post_content_cache()
 
 
 @pytest.fixture

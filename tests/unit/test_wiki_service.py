@@ -1018,6 +1018,87 @@ class TestWikiBlogGate:
 
 
 @pytest.mark.unit
+class TestMon272StorageWriteVersusSlugError:
+    """MON-272 pkt 8: błąd sluga z `ensure_post` nie zostawia w MinIO nowej treści ani osieroconego obiektu."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_gates(self):
+        with (
+            patch("monolynx.services.wiki.ensure_blog_permission", new_callable=AsyncMock),
+            patch("monolynx.services.wiki.has_blog_permission", new_callable=AsyncMock, return_value=True),
+        ):
+            yield
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Stara treść")
+    @patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock, side_effect=ValueError("Slug zajęty"))
+    @patch("monolynx.services.wiki.upload_markdown")
+    async def test_mon272_update_slug_error_does_not_leave_new_content_in_storage(self, mock_upload, _mock_ensure_post, _mock_get):
+        """MON-272 pkt 8: po błędzie ensure_post upload nie był wołany albo ostatnia treść pod kluczem strony to stara."""
+        page = MagicMock()
+        page.title = "Tytuł"
+        page.id = uuid.uuid4()
+        page.is_public = True
+        mock_db = AsyncMock()
+
+        with pytest.raises(ValueError, match="Slug zajęty"):
+            await update_wiki_page(page=page, project_slug="proj", content="Nowa treść", user_id=uuid.uuid4(), db=mock_db)
+
+        uploads = mock_upload.call_args_list
+        assert not uploads or uploads[-1].args[2] == "Stara treść"
+        mock_db.commit.assert_not_awaited()
+
+    @patch("monolynx.services.wiki.delete_object")
+    @patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock, side_effect=ValueError("Slug zajęty"))
+    @patch("monolynx.services.wiki.upload_markdown", return_value="proj/orphan.md")
+    async def test_mon272_create_slug_error_leaves_no_orphaned_storage_object(self, mock_upload, _mock_ensure_post, mock_delete):
+        """MON-272 pkt 8: po błędzie ensure_post upload nie był wołany albo obiekt został usunięty z MinIO."""
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.add = MagicMock()
+
+        with pytest.raises(ValueError, match="Slug zajęty"):
+            await create_wiki_page(
+                project_id=uuid.uuid4(),
+                project_slug="proj",
+                title="Publiczna Strona",
+                content="Treść",
+                user_id=uuid.uuid4(),
+                is_public=True,
+                db=mock_db,
+            )
+
+        deleted = [value for call in mock_delete.call_args_list for value in (*call.args, *call.kwargs.values())]
+        assert not mock_upload.called or "proj/orphan.md" in deleted
+        mock_db.commit.assert_not_awaited()
+
+    @patch("monolynx.services.wiki.delete_object")
+    @patch("monolynx.services.wiki.ensure_post", new_callable=AsyncMock)
+    @patch("monolynx.services.wiki.upload_markdown", return_value="proj/orphan.md")
+    async def test_mon272_create_integrity_error_deletes_exactly_the_uploaded_object(self, _mock_upload, _mock_ensure_post, mock_delete):
+        """MON-272 pkt 8: IntegrityError z commita (kolizja publicznego sluga) usuwa z MinIO dokładnie obiekt wgrany przez tę próbę."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("uq_wiki_public_slug")))
+
+        with pytest.raises(ValueError, match="już istnieje w innym projekcie"):
+            await create_wiki_page(
+                project_id=uuid.uuid4(),
+                project_slug="proj",
+                title="Publiczna Strona",
+                content="Treść",
+                user_id=uuid.uuid4(),
+                is_public=True,
+                db=mock_db,
+            )
+
+        mock_delete.assert_called_once_with("proj/orphan.md")
+        mock_db.rollback.assert_awaited_once()
+
+
+@pytest.mark.unit
 class TestDeleteWikiPage:
     """Testy usuwania strony wiki."""
 

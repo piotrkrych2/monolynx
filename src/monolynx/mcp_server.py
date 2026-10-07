@@ -127,6 +127,9 @@ from monolynx.services.wiki import (
     delete_wiki_page as svc_delete_wiki_page,
 )
 from monolynx.services.wiki import (
+    ensure_can_delete_page as svc_ensure_can_delete_wiki_page,
+)
+from monolynx.services.wiki import (
     get_backlinks as svc_get_wiki_backlinks,
 )
 from monolynx.services.wiki import (
@@ -3002,7 +3005,7 @@ async def delete_wiki_page(
     project_slug: str,
     page_id: str,
 ) -> dict[str, Any]:
-    """Usun strone wiki wraz z podstronami. Wymaga wiki:delete."""
+    """Usun strone wiki wraz z podstronami. Wymaga wiki:delete (dla strony publicznej lub z publicznym potomkiem tez blog:write)."""
     user, project = await _get_user_and_project(ctx, project_slug)
 
     async with async_session_factory() as db:
@@ -3012,6 +3015,8 @@ async def delete_wiki_page(
         page = result.scalar_one_or_none()
         if page is None:
             raise ValueError("Strona wiki nie istnieje")
+
+        await svc_ensure_can_delete_wiki_page(db, user.id, page)
 
         title = page.title
         await svc_delete_wiki_page(page, db)

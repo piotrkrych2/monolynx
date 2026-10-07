@@ -216,7 +216,13 @@
         });
     }
 
+    var blocksInitialized = false;
+
     function initBlocks() {
+        if (blocksInitialized) {
+            return;
+        }
+        blocksInitialized = true;
         [initDiagrams, initTerminals, initGraphics].forEach(function (init) {
             try {
                 init();
@@ -226,12 +232,9 @@
         });
     }
 
-    // Skrypty defer wykonują się przed DOMContentLoaded, więc Mermaid i komponenty są już zarejestrowane.
-    if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", initBlocks);
-    } else {
-        initBlocks();
-    }
+    // W stanie "interactive" kolejne skrypty defer (grafiki, Mermaid) jeszcze się nie wykonały, więc start czeka na
+    // DOMContentLoaded; "load" łapie skrypt wykonany po DOMContentLoaded, a flaga chroni przed podwójnym renderem.
+    if (document.readyState === "complete") { initBlocks(); } else { document.addEventListener("DOMContentLoaded", initBlocks); window.addEventListener("load", initBlocks); }
 
     // Spis treści (MON-260): bez JS linki działają, a <details> jest zwinięty.
     var WIDE_QUERY = "(min-width: 1024px)";

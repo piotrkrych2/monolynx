@@ -59,6 +59,7 @@ from monolynx.services.permissions import has_blog_permission, require_permissio
 from monolynx.services.wiki import (
     create_wiki_page,
     delete_wiki_page,
+    ensure_can_delete_page,
     extract_summary,
     get_backlinks,
     get_breadcrumbs,
@@ -802,6 +803,11 @@ async def wiki_page_delete(
     if page is None:
         return HTMLResponse("Strona nie istnieje", status_code=404)
 
+    try:
+        await ensure_can_delete_page(db, user_id, page)
+    except ValueError as exc:
+        return HTMLResponse(str(exc), status_code=403)
+
     await delete_wiki_page(page, db)
 
     flash(request, "Strona wiki zostala usunieta")
@@ -835,6 +841,8 @@ async def wiki_upload(
         page = await _get_wiki_page(page_id, project.id, db)
         if page is None:
             return JSONResponse({"error": "Strona nie istnieje"}, status_code=404)
+        if page.is_public and not await has_blog_permission(db, user_id):
+            return JSONResponse({"error": "Brak uprawnienia blog:write"}, status_code=403)
 
     if file is None or file.filename is None:
         return JSONResponse({"error": "Brak pliku"}, status_code=400)
@@ -932,7 +940,7 @@ async def _store_page_image(db: AsyncSession, project: Project, page: WikiPage, 
         attachment = await _save_page_attachment(db, project.slug, page.id, filename, data, content_type)
     except Exception:
         logger.exception("Blad uploadu obrazka z edytora (page_id=%s)", page.id)
-        return JSONResponse({"error": "Blad uploadu pliku"}, status_code=500)
+        return JSONResponse({"error": "Błąd uploadu pliku"}, status_code=500)
 
     name = quote(attachment.filename)
     post = await _get_blog_post(page.id, db) if page.is_public else None
@@ -970,6 +978,9 @@ async def wiki_page_attachment_upload(
     page = await _get_wiki_page(page_id, project.id, db)
     if page is None:
         return JSONResponse({"error": "Strona nie istnieje"}, status_code=404)
+
+    if page.is_public and not await has_blog_permission(db, user_id):
+        return JSONResponse({"error": "Brak uprawnienia blog:write"}, status_code=403)
 
     if filepond.filename is None or filepond.filename == "":
         return JSONResponse({"error": "Brak nazwy pliku"}, status_code=400)
