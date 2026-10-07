@@ -1,6 +1,7 @@
 """Testy integracyjne strony głównej i layoutu landingu: Blog w nawigacji i sekcja najnowszych wpisów (MON-266).
 
-Nawigacja: link `/blog/?lang={lang}` ma być w nawigacji górnej, w panelu `id="mobile-menu"` i w `<footer>`
+Nawigacja: link `/blog/?ui={lang}` (MON-271: `ui` to wyłącznie język interfejsu, bez filtra wpisów) ma być
+w nawigacji górnej, w panelu `id="mobile-menu"` i w `<footer>`
 (osobne asercje na każde miejsce, bo usunięcie linku z jednego nie może przejść niezauważone), a `aria-current="page"`
 tylko na stronach bloga.
 
@@ -75,7 +76,12 @@ def _in_top_nav(link: dict) -> bool:
 
 
 def _blog_links(collector: _LinkCollector, lang: str, place) -> list[dict]:
-    return [link for link in collector.links if link["attrs"].get("href") == f"/blog/?lang={lang}" and place(link)]
+    return [link for link in collector.links if link["attrs"].get("href") == f"/blog/?ui={lang}" and place(link)]
+
+
+def _ui_params(path: str, lang: str) -> dict[str, str]:
+    """Język interfejsu: na liście bloga `ui` (`lang` tam filtruje wpisy), na pozostałych stronach `lang`."""
+    return {"ui" if path == "/blog/" else "lang": lang}
 
 
 def _any_blog_link(collector: _LinkCollector) -> list[dict]:
@@ -95,7 +101,7 @@ class TestBlogNavigationLinks:
     @pytest.mark.parametrize("lang", ["pl", "en"])
     @pytest.mark.parametrize("path", _PAGES)
     async def test_blog_link_is_in_the_top_navigation(self, client, landing_enabled, path, lang):
-        response = await client.get(path, params={"lang": lang})
+        response = await client.get(path, params=_ui_params(path, lang))
 
         assert response.status_code == 200
         assert _blog_links(_parse(response.text), lang, _in_top_nav) != []
@@ -103,7 +109,7 @@ class TestBlogNavigationLinks:
     @pytest.mark.parametrize("lang", ["pl", "en"])
     @pytest.mark.parametrize("path", _PAGES)
     async def test_blog_link_is_in_the_mobile_menu_panel(self, client, landing_enabled, path, lang):
-        response = await client.get(path, params={"lang": lang})
+        response = await client.get(path, params=_ui_params(path, lang))
 
         assert response.status_code == 200
         collector = _parse(response.text)
@@ -113,7 +119,7 @@ class TestBlogNavigationLinks:
     @pytest.mark.parametrize("lang", ["pl", "en"])
     @pytest.mark.parametrize("path", _PAGES)
     async def test_blog_link_is_in_the_footer(self, client, landing_enabled, path, lang):
-        response = await client.get(path, params={"lang": lang})
+        response = await client.get(path, params=_ui_params(path, lang))
 
         assert response.status_code == 200
         assert _blog_links(_parse(response.text), lang, _in_footer) != []
@@ -121,7 +127,7 @@ class TestBlogNavigationLinks:
     @pytest.mark.parametrize("lang", ["pl", "en"])
     @pytest.mark.parametrize("path", _PAGES)
     async def test_mobile_menu_toggle_button_exists(self, client, landing_enabled, path, lang):
-        response = await client.get(path, params={"lang": lang})
+        response = await client.get(path, params=_ui_params(path, lang))
 
         assert response.status_code == 200
         assert "mobile-menu-toggle" in _parse(response.text).ids.get("button", set())
@@ -131,7 +137,7 @@ class TestBlogNavigationLinks:
 class TestBlogNavigationActiveState:
     @pytest.mark.parametrize("lang", ["pl", "en"])
     async def test_blog_index_marks_top_nav_link_as_current_page(self, client, lang):
-        response = await client.get("/blog/", params={"lang": lang})
+        response = await client.get("/blog/", params={"ui": lang})
 
         assert response.status_code == 200
         links = _blog_links(_parse(response.text), lang, _in_top_nav)
@@ -140,7 +146,7 @@ class TestBlogNavigationActiveState:
 
     @pytest.mark.parametrize("lang", ["pl", "en"])
     async def test_blog_index_marks_mobile_menu_link_as_current_page(self, client, lang):
-        response = await client.get("/blog/", params={"lang": lang})
+        response = await client.get("/blog/", params={"ui": lang})
 
         assert response.status_code == 200
         links = _blog_links(_parse(response.text), lang, _in_mobile_menu)
@@ -233,6 +239,66 @@ def _features_blog_links(collector: _LinkCollector, lang: str) -> list[dict]:
     return [link for link in collector.links if link["attrs"].get("href") == f"/features/blog?lang={lang}"]
 
 
+def _blog_index_href(html: str, place) -> str:
+    links = [link for link in _parse(html).links if (link["attrs"].get("href") or "").startswith("/blog/?") and place(link)]
+    assert links != []
+    return links[0]["attrs"]["href"]
+
+
+@pytest.mark.integration
+class TestLandingBlogLinkKeepsInterfaceOnly:
+    """MON-271: link Blog z landingu niesie `ui`, nie `lang`, więc nie zawęża listy do języka interfejsu."""
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    @pytest.mark.parametrize("place", [_in_top_nav, _in_mobile_menu, _in_footer])
+    async def test_blog_link_has_only_ui_parameter(self, client, landing_enabled, lang, place):
+        response = await client.get("/", params={"lang": lang})
+
+        assert _blog_index_href(response.text, place) == f"/blog/?ui={lang}"
+
+    @pytest.mark.parametrize("lang", ["pl", "en"])
+    async def test_all_posts_link_in_latest_section_has_only_ui_parameter(self, client, db_session, landing_enabled, lang):
+        await _seed_posts(db_session, f"latestui{lang}")
+
+        response = await client.get("/", params={"lang": lang})
+
+        section = _latest_section(response.text)
+        assert f'href="/blog/?ui={lang}"' in section
+        assert 'href="/blog/?lang=' not in section
+
+    async def test_pl_post_is_visible_after_following_blog_link_from_en_landing(self, client, db_session, landing_enabled):
+        project = await _create_project(db_session, "land-ui-enpl")
+        user = await _create_user(db_session, "land-ui-enpl@test.com")
+        await _create_wiki_page(
+            db_session, project, user, "Polski Wpis Z Angielskiego", is_public=True, with_post=True, post_slug="pl-from-en-271", lang="pl"
+        )
+        landing = await client.get("/", params={"lang": "en"})
+        href = _blog_index_href(landing.text, _in_top_nav)
+
+        with patch("monolynx.services.wiki.get_markdown", return_value="Tresc."):
+            response = await client.get(href)
+
+        assert response.status_code == 200
+        assert "pl-from-en-271" in response.text
+        assert "Polski Wpis Z Angielskiego" in response.text
+
+    async def test_en_post_is_visible_after_following_blog_link_from_pl_landing(self, client, db_session, landing_enabled):
+        project = await _create_project(db_session, "land-ui-plen")
+        user = await _create_user(db_session, "land-ui-plen@test.com")
+        await _create_wiki_page(
+            db_session, project, user, "English Post From Polish", is_public=True, with_post=True, post_slug="en-from-pl-271", lang="en"
+        )
+        landing = await client.get("/", params={"lang": "pl"})
+        href = _blog_index_href(landing.text, _in_top_nav)
+
+        with patch("monolynx.services.wiki.get_markdown", return_value="Content."):
+            response = await client.get(href)
+
+        assert response.status_code == 200
+        assert "en-from-pl-271" in response.text
+        assert "English Post From Polish" in response.text
+
+
 @pytest.mark.integration
 class TestBlogModuleLinks:
     @pytest.mark.parametrize("lang", ["pl", "en"])
@@ -280,7 +346,7 @@ class TestLatestPostsSection:
         assert positions == sorted(positions)
         for item in (newest, third, second):
             assert item["title"] in section
-        assert section.count('href="/blog/') - section.count('href="/blog/?lang=') == 3
+        assert section.count('href="/blog/') - section.count('href="/blog/?ui=') == 3
         for key in ("oldest", "english", "hidden"):
             assert posts[key]["slug"] not in section
             assert posts[key]["title"] not in section
@@ -319,7 +385,7 @@ class TestLatestPostsSection:
         assert response.status_code == 200
         section = _latest_section(response.text)
         assert _LANDING_I18N[lang]["blog_latest_title"] in section
-        assert f'href="/blog/?lang={lang}"' in section
+        assert f'href="/blog/?ui={lang}"' in section
         assert _LANDING_I18N[lang]["blog_latest_all"] in section
 
     async def test_database_error_leaves_landing_without_the_section(self, client, db_session, landing_enabled, caplog):

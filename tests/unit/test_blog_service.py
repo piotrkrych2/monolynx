@@ -396,11 +396,21 @@ class TestSetPostMetaValidation:
         original_page = await _make_page(db_session, project, user)
         await _make_post(db_session, original_page)
         page = await _make_page(db_session, project, user)
-        await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original_page.id)
+        await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original_page.id, lang="en")
 
         post = await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=None)
 
         assert post.translation_of_id is None
+
+    async def test_translation_of_self_message_is_unchanged(self, db_session):
+        user, project = await _setup(db_session, "val-trans-self-msg")
+        page = await _make_page(db_session, project, user)
+        await svc.ensure_post(db_session, page)
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=page.id)
+
+        assert str(excinfo.value) == "Wpis nie może być tłumaczeniem samego siebie"
 
     async def test_empty_author_name_rejected(self, db_session):
         user, project = await _setup(db_session, "val-author")
@@ -787,6 +797,201 @@ class TestGetPublicPostBySlug:
         page = await _make_page(db_session, project, user, is_public=True)
 
         assert await svc.get_public_post_by_slug(db_session, page.slug) is None
+
+
+def _count_executes(monkeypatch, db) -> list[object]:
+    """Zlicza wywołania `db.execute` (każde nadal trafia do realnej sesji)."""
+    calls: list[object] = []
+    original = db.execute
+
+    async def counting(*args, **kwargs):
+        calls.append(args)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(db, "execute", counting)
+    return calls
+
+
+class TestGetPublicPostBySlugShape:
+    """MON-271: slug o złym kształcie daje None BEZ zapytania do bazy (bajt NUL wywróciłby PostgreSQL 500-tką)."""
+
+    @pytest.mark.parametrize(
+        "bad_slug",
+        ["", "\x00", "abc\x00def", "a" * 256, "Wielka-Litera", "ze spacja", "-zaczyna", "konczy-", "podwojny--myslnik", "pod_kreska", "ukośnik/slug"],
+        ids=[
+            "empty",
+            "nul",
+            "nul-inside",
+            "over-255",
+            "uppercase",
+            "space",
+            "leading-hyphen",
+            "trailing-hyphen",
+            "double-hyphen",
+            "underscore",
+            "slash",
+        ],
+    )
+    async def test_malformed_slug_returns_none_without_querying(self, db_session, monkeypatch, bad_slug):
+        calls = _count_executes(monkeypatch, db_session)
+
+        result = await svc.get_public_post_by_slug(db_session, bad_slug)
+
+        assert result is None
+        assert calls == []
+
+    async def test_slug_of_exactly_255_characters_is_still_looked_up(self, db_session, monkeypatch):
+        calls = _count_executes(monkeypatch, db_session)
+
+        result = await svc.get_public_post_by_slug(db_session, "a" * 255)
+
+        assert result is None
+        assert len(calls) == 2
+
+    async def test_valid_current_slug_still_resolves(self, db_session):
+        user, project = await _setup(db_session, "shape-cur")
+        page = await _make_page(db_session, project, user, is_public=True)
+        post = await _make_post(db_session, page)
+
+        result = await svc.get_public_post_by_slug(db_session, page.slug)
+
+        assert result is not None
+        assert result.post is not None
+        assert result.post.page_id == post.page_id
+        assert result.redirect_slug is None
+
+    async def test_valid_old_slug_still_redirects(self, db_session):
+        user, project = await _setup(db_session, "shape-old")
+        page = await _make_page(db_session, project, user, is_public=True)
+        old = f"stary-{_uid()}"
+        new = f"nowy-{_uid()}"
+        await _make_post(db_session, page, slug=new, previous_slugs=[old])
+
+        result = await svc.get_public_post_by_slug(db_session, old)
+
+        assert result is not None
+        assert result.redirect_slug == new
+
+
+class TestSetPostMetaTranslationOf:
+    """MON-271: `translation_of_id` wskazuje oryginał z tego samego projektu, który sam nie jest tłumaczeniem, w innym języku."""
+
+    ORIGINAL_MISSING = "Wpis wskazany jako oryginał nie istnieje"
+    ORIGINAL_IS_TRANSLATION = "Wpis wskazany jako oryginał jest tłumaczeniem innego wpisu"
+    SAME_LANGUAGE = "Tłumaczenie musi być w innym języku niż oryginał"
+    HAS_TRANSLATIONS = "Wpis ma tłumaczenia, więc nie może być tłumaczeniem innego wpisu"
+
+    async def _pair(self, db, tag, *, original_lang="pl", own_lang="en"):
+        user, project = await _setup(db, tag)
+        original_page = await _make_page(db, project, user)
+        await _make_post(db, original_page, lang=original_lang)
+        page = await _make_page(db, project, user)
+        await _make_post(db, page, lang=own_lang, description="Opis przed")
+        return user, project, original_page, page
+
+    async def test_nonexistent_original_rejected_with_message(self, db_session):
+        user, project, _original, page = await self._pair(db_session, "tr-missing")
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=uuid.uuid4())
+
+        assert str(excinfo.value) == self.ORIGINAL_MISSING
+
+    async def test_original_from_another_project_gets_the_same_message_as_a_missing_one(self, db_session):
+        user, project, _original, page = await self._pair(db_session, "tr-foreign")
+        other_user, other_project = await _setup(db_session, "tr-foreign-other")
+        foreign_page = await _make_page(db_session, other_project, other_user)
+        await _make_post(db_session, foreign_page, lang="pl")
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=foreign_page.id)
+
+        assert str(excinfo.value) == self.ORIGINAL_MISSING
+        assert (await _post_row(db_session, page.id)).translation_of_id is None
+
+    async def test_original_that_is_itself_a_translation_rejected(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-chain", original_lang="en", own_lang="pl")
+        middle_page = await _make_page(db_session, project, user)
+        await _make_post(db_session, middle_page, lang="en", translation_of_id=original.id)
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=middle_page.id)
+
+        assert str(excinfo.value) == self.ORIGINAL_IS_TRANSLATION
+
+    async def test_original_that_is_a_translation_is_reported_before_the_language_clash(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-order", original_lang="en", own_lang="pl")
+        middle_page = await _make_page(db_session, project, user)
+        await _make_post(db_session, middle_page, lang="pl", translation_of_id=original.id)
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=middle_page.id)
+
+        assert str(excinfo.value) == self.ORIGINAL_IS_TRANSLATION
+
+    async def test_same_language_as_original_rejected(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-samelang", original_lang="pl", own_lang="pl")
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original.id)
+
+        assert str(excinfo.value) == self.SAME_LANGUAGE
+
+    async def test_language_given_in_the_same_call_decides_the_comparison(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-newlang", original_lang="en", own_lang="pl")
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original.id, lang="en")
+
+        assert str(excinfo.value) == self.SAME_LANGUAGE
+
+    async def test_changing_to_a_different_language_in_the_same_call_is_accepted(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-fixlang", original_lang="pl", own_lang="pl")
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original.id, lang="en")
+
+        assert post.translation_of_id == original.id
+        assert post.lang == "en"
+
+    async def test_post_with_its_own_translations_cannot_become_a_translation(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-hasown", original_lang="en", own_lang="pl")
+        child_page = await _make_page(db_session, project, user)
+        await _make_post(db_session, child_page, lang="en", translation_of_id=page.id)
+
+        with pytest.raises(ValueError) as excinfo:
+            await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original.id)
+
+        assert str(excinfo.value) == self.HAS_TRANSLATIONS
+
+    async def test_rejection_saves_nothing_from_the_same_call(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-nosave", original_lang="pl", own_lang="pl")
+
+        with pytest.raises(ValueError):
+            await svc.set_post_meta(
+                db_session, user, project, page.id, translation_of_id=original.id, description="Opis po", tags=["nowy-tag"], author_name="Ada"
+            )
+
+        row = await _post_row(db_session, page.id)
+        assert row.description == "Opis przed"
+        assert row.tags == []
+        assert row.translation_of_id is None
+        assert row.author_name == "Zespół Monolynx"
+
+    async def test_valid_translation_links_same_project_original_in_another_language(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-valid", original_lang="pl", own_lang="en")
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original.id)
+
+        assert post.translation_of_id == original.id
+
+    async def test_second_translation_of_the_same_original_is_accepted(self, db_session):
+        user, project, original, page = await self._pair(db_session, "tr-second", original_lang="pl", own_lang="en")
+        sibling_page = await _make_page(db_session, project, user)
+        await _make_post(db_session, sibling_page, lang="en", translation_of_id=original.id)
+
+        post = await svc.set_post_meta(db_session, user, project, page.id, translation_of_id=original.id)
+
+        assert post.translation_of_id == original.id
 
 
 class TestListPublicPosts:

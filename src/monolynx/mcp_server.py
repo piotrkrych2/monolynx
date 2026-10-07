@@ -242,25 +242,80 @@ async def _verify_token(raw_token: str) -> User:
 BLOG_WRITE_TOOLS = frozenset({"set_blog_post_meta", "publish_blog_post", "unpublish_blog_post"})
 
 
+def _strip_blog_write_tools(element: object) -> bool:
+    """Usun toole zapisu bloga z `result.tools` jednej odpowiedzi JSON-RPC; zwroc, czy cos usunieto."""
+    if not isinstance(element, dict):
+        return False
+    result = element.get("result")
+    if not isinstance(result, dict):
+        return False
+    tools = result.get("tools")
+    if not isinstance(tools, list):
+        return False
+    visible = [t for t in tools if not (isinstance(t, dict) and t.get("name") in BLOG_WRITE_TOOLS)]
+    if len(visible) == len(tools):
+        return False
+    result["tools"] = visible
+    return True
+
+
 def _hide_blog_write_tools(body: bytes) -> bytes:
-    """Usun toole zapisu bloga z odpowiedzi JSON-RPC `tools/list`; kazde inne cialo zwroc bez zmian."""
+    """Usun toole zapisu bloga z odpowiedzi JSON-RPC `tools/list` (takze z kazdego elementu odpowiedzi wsadowej); reszte zwroc bez zmian."""
     try:
         data = json.loads(body)
     except ValueError:
         return body
-    if not isinstance(data, dict):
+    elements = data if isinstance(data, list) else [data]
+    changed = [_strip_blog_write_tools(element) for element in elements]
+    if not any(changed):
         return body
-    result = data.get("result")
-    if not isinstance(result, dict):
-        return body
-    tools = result.get("tools")
-    if not isinstance(tools, list):
-        return body
-    visible = [t for t in tools if not (isinstance(t, dict) and t.get("name") in BLOG_WRITE_TOOLS)]
-    if len(visible) == len(tools):
-        return body
-    result["tools"] = visible
     return json.dumps(data).encode()
+
+
+# Podglad ciala zadania, z ktorego middleware czyta `method` JSON-RPC; wieksze cialo idzie dalej bez decyzji.
+_REQUEST_PREVIEW_LIMIT = 64 * 1024
+
+
+async def _preview_request(receive: Receive) -> tuple[bool, Receive]:
+    """Przeczytaj cialo zadania (do limitu) i zwroc: czy odpowiedz trzeba filtrowac, oraz `receive` odtwarzajacy cialo.
+
+    Filtrujemy, gdy zadanie zawiera `tools/list` albo nie da sie ustalic metody (ciało ponad limit,
+    niepoprawny JSON, brak ciała) - bezpieczny domyslny, bo ukrycie tooli ma dzialac bez wyjatkow.
+    """
+    messages: list[Message] = []
+    body = b""
+    complete = False
+    while True:
+        message = await receive()
+        messages.append(message)
+        if message["type"] != "http.request":
+            break
+        body += message.get("body", b"")
+        if len(body) > _REQUEST_PREVIEW_LIMIT:
+            break
+        if not message.get("more_body", False):
+            complete = True
+            break
+
+    queue = iter(messages)
+
+    async def replay() -> Message:
+        # Po odtworzeniu przeczytanych komunikatow reszte ciala (i disconnect) daje oryginalny `receive`
+        return next(queue, None) or await receive()
+
+    return (_should_filter(body) if complete else True), replay
+
+
+def _should_filter(body: bytes) -> bool:
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return True
+    if isinstance(data, dict):
+        return data.get("method") == "tools/list"
+    if isinstance(data, list):
+        return any(isinstance(item, dict) and item.get("method") == "tools/list" for item in data)
+    return True
 
 
 def _filtering_send(send: Send) -> Send:
@@ -308,9 +363,10 @@ class _MCPBearerAuthMiddleware:
     Middleware reuzywac _verify_token (OAuth + legacy osk_*) bez zmian w
     116 toolach. Per-tool _auth(ctx) pozostaje jako defense-in-depth.
 
-    MON-270: konto bez uprawnienia `blog:write` (nie superuser, bez `can_edit_blog`) dostaje
-    odpowiedz JSON przepuszczona przez _hide_blog_write_tools, wiec nie widzi tooli zapisu bloga
-    na liscie narzedzi. To ukrycie, nie zabezpieczenie: odmowe przy wywolaniu daje serwis bloga.
+    MON-270: konto bez uprawnienia `blog:write` (nie superuser, bez `can_edit_blog`) dostaje na
+    zadanie `tools/list` odpowiedz JSON przepuszczona przez _hide_blog_write_tools, wiec nie widzi
+    tooli zapisu bloga na liscie narzedzi (MON-271: inne zadania, np. `tools/call`, nie sa buforowane).
+    To ukrycie, nie zabezpieczenie: odmowe przy wywolaniu daje serwis bloga.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -345,7 +401,8 @@ class _MCPBearerAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        await self.app(scope, receive, _filtering_send(send))
+        filter_response, replay = await _preview_request(receive)
+        await self.app(scope, replay, _filtering_send(send) if filter_response else send)
 
 
 def _resource_metadata_url(scope: Scope) -> str:
@@ -2876,8 +2933,9 @@ async def update_wiki_page(
 
     Podaj tylko pola do zmiany. is_public=True/False publikuje/wycofuje strone z /blog/{slug};
     None (domyslnie) nie zmienia flagi.
-    Wymaga wiki:write; zmiana is_public (publikacja i cofniecie) wymaga dodatkowo uprawnienia konta do
-    edycji bloga (blog:write, nadawanego przez superusera), inaczej "Brak uprawnienia blog:write".
+    Wymaga wiki:write; zmiana is_public (publikacja i cofniecie) oraz zmiana tytulu albo tresci strony
+    publicznej wymagaja dodatkowo uprawnienia konta do edycji bloga (blog:write, nadawanego przez
+    superusera), inaczej "Brak uprawnienia blog:write". Zmiana samej pozycji publicznej strony go nie wymaga.
     """
     user, project = await _get_user_and_project(ctx, project_slug)
 
@@ -3017,7 +3075,7 @@ async def get_blog_post(
         try:
             parsed_page_id = uuid.UUID(page_id)
         except ValueError:
-            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
         detail = await blog_service.get_post(db, user, project, parsed_page_id, content_fn=get_page_content)
 
     return {**_blog_view_dict(detail), "content": detail.content}
@@ -3042,7 +3100,7 @@ async def lint_blog_post(
         try:
             parsed_page_id = uuid.UUID(page_id)
         except ValueError:
-            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
         result = await blog_lint_service.lint_post_by_id(db, user, project, parsed_page_id, content_fn=get_page_content)
 
     return {**blog_lint_service.lint_result_dict(parsed_page_id, result), "table": blog_lint_service.format_lint_table(result)}
@@ -3085,17 +3143,17 @@ async def set_blog_post_meta(
             try:
                 fields[name] = uuid.UUID(raw) if raw else None
             except ValueError:
-                raise ValueError(f"Nieprawidlowy {name} (oczekiwany UUID)") from None
+                raise ValueError(f"Nieprawidłowy {name} (oczekiwany UUID)") from None
         if last_verified_at is not None:
             try:
                 fields["last_verified_at"] = date.fromisoformat(last_verified_at) if last_verified_at else None
             except ValueError:
-                raise ValueError("Nieprawidlowy last_verified_at (oczekiwany format YYYY-MM-DD)") from None
+                raise ValueError("Nieprawidłowy last_verified_at (oczekiwany format YYYY-MM-DD)") from None
 
         try:
             parsed_page_id = uuid.UUID(page_id)
         except ValueError:
-            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
 
         post = await blog_service.set_post_meta(db, user, project, parsed_page_id, **fields)
         page = await db.get(WikiPage, post.page_id)
@@ -3124,7 +3182,7 @@ async def publish_blog_post(
         try:
             parsed_page_id = uuid.UUID(page_id)
         except ValueError:
-            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
         published = await blog_service.publish_post(db, user, project, parsed_page_id, force=force, content_fn=get_page_content)
 
     return {**_blog_view_dict(published.view), "lint": blog_lint_service.lint_result_dict(parsed_page_id, published.lint)}
@@ -3148,7 +3206,7 @@ async def unpublish_blog_post(
         try:
             parsed_page_id = uuid.UUID(page_id)
         except ValueError:
-            raise ValueError("Nieprawidlowy page_id (oczekiwany UUID)") from None
+            raise ValueError("Nieprawidłowy page_id (oczekiwany UUID)") from None
         view = await blog_service.unpublish_post(db, user, project, parsed_page_id)
 
     return _blog_view_dict(view)

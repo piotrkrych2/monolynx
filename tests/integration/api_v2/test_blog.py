@@ -622,11 +622,12 @@ class TestPatchBlogPost:
         response = await client.patch(
             url,
             headers=actor.headers,
-            json={"translation_of_id": str(original_id), "last_verified_at": "2026-05-06", "author_name": "Ada"},
+            json={"translation_of_id": str(original_id), "lang": "en", "last_verified_at": "2026-05-06", "author_name": "Ada"},
         )
 
         assert response.status_code == 200
         body = response.json()
+        assert body["lang"] == "en"
         assert body["translation_of_id"] == str(original_id)
         assert body["last_verified_at"] == "2026-05-06"
         assert body["author_name"] == "Ada"

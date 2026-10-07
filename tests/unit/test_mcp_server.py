@@ -8390,7 +8390,7 @@ class TestGetBlogPostTool:
         with pytest.raises(ValueError) as exc_info:
             await _blog_call(get_blog_post, mock_factory, mock_verify, mcp_project.slug, "nie-uuid")
 
-        assert str(exc_info.value) == "Nieprawidlowy page_id (oczekiwany UUID)"
+        assert str(exc_info.value) == "Nieprawidłowy page_id (oczekiwany UUID)"
 
     async def test_role_without_wiki_read_is_refused_even_for_malformed_page_id(self, db_session, mcp_project, mock_factory):
         member = await _make_member_user(db_session, mcp_project, permissions={"scrum": ["read"]})
@@ -8490,7 +8490,7 @@ class TestLintBlogPostTool:
         with pytest.raises(ValueError) as exc_info:
             await _lint_call(mock_factory, mock_verify, "x", mcp_project.slug, "nie-uuid")
 
-        assert str(exc_info.value) == "Nieprawidlowy page_id (oczekiwany UUID)"
+        assert str(exc_info.value) == "Nieprawidłowy page_id (oczekiwany UUID)"
 
     async def test_role_without_wiki_read_is_refused_even_for_malformed_page_id(self, db_session, mcp_project, mock_factory):
         member = await _make_member_user(db_session, mcp_project, permissions={"scrum": ["read"]})
@@ -8589,6 +8589,7 @@ class TestSetBlogPostMetaTool:
             str(page_id),
             translation_of_id=str(original_id),
             cover_attachment_id=str(att_id),
+            lang="en",
         )
 
         row = await _blog_row(db_session, page_id)
@@ -8677,7 +8678,7 @@ class TestSetBlogPostMetaTool:
         with pytest.raises(ValueError) as exc_info:
             await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, "nie-uuid", description="Nie zapisze się")
 
-        assert str(exc_info.value) == "Nieprawidlowy page_id (oczekiwany UUID)"
+        assert str(exc_info.value) == "Nieprawidłowy page_id (oczekiwany UUID)"
         assert (await _blog_row(db_session, page_id)).description == "Bez zmian"
 
     async def test_malformed_parameter_messages_are_exact(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
@@ -8689,8 +8690,8 @@ class TestSetBlogPostMetaTool:
         with pytest.raises(ValueError) as exc_date:
             await _blog_call(set_blog_post_meta, mock_factory, mock_verify, mcp_project.slug, page_id, last_verified_at="2026-13-45")
 
-        assert str(exc_cover.value) == "Nieprawidlowy cover_attachment_id (oczekiwany UUID)"
-        assert str(exc_date.value) == "Nieprawidlowy last_verified_at (oczekiwany format YYYY-MM-DD)"
+        assert str(exc_cover.value) == "Nieprawidłowy cover_attachment_id (oczekiwany UUID)"
+        assert str(exc_date.value) == "Nieprawidłowy last_verified_at (oczekiwany format YYYY-MM-DD)"
 
     async def test_creates_missing_post_row(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         page = await _blog_page(db_session, mcp_project, mcp_user, with_post=False)
@@ -8835,7 +8836,7 @@ class TestPublishBlogPostTool:
         with pytest.raises(ValueError) as exc_info:
             await _publish_call(publish_blog_post, mock_factory, mock_verify, _LINT_CLEAN_CONTENT, mcp_project.slug, "nie-uuid")
 
-        assert str(exc_info.value) == "Nieprawidlowy page_id (oczekiwany UUID)"
+        assert str(exc_info.value) == "Nieprawidłowy page_id (oczekiwany UUID)"
 
     async def test_read_only_role_is_refused_before_parsing_page_id_lookup_and_lint(self, db_session, mcp_user, mcp_project, mock_factory):
         member = await _make_member_user(db_session, mcp_project, permissions={"wiki": ["read"]})
@@ -8908,7 +8909,7 @@ class TestUnpublishBlogPostTool:
         with pytest.raises(ValueError) as exc_info:
             await _publish_call(unpublish_blog_post, mock_factory, mock_verify, "x", mcp_project.slug, "nie-uuid")
 
-        assert str(exc_info.value) == "Nieprawidlowy page_id (oczekiwany UUID)"
+        assert str(exc_info.value) == "Nieprawidłowy page_id (oczekiwany UUID)"
 
     async def test_read_only_role_is_refused_before_parsing_page_id_and_lookup(self, db_session, mcp_user, mcp_project, mock_factory):
         member = await _make_member_user(db_session, mcp_project, permissions={"wiki": ["read"]})
@@ -9136,25 +9137,44 @@ class TestWikiToolsIsPublicRequiresBlogPermission:
         assert result["is_public"] is True
         assert (await db_session.execute(select(BlogPost).where(BlogPost.page_id == page_id))).scalar_one_or_none() is not None
 
-    async def test_content_edit_of_public_page_without_flag_keeps_it_public(self, db_session, mcp_user, mcp_project, mock_factory):
+    @pytest.mark.parametrize("kwargs", [{"content": "nowa tresc"}, {"content": "nowa tresc", "is_public": True}, {"title": "Nowy tytul"}])
+    async def test_content_or_title_edit_of_public_page_without_flag_is_refused_and_writes_nothing(
+        self, db_session, mcp_user, mcp_project, mock_factory, kwargs
+    ):
+        owner = await _flagless_owner(db_session, mcp_project)
+        page = await _blog_page(db_session, mcp_project, mcp_user, is_public=True)
+        page_id, title = page.id, page.title
+
+        with (
+            patch("monolynx.services.wiki.get_markdown", return_value="stara tresc"),
+            patch("monolynx.services.wiki.upload_markdown", return_value="proj/blog.md") as upload_mock,
+            pytest.raises(ValueError) as exc_info,
+        ):
+            await _wiki_write_call(mcp_update_wiki_page, mock_factory, AsyncMock(return_value=owner), mcp_project.slug, str(page_id), **kwargs)
+
+        assert str(exc_info.value) == _BLOG_DENIED
+        upload_mock.assert_not_called()
+        saved = (await db_session.execute(select(WikiPage.title, WikiPage.is_public).where(WikiPage.id == page_id))).one()
+        assert tuple(saved) == (title, True)
+
+    async def test_update_to_the_same_visibility_without_flag_and_unchanged_content_is_not_gated(
+        self, db_session, mcp_user, mcp_project, mock_factory
+    ):
         owner = await _flagless_owner(db_session, mcp_project)
         page = await _blog_page(db_session, mcp_project, mcp_user, is_public=True)
 
-        result, upload_mock = await _wiki_write_call(
-            mcp_update_wiki_page, mock_factory, AsyncMock(return_value=owner), mcp_project.slug, str(page.id), content="nowa tresc"
-        )
+        with patch("monolynx.services.wiki.get_markdown", return_value="x"):
+            result, upload_mock = await _wiki_write_call(
+                mcp_update_wiki_page, mock_factory, AsyncMock(return_value=owner), mcp_project.slug, str(page.id), content="x", is_public=True
+            )
 
         assert result["is_public"] is True
         upload_mock.assert_called_once()
-        await db_session.refresh(page)
-        assert page.is_public is True
 
-    async def test_update_to_the_same_visibility_without_flag_is_not_gated(self, db_session, mcp_user, mcp_project, mock_factory):
-        owner = await _flagless_owner(db_session, mcp_project)
+    async def test_content_edit_of_public_page_with_flag_stores_it(self, db_session, mcp_user, mcp_project, mcp_member, mock_factory, mock_verify):
         page = await _blog_page(db_session, mcp_project, mcp_user, is_public=True)
 
-        result, _ = await _wiki_write_call(
-            mcp_update_wiki_page, mock_factory, AsyncMock(return_value=owner), mcp_project.slug, str(page.id), content="x", is_public=True
-        )
+        result, upload_mock = await _wiki_write_call(mcp_update_wiki_page, mock_factory, mock_verify, mcp_project.slug, str(page.id), content="nowa")
 
         assert result["is_public"] is True
+        upload_mock.assert_called_once()

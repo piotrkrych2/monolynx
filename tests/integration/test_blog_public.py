@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from sqlalchemy import delete, event, select
@@ -44,6 +44,7 @@ from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services import blog as blog_service
 from monolynx.services.auth import hash_password
+from monolynx.services.blog_blocks import render_post_markdown as real_render_post_markdown
 from monolynx.services.mcp_auth import generate_api_token
 from monolynx.services.wiki import create_wiki_page, update_wiki_page
 from tests.conftest import login_session
@@ -976,9 +977,31 @@ class TestBlogSlugRedirect:
         assert old_resp.status_code == 404
         assert new_resp.status_code == 404
 
-    async def test_attachment_under_old_slug_returns_404_with_nosniff_not_redirect(self, client, db_session):
-        _project, _user, page, old_slug, _new_slug = await self._published_post_with_new_slug(db_session, "e")
+    async def test_attachment_under_old_slug_redirects_301_to_current_slug_with_nosniff(self, client, db_session):
+        """MON-271: obraz wstawiony przed zmianą sluga nie może się wysypać, więc stary adres załącznika daje 301."""
+        _project, _user, page, old_slug, new_slug = await self._published_post_with_new_slug(db_session, "e")
         att = await _create_attachment(db_session, page, filename="stary.png", mime_type="image/png")
+
+        resp = await client.get(f"/blog/{old_slug}/attachments/{att.id}/{att.filename}")
+
+        assert resp.status_code == 301
+        assert urlsplit(resp.headers["location"]).path == f"/blog/{new_slug}/attachments/{att.id}/stary.png"
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    async def test_attachment_redirect_keeps_a_filename_that_needs_quoting(self, client, db_session):
+        _project, _user, page, old_slug, new_slug = await self._published_post_with_new_slug(db_session, "e2")
+        att = await _create_attachment(db_session, page, filename="zdjecie z kropka.png", mime_type="image/png")
+
+        resp = await client.get(f"/blog/{old_slug}/attachments/{att.id}/zdjecie%20z%20kropka.png")
+
+        assert resp.status_code == 301
+        assert resp.headers["location"] == f"/blog/{new_slug}/attachments/{att.id}/zdjecie%20z%20kropka.png"
+
+    async def test_attachment_under_old_slug_of_unpublished_post_returns_404_with_nosniff(self, client, db_session):
+        _project, _user, page, old_slug, _new_slug = await self._published_post_with_new_slug(db_session, "e3")
+        att = await _create_attachment(db_session, page, filename="prywatny.png", mime_type="image/png")
+        page.is_public = False
+        await db_session.flush()
 
         resp = await client.get(f"/blog/{old_slug}/attachments/{att.id}/{att.filename}")
 
@@ -994,6 +1017,71 @@ class TestBlogSlugRedirect:
 
         assert resp.status_code == 200
         assert resp.content == b"\x89PNG\r\n\x1a\n"
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+
+@pytest.mark.integration
+class TestBlogSlugShapeReturns404:
+    """MON-271: slug o złym kształcie (bajt NUL) to 404 na każdej trasie, nigdy 500 z PostgreSQL."""
+
+    async def test_page_with_nul_slug_returns_404(self, client):
+        resp = await client.get("/blog/%00")
+
+        assert resp.status_code == 404
+
+    async def test_markdown_twin_with_nul_slug_returns_404(self, client):
+        resp = await client.get("/blog/%00.md")
+
+        assert resp.status_code == 404
+
+    async def test_attachment_with_nul_slug_returns_404_with_nosniff(self, client):
+        resp = await client.get(f"/blog/%00/attachments/{uuid.uuid4()}/plik.png")
+
+        assert resp.status_code == 404
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+
+    @pytest.mark.parametrize(
+        "path",
+        ["/blog/%00", "/blog/%00.md", f"/blog/%00/attachments/{uuid.UUID(int=271)}/plik.png"],
+        ids=["page", "md", "attachment"],
+    )
+    async def test_nul_slug_never_reaches_the_slug_queries(self, client, path):
+        """Kształt sluga odrzuca `get_public_post_by_slug` przed zapytaniem - jedno miejsce dla trzech tras."""
+        with patch("sqlalchemy.ext.asyncio.AsyncSession.execute", new_callable=AsyncMock) as mock_execute:
+            resp = await client.get(path)
+
+        assert resp.status_code == 404
+        mock_execute.assert_not_awaited()
+
+
+@pytest.mark.integration
+class TestPublicPageRendersMarkdownOnce:
+    """MON-271: `render_post_markdown` jest liczone raz na żądanie i zasila `word_count` oraz czas czytania."""
+
+    async def test_post_page_renders_the_markdown_text_exactly_once(self, client, db_session):
+        project = await _create_project(db_session, "blog-render-once")
+        user = await _create_user(db_session, "blog-render-once@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Jedno Renderowanie MON271", is_public=True)
+
+        with (
+            patch("monolynx.services.wiki.get_markdown", return_value=" ".join(["slowo"] * 201)),
+            patch("monolynx.blog.render_post_markdown", wraps=real_render_post_markdown) as spy,
+        ):
+            resp = await client.get(f"/blog/{page.slug}")
+
+        assert resp.status_code == 200
+        assert spy.call_count == 1
+
+    async def test_word_count_and_reading_time_still_come_from_the_single_render(self, client, db_session):
+        project = await _create_project(db_session, "blog-render-values")
+        user = await _create_user(db_session, "blog-render-values@test.com")
+        page = await _create_wiki_page(db_session, project, user, "Wpis Wartosci Renderowania MON271", is_public=True)
+
+        with patch("monolynx.services.wiki.get_markdown", return_value=" ".join(["slowo"] * 201)):
+            resp = await client.get(f"/blog/{page.slug}", params={"lang": "en"})
+
+        assert re.search(r'"wordCount":\s*201\b', resp.text)
+        assert "2 min read" in resp.text
 
 
 @pytest.mark.integration
@@ -2455,6 +2543,160 @@ class TestBlogIndexFilters:
 
         assert resp.status_code == 200
         mock_list.assert_not_awaited()
+
+
+def _query_of(href):
+    return parse_qs(urlsplit(href).query)
+
+
+def _anchor_hrefs(text, label):
+    """Adresy kotwic o danym tekście (z dowolnymi atrybutami), odescapowane."""
+    return [html.unescape(href) for href in re.findall(rf'<a href="([^"]*)"[^>]*>\s*{label}\s*</a>', text)]
+
+
+@pytest.mark.integration
+class TestBlogIndexInterfaceParam:
+    """MON-271: `?ui=` to wyłącznie język interfejsu listy, `?lang=` zostaje wyłącznie filtrem języka wpisów."""
+
+    async def _seed_both_languages(self, db_session, tag):
+        project, user = await _scene(db_session, f"ui-{tag}")
+        await _create_wiki_page(db_session, project, user, f"Wpis Polski Ui {tag} MON271", is_public=True, lang="pl")
+        await _create_wiki_page(db_session, project, user, f"Post English Ui {tag} MON271", is_public=True, lang="en")
+        return f"Wpis Polski Ui {tag} MON271", f"Post English Ui {tag} MON271"
+
+    @pytest.mark.parametrize("ui", ["pl", "en"])
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_ui_param_sets_interface_language_and_keeps_every_post(self, mock_get_markdown, ui, client, db_session):
+        pl_title, en_title = await self._seed_both_languages(db_session, f"keep-{ui}")
+
+        resp = await client.get("/blog/", params={"ui": ui})
+
+        assert resp.status_code == 200
+        assert f'<html lang="{ui}"' in resp.text
+        assert pl_title in resp.text
+        assert en_title in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_ui_pl_with_lang_en_gives_polish_interface_and_english_posts_only(self, mock_get_markdown, client, db_session):
+        pl_title, en_title = await self._seed_both_languages(db_session, "plen")
+
+        resp = await client.get("/blog/", params={"ui": "pl", "lang": "en"})
+
+        assert resp.status_code == 200
+        assert '<html lang="pl"' in resp.text
+        assert en_title in resp.text
+        assert pl_title not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_ui_en_with_lang_pl_gives_english_interface_and_polish_posts_only(self, mock_get_markdown, client, db_session):
+        pl_title, en_title = await self._seed_both_languages(db_session, "enpl")
+
+        resp = await client.get("/blog/", params={"ui": "en", "lang": "pl"})
+
+        assert resp.status_code == 200
+        assert '<html lang="en"' in resp.text
+        assert pl_title in resp.text
+        assert en_title not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_lang_pl_without_ui_filters_and_sets_polish_interface_as_before(self, mock_get_markdown, client, db_session):
+        pl_title, en_title = await self._seed_both_languages(db_session, "legacy")
+
+        resp = await client.get("/blog/", params={"lang": "pl"})
+
+        assert resp.status_code == 200
+        assert '<html lang="pl"' in resp.text
+        assert pl_title in resp.text
+        assert en_title not in resp.text
+
+    @pytest.mark.parametrize("bad_ui", ["de", "", "PL", "pl\x00"], ids=["unknown", "empty", "uppercase", "nul"])
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_invalid_ui_is_ignored_without_filtering_and_with_english_interface(self, mock_get_markdown, bad_ui, client, db_session):
+        pl_title, en_title = await self._seed_both_languages(db_session, f"bad-{len(bad_ui)}-{abs(hash(bad_ui)) % 1000}")
+
+        resp = await client.get("/blog/", params={"ui": bad_ui})
+
+        assert resp.status_code == 200
+        assert '<html lang="en"' in resp.text
+        assert pl_title in resp.text
+        assert en_title in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_invalid_ui_falls_back_to_valid_lang_for_interface_and_filter(self, mock_get_markdown, client, db_session):
+        pl_title, en_title = await self._seed_both_languages(db_session, "badfallback")
+
+        resp = await client.get("/blog/", params={"ui": "de", "lang": "pl"})
+
+        assert resp.status_code == 200
+        assert '<html lang="pl"' in resp.text
+        assert pl_title in resp.text
+        assert en_title not in resp.text
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_pagination_links_keep_ui_and_do_not_add_a_language_filter(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "ui-paging")
+        await _seed_series(db_session, project, user, 41, prefix="Seria Ui Paginacja MON271", lang="pl")
+
+        resp = await client.get("/blog/", params={"ui": "en", "page": "2"})
+
+        assert resp.status_code == 200
+        previous = _anchor_hrefs(resp.text, r"&larr; Previous")
+        following = _anchor_hrefs(resp.text, r"Next &rarr;")
+        assert len(previous) == 1
+        assert len(following) == 1
+        assert _query_of(previous[0]) == {"ui": ["en"]}
+        assert _query_of(following[0]) == {"ui": ["en"], "page": ["3"]}
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_tag_links_on_cards_keep_ui_and_tag(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "ui-cardtag")
+        await _create_wiki_page(db_session, project, user, "Wpis Z Tagiem Ui MON271", is_public=True, lang="pl", tags=["x"])
+
+        resp = await client.get("/blog/", params={"ui": "pl"})
+
+        tag_hrefs = [html.unescape(href) for href in re.findall(r'<a class="blog-tag[^"]*"[^>]*href="([^"]*)"', resp.text)]
+        assert len(tag_hrefs) == 1
+        assert _query_of(tag_hrefs[0]) == {"tag": ["x"], "ui": ["pl"]}
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_language_filter_links_keep_ui_and_tag(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "ui-filter")
+        await _create_wiki_page(db_session, project, user, "Wpis Filtr Ui MON271", is_public=True, lang="pl", tags=["x"])
+
+        resp = await client.get("/blog/", params={"tag": "x", "ui": "pl"})
+
+        pl_link = re.findall(r'<a href="([^"]*)"(?: aria-current="true")?>PL</a>', resp.text)
+        en_link = re.findall(r'<a href="([^"]*)"(?: aria-current="true")?>EN</a>', resp.text)
+        all_link = _anchor_hrefs(resp.text, "Wszystkie")
+        assert [_query_of(html.unescape(href)) for href in pl_link] == [{"tag": ["x"], "lang": ["pl"], "ui": ["pl"]}]
+        assert [_query_of(html.unescape(href)) for href in en_link] == [{"tag": ["x"], "lang": ["en"], "ui": ["pl"]}]
+        assert [_query_of(href) for href in all_link] == [{"tag": ["x"], "ui": ["pl"]}]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_clear_tag_filter_link_keeps_ui_and_language_filter(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "ui-clear")
+        await _create_wiki_page(db_session, project, user, "Wpis Czyszczenie Ui MON271", is_public=True, lang="pl", tags=["x"])
+
+        resp = await client.get("/blog/", params={"tag": "x", "lang": "pl", "ui": "en"})
+
+        clear_links = _anchor_hrefs(resp.text, "clear filter")
+        assert [_query_of(href) for href in clear_links] == [{"lang": ["pl"], "ui": ["en"]}]
+
+    @patch("monolynx.services.wiki.get_markdown", return_value="Tresc MON271.")
+    async def test_links_without_ui_do_not_gain_one(self, mock_get_markdown, client, db_session):
+        project, user = await _scene(db_session, "ui-none")
+        await _create_wiki_page(db_session, project, user, "Wpis Bez Ui MON271", is_public=True, lang="pl", tags=["x"])
+
+        resp = await client.get("/blog/", params={"tag": "x", "lang": "pl"})
+
+        pl_link = [html.unescape(href) for href in re.findall(r'<a href="([^"]*)"(?: aria-current="true")?>PL</a>', resp.text)]
+        en_link = [html.unescape(href) for href in re.findall(r'<a href="([^"]*)"(?: aria-current="true")?>EN</a>', resp.text)]
+        tag_links = [html.unescape(href) for href in re.findall(r'<a class="blog-tag[^"]*"[^>]*href="([^"]*)"', resp.text)]
+        clear_links = _anchor_hrefs(resp.text, "wyczyść filtr")
+        assert [_query_of(href) for href in pl_link] == [{"tag": ["x"], "lang": ["pl"]}]
+        assert [_query_of(href) for href in en_link] == [{"tag": ["x"], "lang": ["en"]}]
+        assert [_query_of(href) for href in tag_links] == [{"tag": ["x"], "lang": ["pl"]}]
+        assert [_query_of(href) for href in clear_links] == [{"lang": ["pl"]}]
 
 
 @pytest.mark.integration

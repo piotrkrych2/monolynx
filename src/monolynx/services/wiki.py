@@ -23,7 +23,7 @@ from monolynx.models.wiki_backlink import WikiBacklink
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.blog import ensure_post
 from monolynx.services.minio_client import delete_object, get_markdown, upload_markdown
-from monolynx.services.permissions import check_permission, ensure_blog_permission, ensure_permission
+from monolynx.services.permissions import check_permission, ensure_blog_permission, ensure_permission, has_blog_permission
 
 logger = logging.getLogger("monolynx.wiki")
 
@@ -554,6 +554,10 @@ async def create_wiki_page(
     return page
 
 
+def _normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n")
+
+
 async def update_wiki_page(
     *,
     page: WikiPage,
@@ -568,11 +572,17 @@ async def update_wiki_page(
 ) -> WikiPage:
     """Aktualizuj strone wiki.
 
-    Zmiana `is_public` (publikacja i cofniecie) wymaga uprawnienia `blog:write` konta (MON-270),
-    sprawdzanego przed jakimkolwiek zapisem. Wartosc rowna biezacej i `None` nie sa zmiana.
+    Zmiana `is_public` (publikacja i cofniecie) oraz zmiana tytulu albo tresci strony, ktora jest juz publiczna,
+    wymagaja uprawnienia `blog:write` konta (MON-270, MON-271), sprawdzanego przed jakimkolwiek zapisem.
+    Wartosc `is_public` rowna biezacej i `None` nie sa zmiana; niezmieniony tytul i tresc (np. sama pozycja)
+    przechodza bez uprawnienia. Zapisana tresc czytamy tylko dla konta bez uprawnienia.
     """
     if is_public is not None and is_public != page.is_public:
         await ensure_blog_permission(db, user_id)
+    elif page.is_public and not await has_blog_permission(db, user_id):
+        title_changed = title is not None and title.strip() != page.title
+        if title_changed or (content is not None and _normalize_newlines(content) != _normalize_newlines(get_markdown(page.minio_path))):
+            await ensure_blog_permission(db, user_id)
 
     if title is not None and title.strip() != page.title:
         page.title = title.strip()
@@ -581,6 +591,8 @@ async def update_wiki_page(
 
     if content is not None:
         upload_markdown(project_slug, page.id, content)
+        # Edycja tresci tym samym uzytkownikiem nie zmienia zadnej kolumny, wiec bez jawnej daty nie byloby UPDATE
+        page.updated_at = func.now()
 
     if position is not None:
         page.position = position

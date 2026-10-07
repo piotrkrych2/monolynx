@@ -23,7 +23,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import math
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -33,6 +32,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx.config import settings
@@ -47,6 +47,8 @@ from monolynx.services.blog import (
     is_valid_tag,
     list_public_posts,
     list_public_translations,
+    reading_time_minutes,
+    rewrite_attachment_urls,
 )
 from monolynx.services.blog_blocks import render_post_html, render_post_markdown, strip_block_markers
 from monolynx.services.wiki import extract_summary, get_page_content
@@ -57,7 +59,6 @@ router = APIRouter(prefix="/blog", tags=["blog-ai"])
 
 MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
 _INDEX_LIMIT = 1000
-_WORDS_PER_MINUTE = 200
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 FEED_LIMIT = 20
@@ -173,6 +174,8 @@ def render_post_markdown_document(post: BlogPost, page: WikiPage, content: str, 
     ręczna (bez PyYAML w kodzie produkcyjnym); pola zawsze obecne, w stałej kolejności.
     """
     base = _base_url()
+    # Adresy załączników tej strony wychodzą publiczne (`/blog/<slug>/attachments/...`), nie dashboardowe (MON-271).
+    content = rewrite_attachment_urls(content, page_id=page.id, post_slug=post.slug)
     body = absolutize_markdown_urls(render_post_markdown(content), base)
     word_count = len(body.split())
     fields: list[tuple[str, str]] = [
@@ -186,7 +189,7 @@ def render_post_markdown_document(post: BlogPost, page: WikiPage, content: str, 
         ("last_verified", _yaml(post.last_verified_at.isoformat()) if post.last_verified_at is not None else "null"),
         ("tags", _yaml(list(post.tags or []))),
         ("translations", _yaml(translations)),
-        ("reading_time_minutes", str(max(1, math.ceil(word_count / _WORDS_PER_MINUTE)))),
+        ("reading_time_minutes", str(reading_time_minutes(body))),
         ("word_count", str(word_count)),
     ]
     front = "".join(f"{key}: {value}\n" for key, value in fields)
@@ -313,7 +316,9 @@ async def _load_feed_entries(db: AsyncSession, lang: str | None) -> tuple[list[_
         if isinstance(result, BaseException):
             logger.error("Blad pobierania tresci strony wiki z MinIO dla feedu (page_id=%s)", item.page.id, exc_info=result)
             continue
-        entries.append(_FeedEntry(post=item.post, page=item.page, content=result))
+        entries.append(
+            _FeedEntry(post=item.post, page=item.page, content=rewrite_attachment_urls(result, page_id=item.page.id, post_slug=item.post.slug))
+        )
     last_modified = max((_utc(item.page.updated_at) for item in items), default=_EPOCH)
     return entries, last_modified
 
@@ -427,8 +432,67 @@ async def build_llms_blog_section(db: AsyncSession) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Gotowy `/llms-full.txt` w pamięci procesu: (odcisk metadanych, dokument). Dokument kosztuje po odczycie z MinIO
+# na każdy publiczny wpis, a endpoint jest anonimowy i często odpytywany przez boty.
+_llms_full_cache: tuple[str, str] | None = None
+
+
+def clear_llms_full_cache() -> None:
+    """Wyrzuca gotowy `/llms-full.txt` z pamięci procesu (testy; produkcyjnie unieważnia go odcisk)."""
+    global _llms_full_cache
+    _llms_full_cache = None
+
+
+async def _llms_full_fingerprint(db: AsyncSession) -> str:
+    """Odcisk wejścia dokumentu: jedno zapytanie o metadane publicznych wpisów (bez MinIO) i bieżący limit bajtów.
+
+    `WikiPage.updated_at` łapie edycję treści (zapis treści jawnie go podbija), reszta pól to metadane wchodzące do
+    frontmatter, listy tłumaczeń i kolejności wpisów. Cofnięcie publikacji usuwa wiersz z odcisku.
+    """
+    rows = (
+        await db.execute(
+            select(
+                BlogPost.page_id,
+                BlogPost.slug,
+                BlogPost.lang,
+                BlogPost.translation_of_id,
+                BlogPost.published_at,
+                BlogPost.description,
+                BlogPost.tags,
+                BlogPost.author_name,
+                BlogPost.last_verified_at,
+                WikiPage.title,
+                WikiPage.created_at,
+                WikiPage.updated_at,
+            )
+            .join(WikiPage, WikiPage.id == BlogPost.page_id)
+            .where(WikiPage.is_public.is_(True))
+            .order_by(BlogPost.page_id)
+        )
+    ).all()
+    payload = json.dumps([[*map(str, row)] for row in rows] + [LLMS_FULL_MAX_BYTES, _base_url()], ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 async def build_llms_full(db: AsyncSession) -> str:
+    """Dokument `/llms-full.txt` z cache'u w pamięci procesu, gdy odcisk metadanych się nie zmienił, inaczej zbudowany od nowa.
+
+    Dokument z pominiętym wpisem (błąd storage) nie trafia do cache'u: usterka nie może przeżyć do następnej zmiany metadanych.
+    """
+    global _llms_full_cache
+    fingerprint = await _llms_full_fingerprint(db)
+    cached = _llms_full_cache
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+    document, complete = await _build_llms_full_document(db)
+    if complete:
+        _llms_full_cache = (fingerprint, document)
+    return document
+
+
+async def _build_llms_full_document(db: AsyncSession) -> tuple[str, bool]:
     """Pełna treść publicznych wpisów (`render_post_markdown_document`), najnowsze pierwsze, do `LLMS_FULL_MAX_BYTES`.
+    Drugi element wyniku to `False`, gdy któryś wpis pominięto z powodu błędu storage.
 
     Wpis, który nie zmieści się w limicie (razem z linią obcięcia), i wszystkie następne są pomijane w całości;
     wtedy dokument kończy linia `> Truncated: <pominięte> of <wszystkie> posts omitted ...`. Wpis z błędem storage
@@ -439,7 +503,7 @@ async def build_llms_full(db: AsyncSession) -> str:
     base = _base_url()
     header = f"# Monolynx Blog: full content\n\nPublic posts as markdown with YAML frontmatter, newest first. Index: {base}/blog/index.md\n"
     if not items:
-        return header + "\nNo public posts yet.\n"
+        return header + "\nNo public posts yet.\n", True
 
     total = len(items)
 
@@ -454,11 +518,13 @@ async def build_llms_full(db: AsyncSession) -> str:
     size = len(header.encode())
     kept = 0
     truncated = False
+    complete = True
     for index, item in enumerate(items):
         try:
             content = await loop.run_in_executor(None, get_page_content, item.page)
         except Exception:
             logger.exception("Blad pobierania tresci strony wiki z MinIO dla llms-full (page_id=%s)", item.page.id)
+            complete = False
             continue
         translations = [{"lang": t.lang, "url": f"{base}/blog/{t.slug}"} for t in await list_public_translations(db, item.post)]
         document = render_post_markdown_document(item.post, item.page, content, translations)
@@ -471,4 +537,4 @@ async def build_llms_full(db: AsyncSession) -> str:
         kept += 1
 
     body = LLMS_FULL_SEPARATOR.join(parts)
-    return body + truncation_line(total - kept) if truncated else body
+    return (body + truncation_line(total - kept) if truncated else body), complete

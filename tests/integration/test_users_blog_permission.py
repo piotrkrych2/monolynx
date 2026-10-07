@@ -194,6 +194,39 @@ class TestUnknownTarget:
         assert resp.status_code == 404
 
 
+class TestRefusalMessagesKeepPolishDiacritics:
+    """MON-271: komunikaty handlera uprawnienia do bloga mają polskie znaki (starsze handlery pliku bez zmian)."""
+
+    async def test_refusal_for_non_superuser_says_brak_uprawnien(self, client, db_session):
+        await _login(client, db_session, "blogperm-diacritics-deny@test.com", is_superuser=False)
+        target_id = await _target(db_session, "diacritics-deny")
+
+        resp = await _post(client, target_id, "true")
+
+        assert resp.status_code == 403
+        assert resp.text == "Brak uprawnień"
+        assert await _flag(db_session, target_id) is False
+
+    async def test_unknown_account_says_uzytkownik_nie_znaleziony(self, client, db_session):
+        await _login(client, db_session, "blogperm-diacritics-404@test.com", is_superuser=True)
+
+        resp = await _post(client, uuid.uuid4(), "true")
+
+        assert resp.status_code == 404
+        assert resp.text == "Użytkownik nie znaleziony"
+
+    async def test_inactive_account_says_uzytkownik_nie_znaleziony(self, client, db_session):
+        await _login(client, db_session, "blogperm-diacritics-inactive@test.com", is_superuser=True)
+        target = User(email="blogperm-target-diacritics-inactive@test.com", password_hash=hash_password("testpass123"), is_active=False)
+        db_session.add(target)
+        await db_session.flush()
+
+        resp = await _post(client, target.id, "true")
+
+        assert resp.status_code == 404
+        assert resp.text == "Użytkownik nie znaleziony"
+
+
 class TestEnabledFieldParsing:
     async def test_uppercase_true_enables(self, client, db_session):
         await _login(client, db_session, "blogperm-su-upper@test.com", is_superuser=True)

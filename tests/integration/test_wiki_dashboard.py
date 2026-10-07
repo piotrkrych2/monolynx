@@ -3306,8 +3306,9 @@ class TestWikiFormIsPublicRequiresBlogPermission:
     @patch("monolynx.dashboard.wiki.set_post_meta")
     @patch("monolynx.services.embeddings.update_page_embeddings")
     @patch("monolynx.services.wiki.upload_markdown", return_value="m270-keep/fake.md")
-    async def test_content_edit_of_public_page_without_flag_saves_and_keeps_it_public(
-        self, mock_upload, mock_embeddings, mock_set_meta, client, db_session
+    @patch("monolynx.services.wiki.get_markdown", return_value="Stara tresc")
+    async def test_title_and_content_edit_of_public_page_without_flag_is_refused_and_changes_nothing(
+        self, mock_get, mock_upload, mock_embeddings, mock_set_meta, client, db_session
     ):
         project = await _create_project(db_session, "m270-keep")
         user = await _login_plain_member(client, db_session, project, "m270-keep@test.com", can_edit_blog=False)
@@ -3315,21 +3316,135 @@ class TestWikiFormIsPublicRequiresBlogPermission:
         await _add_blog_post(db_session, page, slug="publiczna-edycja-m270")
         page_id = page.id
 
+        with patch.object(db_session, "rollback", AsyncMock()):
+            resp = await client.post(
+                f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+                data={"title": "Nowy Tytul Publicznej M270", "content": "Nowa tresc", "position": "7"},
+                follow_redirects=False,
+            )
+
+        assert resp.status_code == 200
+        assert "Brak uprawnienia blog:write" in resp.text
+        saved = (await db_session.execute(select(WikiPage.is_public, WikiPage.title, WikiPage.position).where(WikiPage.id == page_id))).one()
+        assert tuple(saved) == (True, "Publiczna Edycja M270", 0)
+        mock_upload.assert_not_called()
+        mock_set_meta.assert_not_called()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m270-keep-content/fake.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="Stara tresc")
+    async def test_content_only_edit_of_public_page_without_flag_is_refused_and_stores_nothing(
+        self, mock_get, mock_upload, mock_embeddings, client, db_session
+    ):
+        project = await _create_project(db_session, "m270-keep-content")
+        user = await _login_plain_member(client, db_session, project, "m270-keep-content@test.com", can_edit_blog=False)
+        page = await _create_wiki_page(db_session, project, user, title="Publiczna Tresc M270", is_public=True)
+        page_id = page.id
+
+        with patch.object(db_session, "rollback", AsyncMock()):
+            resp = await client.post(
+                f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+                data={"title": "Publiczna Tresc M270", "content": "Podmieniona tresc", "position": "5"},
+                follow_redirects=False,
+            )
+
+        assert resp.status_code == 200
+        assert "Brak uprawnienia blog:write" in resp.text
+        saved = (await db_session.execute(select(WikiPage.title, WikiPage.position).where(WikiPage.id == page_id))).one()
+        assert tuple(saved) == ("Publiczna Tresc M270", 0)
+        mock_upload.assert_not_called()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m270-keep-title/fake.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="Ta sama tresc")
+    async def test_title_only_edit_of_public_page_without_flag_is_refused_and_changes_nothing(
+        self, mock_get, mock_upload, mock_embeddings, client, db_session
+    ):
+        project = await _create_project(db_session, "m270-keep-title")
+        user = await _login_plain_member(client, db_session, project, "m270-keep-title@test.com", can_edit_blog=False)
+        page = await _create_wiki_page(db_session, project, user, title="Publiczny Tytul M270", is_public=True)
+        page_id = page.id
+
+        with patch.object(db_session, "rollback", AsyncMock()):
+            resp = await client.post(
+                f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+                data={"title": "Zmieniony Publiczny Tytul M270", "content": "Ta sama tresc", "position": "5"},
+                follow_redirects=False,
+            )
+
+        assert resp.status_code == 200
+        assert "Brak uprawnienia blog:write" in resp.text
+        saved = (await db_session.execute(select(WikiPage.title, WikiPage.position).where(WikiPage.id == page_id))).one()
+        assert tuple(saved) == ("Publiczny Tytul M270", 0)
+        mock_upload.assert_not_called()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m270-keep-crlf/fake.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="Linia pierwsza\nLinia druga")
+    async def test_edit_of_public_page_without_flag_with_unchanged_title_and_crlf_content_passes(
+        self, mock_get, mock_upload, mock_embeddings, client, db_session
+    ):
+        """Textarea formularza zwraca CRLF, wiec sama inna konwencja konca linii nie jest zmiana tresci."""
+        project = await _create_project(db_session, "m270-keep-crlf")
+        user = await _login_plain_member(client, db_session, project, "m270-keep-crlf@test.com", can_edit_blog=False)
+        page = await _create_wiki_page(db_session, project, user, title="Publiczna Crlf M270", is_public=True)
+        page_id = page.id
+
         resp = await client.post(
             f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
-            data={"title": "Nowy Tytul Publicznej M270", "content": "Nowa tresc", "position": "7"},
+            data={"title": "Publiczna Crlf M270", "content": "Linia pierwsza\r\nLinia druga", "position": "4"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        saved = (await db_session.execute(select(WikiPage.is_public, WikiPage.position).where(WikiPage.id == page_id))).one()
+        assert tuple(saved) == (True, 4)
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m270-keep-flag/fake.md")
+    @patch("monolynx.services.wiki.get_markdown", return_value="Stara tresc")
+    async def test_title_and_content_edit_of_public_page_with_flag_saves(self, mock_get, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m270-keep-flag")
+        user = await _login_plain_member(client, db_session, project, "m270-keep-flag@test.com", can_edit_blog=True)
+        page = await _create_wiki_page(db_session, project, user, title="Publiczna Z Flaga M270", is_public=True)
+        page_id = page.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data={"title": "Nowy Tytul Z Flaga M270", "content": "Nowa tresc", "position": "7", "is_public": "on"},
             follow_redirects=False,
         )
 
         assert resp.status_code == 303
         saved = (await db_session.execute(select(WikiPage.is_public, WikiPage.title, WikiPage.position).where(WikiPage.id == page_id))).one()
-        assert tuple(saved) == (True, "Nowy Tytul Publicznej M270", 7)
+        assert tuple(saved) == (True, "Nowy Tytul Z Flaga M270", 7)
         mock_upload.assert_called_once()
-        mock_set_meta.assert_not_called()
+
+    @patch("monolynx.services.embeddings.update_page_embeddings")
+    @patch("monolynx.services.wiki.upload_markdown", return_value="m270-priv-edit/fake.md")
+    async def test_title_and_content_edit_of_private_page_without_flag_saves(self, mock_upload, mock_embeddings, client, db_session):
+        project = await _create_project(db_session, "m270-priv-edit")
+        user = await _login_plain_member(client, db_session, project, "m270-priv-edit@test.com", can_edit_blog=False)
+        page = await _create_wiki_page(db_session, project, user, title="Prywatna Edycja M270", is_public=False)
+        page_id = page.id
+
+        resp = await client.post(
+            f"/dashboard/{project.slug}/wiki/pages/{page_id}/edit",
+            data={"title": "Prywatna Po Edycji M270", "content": "Nowa tresc", "position": "2"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        saved = (await db_session.execute(select(WikiPage.is_public, WikiPage.title, WikiPage.position).where(WikiPage.id == page_id))).one()
+        assert tuple(saved) == (False, "Prywatna Po Edycji M270", 2)
+        mock_upload.assert_called_once()
 
     @patch("monolynx.services.embeddings.update_page_embeddings")
     @patch("monolynx.services.wiki.upload_markdown", return_value="m270-keep-on/fake.md")
-    async def test_edit_of_public_page_without_flag_with_checked_box_keeps_it_public(self, mock_upload, mock_embeddings, client, db_session):
+    @patch("monolynx.services.wiki.get_markdown", return_value="Nowa tresc")
+    async def test_edit_of_public_page_without_flag_with_checked_box_keeps_it_public(
+        self, mock_get, mock_upload, mock_embeddings, client, db_session
+    ):
         project = await _create_project(db_session, "m270-keep-on")
         user = await _login_plain_member(client, db_session, project, "m270-keep-on@test.com", can_edit_blog=False)
         page = await _create_wiki_page(db_session, project, user, title="Publiczna Zaznaczona M270", is_public=True)
@@ -3347,7 +3462,8 @@ class TestWikiFormIsPublicRequiresBlogPermission:
 
     @patch("monolynx.services.embeddings.update_page_embeddings")
     @patch("monolynx.services.wiki.upload_markdown", return_value="m270-unpub/fake.md")
-    async def test_edit_without_checkbox_by_account_with_flag_still_unpublishes(self, mock_upload, mock_embeddings, client, db_session):
+    @patch("monolynx.services.wiki.get_markdown", return_value="Nowa tresc")
+    async def test_edit_without_checkbox_by_account_with_flag_still_unpublishes(self, mock_get, mock_upload, mock_embeddings, client, db_session):
         project = await _create_project(db_session, "m270-unpub")
         user = await _login_plain_member(client, db_session, project, "m270-unpub@test.com", can_edit_blog=True)
         page = await _create_wiki_page(db_session, project, user, title="Do Cofniecia M270", is_public=True)

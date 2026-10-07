@@ -352,7 +352,7 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
         ET.SubElement(ET.SubElement(urlset, "url"), "loc").text = url
 
     # Lista bloga bez lastmod, potem wpisy z bazy (is_public=True) pod BlogPost.slug -- filtr w SQL,
-    # nigdy w petli Pythona (MON-202, MON-254). lastmod: last_verified_at, potem published_at, potem updated_at strony.
+    # nigdy w petli Pythona (MON-202, MON-254). lastmod: pozniejsza z dat updated_at strony i last_verified_at (MON-271).
     ET.SubElement(ET.SubElement(urlset, "url"), "loc").text = f"{base}/blog/"
     result = await db.execute(
         select(
@@ -361,7 +361,6 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
             BlogPost.page_id,
             BlogPost.translation_of_id,
             BlogPost.last_verified_at,
-            BlogPost.published_at,
             WikiPage.updated_at,
         )
         .join(WikiPage, WikiPage.id == BlogPost.page_id)
@@ -375,7 +374,10 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)) -> Response:
     for row in rows:
         url_el = ET.SubElement(urlset, "url")
         ET.SubElement(url_el, "loc").text = f"{base}/blog/{row.slug}"
-        ET.SubElement(url_el, "lastmod").text = (row.last_verified_at or row.published_at or row.updated_at).isoformat()
+        # last_verified_at to data bez godziny: wygrywa tylko gdy jest pozniejszym dniem niz updated_at,
+        # inaczej zostaje pelny znacznik czasu edycji.
+        verified_later = row.last_verified_at is not None and row.last_verified_at > row.updated_at.date()
+        ET.SubElement(url_el, "lastmod").text = (row.last_verified_at if verified_later else row.updated_at).isoformat()
         versions = groups[row.translation_of_id or row.page_id]
         if len(versions) > 1:
             for lang, slug in sorted(versions):

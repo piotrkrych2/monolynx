@@ -1,7 +1,7 @@
 """Testy integracyjne sitemap.xml z bazy (wpisy bloga) i robots.txt (jawne Allow: /blog/).
 
 MON-254: adresy wpisów pochodzą z `BlogPost.slug` (nie ze sluga strony wiki), a `lastmod`
-z `BlogPost.last_verified_at`, potem `BlogPost.published_at`, potem `WikiPage.updated_at`.
+z późniejszej z dat `WikiPage.updated_at` i `BlogPost.last_verified_at` (MON-271; `published_at` w `lastmod` nie bierze udziału).
 Sitemap zawiera też stronę listy `{base}/blog/`.
 
 MON-259: pary `xhtml:link hreflang` dla publicznych tłumaczeń (klasa `TestSitemapHreflang`) oraz osobne
@@ -26,6 +26,7 @@ from monolynx.models.project import Project
 from monolynx.models.user import User
 from monolynx.models.wiki_page import WikiPage
 from monolynx.services.auth import hash_password
+from monolynx.services.wiki import update_wiki_page
 
 _SITEMAP_NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
@@ -170,27 +171,33 @@ class TestSitemapPublicWikiPages:
         assert f"{base}/blog/adres-wpisu-w-sitemap-mon254" in entries
         assert f"{base}/blog/{page.slug}" not in entries
 
-    async def test_sitemap_lastmod_is_published_at_when_no_last_verified_at(self, client, db_session):
-        project = await _create_project(db_session, "sitemap-lm-pub")
-        user = await _create_user(db_session, "sitemap-lm-pub@test.com")
-        published = datetime(2026, 2, 1, 8, 0, tzinfo=UTC)
+    @pytest.mark.parametrize(
+        ("published", "name"),
+        [(datetime(2026, 2, 1, 8, 0, tzinfo=UTC), "older"), (datetime(2026, 8, 1, 8, 0, tzinfo=UTC), "newer")],
+        ids=["published-before-update", "published-after-update"],
+    )
+    async def test_sitemap_lastmod_is_page_updated_at_and_ignores_published_at(self, client, db_session, published, name):
+        """MON-271: `published_at` nie bierze udziału w `lastmod` (ani gdy jest starszy, ani gdy nowszy od `updated_at`)."""
+        project = await _create_project(db_session, f"sitemap-lm-pub-{name}")
+        user = await _create_user(db_session, f"sitemap-lm-pub-{name}@test.com")
+        updated = datetime(2026, 5, 5, 5, 0, tzinfo=UTC)
         await _create_wiki_page(
             db_session,
             project,
             user,
-            "Wpis Lastmod Published MON254",
+            f"Wpis Lastmod Published {name} MON254",
             is_public=True,
-            post_slug="lastmod-published-mon254",
+            post_slug=f"lastmod-published-{name}-mon254",
             published_at=published,
-            updated_at=datetime(2026, 5, 5, 5, 0, tzinfo=UTC),
+            updated_at=updated,
         )
 
         resp = await client.get("/sitemap.xml")
 
         base = settings.APP_URL.rstrip("/")
-        assert _sitemap_entries(resp.text)[f"{base}/blog/lastmod-published-mon254"] == published.isoformat()
+        assert _sitemap_entries(resp.text)[f"{base}/blog/lastmod-published-{name}-mon254"] == updated.isoformat()
 
-    async def test_sitemap_lastmod_prefers_last_verified_at(self, client, db_session):
+    async def test_sitemap_lastmod_is_last_verified_at_when_later_than_updated_at(self, client, db_session):
         project = await _create_project(db_session, "sitemap-lm-ver")
         user = await _create_user(db_session, "sitemap-lm-ver@test.com")
         await _create_wiki_page(
@@ -201,14 +208,66 @@ class TestSitemapPublicWikiPages:
             is_public=True,
             post_slug="lastmod-verified-mon254",
             published_at=datetime(2026, 2, 1, 8, 0, tzinfo=UTC),
-            last_verified_at=date(2026, 3, 9),
+            last_verified_at=date(2026, 7, 1),
             updated_at=datetime(2026, 5, 5, 5, 0, tzinfo=UTC),
         )
 
         resp = await client.get("/sitemap.xml")
 
         base = settings.APP_URL.rstrip("/")
-        assert _sitemap_entries(resp.text)[f"{base}/blog/lastmod-verified-mon254"] == date(2026, 3, 9).isoformat()
+        assert _sitemap_entries(resp.text)[f"{base}/blog/lastmod-verified-mon254"] == date(2026, 7, 1).isoformat()
+
+    @pytest.mark.parametrize(
+        ("last_verified", "name"),
+        [(date(2026, 3, 9), "older"), (date(2026, 5, 5), "same-day")],
+        ids=["verified-before-update", "verified-same-day-as-update"],
+    )
+    async def test_sitemap_lastmod_is_updated_at_when_last_verified_at_is_not_later(self, client, db_session, last_verified, name):
+        """`last_verified_at` jest datą: równa dacie `updated_at` nie jest późniejsza, więc wygrywa pełny `updated_at`."""
+        project = await _create_project(db_session, f"sitemap-lm-ver-{name}")
+        user = await _create_user(db_session, f"sitemap-lm-ver-{name}@test.com")
+        updated = datetime(2026, 5, 5, 5, 0, tzinfo=UTC)
+        await _create_wiki_page(
+            db_session,
+            project,
+            user,
+            f"Wpis Lastmod Verified Not Later {name} MON254",
+            is_public=True,
+            post_slug=f"lastmod-verified-notlater-{name}-mon254",
+            published_at=datetime(2026, 2, 1, 8, 0, tzinfo=UTC),
+            last_verified_at=last_verified,
+            updated_at=updated,
+        )
+
+        resp = await client.get("/sitemap.xml")
+
+        base = settings.APP_URL.rstrip("/")
+        assert _sitemap_entries(resp.text)[f"{base}/blog/lastmod-verified-notlater-{name}-mon254"] == updated.isoformat()
+
+    async def test_sitemap_lastmod_changes_after_the_post_content_is_edited(self, client, db_session):
+        """Edycja treści tym samym użytkownikiem podbija `updated_at` strony, więc `lastmod` przesuwa się do przodu."""
+        project = await _create_project(db_session, "sitemap-lm-edit")
+        user = await _create_user(db_session, "sitemap-lm-edit@test.com")
+        user.can_edit_blog = True
+        old = datetime(2020, 1, 1, 8, 0, tzinfo=UTC)
+        page = await _create_wiki_page(
+            db_session, project, user, "Wpis Lastmod Edycja MON271", is_public=True, post_slug="lastmod-edit-mon271", updated_at=old
+        )
+        base = settings.APP_URL.rstrip("/")
+        before = (await client.get("/sitemap.xml")).text
+
+        with (
+            patch("monolynx.services.wiki.upload_markdown", return_value="x.md"),
+            patch("monolynx.services.embeddings.update_page_embeddings"),
+            patch("monolynx.services.wiki.sync_backlinks"),
+            patch("monolynx.services.wiki.get_markdown", return_value="Stara tresc."),
+        ):
+            await update_wiki_page(page=page, project_slug=project.slug, content="Nowa tresc po edycji.", user_id=user.id, db=db_session)
+        after = (await client.get("/sitemap.xml")).text
+
+        assert _sitemap_entries(before)[f"{base}/blog/lastmod-edit-mon271"] == old.isoformat()
+        new_lastmod = datetime.fromisoformat(_sitemap_entries(after)[f"{base}/blog/lastmod-edit-mon271"])
+        assert new_lastmod > old
 
     async def test_sitemap_lastmod_falls_back_to_page_updated_at(self, client, db_session):
         project = await _create_project(db_session, "sitemap-lm-upd")
@@ -384,8 +443,16 @@ class TestSitemapHreflang:
         project = await _create_project(db_session, "sitemap-hl-lm")
         user = await _create_user(db_session, "sitemap-hl-lm@test.com")
         published = datetime(2026, 2, 1, 8, 0, tzinfo=UTC)
+        updated = datetime(2026, 4, 4, 4, 0, tzinfo=UTC)
         root = await _create_wiki_page(
-            db_session, project, user, "Wpis Hreflang Lm Pl MON259", is_public=True, post_slug="hl-lm-pl-mon259", published_at=published
+            db_session,
+            project,
+            user,
+            "Wpis Hreflang Lm Pl MON259",
+            is_public=True,
+            post_slug="hl-lm-pl-mon259",
+            published_at=published,
+            updated_at=updated,
         )
         await _create_wiki_page(
             db_session, project, user, "Wpis Hreflang Lm En MON259", is_public=True, post_slug="hl-lm-en-mon259", lang="en", translation_of_id=root.id
@@ -394,7 +461,7 @@ class TestSitemapHreflang:
         resp = await client.get("/sitemap.xml")
 
         base = settings.APP_URL.rstrip("/")
-        assert _sitemap_entries(resp.text)[f"{base}/blog/hl-lm-pl-mon259"] == published.isoformat()
+        assert _sitemap_entries(resp.text)[f"{base}/blog/hl-lm-pl-mon259"] == updated.isoformat()
 
     async def test_post_without_translation_has_no_xhtml_link(self, client, db_session):
         project = await _create_project(db_session, "sitemap-hl-solo")

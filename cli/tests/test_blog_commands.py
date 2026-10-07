@@ -143,6 +143,14 @@ _BAD_ITEMS: list[dict[str, Any]] = [
     {**_item(), "tags": [1]},
     {**_item(), "public_url": 7},
     {**_item(), "markdown_url": 7},
+    # lang i published_at (MON-271): klucz musi byc obecny, lang jest tekstem, published_at tekstem albo null.
+    _without(_item(), "lang"),
+    {**_item(), "lang": 5},
+    {**_item(), "lang": ["pl"]},
+    {**_item(), "lang": None},
+    _without(_item(), "published_at"),
+    {**_item(), "published_at": 5},
+    {**_item(), "published_at": ["2026-04-05"]},
 ]
 _BAD_ITEM_IDS = [f"bad-item-{i}" for i in range(len(_BAD_ITEMS))]
 
@@ -391,6 +399,26 @@ def test_list_bad_envelope_is_contract_error_exit_1(runner, monkeypatch, mock_tr
     _patch_client(monkeypatch, mock_transport, _json(bad))
 
     result = _run(runner, "list")
+
+    assert result.exit_code == 1
+    assert "Nieprawidłowa odpowiedź serwera" in result.stderr
+    assert result.stdout == ""
+
+
+def test_list_accepts_null_published_at_and_text_published_at(runner, monkeypatch, mock_transport):
+    items = [_item("p-1", "Szkic", "szkic", published_at=None, lang="en"), _item("p-2", "Data", "data", published_at="2026-04-05T06:07:00Z")]
+    _patch_client(monkeypatch, mock_transport, _json(_envelope(items)))
+
+    result = _run(runner, "list")
+
+    assert result.exit_code == 0, result.output
+    assert [(row["lang"], row["published_at"]) for row in json.loads(result.stdout)] == [("en", None), ("pl", "2026-04-05T06:07:00Z")]
+
+
+def test_list_table_of_a_bad_lang_is_contract_error_not_a_blank_cell(runner, monkeypatch, mock_transport):
+    _patch_client(monkeypatch, mock_transport, _json(_envelope([_item(), {**_item(), "lang": 5}])))
+
+    result = _run(runner, "list", output="table")
 
     assert result.exit_code == 1
     assert "Nieprawidłowa odpowiedź serwera" in result.stderr
