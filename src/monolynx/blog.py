@@ -7,9 +7,9 @@ Renderuje wyłącznie strony wiki z is_public=True; wszystko inne (strona prywat
 nieistniejący slug) mapuje na 404 -- nigdy 403, żeby nie potwierdzać istnienia zasobu.
 
 MON-254: wpis adresuje stabilny `BlogPost.slug` (nie slug strony wiki, który zmienia się wraz
-z tytułem). Stary slug z `previous_slugs` daje 301 na aktualny adres (poza trasą załączników:
-tam 404). Strona publiczna bez wiersza BlogPost to 404 -- wiersz zakładają `ensure_post` i
-migracja. Lista sortuje po `published_at`, zajawka to `description` z fallbackiem na streszczenie
+z tytułem). Stary slug z `previous_slugs` daje 301 na aktualny adres
+(także na trasie załączników, MON-271). Strona publiczna bez wiersza BlogPost to 404 -- wiersz zakładają
+`ensure_post` i migracja. Lista sortuje po `published_at`, zajawka to `description` z fallbackiem na streszczenie
 treści.
 
 MON-255: treść wpisu renderuje `services/blog_blocks.render_post_html` (bloki + sanityzacja nh3);
@@ -23,11 +23,14 @@ MON-258: `/blog/{slug}` z `Accept: text/markdown` zwraca ten sam dokument co `/b
 (`blog_ai.markdown_twin_response`); odpowiedź HTML niesie `Vary: Accept` i `Link` do bliźniaka,
 a strony dostają JSON-LD (`services/blog.build_post_jsonld` / `build_blog_jsonld`).
 
-MON-260: strony dla ludzi. Lista przyjmuje `?tag=` i `?lang=` (poprawny `lang` filtruje wpisy i ustawia
-język interfejsu), karty niosą okładkę, tagi i czas czytania (treść każdej karty czytana równolegle),
+MON-260: strony dla ludzi. Lista przyjmuje `?tag=` i `?lang=` (poprawny `lang` filtruje wpisy; interfejs: patrz
+MON-271), karty niosą okładkę, tagi i czas czytania (treść każdej karty czytana równolegle),
 paginacja zachowuje filtry, a `canonical` / `prev` / `next` wskazują bieżącą stronę. Wpis dostaje spis
 treści, powiązane wpisy, tłumaczenia i `hreflang`; jego interfejs to `?lang=` albo `lang` wpisu. Obie
 odpowiedzi HTML idą przez `blog_ai.conditional_response` (ETag, Last-Modified, 304).
+
+MON-271: `/blog/?ui=` to wyłącznie język interfejsu listy (`lang` zostaje filtrem wpisów), stary slug załącznika
+opublikowanego wpisu daje 301, a `public_page` renderuje tekst wpisu raz na żądanie.
 
 MON-264: `public_page` przepisuje dashboardowe adresy załączników strony na publiczne
 (`rewrite_attachment_urls`), zanim treść trafi do renderera.
@@ -119,13 +122,15 @@ async def _fetch_card_data(item: PublicPost) -> tuple[str, int | None]:
     return summary, reading_time_minutes(render_post_markdown(content))
 
 
-def _index_path(tag: str | None, lang: str | None, page: int | None = None) -> str:
-    """Ścieżka listy z query w stałej kolejności `tag`, `lang`, `page`; `page` tylko gdy > 1."""
+def _index_path(tag: str | None, lang: str | None, page: int | None = None, ui: str | None = None) -> str:
+    """Ścieżka listy z query w stałej kolejności `tag`, `lang`, `ui`, `page`; `page` tylko gdy > 1."""
     params: list[tuple[str, str]] = []
     if tag is not None:
         params.append(("tag", tag))
     if lang is not None:
         params.append(("lang", lang))
+    if ui is not None:
+        params.append(("ui", ui))
     if page is not None and page > 1:
         params.append(("page", str(page)))
     return f"/blog/?{urlencode(params)}" if params else "/blog/"
@@ -184,17 +189,22 @@ async def _public_backlinks(page: WikiPage, db: AsyncSession) -> list[dict[str, 
 
 
 @router.get("/", response_class=HTMLResponse, response_model=None)
-async def public_index(request: Request, lang: str | None = None, tag: str | None = None, db: AsyncSession = Depends(get_db)) -> Response:
+async def public_index(
+    request: Request, lang: str | None = None, tag: str | None = None, ui: str | None = None, db: AsyncSession = Depends(get_db)
+) -> Response:
     """Lista publicznych wpisow bloga, najnowsze (`published_at`) najpierw, z paginacja.
 
     `page` z try/except -> 1; clampowanie do <1, total_pages> robi `list_public_posts`.
-    `lang` (`pl`/`en`) filtruje wpisy po jezyku tresci i ustawia jezyk interfejsu; brak albo inna
-    wartosc = bez filtra, interfejs `en`. `tag`: pusty = bez filtra, niepoprawny (`is_valid_tag`) =
+    `lang` (`pl`/`en`) filtruje wpisy po jezyku tresci; brak albo inna wartosc = bez filtra. `ui` (`pl`/`en`)
+    ustawia WYLACZNIE jezyk interfejsu (link z landingu nie zawęża listy); bez poprawnego `ui` interfejs to
+    poprawny `lang` (stare linki `?lang=pl`), a bez niego `en`. Linki listy zachowują `ui`, gdy go podano.
+    `tag`: pusty = bez filtra, niepoprawny (`is_valid_tag`) =
     pusta lista bez zapytania do bazy (bajt NUL w parametrze wywrocilby PostgreSQL), status 200.
     Odpowiedz niesie `ETag` i `Last-Modified` (najnowszy `updated_at` wsrod wpisow strony listy).
     """
     filter_lang = lang if lang in POST_LANGS else None
-    ui_lang = filter_lang or "en"
+    ui_param = ui if ui in POST_LANGS else None
+    ui_lang = ui_param or filter_lang or "en"
     filter_tag = tag if tag and is_valid_tag(tag) else None
 
     try:
@@ -239,8 +249,13 @@ async def public_index(request: Request, lang: str | None = None, tag: str | Non
         "filter_tag": filter_tag,
         "filter_lang": filter_lang,
         "canonical_url": f"{settings.APP_URL.rstrip('/')}{_index_path(filter_tag, filter_lang, current_page)}",
-        "prev_url": _index_path(filter_tag, filter_lang, current_page - 1) if has_prev else None,
-        "next_url": _index_path(filter_tag, filter_lang, current_page + 1) if has_next else None,
+        "prev_url": _index_path(filter_tag, filter_lang, current_page - 1, ui_param) if has_prev else None,
+        "next_url": _index_path(filter_tag, filter_lang, current_page + 1, ui_param) if has_next else None,
+        "all_langs_url": _index_path(filter_tag, None, ui=ui_param),
+        "filter_pl_url": _index_path(filter_tag, "pl", ui=ui_param),
+        "filter_en_url": _index_path(filter_tag, "en", ui=ui_param),
+        "clear_tag_url": _index_path(None, filter_lang, ui=ui_param),
+        "tag_url": lambda card_tag: _index_path(card_tag, filter_lang, ui=ui_param),
         "lang_switch_url": _index_path(filter_tag, "pl"),
         "lang_switch_url_en": _index_path(filter_tag, "en"),
         "json_ld": dump_jsonld(build_blog_jsonld(items, base_url=settings.APP_URL)),
@@ -291,6 +306,7 @@ async def public_page(slug: str, request: Request, lang: str | None = None, db: 
         raise HTTPException(status_code=404, detail="Nie znaleziono strony") from None
     content = rewrite_attachment_urls(content, page_id=page.id, post_slug=post.slug)
     content_html = render_post_html(content)
+    plain_text = render_post_markdown(content)
     assets = collect_block_assets(content)
     meta_description = post.description or extract_summary(strip_block_markers(content))
 
@@ -317,7 +333,7 @@ async def public_page(slug: str, request: Request, lang: str | None = None, db: 
             page,
             base_url=settings.APP_URL,
             description=meta_description,
-            word_count=len(render_post_markdown(content).split()),
+            word_count=len(plain_text.split()),
             image_url=cover_image_url,
             structured=extract_structured_data(content),
         )
@@ -361,7 +377,7 @@ async def public_page(slug: str, request: Request, lang: str | None = None, db: 
             "author_name": post.author_name,
             "last_verified_at": post.last_verified_at,
             "tags": list(post.tags or []),
-            "reading_time": reading_time_minutes(render_post_markdown(content)),
+            "reading_time": reading_time_minutes(plain_text),
             "toc": extract_toc(content_html),
             "related": [
                 {
@@ -396,11 +412,12 @@ async def public_attachment(
     attachment_id: uuid.UUID,
     filename: str,
     db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
+) -> Response:
     """Publiczny zalacznik strony wiki -- bez sesji, tylko is_public=True (MON-203).
 
-    Wpis wyszukiwany po AKTUALNYM `BlogPost.slug` (MON-254); stary slug daje 404, bez 301
-    (adres zalacznika nie jest linkowany z zewnatrz jak adres wpisu). Zapytanie wiaze
+    Wpis wyszukiwany po AKTUALNYM `BlogPost.slug` (MON-254); stary slug opublikowanego wpisu daje 301 na
+    adres pod aktualnym slugiem (MON-271: obraz wstawiony przed zmianą sluga nie może się wysypać), a stary
+    slug wpisu niepublicznego 404. Zapytanie wiaze
     attachment_id z page.id (page samo jest juz przefiltrowane po is_public=True przez
     get_public_post_by_slug) -- sam attachment_id nie wystarcza,
     inaczej kazdy zalacznik w systemie stalby sie publiczny pod tym adresem. Zalacznik
@@ -412,6 +429,9 @@ async def public_attachment(
     nosniff = {"X-Content-Type-Options": "nosniff"}
 
     lookup = await get_public_post_by_slug(db, slug)
+    if lookup is not None and lookup.redirect_slug is not None:
+        target = f"/blog/{lookup.redirect_slug}/attachments/{attachment_id}/{quote(filename, safe='')}"
+        return RedirectResponse(url=target, status_code=301, headers=nosniff)
     if lookup is None or lookup.page is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono strony", headers=nosniff)
     page = lookup.page

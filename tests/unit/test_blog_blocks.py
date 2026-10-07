@@ -3472,3 +3472,32 @@ class TestListBlockTemplates:
             assert set(item) == {"name", "template"}
             assert isinstance(item["name"], str)
             assert isinstance(item["template"], str)
+
+
+class TestHeadingAnchorIsNotWikiSlug:
+    """MON-271 (pkt 12, para 2): `_slug` kotwic nagłówków i `services.wiki.generate_slug` wyglądają jak duplikaty, ale
+    dają inne wyniki dla tych samych wejść, więc nie można ich scalić bez zmiany adresów kotwic wpisów."""
+
+    @pytest.mark.parametrize(
+        ("heading", "anchor", "wiki_slug"),
+        [
+            ("Café", "cafe", "caf"),
+            ("Hello.World", "hello-world", "helloworld"),
+            ("a/b", "a-b", "ab"),
+        ],
+        ids=["accent", "dot-separator", "slash-separator"],
+    )
+    def test_anchor_differs_from_the_wiki_slug_for_accents_and_separators(self, heading, anchor, wiki_slug):
+        from monolynx.services.wiki import generate_slug
+
+        assert blog_blocks._slug(heading) == anchor
+        assert generate_slug(heading) == wiki_slug
+
+    def test_heading_without_any_ascii_letter_falls_back_to_section_anchor(self):
+        assert blog_blocks._slug("!!!") == "sekcja"
+
+    def test_rendered_heading_id_uses_the_anchor_form(self):
+        rendered = render_post_html("## Café\n\ntekst\n\n## Hello.World\n\ntekst")
+
+        assert 'id="cafe"' in rendered
+        assert 'id="hello-world"' in rendered

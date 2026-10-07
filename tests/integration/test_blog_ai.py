@@ -38,7 +38,18 @@ from monolynx.config import settings
 from monolynx.services import blog as blog_service
 from monolynx.services.blog import DEFAULT_AUTHOR_NAME
 from monolynx.services.blog import list_public_posts as real_list_public_posts
-from tests.integration.test_blog_public import _add_owner, _create_attachment, _create_project, _create_user, _create_wiki_page
+from monolynx.services.blog_blocks import render_post_markdown
+from monolynx.services.wiki import get_page_content as real_get_page_content
+from monolynx.services.wiki import update_wiki_page
+from tests.integration.test_blog_public import (
+    _add_owner,
+    _blog_post_of,
+    _create_attachment,
+    _create_project,
+    _create_user,
+    _create_wiki_page,
+    _wiki_side_effects,
+)
 
 BASE = settings.APP_URL.rstrip("/")
 MD_TYPE = "text/markdown; charset=utf-8"
@@ -63,6 +74,13 @@ _LD_BLOCK = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re
 
 def _uid() -> str:
     return uuid.uuid4().hex[:8]
+
+
+def _clear_llms_cache() -> None:
+    """Czyści cache `/llms-full.txt`; odporne na brak funkcji, dopóki nie powstała implementacja (MON-271)."""
+    clear = getattr(blog_ai, "clear_llms_full_cache", None)
+    if clear is not None:
+        clear()
 
 
 @contextmanager
@@ -1817,6 +1835,7 @@ class TestLlmsTxtBlogSection:
 @pytest.mark.integration
 class TestLlmsFull:
     async def _full(self, client, env):
+        _clear_llms_cache()
         with _minio(env.store):
             return await client.get("/llms-full.txt")
 
@@ -2157,6 +2176,9 @@ class TestLlmsTxtDetails:
 @pytest.mark.integration
 class TestLlmsFullLimits:
     async def _get(self, client, env, *slugs):
+        # Każde wywołanie liczy dokument od zera: testy limitów zmieniają `LLMS_FULL_MAX_BYTES`, a cache
+        # (odcisk z limitem) ma osobne testy w `TestLlmsFullCache`.
+        _clear_llms_cache()
         with _minio(env.store), _only(*slugs):
             return await client.get("/llms-full.txt")
 
@@ -2263,3 +2285,321 @@ class TestJsonLdVideoBranches:
 
         video = _graph_by_type(resp.text)["VideoObject"][0]
         assert "uploadDate" not in video
+
+
+# ---------------------------------------------------------------------------
+# MON-271 pkt 3: slug o złym kształcie na trasach warstwy AI
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestMalformedSlugOnAiRoutes:
+    async def test_markdown_twin_with_nul_slug_returns_404(self, client):
+        resp = await client.get("/blog/%00.md")
+
+        assert resp.status_code == 404
+
+    async def test_accept_markdown_with_nul_slug_returns_404(self, client):
+        resp = await client.get("/blog/%00", headers={"Accept": "text/markdown"})
+
+        assert resp.status_code == 404
+
+    async def test_nul_slug_markdown_twin_never_queries_the_database(self, client):
+        with patch("sqlalchemy.ext.asyncio.AsyncSession.execute", new_callable=AsyncMock) as mock_execute:
+            resp = await client.get("/blog/%00.md")
+
+        assert resp.status_code == 404
+        mock_execute.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# MON-271 pkt 4: adresy obrazów własnej strony w `.md`, feedach i llms-full bez `/dashboard/`
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestDashboardImageAddressesAreRewritten:
+    async def _post_with_dashboard_image(self, env, name):
+        page, slug = await env.post(name, "placeholder", published_at=_at(1))
+        attachment_id = uuid.uuid4()
+        address = f"/dashboard/{env.project.slug}/wiki/pages/{page.id}/attachments/{attachment_id}/obraz.png"
+        env.store[page.minio_path] = f"Wstep wpisu.\n\n![obraz]({address})\n\nKoniec wpisu."
+        return slug, attachment_id
+
+    async def test_markdown_twin_has_absolute_public_image_address_and_no_dashboard_path(self, client, db_session):
+        env = await _env(db_session, "dashmd")
+        slug, att = await self._post_with_dashboard_image(env, "dashmd")
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}.md")
+
+        _front, body = _split(resp.text)
+        assert "/dashboard/" not in resp.text
+        assert f"![obraz]({BASE}/blog/{slug}/attachments/{att}/obraz.png)" in body
+
+    async def test_accept_markdown_twin_has_the_same_public_image_address(self, client, db_session):
+        env = await _env(db_session, "dashaccept")
+        slug, att = await self._post_with_dashboard_image(env, "dashaccept")
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}", headers={"Accept": "text/markdown"})
+
+        assert "/dashboard/" not in resp.text
+        assert f"{BASE}/blog/{slug}/attachments/{att}/obraz.png" in resp.text
+
+    @_ALL_KINDS
+    async def test_feed_content_has_public_image_address_and_no_dashboard_path(self, kind, client, db_session):
+        env = await _env(db_session, f"dashfeed{kind}")
+        slug, att = await self._post_with_dashboard_image(env, f"dashfeed{kind}")
+
+        resp = await _get_feed(client, env, kind)
+
+        item = next(i for i in _parse_feed(kind, resp.content) if i["url"] == _url(slug))
+        assert "/dashboard/" not in item["content"]
+        assert f"/blog/{slug}/attachments/{att}/obraz.png" in item["content"]
+
+    async def test_json_feed_image_address_is_absolute(self, client, db_session):
+        env = await _env(db_session, "dashjsonabs")
+        slug, att = await self._post_with_dashboard_image(env, "dashjsonabs")
+
+        resp = await _get_feed(client, env, "json")
+
+        item = next(i for i in _parse_feed("json", resp.content) if i["url"] == _url(slug))
+        assert f"![obraz]({BASE}/blog/{slug}/attachments/{att}/obraz.png)" in item["content"]
+
+    async def test_llms_full_has_absolute_public_image_address_and_no_dashboard_path(self, client, db_session):
+        env = await _env(db_session, "dashfull")
+        slug, att = await self._post_with_dashboard_image(env, "dashfull")
+        _clear_llms_cache()
+
+        with _minio(env.store), _only(slug):
+            resp = await client.get("/llms-full.txt")
+
+        assert "/dashboard/" not in resp.text
+        assert f"![obraz]({BASE}/blog/{slug}/attachments/{att}/obraz.png)" in resp.text
+
+    async def test_attachment_of_another_page_is_not_rewritten(self, client, db_session):
+        env = await _env(db_session, "dashother")
+        page, slug = await env.post("dashother", "placeholder", published_at=_at(1))
+        foreign = f"/dashboard/{env.project.slug}/wiki/pages/{uuid.uuid4()}/attachments/{uuid.uuid4()}/cudzy.png"
+        env.store[page.minio_path] = f"![cudzy]({foreign})"
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}.md")
+
+        assert f"![cudzy]({BASE}{foreign})" in resp.text
+        assert f"/blog/{slug}/attachments/" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# MON-271 pkt 12 (para 1): czas czytania `.md` liczy `services.blog.reading_time_minutes`
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestReadingTimeSharedWithService:
+    """Test charakteryzujący: zachowanie nie zmienia się po usunięciu duplikatu `_WORDS_PER_MINUTE`."""
+
+    @pytest.mark.parametrize(("words", "minutes"), [(200, 1), (201, 2), (400, 2), (401, 3)])
+    async def test_frontmatter_reading_time_equals_the_service_function_on_the_same_text(self, words, minutes, client, db_session):
+        env = await _env(db_session, f"rtshared{words}")
+        content = " ".join(["slowo"] * words)
+        _page, slug = await env.post(f"rtshared{words}", content)
+
+        with _minio(env.store):
+            resp = await client.get(f"/blog/{slug}.md")
+
+        front, _body = _split(resp.text)
+        assert front["reading_time_minutes"] == blog_service.reading_time_minutes(render_post_markdown(content))
+        assert front["reading_time_minutes"] == minutes
+
+
+# ---------------------------------------------------------------------------
+# MON-271 pkt 9: cache `/llms-full.txt` pod odciskiem metadanych
+# ---------------------------------------------------------------------------
+
+_OLD_UPDATE = datetime(2020, 1, 1, 8, 0, tzinfo=UTC)
+
+_METADATA_MUTATIONS = {
+    "description": lambda page, post: setattr(post, "description", "Nowy opis MON271"),
+    "author_name": lambda page, post: setattr(post, "author_name", "Nowy Autor MON271"),
+    "tags": lambda page, post: setattr(post, "tags", ["nowy-tag-271"]),
+    "last_verified_at": lambda page, post: setattr(post, "last_verified_at", date(2026, 6, 6)),
+    "published_at": lambda page, post: setattr(post, "published_at", datetime(2026, 6, 6, 6, 0, tzinfo=UTC)),
+    "lang": lambda page, post: setattr(post, "lang", "en"),
+    "title": lambda page, post: setattr(page, "title", "Nowy Tytul MON271"),
+}
+
+
+@pytest.mark.integration
+class TestLlmsFullCache:
+    """Gotowy dokument leży w pamięci procesu pod odciskiem z metadanych (jedno zapytanie, bez MinIO) i limitu bajtów."""
+
+    async def _get(self, client, env, *slugs):
+        with _minio(env.store), _only(*slugs):
+            return await client.get("/llms-full.txt")
+
+    async def _two_posts(self, db_session, tag):
+        env = await _env(db_session, tag)
+        page_a, slug_a = await env.post(f"{tag}a", "Tresc A MON271-A.", published_at=_at(2), updated_at=_OLD_UPDATE)
+        page_b, slug_b = await env.post(f"{tag}b", "Tresc B MON271-B.", published_at=_at(1), updated_at=_OLD_UPDATE)
+        return env, (page_a, slug_a), (page_b, slug_b)
+
+    async def test_unchanged_second_request_does_not_read_storage_again(self, client, db_session):
+        env, (_pa, slug_a), (_pb, slug_b) = await self._two_posts(db_session, "cachehit")
+
+        with patch("monolynx.blog_ai.get_page_content", wraps=real_get_page_content) as spy:
+            first = await self._get(client, env, slug_a, slug_b)
+            reads_after_first = spy.call_count
+            second = await self._get(client, env, slug_a, slug_b)
+
+        assert first.status_code == 200
+        assert reads_after_first == 2
+        assert spy.call_count == reads_after_first
+        assert second.text == first.text
+        assert "MON271-A" in second.text
+        assert "MON271-B" in second.text
+
+    async def test_clear_function_forces_a_fresh_read(self, client, db_session):
+        env, (_pa, slug_a), (_pb, slug_b) = await self._two_posts(db_session, "cacheclear")
+
+        with patch("monolynx.blog_ai.get_page_content", wraps=real_get_page_content) as spy:
+            first = await self._get(client, env, slug_a, slug_b)
+            reads_after_first = spy.call_count
+            blog_ai.clear_llms_full_cache()
+            second = await self._get(client, env, slug_a, slug_b)
+
+        assert spy.call_count == reads_after_first * 2
+        assert second.text == first.text
+
+    async def test_document_with_a_storage_error_is_not_cached_and_the_post_returns_after_recovery(self, client, db_session):
+        env, (_pa, slug_a), (page_b, slug_b) = await self._two_posts(db_session, "cachebroken")
+        env.store[page_b.minio_path] = RuntimeError("MinIO niedostepne")
+
+        with patch("monolynx.blog_ai.get_page_content", wraps=real_get_page_content) as spy:
+            first = await self._get(client, env, slug_a, slug_b)
+            reads_after_first = spy.call_count
+            # storage wraca, metadane i `updated_at` bez zmian, cache nie jest czyszczony
+            env.store[page_b.minio_path] = "Tresc B po naprawie MON271-FIXED."
+            second = await self._get(client, env, slug_a, slug_b)
+
+        assert first.status_code == 200
+        assert "MON271-A" in first.text
+        assert "MON271-FIXED" not in first.text
+        assert reads_after_first == 2
+        assert second.status_code == 200
+        assert "MON271-FIXED" in second.text
+        assert spy.call_count > reads_after_first
+
+    async def test_complete_document_is_served_from_cache_even_when_storage_fails_later(self, client, db_session):
+        env, (page_a, slug_a), (page_b, slug_b) = await self._two_posts(db_session, "cachecomplete")
+
+        with patch("monolynx.blog_ai.get_page_content", wraps=real_get_page_content) as spy:
+            first = await self._get(client, env, slug_a, slug_b)
+            reads_after_first = spy.call_count
+            # pelny dokument jest w cache: pozniejsza usterka storage nie moze go zepsuc ani wywolac odczytu
+            env.store[page_a.minio_path] = RuntimeError("MinIO niedostepne")
+            env.store[page_b.minio_path] = RuntimeError("MinIO niedostepne")
+            second = await self._get(client, env, slug_a, slug_b)
+
+        assert first.status_code == 200
+        assert "MON271-A" in first.text
+        assert "MON271-B" in first.text
+        assert reads_after_first == 2
+        assert spy.call_count == reads_after_first
+        assert second.text == first.text
+
+    async def test_content_change_with_a_newer_updated_at_invalidates_the_cache(self, client, db_session):
+        env, (page_a, slug_a), (_pb, slug_b) = await self._two_posts(db_session, "cachecontent")
+        first = await self._get(client, env, slug_a, slug_b)
+        env.store[page_a.minio_path] = "Tresc A po zmianie MON271-NEW."
+        page_a.updated_at = datetime(2026, 6, 6, 6, 0, tzinfo=UTC)
+        await db_session.flush()
+
+        second = await self._get(client, env, slug_a, slug_b)
+
+        assert "MON271-NEW" not in first.text
+        assert "MON271-NEW" in second.text
+        assert "MON271-A." not in second.text
+
+    async def test_content_edit_through_the_service_invalidates_the_cache(self, client, db_session):
+        env, (page_a, slug_a), (_pb, slug_b) = await self._two_posts(db_session, "cacheedit")
+        first = await self._get(client, env, slug_a, slug_b)
+
+        env.store[page_a.minio_path] = "Tresc A po edycji przez serwis MON271-EDIT."
+        with _wiki_side_effects():
+            await update_wiki_page(
+                page=page_a, project_slug=env.project.slug, content=env.store[page_a.minio_path], user_id=env.user.id, db=db_session
+            )
+        second = await self._get(client, env, slug_a, slug_b)
+
+        assert "MON271-EDIT" not in first.text
+        assert "MON271-EDIT" in second.text
+
+    @pytest.mark.parametrize("field", sorted(_METADATA_MUTATIONS))
+    async def test_metadata_change_invalidates_the_cache(self, field, client, db_session):
+        env, (page_a, slug_a), (_pb, slug_b) = await self._two_posts(db_session, f"cachemeta{field.replace('_', '')}")
+        post_a = await _blog_post_of(db_session, page_a.id)
+        with patch("monolynx.blog_ai.get_page_content", wraps=real_get_page_content) as spy:
+            first = await self._get(client, env, slug_a, slug_b)
+            reads_after_first = spy.call_count
+            _METADATA_MUTATIONS[field](page_a, post_a)
+            await db_session.flush()
+
+            second = await self._get(client, env, slug_a, slug_b)
+
+        assert second.text != first.text
+        assert spy.call_count > reads_after_first
+
+    async def test_slug_change_invalidates_the_cache(self, client, db_session):
+        env, (page_a, slug_a), (_pb, slug_b) = await self._two_posts(db_session, "cacheslug")
+        post_a = await _blog_post_of(db_session, page_a.id)
+        new_slug = f"ai-cacheslug-new-{_uid()}"
+        first = await self._get(client, env, slug_a, slug_b, new_slug)
+        post_a.slug = new_slug
+        await db_session.flush()
+
+        second = await self._get(client, env, slug_a, slug_b, new_slug)
+
+        assert f'/blog/{slug_a}"' in first.text
+        assert f'/blog/{new_slug}"' in second.text
+        assert f'/blog/{slug_a}"' not in second.text
+
+    async def test_translation_link_change_invalidates_the_cache(self, client, db_session):
+        env = await _env(db_session, "cachetrans")
+        root, root_slug = await env.post("cachetransroot", "Tresc root MON271.", lang="pl", published_at=_at(2), updated_at=_OLD_UPDATE)
+        english, en_slug = await env.post("cachetransen", "Tresc en MON271.", lang="en", published_at=_at(1), updated_at=_OLD_UPDATE)
+        first = await self._get(client, env, root_slug, en_slug)
+        post_en = await _blog_post_of(db_session, english.id)
+        post_en.translation_of_id = root.id
+        await db_session.flush()
+
+        second = await self._get(client, env, root_slug, en_slug)
+
+        assert f"{BASE}/blog/{en_slug}" not in first.text.split(blog_ai.LLMS_FULL_SEPARATOR)[1]
+        assert f"{BASE}/blog/{en_slug}" in second.text.split(blog_ai.LLMS_FULL_SEPARATOR)[1]
+
+    async def test_unpublishing_a_post_invalidates_the_cache(self, client, db_session):
+        env, (page_a, slug_a), (_pb, slug_b) = await self._two_posts(db_session, "cachehide")
+        first = await self._get(client, env, slug_a, slug_b)
+        page_a.is_public = False
+        await db_session.flush()
+
+        second = await self._get(client, env, slug_a, slug_b)
+
+        assert "MON271-A" in first.text
+        assert "MON271-A" not in second.text
+        assert "MON271-B" in second.text
+
+    async def test_changed_size_limit_invalidates_the_cache(self, client, db_session):
+        env, (_pa, slug_a), (_pb, slug_b) = await self._two_posts(db_session, "cachelimit")
+        full = await self._get(client, env, slug_a, slug_b)
+        small_limit = len(full.content) - 1
+
+        with patch("monolynx.blog_ai.LLMS_FULL_MAX_BYTES", small_limit):
+            limited = await self._get(client, env, slug_a, slug_b)
+        back_to_full = await self._get(client, env, slug_a, slug_b)
+
+        assert "> Truncated:" not in full.text
+        assert f"(size limit {small_limit} bytes)" in limited.text
+        assert back_to_full.text == full.text

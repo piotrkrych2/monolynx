@@ -9,6 +9,8 @@ superuserem albo ma `can_edit_blog=True`. Rola w projekcie (owner, admin, member
 - po odmowie stan bazy (strona, wpis bloga, liczba stron i wpisów) jest identyczny jak przed wywołaniem, więc zapis
   przed bramką albo po niej też wychodzi,
 - to samo wywołanie na koncie z uprawnieniem (flaga albo superuser) przechodzi i zmienia stan (para pozytywna),
+- edycja tytułu albo treści strony, która jest już publiczna, wymaga tego samego uprawnienia (MON-271); niezmieniony
+  tytuł i treść (także różniące się tylko CRLF/LF albo spacjami wokół tytułu) oraz strony prywatne go nie wymagają,
 - uprawnienie jest czytane z konta w chwili wywołania: odebranie flagi blokuje kolejny zapis tym samym tokenem,
   nadanie go odblokowuje.
 
@@ -22,13 +24,13 @@ from __future__ import annotations
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from monolynx import mcp_server
@@ -293,17 +295,190 @@ class TestAccountWithoutPermissionIsDenied:
         assert (snapshot["title"], snapshot["is_public"]) == ("Zmieniony tytuł v2", False)
         assert env.minio[f"{env.project.slug}/{page_id}.md"] == "# Nowa treść"
 
-    async def test_public_page_content_edit_without_visibility_change_keeps_it_public(self, env):
+    async def test_public_page_title_edit_without_visibility_change_is_denied(self, env):
         actor = await env.actor("owner", superuser=False, flag=False)
-        page_id = await env.page(public=True)
+        page_id = await env.page(public=True, title="Tytuł przed zmianą")
+        before = await env.snapshot(page_id)
+        storage_before = dict(env.minio)
 
-        same = await env.client.patch(
+        response = await env.client.patch(
             f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}", headers=actor.headers, json={"title": "Nowy tytuł", "is_public": True}
         )
 
-        assert same.status_code == 200
+        _assert_denied_problem(response)
+        assert await env.snapshot(page_id) == before
+        assert env.minio == storage_before
+
+    async def test_public_page_title_edit_by_account_with_flag_succeeds(self, env):
+        actor = await env.actor("owner", superuser=False, flag=True)
+        page_id = await env.page(public=True, title="Tytuł przed zmianą flaga")
+
+        response = await env.client.patch(
+            f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}",
+            headers=actor.headers,
+            json={"title": "Nowy tytuł z flagą", "is_public": True},
+        )
+
+        assert response.status_code == 200
         snapshot = await env.snapshot(page_id)
-        assert (snapshot["title"], snapshot["is_public"]) == ("Nowy tytuł", True)
+        assert (snapshot["title"], snapshot["is_public"]) == ("Nowy tytuł z flagą", True)
+
+    async def test_v2_public_page_title_only_edit_is_denied_and_changes_nothing(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=True, title="Tytuł tylko tytuł")
+        before = await env.snapshot(page_id)
+
+        response = await env.client.patch(f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}", headers=actor.headers, json={"title": "Inny"})
+
+        _assert_denied_problem(response)
+        assert await env.snapshot(page_id) == before
+
+    async def test_v2_public_page_content_edit_is_denied_and_stores_nothing(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=True)
+        before = await env.snapshot(page_id)
+        storage_before = dict(env.minio)
+
+        response = await env.client.patch(
+            f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}", headers=actor.headers, json={"content": "# Podmieniona treść publiczna"}
+        )
+
+        _assert_denied_problem(response)
+        assert await env.snapshot(page_id) == before
+        assert env.minio == storage_before
+
+    async def test_mcp_public_page_content_edit_is_denied_and_stores_nothing(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=True)
+        before = await env.snapshot(page_id)
+        storage_before = dict(env.minio)
+
+        message = await env.mcp_error(actor, "update_wiki_page", page_id, content="# Podmieniona treść publiczna MCP")
+
+        assert message == _DENIED
+        assert await env.snapshot(page_id) == before
+        assert env.minio == storage_before
+
+    async def test_mcp_public_page_title_edit_is_denied_and_changes_nothing(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=True, title="Tytuł MCP przed")
+        before = await env.snapshot(page_id)
+
+        message = await env.mcp_error(actor, "update_wiki_page", page_id, title="Tytuł MCP po")
+
+        assert message == _DENIED
+        assert await env.snapshot(page_id) == before
+
+    async def test_mcp_public_page_content_edit_by_account_with_flag_stores_content(self, env):
+        actor = await env.actor("member", superuser=False, flag=True)
+        page_id = await env.page(public=True)
+
+        await env.mcp(actor, "update_wiki_page", page_id, content="# Nowa treść publiczna z flagą")
+
+        assert env.minio[f"{env.project.slug}/{page_id}.md"] == "# Nowa treść publiczna z flagą"
+
+    async def test_v2_public_page_content_edit_by_superuser_stores_content(self, env):
+        actor = await env.actor("member", superuser=True, flag=False)
+        page_id = await env.page(public=True)
+
+        response = await env.client.patch(
+            f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}", headers=actor.headers, json={"content": "# Treść superusera"}
+        )
+
+        assert response.status_code == 200
+        assert env.minio[f"{env.project.slug}/{page_id}.md"] == "# Treść superusera"
+
+    async def test_public_page_with_unchanged_title_and_content_passes_without_permission(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=True, title="Tytuł bez zmiany")
+
+        response = await env.client.patch(
+            f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}",
+            headers=actor.headers,
+            json={"title": "Tytuł bez zmiany", "content": _CONTENT, "position": 4},
+        )
+
+        assert response.status_code == 200
+        snapshot = await env.snapshot(page_id)
+        assert (snapshot["title"], snapshot["position"], snapshot["is_public"]) == ("Tytuł bez zmiany", 4, True)
+
+    async def test_public_page_with_title_differing_only_by_surrounding_whitespace_passes_without_permission(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=True, title="Tytuł ze spacjami")
+
+        response = await env.client.patch(
+            f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}", headers=actor.headers, json={"title": "  Tytuł ze spacjami  ", "position": 2}
+        )
+
+        assert response.status_code == 200
+        assert (await env.snapshot(page_id))["position"] == 2
+
+    async def test_public_page_content_differing_only_by_line_endings_passes_without_permission(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=True, title="Tytuł CRLF")
+
+        response = await env.client.patch(
+            f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}",
+            headers=actor.headers,
+            json={"title": "Tytuł CRLF", "content": _CONTENT.replace("\n", "\r\n"), "position": 6},
+        )
+
+        assert response.status_code == 200
+        assert (await env.snapshot(page_id))["position"] == 6
+
+    async def test_public_page_position_only_edit_passes_without_permission(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=True)
+
+        response = await env.client.patch(f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}", headers=actor.headers, json={"position": 9})
+
+        assert response.status_code == 200
+        assert (await env.snapshot(page_id))["position"] == 9
+
+    async def test_private_page_title_and_content_edit_passes_without_permission(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=False, title="Prywatna przed")
+
+        response = await env.client.patch(
+            f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}",
+            headers=actor.headers,
+            json={"title": "Prywatna po", "content": "# Prywatna nowa treść"},
+        )
+
+        assert response.status_code == 200
+        assert (await env.snapshot(page_id))["title"] == "Prywatna po"
+        assert env.minio[f"{env.project.slug}/{page_id}.md"] == "# Prywatna nowa treść"
+
+
+class TestContentEditBumpsUpdatedAt:
+    """Edycja treści tym samym użytkownikiem nie zmienia żadnej kolumny strony, więc bez jawnego `updated_at` nie ma UPDATE."""
+
+    async def test_v2_content_edit_by_the_last_editor_bumps_updated_at(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=False)
+        old = datetime(2020, 1, 1, tzinfo=UTC)
+        await env.db.execute(update(WikiPage).where(WikiPage.id == page_id).values(updated_at=old, last_edited_by_id=actor.user.id))
+        await env.db.flush()
+
+        response = await env.client.patch(
+            f"/api/v2/projects/{env.project.slug}/wiki/pages/{page_id}", headers=actor.headers, json={"content": "# Zmieniona treść"}
+        )
+
+        assert response.status_code == 200
+        updated_at = (await env.db.execute(select(WikiPage.updated_at).where(WikiPage.id == page_id))).scalar_one()
+        assert updated_at > old
+
+    async def test_mcp_content_edit_by_the_last_editor_bumps_updated_at(self, env):
+        actor = await env.actor("member", superuser=False, flag=False)
+        page_id = await env.page(public=False)
+        old = datetime(2020, 1, 1, tzinfo=UTC)
+        await env.db.execute(update(WikiPage).where(WikiPage.id == page_id).values(updated_at=old, last_edited_by_id=actor.user.id))
+        await env.db.flush()
+
+        await env.mcp(actor, "update_wiki_page", page_id, content="# Zmieniona treść MCP")
+
+        updated_at = (await env.db.execute(select(WikiPage.updated_at).where(WikiPage.id == page_id))).scalar_one()
+        assert updated_at > old
 
 
 class TestAccountWithPermissionPasses:

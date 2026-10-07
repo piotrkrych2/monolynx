@@ -128,7 +128,7 @@
                             </div>
                         </div>
                     </div>
-                    <a href="/blog/?lang={{ lang }}"{% if in_blog %} aria-current="page"{% endif %}
+                    <a href="/blog/?ui={{ lang }}"{% if in_blog %} aria-current="page"{% endif %}
                        class="text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors {% if in_blog %}text-gray-900 dark:text-white font-medium{% endif %}">
                         Blog
                     </a>
@@ -185,7 +185,7 @@
                         <a href="/features/pipelines?lang={{ lang }}" class="block px-3 py-1.5 rounded-md text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-colors">Pipelines</a>
                         <a href="/features/blog?lang={{ lang }}" class="block px-3 py-1.5 rounded-md text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-colors">Blog</a>
                 </div>
-                <a href="/blog/?lang={{ lang }}"{% if in_blog %} aria-current="page"{% endif %} class="block px-3 py-2 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-colors {% if in_blog %}text-gray-900 dark:text-white font-medium{% endif %}">
+                <a href="/blog/?ui={{ lang }}"{% if in_blog %} aria-current="page"{% endif %} class="block px-3 py-2 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-colors {% if in_blog %}text-gray-900 dark:text-white font-medium{% endif %}">
                     Blog
                 </a>
                 <a href="/contact?lang={{ lang }}" class="block px-3 py-2 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-colors {% if active_page == 'contact' %}text-gray-900 dark:text-white font-medium{% endif %}">
@@ -207,7 +207,7 @@
             open-source project platform
             {% endif %}
             <div class="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-2 text-xs">
-                <a href="/blog/?lang={{ lang }}" class="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Blog</a>
+                <a href="/blog/?ui={{ lang }}" class="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Blog</a>
                 <a href="/how-to-use-monolynx.md" class="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
                     {% if lang == "pl" %}Przewodnik dla agentów AI{% else %}Guide for AI agents{% endif %}
                 </a>

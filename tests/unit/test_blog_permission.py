@@ -202,7 +202,6 @@ class TestHideBlogWriteTools:
             json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": "publish_blog_post"}]}}).encode(),
             json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32600, "message": "publish_blog_post"}}).encode(),
             json.dumps({"error": "unauthorized"}).encode(),
-            json.dumps([{"jsonrpc": "2.0", "id": 1, "result": {"tools": [_tool("publish_blog_post")]}}]).encode(),
             json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"tools": "publish_blog_post"}}).encode(),
         ],
         ids=[
@@ -215,7 +214,6 @@ class TestHideBlogWriteTools:
             "tools-call-result",
             "jsonrpc-error",
             "plain-error-object",
-            "batch-list",
             "tools-not-a-list",
         ],
     )
@@ -251,21 +249,45 @@ def _fake_app(body_chunks: list[bytes], *, status: int = 200, extra_headers: lis
     return app
 
 
-async def _drive(middleware_app, user, scope=None):
+def _rpc(method: str, *, request_id: int = 1) -> bytes:
+    return json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method}).encode()
+
+
+def _receive_from(chunks: list[bytes]):
+    """`receive` ASGI oddające ciało żądania po kawałku (`more_body`), a potem `http.disconnect`."""
+    messages = [{"type": "http.request", "body": chunk, "more_body": index < len(chunks) - 1} for index, chunk in enumerate(chunks)]
+    pending = iter(messages or [{"type": "http.request", "body": b"", "more_body": False}])
+
+    async def receive():
+        try:
+            return next(pending)
+        except StopIteration:
+            return {"type": "http.disconnect"}
+
+    return receive
+
+
+async def _drive_raw(middleware_app, user, request_chunks: list[bytes] | None = None, scope=None) -> list[dict]:
+    """Przepuść żądanie przez middleware i zwróć surowe komunikaty `send`, w kolejności wysłania.
+
+    Domyślne żądanie to `tools/list`: tylko takie odpowiedź middleware filtruje (MON-271).
+    """
     from monolynx.mcp_server import _MCPBearerAuthMiddleware
 
     sent: list[dict] = []
-
-    async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
 
     async def send(message):
         sent.append(message)
 
     middleware = _MCPBearerAuthMiddleware(middleware_app)
+    receive = _receive_from([_rpc("tools/list")] if request_chunks is None else request_chunks)
     with patch("monolynx.mcp_server._verify_token", AsyncMock(return_value=user)):
         await middleware(scope or _scope(), receive, send)
+    return sent
 
+
+async def _drive(middleware_app, user, scope=None, request_chunks: list[bytes] | None = None):
+    sent = await _drive_raw(middleware_app, user, request_chunks, scope)
     start = next(m for m in sent if m["type"] == "http.response.start")
     body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
     return start, dict((k.lower(), v) for k, v in start["headers"]), body
@@ -336,7 +358,7 @@ class TestMiddlewareToolListFilter:
     async def test_tool_call_response_of_account_without_permission_is_not_altered(self):
         call_body = json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"content": [{"type": "text", "text": "Brak uprawnienia blog:write"}]}}).encode()
 
-        _, headers, body = await _drive(_fake_app([call_body]), _plain_user())
+        _, headers, body = await _drive(_fake_app([call_body]), _plain_user(), request_chunks=[_rpc("tools/call")])
 
         assert body == call_body
         assert headers[b"content-length"] == str(len(call_body)).encode()
@@ -404,8 +426,7 @@ class TestMiddlewareStreamsEventStream:
             events.append(("inner", "after-first"))
             await send({"type": "http.response.body", "body": second, "more_body": False})
 
-        async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
+        receive = _receive_from([_rpc("tools/list")])
 
         async def send(message):
             if message["type"] == "http.response.start":
@@ -435,3 +456,261 @@ class TestMiddlewareStreamsEventStream:
 
         names = [t["name"] for t in json.loads(body)["result"]["tools"]]
         assert not set(BLOG_WRITE_NAMES) & set(names)
+
+
+def _app_reading_request(response_chunks: list[bytes], received: list[dict]):
+    """Aplikacja ASGI, która czyta całe ciało żądania przez `receive` (jak SDK MCP), zapisuje komunikaty i odpowiada JSON-em."""
+    inner = _fake_app(response_chunks)
+
+    async def app(scope, receive, send):
+        while True:
+            message = await receive()
+            received.append(message)
+            if message["type"] != "http.request" or not message.get("more_body", False):
+                break
+        await inner(scope, receive, send)
+
+    return app
+
+
+def _request_padded_to(size: int, method: str) -> bytes:
+    prefix = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": {"pad": ""}}).encode()
+    body = prefix.replace(b'"pad": ""', b'"pad": "' + b"x" * (size - len(prefix)) + b'"')
+    assert len(body) == size
+    return body
+
+
+class TestMiddlewareFiltersOnlyToolsListRequests:
+    """MON-271: odpowiedź `tools/call` konta bez uprawnienia nie jest buforowana ani przepisywana."""
+
+    async def test_tools_call_response_is_forwarded_message_by_message_without_buffering(self):
+        first = b'{"jsonrpc": "2.0", "id": 3, '
+        second = b'"result": {"content": [{"type": "text", "text": "Brak uprawnienia blog:write"}]}}'
+        app = _fake_app([first, second], extra_headers=[(b"mcp-session-id", b"abc")])
+        expected = await _drive_raw(app, _super_user(), [_rpc("tools/call", request_id=3)])
+
+        sent = await _drive_raw(app, _plain_user(), [_rpc("tools/call", request_id=3)])
+
+        assert sent == expected
+        assert [m["body"] for m in sent if m["type"] == "http.response.body"] == [first, second]
+
+    async def test_tools_call_response_shaped_like_a_tool_list_keeps_its_bytes_and_content_length(self):
+        original = _tools_list_body(_ALL_NAMES)
+
+        _, headers, body = await _drive(_fake_app([original]), _plain_user(), request_chunks=[_rpc("tools/call")])
+
+        assert body == original
+        assert headers[b"content-length"] == str(len(original)).encode()
+
+    async def test_other_methods_are_not_buffered_either(self):
+        original = _tools_list_body(_ALL_NAMES)
+
+        for method in ("initialize", "ping", "resources/list", "tools/list_changed"):
+            _, _, body = await _drive(_fake_app([original]), _plain_user(), request_chunks=[_rpc(method)])
+            assert body == original, method
+
+    async def test_tools_list_request_is_still_filtered(self):
+        original = _tools_list_body(_ALL_NAMES)
+
+        _, headers, body = await _drive(_fake_app([original]), _plain_user(), request_chunks=[_rpc("tools/list")])
+
+        names = [t["name"] for t in json.loads(body)["result"]["tools"]]
+        assert names == ["list_projects", *BLOG_READ_NAMES, "create_ticket", "create_wiki_page"]
+        assert headers[b"content-length"] == str(len(body)).encode()
+
+    async def test_account_with_flag_gets_full_list_for_tools_list_request(self):
+        original = _tools_list_body(_ALL_NAMES)
+
+        _, _, body = await _drive(_fake_app([original]), _flag_user(), request_chunks=[_rpc("tools/list")])
+
+        assert body == original
+
+    async def test_batch_request_with_tools_list_gets_every_response_element_filtered(self):
+        batch_request = json.dumps([json.loads(_rpc("initialize", request_id=1)), json.loads(_rpc("tools/list", request_id=2))]).encode()
+        batch_response = json.dumps(
+            [
+                {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-03-26", "capabilities": {}}},
+                json.loads(_tools_list_body(_ALL_NAMES, request_id=2)),
+                json.loads(_tools_list_body(["publish_blog_post", "list_projects"], request_id=3)),
+            ]
+        ).encode()
+
+        _, headers, body = await _drive(_fake_app([batch_response]), _plain_user(), request_chunks=[batch_request])
+
+        elements = json.loads(body)
+        assert elements[0]["result"]["protocolVersion"] == "2025-03-26"
+        assert [t["name"] for t in elements[1]["result"]["tools"]] == ["list_projects", *BLOG_READ_NAMES, "create_ticket", "create_wiki_page"]
+        assert [t["name"] for t in elements[2]["result"]["tools"]] == ["list_projects"]
+        assert headers[b"content-length"] == str(len(body)).encode()
+
+    async def test_batch_request_without_tools_list_is_forwarded_without_buffering(self):
+        batch_request = json.dumps([json.loads(_rpc("tools/call", request_id=1)), json.loads(_rpc("ping", request_id=2))]).encode()
+        first = b"[" + _tools_list_body(_ALL_NAMES, request_id=1) + b","
+        second = _tools_list_body(_ALL_NAMES, request_id=2) + b"]"
+        app = _fake_app([first, second])
+        expected = await _drive_raw(app, _super_user(), [batch_request])
+
+        sent = await _drive_raw(app, _plain_user(), [batch_request])
+
+        assert sent == expected
+
+    async def test_request_exactly_at_the_limit_is_read_and_decides(self):
+        original = _tools_list_body(_ALL_NAMES)
+        request = _request_padded_to(64 * 1024, "tools/call")
+
+        _, _, body = await _drive(_fake_app([original]), _plain_user(), request_chunks=[request])
+
+        assert body == original
+
+    async def test_request_over_the_limit_falls_back_to_filtering(self):
+        original = _tools_list_body(_ALL_NAMES)
+        request = _request_padded_to(64 * 1024 + 1, "tools/call")
+
+        _, headers, body = await _drive(_fake_app([original]), _plain_user(), request_chunks=[request])
+
+        names = [t["name"] for t in json.loads(body)["result"]["tools"]]
+        assert not set(BLOG_WRITE_NAMES) & set(names)
+        assert headers[b"content-length"] == str(len(body)).encode()
+
+    @pytest.mark.parametrize(
+        "request_chunks",
+        [[b"to nie jest json"], [b""], [], [b"null"], [b"5"], [b'"tools/list"']],
+        ids=["invalid-json", "empty-body", "no-body", "json-null", "json-number", "json-string"],
+    )
+    async def test_request_with_undeterminable_method_falls_back_to_filtering(self, request_chunks):
+        original = _tools_list_body(_ALL_NAMES)
+
+        _, headers, body = await _drive(_fake_app([original]), _plain_user(), request_chunks=request_chunks)
+
+        names = [t["name"] for t in json.loads(body)["result"]["tools"]]
+        assert not set(BLOG_WRITE_NAMES) & set(names)
+        assert headers[b"content-length"] == str(len(body)).encode()
+
+    async def test_batch_request_with_non_object_element_and_tools_list_is_filtered(self):
+        original = _tools_list_body(_ALL_NAMES)
+        batch_request = json.dumps([1, json.loads(_rpc("tools/list", request_id=2))]).encode()
+
+        _, headers, body = await _drive(_fake_app([original]), _plain_user(), request_chunks=[batch_request])
+
+        names = [t["name"] for t in json.loads(body)["result"]["tools"]]
+        assert not set(BLOG_WRITE_NAMES) & set(names)
+        assert headers[b"content-length"] == str(len(body)).encode()
+
+    async def test_batch_request_with_non_object_elements_and_no_tools_list_is_forwarded_without_buffering(self):
+        batch_request = json.dumps([1, "x", json.loads(_rpc("tools/call", request_id=3))]).encode()
+        first = b"[" + _tools_list_body(_ALL_NAMES, request_id=3) + b","
+        second = _tools_list_body(_ALL_NAMES, request_id=4) + b"]"
+        app = _fake_app([first, second])
+        expected = await _drive_raw(app, _super_user(), [batch_request])
+
+        sent = await _drive_raw(app, _plain_user(), [batch_request])
+
+        assert sent == expected
+        assert [m["body"] for m in sent if m["type"] == "http.response.body"] == [first, second]
+
+
+class TestMiddlewareReplaysRequestBody:
+    async def test_single_message_body_reaches_the_app_byte_for_byte(self):
+        request = _rpc("tools/call", request_id=11)
+        received: list[dict] = []
+
+        await _drive_raw(_app_reading_request([b"{}"], received), _plain_user(), [request])
+
+        assert b"".join(m["body"] for m in received if m["type"] == "http.request") == request
+        assert received[-1]["more_body"] is False
+
+    async def test_multi_part_body_reaches_the_app_byte_for_byte(self):
+        parts = [b'{"jsonrpc": "2.0", ', b'"id": 12, "meth', b'od": "tools/call"}']
+        received: list[dict] = []
+
+        await _drive_raw(_app_reading_request([b"{}"], received), _plain_user(), parts)
+
+        assert b"".join(m["body"] for m in received if m["type"] == "http.request") == b"".join(parts)
+        assert received[-1]["more_body"] is False
+        assert all(m["more_body"] for m in received[:-1])
+
+    async def test_multi_part_tools_list_body_is_replayed_and_still_filtered(self):
+        parts = [b'{"jsonrpc": "2.0", "id": 13, ', b'"method": "tools/list"}']
+        received: list[dict] = []
+        original = _tools_list_body(_ALL_NAMES)
+
+        _, _, body = await _drive(_app_reading_request([original], received), _plain_user(), request_chunks=parts)
+
+        assert b"".join(m["body"] for m in received if m["type"] == "http.request") == b"".join(parts)
+        assert not set(BLOG_WRITE_NAMES) & {t["name"] for t in json.loads(body)["result"]["tools"]}
+
+    async def test_body_over_the_limit_is_replayed_in_full(self):
+        request = _request_padded_to(70 * 1024, "tools/call")
+        parts = [request[i : i + 8192] for i in range(0, len(request), 8192)]
+        received: list[dict] = []
+
+        await _drive_raw(_app_reading_request([b"{}"], received), _plain_user(), parts)
+
+        assert b"".join(m["body"] for m in received if m["type"] == "http.request") == request
+        assert received[-1]["more_body"] is False
+
+    async def test_invalid_json_body_is_replayed_unchanged(self):
+        received: list[dict] = []
+
+        await _drive_raw(_app_reading_request([b"{}"], received), _plain_user(), [b"to nie jest ", b"json"])
+
+        assert b"".join(m["body"] for m in received if m["type"] == "http.request") == b"to nie jest json"
+
+    async def test_account_with_permission_gets_the_original_receive(self):
+        request = _rpc("tools/call", request_id=14)
+        received: list[dict] = []
+
+        await _drive_raw(_app_reading_request([b"{}"], received), _flag_user(), [request])
+
+        assert received == [{"type": "http.request", "body": request, "more_body": False}]
+
+
+class TestHideBlogWriteToolsBatchResponse:
+    def test_every_element_of_a_batch_is_filtered(self):
+        from monolynx.mcp_server import _hide_blog_write_tools
+
+        body = json.dumps(
+            [
+                json.loads(_tools_list_body(_ALL_NAMES, request_id=1)),
+                {"jsonrpc": "2.0", "id": 2, "result": {"protocolVersion": "2025-03-26"}},
+                json.loads(_tools_list_body(["unpublish_blog_post", "get_blog_post"], request_id=3)),
+            ]
+        ).encode()
+
+        result = json.loads(_hide_blog_write_tools(body))
+
+        assert [t["name"] for t in result[0]["result"]["tools"]] == ["list_projects", *BLOG_READ_NAMES, "create_ticket", "create_wiki_page"]
+        assert result[1] == {"jsonrpc": "2.0", "id": 2, "result": {"protocolVersion": "2025-03-26"}}
+        assert [t["name"] for t in result[2]["result"]["tools"]] == ["get_blog_post"]
+        assert [e["id"] for e in result] == [1, 2, 3]
+
+    def test_single_element_batch_is_filtered(self):
+        from monolynx.mcp_server import _hide_blog_write_tools
+
+        body = json.dumps([json.loads(_tools_list_body(["publish_blog_post", "list_projects"]))]).encode()
+
+        result = json.loads(_hide_blog_write_tools(body))
+
+        assert [t["name"] for t in result[0]["result"]["tools"]] == ["list_projects"]
+
+    def test_non_dict_elements_of_a_batch_are_kept(self):
+        from monolynx.mcp_server import _hide_blog_write_tools
+
+        body = json.dumps(["surowy", 5, None, json.loads(_tools_list_body(["publish_blog_post", "list_projects"]))]).encode()
+
+        result = json.loads(_hide_blog_write_tools(body))
+
+        assert result[:3] == ["surowy", 5, None]
+        assert [t["name"] for t in result[3]["result"]["tools"]] == ["list_projects"]
+
+    def test_batch_without_blog_write_tools_is_returned_byte_identical(self):
+        from monolynx.mcp_server import _hide_blog_write_tools
+
+        body = json.dumps([json.loads(_tools_list_body(["list_projects"])), {"jsonrpc": "2.0", "id": 2, "result": {}}], indent=2).encode()
+
+        assert _hide_blog_write_tools(body) == body
+
+    def test_empty_batch_is_returned_byte_identical(self):
+        from monolynx.mcp_server import _hide_blog_write_tools
+
+        assert _hide_blog_write_tools(b"[]") == b"[]"

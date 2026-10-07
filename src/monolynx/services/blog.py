@@ -19,6 +19,9 @@ MON-263: `publish_post` (bramka lintu, potem `is_public=True`) i `unpublish_post
 `wiki:write` i `blog:write` i commitują w serwisie. `blog_lint` jest importowany w czasie wywołania, bo sam
 importuje stąd `DESCRIPTION_MAX_LENGTH`.
 
+MON-271: `get_public_post_by_slug` odrzuca slug o złym kształcie bez zapytania do bazy, a `set_post_meta` waliduje
+`translation_of_id` (ten sam projekt, oryginał nie jest tłumaczeniem, inny język, wpis bez własnych tłumaczeń).
+
 MON-270: `publish_post`, `unpublish_post` i `set_post_meta` wymagają też uprawnienia kontowego
 `blog:write` (`ensure_blog_permission`, zaraz po `wiki:write`). Odczyty zostają na `wiki:read`.
 """
@@ -242,8 +245,12 @@ async def get_public_post_by_slug(db: AsyncSession, slug: str) -> PublicPostLook
     """Znajdź publiczny wpis po aktualnym slugu albo po starym adresie (wtedy `redirect_slug`).
 
     Filtr `WikiPage.is_public` jest w SQL w obu ścieżkach, więc wpis prywatny (także jego stary
-    adres) daje None i nie ujawnia swojego istnienia.
+    adres) daje None i nie ujawnia swojego istnienia. Slug o złym kształcie (pusty, ponad `SLUG_MAX_LENGTH`,
+    bajt NUL) daje None bez zapytania: PostgreSQL odrzuca NUL błędem, który wyszedłby jako 500.
     """
+    if not slug or len(slug) > SLUG_MAX_LENGTH or _SLUG_PATTERN.fullmatch(slug) is None:
+        return None
+
     current_result = await db.execute(
         select(BlogPost, WikiPage).join(WikiPage, WikiPage.id == BlogPost.page_id).where(BlogPost.slug == slug, WikiPage.is_public.is_(True))
     )
@@ -560,6 +567,8 @@ async def set_post_meta(
     """Zapisz metadane wpisu (częściowo: `_UNSET` = bez zmian, `None` czyści pole nullable).
 
     Wymaga `wiki:write` i `blog:write`; nie zmienia `is_public`. Brakujący wiersz zakłada przez `ensure_post`.
+    `translation_of_id` sprawdzane w kolejności: oryginał istnieje w tym projekcie, nie jest tłumaczeniem, ma inny
+    język niż edytowany wpis (po zmianie `lang` z tego samego wywołania), a edytowany wpis nie ma własnych tłumaczeń.
     Wszystkie walidacje biegną przed pierwszą mutacją, więc błąd nic nie zapisuje.
     """
     await ensure_permission(db, user.id, project.id, "wiki", "write")
@@ -611,9 +620,24 @@ async def set_post_meta(
         if translation_of_id is not None:
             if translation_of_id == page.id:
                 raise ValueError("Wpis nie może być tłumaczeniem samego siebie")
-            original = (await db.execute(select(BlogPost.page_id).where(BlogPost.page_id == translation_of_id))).scalar_one_or_none()
+            # Oryginał z innego projektu dostaje ten sam komunikat co nieistniejący: nie ujawniamy cudzych wpisów.
+            original = (
+                await db.execute(
+                    select(BlogPost.translation_of_id, BlogPost.lang)
+                    .join(WikiPage, WikiPage.id == BlogPost.page_id)
+                    .where(BlogPost.page_id == translation_of_id, WikiPage.project_id == project.id)
+                )
+            ).first()
             if original is None:
                 raise ValueError("Wpis wskazany jako oryginał nie istnieje")
+            if original.translation_of_id is not None:
+                raise ValueError("Wpis wskazany jako oryginał jest tłumaczeniem innego wpisu")
+            effective_lang = changes.get("lang", post.lang if post is not None else "pl")
+            if original.lang == effective_lang:
+                raise ValueError("Tłumaczenie musi być w innym języku niż oryginał")
+            has_translations = (await db.execute(select(BlogPost.page_id).where(BlogPost.translation_of_id == page.id).limit(1))).scalar_one_or_none()
+            if has_translations is not None:
+                raise ValueError("Wpis ma tłumaczenia, więc nie może być tłumaczeniem innego wpisu")
         changes["translation_of_id"] = translation_of_id
 
     if post is None:

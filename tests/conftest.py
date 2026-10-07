@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from monolynx import blog_ai
 from monolynx.cli import TEST_DB_PREFIX, validate_test_db_name
 from monolynx.config import settings
 from monolynx.database import get_db
@@ -57,6 +58,16 @@ async def engine():
             async with admin_engine.connect() as conn:
                 await conn.execute(text(f'DROP DATABASE IF EXISTS "{TEST_DATABASE_NAME}" WITH (FORCE)'))
         await admin_engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _clear_llms_full_cache():
+    """Cache `/llms-full.txt` (odcisk metadanych, MON-271) żyje w pamięci procesu, więc bez czyszczenia dokument jednego
+    testu wyciekłby do następnego. `getattr`, bo funkcja powstaje razem z cache'em."""
+    clear = getattr(blog_ai, "clear_llms_full_cache", None)
+    if clear is not None:
+        clear()
+    yield
 
 
 @pytest.fixture

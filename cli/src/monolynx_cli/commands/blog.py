@@ -36,7 +36,7 @@ def _invalid(detail: str) -> MonolynxAPIError:
 def _require_post(payload: Any, where: str = "Odpowiedź") -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise _invalid(f"{where} nie jest obiektem JSON.")
-    for name in ("page_id", "title", "slug"):
+    for name in ("page_id", "title", "slug", "lang"):
         if not isinstance(payload.get(name), str):
             raise _invalid(f"{where}: pole {name} nie jest tekstem.")
     if not isinstance(payload.get("is_public"), bool):
@@ -44,7 +44,7 @@ def _require_post(payload: Any, where: str = "Odpowiedź") -> dict[str, Any]:
     tags = payload.get("tags")
     if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
         raise _invalid(f"{where}: pole tags nie jest listą tekstów.")
-    for name in ("public_url", "markdown_url"):
+    for name in ("public_url", "markdown_url", "published_at"):
         if name not in payload:
             raise _invalid(f"{where}: brak pola {name}.")
         if payload[name] is not None and not isinstance(payload[name], str):
@@ -59,8 +59,8 @@ def _table_row(item: dict[str, Any]) -> dict[str, Any]:
         "title": item["title"],
         "slug": item["slug"],
         "is_public": item["is_public"],
-        "lang": item.get("lang"),
-        "published_at": item.get("published_at"),
+        "lang": item["lang"],
+        "published_at": item["published_at"],
         "tags": ", ".join(item["tags"]),
     }
 
