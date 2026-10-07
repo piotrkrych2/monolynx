@@ -390,7 +390,7 @@ class TestWikiPageIsPublicMcpCommit:
         raw_token, token_hash = generate_api_token()
 
         async with test_factory() as setup_db:
-            user = User(email=f"mcp-pub-none-{uid}@test.com", is_superuser=False)
+            user = User(email=f"mcp-pub-none-{uid}@test.com", is_superuser=False, can_edit_blog=True)
             setup_db.add(user)
             await setup_db.flush()
             setup_db.add(UserApiToken(user_id=user.id, token_hash=token_hash, token_prefix=raw_token[:8], name="mon203-mcp-none"))

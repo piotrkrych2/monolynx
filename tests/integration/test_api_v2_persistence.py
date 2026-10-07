@@ -882,9 +882,25 @@ async def test_denied_is_public_change_on_wiki_update_persists_nothing(engine, s
         assert page.title == "Wpis bloga"
 
 
-async def test_content_edit_of_public_page_without_flag_persists_and_keeps_it_public(engine) -> None:
+async def test_title_edit_of_public_page_without_flag_is_refused_and_persists_nothing(engine) -> None:
     async with _persistence_env(engine) as env:
         actor, project, page_id = await _seed_blog_target(env, "keeppub", can_edit_blog=False, is_public=True)
+
+        with patch("monolynx.services.wiki.upload_markdown", return_value="x/y.md") as upload:
+            response = await _call(
+                env, "update_wiki_page", actor, body={"title": "Nowy tytuł treści"}, project_slug=project.slug, page_id=str(page_id)
+            )
+
+        assert response.status_code == 403
+        assert "Brak uprawnienia blog:write" in response.json()["detail"]
+        upload.assert_not_called()
+        page = await _one(env, select(WikiPage).where(WikiPage.id == page_id))
+        assert (page.title, page.is_public) == ("Wpis bloga", True)
+
+
+async def test_title_edit_of_public_page_with_flag_persists_and_keeps_it_public(engine) -> None:
+    async with _persistence_env(engine) as env:
+        actor, project, page_id = await _seed_blog_target(env, "keeppubok", can_edit_blog=True, is_public=True)
 
         with patch("monolynx.services.wiki.upload_markdown", return_value="x/y.md"):
             response = await _call(
