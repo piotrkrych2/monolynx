@@ -26,6 +26,7 @@ Skrypt czytający JSON/XML/tekst z pliku, stdin albo z wyjścia innego narzędzi
 7. Test pokrywa gałąź błędu storage (mock rzucający wyjątek) i asercję na kodzie odpowiedzi.
 8. Klient HTTP (CLI `monolynx`) sprawdza kształt odpowiedzi API i pliku konfiguracyjnego edytowanego przez człowieka przed użyciem. Brak wymaganego pola albo zły typ kończy się komunikatem na stderr i kodem wyjścia z kontraktu CLI, nigdy tracebackiem ani cichym fallbackiem (pusty string, `.get(..., "")`) z kodem 0.
 9. Wartość z wejścia zewnętrznego, która trafia do listy sterującej operacją nieodwracalną (id pipeline'u do anulowania, id sesji do usunięcia, ref do merge), ma sprawdzony typ i obecność przed zbudowaniem tej listy. `bool` nie jest poprawnym `int`. Zły element to kod 2 z indeksem, nigdy `null` w wyniku z kodem 0: wywołujący wykona operację na tym, co dostał.
+10. Parametr liczbowy z wejścia zewnętrznego (query string, flaga CLI, argument skryptu) ma sprawdzone obie granice, dolną i górną, zanim trafi do zapytania, wywołania systemowego albo pętli. Wartość spoza zakresu to błąd z kontraktu (422, kod 64 albo 2), nigdy traceback ani ciche przycięcie. Test pokrywa wartość ujemną, zero i wartość powyżej górnej granicy.
 
 ## Pitfall
 
@@ -40,9 +41,12 @@ Docstring obiecuje "kod 2 przy błędnym wejściu", a implementacja robi `data["
 - MON-125: odpowiedź HTTP i `config.toml` w CLI używane bez sprawdzenia kształtu (reguła roli powtórzona po MON-167 i MON-190).
 - MON-133: `monolynx wiki get --raw` na odpowiedzi bez `content` wypisywał pusty string z exit 0 (-25, powtórka MON-125). Retro sprintu „CLI monolynx - fundament + REST API v2” dopisało `cli/src/**` do `paths` i punkt 8.
 - MON-233: `target_cancel_glab` / `target_cancel_gh` w `mr_queue_state.py` budowały listę `cancel` z elementów bez walidacji `id` i `status` (-25, czwarta powtórka klasy po MON-167, MON-190, MON-125). Retro sprintu "Skille na CLI - transport CLI/MCP" dopisało punkt 9.
+- MON-248: `depth` i `limit` w `api/v2/graph.py` bez dolnej granicy, wartość ujemna dochodziła do Cypher (-10).
+- MON-251: `--timeout 1000000000` w `test_lock.py` dawał traceback z `signal.setitimer` i kod 1 zamiast 64 (-10). Retro sprintu „Fix uprawnień” dopisało punkt 10.
 
 ## What to check
 
+- `Query(default=...)` / `typer.Option` / `int(argv)` z liczbą bez `ge`/`le`, `min`/`max` albo jawnego sprawdzenia zakresu -> brak granicy.
 - `isinstance(x, list)` / `isinstance(x, dict)` na korzeniu bez pętli po elementach -> brak walidacji elementów.
 - Indeksowanie `elem["pole"]` na danych z zewnątrz bez wcześniejszego sprawdzenia -> traceback na granicy.
 - `try/except Exception` wokół całego parsowania zamiast walidacji -> ukrywa, który element jest zły.

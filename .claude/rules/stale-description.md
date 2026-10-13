@@ -36,9 +36,16 @@ Diff zmienia ciało funkcji, a docstring kilkadziesiąt linii wyżej zostaje poz
   - MON-137, MON-139: komentarz testu obiecywał więcej niż asercje albo był sprzeczny z seedem (-5, -5).
   - MON-127: nazwy testów `config list` niezgodne z asercjami (-5).
   - MON-222: docstring `plugin/scripts/sprint_run_tick.py` bez `--slots`/`--max-waiting`, klucza `dispatch` i kodu 64 (-25, reguła z pamięci roli wracała).
+- Retro sprintu „Fix uprawnień”: reguła łamana w 5 ticketach, za każdym razem wychwycona dopiero w review.
+  - MON-239: docstring `schedule_for_ticket` mówił „wszystkie wpisy użytkownika” po dodaniu filtra członkostwa (-5).
+  - MON-241: docstringi 15 narzędzi MCP bez wymaganego uprawnienia, nieścisły opis `_auth` w `CLAUDE.md` (-5, -5).
+  - MON-242: `CLAUDE.md` z nowym wpisem sprzecznym ze starym opisem kilkadziesiąt linii niżej (-5).
+  - MON-245: komentarz nad `REQUIRED_FLAG_PARAMS` i changelog z nieprawdziwym twierdzeniem o wersji CLI i o parametrach MCP.
+  - MON-252: docstring modułu bez `[--state-dir D]`, README sprzeczne z zasadą skilla i z kodem (-5, -5).
 
 ## What to check
 
+- Dopisujesz akapit do `CLAUDE.md` albo README: grep tego samego tematu w reszcie pliku, czy starszy opis nie mówi czegoś przeciwnego.
 - Diff zmienia sygnaturę albo zachowanie, a docstring tej funkcji lub modułu nie jest w diffie.
 - Grep starej nazwy w zmienianym pliku zwraca trafienia w komentarzach lub docstringach.
 - Sekcja "Ważne zasady" skilla sprzeczna z krokiem, który diff zmienił.

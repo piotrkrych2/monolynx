@@ -22,6 +22,7 @@ RESOURCES = [
     ("create-mutation-ci-script", "scripts/mutation_report.py"),
     ("create-mutation-ci-script", "scripts/mutation_baseline.py"),
     ("work", "scripts/toolchain_fields.py"),
+    ("work", "scripts/critic_backend.py"),
     ("work-simple", "scripts/toolchain_fields.py"),
     ("setup", "scripts/toolchain_fields.py"),
     ("work", "references/resume-stages.md"),

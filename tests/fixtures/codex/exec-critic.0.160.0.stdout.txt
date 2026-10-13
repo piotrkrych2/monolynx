@@ -1,0 +1,7 @@
+**Code Review**
+
+agent-1: 100 -5 (przyklad.py:1 drobna uwaga) = 95/100
+  -> APPROVED
+
+Ogolna ocena: 95/100 (minimum z agentow)
+Status: APPROVED

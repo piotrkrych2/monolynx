@@ -14,6 +14,7 @@ Każdy proces `claude`, który plugin startuje sam (`claude -p`, `claude --bg`),
 2. **Model na końcu nazwy.** `--name "<nazwa>-<model>"`, z tą samą wartością, która idzie do `--model`. W `sprint_run.sh` dopisuje go wyłącznie `run_claude`; wywołujący podaje nazwę bez modelu.
 3. **Dopasowanie po nazwie ignoruje sufiks modelu.** Kod, który szuka sesji po nazwie (`sprint_run_state.py` `match_session`), przyjmuje `<nazwa>` i `<nazwa>-<cokolwiek>`, nigdy równość z nazwą zawierającą bieżący model.
 4. **Fable tylko świadomie**: przez nadpisanie zmiennej, dla roli koordynującej. Domyślna wartość w komendzie, skrypcie i dokumentacji to `opus` (albo `sonnet` dla subagentów wykonawczych).
+5. **Wyjątek: krytyk Codex w `work` (MON-274).** Krytyk uruchamiany przez `critic_backend.py run` nie jest procesem `claude` ani wywołaniem `Agent()`, więc punkty 1-2 go nie dotyczą: nie ma parametru `model` ani nazwy sesji. Model podaje `MONOLYNX_CRITIC_CODEX_MODEL` (wrapper dodaje wtedy `codex exec -m <model>`), a przy pustej zmiennej Codex bierze go z `~/.codex/config.toml`. Alias `opus` w Codex nie działa, więc nie jest wartością domyślną tej zmiennej i nie trafia do `-m`. Krytyk Claude, także zapasowy po nieudanym wywołaniu Codex, zostaje przy `model="opus"` z punktu 1.
 
 ## Pitfall
 
@@ -30,5 +31,6 @@ Dopasowanie po pełnej nazwie z modelem ma odwrotną pułapkę: po zmianie `MONO
 - Nowe albo zmienione wywołanie `claude -p` / `claude --bg` bez `--model` -> punkt 1.
 - `--name` bez sufiksu modelu albo z sufiksem innym niż wartość `--model` -> punkt 2.
 - `Agent(` w SKILL.md bez `model=` (poza developerem z `model:` we frontmatter) -> punkt 1.
+- Alias `opus` albo `sonnet` jako wartość `MONOLYNX_CRITIC_CODEX_MODEL` albo argument `codex exec -m` -> punkt 5.
 - Porównanie `name == f"{slug}-{key}-{model}"` albo inne dopasowanie wymagające konkretnego modelu -> punkt 3.
 - Domyślna wartość modelu `fable` w komendzie, skrypcie albo tabeli -> punkt 4.

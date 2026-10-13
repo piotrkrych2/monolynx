@@ -75,11 +75,12 @@ def test_sync_check_detects_nested_drift_and_sync_removes_stale_resource(source_
 
 
 def _write_test_lock_stub(skills_dir: Path) -> None:
-    """`work` i `work-simple` pakuja `scripts/test_lock.py` (MON-251) i `toolchain_fields.py` (MON-269) - drzewo musi je miec obok `references/`."""
+    """`work`/`work-simple` pakuja `scripts/test_lock.py` (MON-251), `toolchain_fields.py` (MON-269); `work` takze `critic_backend.py` (MON-274)."""
     scripts = skills_dir.parent / "scripts"
     scripts.mkdir(exist_ok=True)
     (scripts / "test_lock.py").write_text("# test_lock stub\n", encoding="utf-8")
     (scripts / "toolchain_fields.py").write_text("# toolchain_fields stub\n", encoding="utf-8")
+    (scripts / "critic_backend.py").write_text("# critic_backend stub\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize("check_only", [False, True])
@@ -721,3 +722,46 @@ def test_real_blog_post_skill_ships_the_guide_catalog_as_bloki_reference():
     end = guide.find("\n## ", start + 1)
 
     assert resources["references/bloki.md"] == guide[start : end if end != -1 else len(guide)].rstrip() + "\n"
+
+
+# MON-274: `critic_backend.py` jedzie tylko z `work` (krytyk przez Codex CLI); `work-simple` ma krytyka jako zwyklego subagenta.
+CRITIC_BACKEND_SKILLS = ("work",)
+NON_CRITIC_BACKEND_SKILLS = sorted(
+    path.parent.name for path in (ROOT / "plugin" / "skills").glob("*/SKILL.md") if path.parent.name not in CRITIC_BACKEND_SKILLS
+)
+CRITIC_BACKEND_SOURCE = ROOT / "plugin" / "scripts" / "critic_backend.py"
+
+
+def test_work_skill_bundles_critic_backend_script():
+    resources = sync_skills.bundled_resources("work")
+
+    assert resources["scripts/critic_backend.py"] == CRITIC_BACKEND_SOURCE.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("skill", NON_CRITIC_BACKEND_SKILLS)
+def test_other_skills_do_not_bundle_critic_backend_script(skill):
+    assert "scripts/critic_backend.py" not in sync_skills.bundled_resources(skill)
+
+
+def test_work_simple_is_among_skills_without_critic_backend_script():
+    assert "work-simple" in NON_CRITIC_BACKEND_SKILLS
+    assert "scripts/critic_backend.py" not in sync_skills.bundled_resources("work-simple")
+
+
+def test_work_skill_keeps_critic_backend_next_to_test_lock_and_toolchain_fields():
+    resources = sync_skills.bundled_resources("work")
+
+    assert {"scripts/test_lock.py", "scripts/toolchain_fields.py", "scripts/critic_backend.py"} <= set(resources)
+
+
+def test_work_skill_ships_byte_identical_critic_backend_copies():
+    source = CRITIC_BACKEND_SOURCE.read_bytes()
+
+    assert (ROOT / "plugin" / "skills" / "work" / "scripts" / "critic_backend.py").read_bytes() == source
+    assert (ROOT / "src" / "monolynx" / "static" / "skills" / "monolynx-work" / "scripts" / "critic_backend.py").read_bytes() == source
+
+
+@pytest.mark.parametrize("skill", NON_CRITIC_BACKEND_SKILLS)
+def test_other_skills_ship_no_critic_backend_copy(skill):
+    assert not (ROOT / "plugin" / "skills" / skill / "scripts" / "critic_backend.py").exists()
+    assert not (ROOT / "src" / "monolynx" / "static" / "skills" / f"monolynx-{skill}" / "scripts" / "critic_backend.py").exists()

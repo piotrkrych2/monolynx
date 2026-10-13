@@ -21,6 +21,8 @@ Nowy test ma dowodzić zachowania, nie tylko przechodzić. Jeśli po usunięciu 
 9. Asercja celuje w tekst, który pojawia się wyłącznie przy chronionym zachowaniu. Fragment wspólny dla sukcesu i błędu (`Usage` w pomocy i w „Missing command”) albo podciąg obecny też w stanie bazowym (`completion` w nazwie flagi `--show-completion`) przechodzi także bez chronionego kodu.
 10. Asercja „zasób zamknięty” odróżnia brak zasobu od odpowiedzi błędem. Łapanie klasy bazowej wyjątku, której podklasą jest żywa odpowiedź (`URLError` obejmuje `HTTPError`), przepuszcza mutanta, który zasobu nie zamyka.
 11. Flagę wpływającą na render terminala (`--no-color`) testujesz z rendererem w trybie terminala (wymuszony TTY), bo poza TTY wyjście i tak jest takie samo. Każde wpięcie flagi globalnej (`--quiet`, `--profile`, `--project`, `--no-color`) w nową gałąź albo komendę ma własny test z tą flagą, który pada po jej odpięciu.
+12. Test odmowy uprawnień (403/404) ustawia aktora, któremu brakuje wyłącznie sprawdzanego uprawnienia, a każda inna warstwa by go przepuściła (rozszerzenie punktu 8). Kolejność checków dowodzi osobny test: wcześniejszy check odmawia w stanie, w którym późniejszy by przepuścił, i odwrotnie, z asercją na `detail` konkretnej warstwy; `pytest.raises` bez `match` nie odróżnia warstw. Listę funkcji do takich testów bierzesz z grepa `ensure_permission` / `require_permission` / `_require` w diffie, nie z przykładów w feedbacku.
+13. Każda gałąź, filtr zakresu (`project_id`), handler wyjątku, wartość domyślna z kontraktu i gałąź walidacji dopisana w tickecie, także ponad listę z opisu ticketu, ma test z wejściem docierającym do tej gałęzi, który pada po jej usunięciu. Przed raportem porównujesz listę zmienionych gałęzi i zapytań z diffu z listą testów.
 
 ## Pitfall
 
@@ -46,9 +48,16 @@ Test pisany w TDD przed implementacją przechodzi po implementacji, więc wyglą
   - MON-141: asercja na podciąg `completion` trafiała też w `--show-completion` (-25, powtórka MON-129).
   - MON-142: testy 403 asertowały sam status, przeżył mutant bez `require_permission` (-20).
   - MON-143: `_assert_port_closed` łapał `URLError`, więc działający serwer też przechodził (-20).
+- Retro sprintu „Fix uprawnień”: reguła łamana w 14 z 19 ticketów, 15 rund NEEDS WORK, wszystkie na qa-testerze; 13 komentarzy oznacza korektę jako powtórzoną. Narzędzie mutacyjne nadal niezainstalowane (trzecia eskalacja), a `.claude/agent-memory/qa-tester/MEMORY.md` przekroczył limit odczytu (MON-236, MON-241), więc najnowsze reguły roli mogły się nie ładować. Dopisane punkty 12 i 13.
+  - MON-234, MON-236, MON-240, MON-241, MON-243: tę samą odmowę dawały dwie warstwy albo o wyniku decydowała kolejność checków, a test nie izolował warstwy (-20 do -25; MON-241 dwie rundy, bo lista funkcji pochodziła z przykładów, nie z grepa).
+  - MON-237, MON-238, MON-244, MON-246, MON-248, MON-250, MON-252: gałąź, filtr `project_id` albo handler dopisany bez testu padającego po usunięciu (MON-248: 7 mutantów naraz).
+  - MON-235, MON-251: wartość domyślna z kontraktu i gałąź walidacji bez wejścia rozróżniającego (mutant `DEFAULT_TIMEOUT = 1800`).
 
 ## What to check
 
+- Test odmowy 403/404 z aktorem bez żadnych uprawnień albo z `pytest.raises` bez `match`, gdy odmawia więcej niż jedna warstwa.
+- Dwa `ensure_permission` / `require_permission` w jednym handlerze bez testu, który pada po zamianie ich kolejności.
+- Nowy `.where(... project_id ...)`, `except <Wyjątek>` albo stała domyślna w diffie bez testu z danymi spoza zakresu, z tym wyjątkiem albo z wywołaniem bez parametru.
 - Test sortowania z seedem wstawianym w tej samej kolejności, w jakiej asercja oczekuje wyniku.
 - `assert response.status_code in (...)` z więcej niż jedną wartością.
 - Parametr z wartością domyślną w nowej sygnaturze bez testu wywołania bez tego parametru.

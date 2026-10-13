@@ -180,3 +180,37 @@ fields and this hook-specific shape: { hookSpecificOutput: { hookEventName:
   - **`codex exec` czyta stdin**: nawet przy `< /dev/null` wypisuje `Reading additional
     input from stdin...`. Wywolanie ze stdin-em bedacym otwartym pipe czeka na EOF, wiec
     kazde uruchomienie w tle wymaga jawnego `< /dev/null`.
+
+## codex-cli 0.160.0 (MON-274, krytyk przez Codex)
+
+Przechwycone 2026-10-13 przez qa-testera na maszynie realizującej ticket, `codex-cli 0.160.0`
+(`codex --version` wypisuje `codex-cli 0.160.0` i kończy się kodem `0`). Wszystkie trzy pliki są
+doslownymi strumieniami bez naglowka `_meta` (jak `exec-plain.0.155.1.*`): testy czytaja je 1:1.
+Sluza testom `plugin/scripts/critic_backend.py` (`tests/unit/test_critic_backend.py`), ktorego atrapa
+`codex` odtwarza te odpowiedzi.
+
+- `exec-help.0.160.0.txt` - `codex exec --help`, kod `0`, 112 linii, bez kodow ANSI. Sprawdza sygnature
+  uzyta przez skrypt (`.claude/rules/external-tool-output.md` pkt 5): `-c, --config <key=value>`,
+  `-m, --model <MODEL>`, `-s, --sandbox <SANDBOX_MODE>`, `-C, --cd <DIR>`, `-o, --output-last-message <FILE>`;
+  `[PROMPT]` bez argumentu albo `-` czyta stdin. Flagi `--worktree` i `--json` istnieja, a skrypt ich
+  CELOWO nie przekazuje.
+- `login-status.0.160.0.txt` - `codex login status`, kod `0` przy zalogowanym koncie, jedna linia
+  `Logged in using ChatGPT` na stdout (stderr pusty). Skrypt rozpoznaje zalogowanie po kodzie `0` i
+  case-sensitive `Logged in`. Stan "niezalogowany" NIE jest przechwycony (wymagalby wylogowania konta
+  uzytkownika): atrapy w testach uzywaja ksztaltu z kontraktu (`Not logged in`, kod niezerowy oraz kod `0`
+  bez frazy `Logged in`), a nieznany ksztalt mapuje sie na wariant bezpieczny (`auth=missing`, krytyk Claude).
+- `exec-critic.0.160.0.stdout.txt` - zawartosc pliku `-o` (ostatnia wiadomosc agenta) z JEDNEGO realnego
+  przebiegu, kod `0`, ok. 26 s. Komenda dokladnie w formie, w jakiej wola ja skrypt (prompt na stdin):
+  `codex exec -C /Users/piotrkrych/projects/monolynx/monolynx --sandbox read-only -c model_reasoning_effort="high" -o <plik> - < <plik promptu>`.
+  Prompt (krotki, bez czytania repo) prosil o odpowiedz wylacznie w formacie rubryki: blok `**Code Review**`,
+  linia agenta `agent-1: 100 -5 (...) = 95/100`, `-> APPROVED`, `Ogolna ocena: 95/100`, `Status: APPROVED`.
+  Tresc werdyktu to wiec odpowiedz na prosbe o format, nie realna recenzja kodu - fixture dowodzi
+  KSZTALTU wyjscia (plik `-o` = sam werdykt, zero ANSI i zero prefiksow, BEZ konczacego `\n`), nie jakosci oceny.
+  Podzial strumieni tego samego przebiegu:
+  - plik `-o`: sam werdykt (to jest fixture),
+  - stdout procesu: ten sam werdykt zakonczony `\n` (finalna odpowiedz agenta),
+  - stderr procesu: render sesji - naglowek (`OpenAI Codex v0.160.0`, `workdir`, `model: gpt-6-sol`, `provider`,
+    `approval: never`, `sandbox: read-only`, `reasoning effort: high`, `session id`), echo promptu, linie hookow,
+    szum klienta MCP (`rmcp::transport::worker ... AuthRequired`, `invalid_grant`) i kody ANSI. Nie jest
+    parsowalny i skrypt go nie parsuje. Id modelu `gpt-6-sol` w testach pochodzi z tego naglowka.
+  Dlatego skrypt czyta werdykt z pliku `-o`, a stdout i stderr procesu `codex` nie trafiaja na stdout skryptu.
