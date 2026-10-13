@@ -332,7 +332,7 @@ Wrapper uruchamia `codex exec` z promptem na stdin, w sandboxie `read-only`, w k
 | Kod | Ostatnia linia stdout | Znaczenie |
 |---|---|---|
 | `0` | `CRITIC-RUN: status=ok out=<ścieżka>` | Werdykt zapisany w pliku `--out`. Wrapper sprawdził tylko, że zawiera blok `**Code Review**` i punktację `X/100`; APPROVED albo NEEDS WORK rozstrzyga Team Manager według progu 82 |
-| `2` | `CRITIC-RUN: status=error reason=<timeout\|exit\|verdict\|input\|disabled\|missing>` | Werdyktu nie ma, plik `--out` nie istnieje. Przy `reason=verdict` odrzucona treść leży w `<out>.rejected` |
+| `2` | `CRITIC-RUN: status=error reason=<timeout\|exit\|verdict\|input\|disabled\|missing>` | Werdyktu nie ma. Przy błędzie wykrytym po starcie Codex (`timeout`, `exit`, `verdict`) plik `--out` nie istnieje; przy `input`, `disabled` i `missing` istniejący wcześniej plik `--out` zostaje nietknięty. Przy `reason=verdict` odrzucona treść leży w `<out>.rejected` |
 | `64` | brak linii `CRITIC-RUN:` | Błąd użycia (brak flagi, `--timeout` poza zakresem); Codex nie był wołany |
 
 Każde nieudane wywołanie (kod 2, kod 64 nie do poprawienia albo odmowa uprawnień dla komendy wrappera, możliwa w sesji `--bg`) kończy się krytykiem Claude `opus`, uruchamianym jak w ścieżce bez Agent Teams, z komentarzem `**Krytyk: fallback na Claude Opus**` w tickecie i adnotacją w podsumowaniu. Review nigdy nie jest pomijane ani liczone jako APPROVED, nieudane wywołanie nie zużywa limitu poprawek, a w sesji w tle fallback nie jest powodem `SPRINT-RUN STOP`. Ponowna ocena po poprawce to świeże wywołanie wrappera z pełnym promptem, bo sesja Codex nic nie pamięta. Sesja Codex w sandboxie `read-only` nie pisze do Monolynx, więc score, log, czas pracy i zamknięcie joba krytyka w Pipelines zapisuje Team Manager.

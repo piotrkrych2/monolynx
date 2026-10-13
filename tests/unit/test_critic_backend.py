@@ -1,6 +1,7 @@
 r"""Testy plugin/scripts/critic_backend.py - wybor backendu krytyka (Codex albo Claude) i uruchomienie `codex exec` (MON-274).
 
-TDD: skrypt powstaje po tych testach; testy sa specyfikacja kontraktu.
+Testy czarnoskrzynkowe (atrapa `codex` w PATH, subprocess) oraz w procesie (importlib + monkeypatch) tam, gdzie kontrakt wymaga
+czasu albo zdarzenia niedostepnego z zewnatrz (timeout, SIGKILL, limity domyslne, bledy odczytu plikow, ktore pod rootem nie zachodza).
 
 Kontrakt (stdlib, Python 3.10+, `main(argv=None) -> int`, nigdy traceback):
 
@@ -9,7 +10,8 @@ Kontrakt (stdlib, Python 3.10+, `main(argv=None) -> int`, nigdy traceback):
   case-sensitive `Logged in` w stdout+stderr sondy,
 - ostatnia linia stdout (zamrozona):
   `CRITIC: backend=codex|claude codex=<wersja|none> auth=ok|missing model=<id|inherit>`,
-- `backend=codex` tylko gdy: binarka jest, wersja odczytana, zalogowany, wylacznik nieaktywny, model poprawny,
+- w trybie wykrywania `backend=codex` tylko gdy: binarka jest, wersja odczytana, zalogowany, model poprawny; w trybie wymuszonym
+  (`MONOLYNX_CRITIC=codex`) gdy binarka jest i model poprawny, niezaleznie od sond; wylacznik `claude` zawsze daje Claude,
 - `MONOLYNX_CRITIC` (po strip().lower()): pusta/`auto` -> detekcja (`backend=codex` tylko gdy sondy potwierdzily Codex);
   `codex` -> tryb WYMUSZONY (`backend=codex`, gdy binarka jest i model poprawny, niezaleznie od sond; niepotwierdzone sondy
   daja jedna linie `CRITIC-HINT: Tryb wymuszony (MONOLYNX_CRITIC=codex): <powody po "; "> - krytykiem pozostaje Codex.`);
@@ -36,9 +38,11 @@ Kontrakt (stdlib, Python 3.10+, `main(argv=None) -> int`, nigdy traceback):
   `reason=verdict`, tresc w `<out>.rejected`, brak `<out>`; skrypt NIGDY nie interpretuje APPROVED/NEEDS WORK,
 - ostatnia linia stdout: `CRITIC-RUN: status=ok out=<sciezka>` (kod 0) albo `CRITIC-RUN: status=error reason=<...>` (kod 2).
 
-Czego oczekuje od implementacji test timeoutu (jedyny test w procesie, bo dolna granica `--timeout` to 30 s):
-- stala modulowa `MIN_TIMEOUT` (int, 30) czytana przez walidacje w chwili wywolania `main` (nie wpisana literalem w `range(30, ...)`),
-- stala modulowa `KILL_GRACE_SECONDS` (int/float, 5) czytana w chwili zabijania grupy procesow.
+Czego oczekuja testy w procesie od implementacji (stale modulowe czytane w chwili uzycia, nie wpisane literalem):
+- `MIN_TIMEOUT` (30) - walidacja `--timeout` (dolna granica 30 s uniemozliwia test timeoutu czarnoskrzynkowo),
+- `DEFAULT_TIMEOUT` (900) - wartosc domyslna `--timeout`, przekazywana do oczekiwania na proces,
+- `KILL_GRACE_SECONDS` (5) - czas miedzy SIGTERM a SIGKILL dla grupy procesow,
+- `_PROBE_TIMEOUT` (30) - limit kazdej sondy preflightu (i liczba sekund w HINT-ach sond bez odpowiedzi).
 
 Atrapa `codex` to wykonywalny skrypt Pythona sterowany plikiem JSON (`FAKE_SPEC`), ktory loguje argv i stdin kazdego wywolania.
 Odpowiedzi atrapy pochodza z fixture'ow `tests/fixtures/codex/*.0.160.0.*` (przechwycone z realnego codex-cli 0.160.0, patrz README
@@ -53,6 +57,7 @@ import importlib.util
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -337,15 +342,15 @@ def test_preflight_disabled_switch_forces_claude_but_keeps_true_probe_fields(san
     before, fields = parse_preflight(sandbox.invoke("preflight", MONOLYNX_CRITIC=value))
 
     assert fields == {"backend": "claude", "codex": VERSION, "auth": "ok", "model": "inherit"}
-    assert len(hints(before)) == 1
+    assert before == [HINT_SWITCH_CLAUDE]
 
 
-@pytest.mark.parametrize("value", ["gemini", "0", "off", "claud"])
-def test_preflight_unknown_switch_value_maps_to_safe_claude(sandbox, value):
+@pytest.mark.parametrize(("value", "shown"), [("gemini", "gemini"), ("0", "0"), ("off", "off"), ("claud", "claud"), (" Gemini ", "Gemini")])
+def test_preflight_unknown_switch_value_maps_to_safe_claude_with_value_in_hint(sandbox, value, shown):
     before, fields = parse_preflight(sandbox.invoke("preflight", MONOLYNX_CRITIC=value))
 
     assert fields["backend"] == "claude"
-    assert len(hints(before)) == 1
+    assert before == [f"CRITIC-HINT: Nieznana wartość MONOLYNX_CRITIC={shown!r} (dozwolone: auto, codex, claude) - krytykiem będzie Claude."]
 
 
 @pytest.mark.parametrize("value", ["", "auto", "  AUTO  ", "Auto"])
@@ -532,7 +537,7 @@ def test_preflight_invalid_model_selects_claude_with_inherit_and_hint(sandbox, m
 
     assert fields["backend"] == "claude"
     assert fields["model"] == "inherit"
-    assert len(hints(before)) == 1
+    assert before == [HINT_BAD_MODEL]
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +597,7 @@ def test_run_adds_model_flag_before_output_flag_when_variable_is_set(sandbox):
 
 
 @pytest.mark.parametrize("value", ["", "auto", "codex", "  CODEX "])
-def test_run_with_detection_values_of_switch_runs_codex(sandbox, value):
+def test_run_with_detection_or_forced_values_of_switch_runs_codex(sandbox, value):
     result = sandbox.invoke(*sandbox.run_args(), MONOLYNX_CRITIC=value, MONOLYNX_CRITIC_CODEX_MODEL="")
 
     assert result.returncode == 0, result.stderr
@@ -1247,6 +1252,7 @@ def test_preflight_probe_limit_comes_from_module_constant(tmp_path, monkeypatch,
     assert limits == [("--version", 7), ("login status", 7)]
 
 
+HINT_SWITCH_CLAUDE = "CRITIC-HINT: Wyłącznik MONOLYNX_CRITIC=claude - krytykiem będzie Claude."
 HINT_NO_BINARY = "CRITIC-HINT: Brak polecenia codex w PATH - krytykiem będzie Claude."
 HINT_NO_VERSION = "CRITIC-HINT: Nie udało się odczytać wersji codex (codex --version) - krytykiem będzie Claude."
 HINT_NO_AUTH = "CRITIC-HINT: Codex nie jest zalogowany - krytykiem będzie Claude. Zaloguj: codex login"
@@ -1310,3 +1316,172 @@ def test_preflight_missing_binary_keeps_its_own_hint_text(tmp_path):
     before, _fields = parse_preflight(Sandbox(tmp_path).invoke("preflight"))
 
     assert before == [HINT_NO_BINARY]
+
+
+# ---------------------------------------------------------------------------
+# KILL_GRACE_SECONDS i galezie `except OSError` w procesie (niezalezne od uid: pod rootem chmod nic nie blokuje)
+# ---------------------------------------------------------------------------
+
+FAKE_PID = 12345
+
+
+def hanging_popen(waits: list[float | None]):
+    """Zastepnik Popen, ktorego communicate() zawsze przekracza limit; wait() zapisuje limit oczekiwania po SIGTERM."""
+
+    class HangingPopen:
+        pid = FAKE_PID
+        returncode = None
+
+        def __init__(self, argv, **_kwargs):
+            self.argv = argv
+
+        def communicate(self, input=None, timeout=None):
+            raise subprocess.TimeoutExpired(self.argv, timeout)
+
+        def wait(self, timeout=None):
+            waits.append(timeout)
+            return 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    return HangingPopen
+
+
+def record_killpg(monkeypatch) -> list[tuple[int, int]]:
+    """Podmienia os.killpg: nigdy nie wysyla prawdziwego sygnalu (pid jest zmyslony)."""
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: sent.append((pgid, int(sig))))
+    return sent
+
+
+def test_run_timeout_waits_default_5_seconds_between_sigterm_and_sigkill(tmp_path, monkeypatch, capsys):
+    box = Sandbox(tmp_path)
+    box.install()
+    waits: list[float | None] = []
+    monkeypatch.setattr(subprocess, "Popen", hanging_popen(waits))
+    sent = record_killpg(monkeypatch)
+
+    code, out, err, _elapsed = run_in_process(monkeypatch, capsys, box, box.run_args(timeout="30"))
+
+    assert code == 2, (out, err)
+    assert out.splitlines()[-1] == "CRITIC-RUN: status=error reason=timeout"
+    assert waits == [5, None]
+    assert sent == [(FAKE_PID, int(signal.SIGTERM)), (FAKE_PID, int(signal.SIGKILL))]
+
+
+def test_run_timeout_grace_comes_from_module_constant(tmp_path, monkeypatch, capsys):
+    box = Sandbox(tmp_path)
+    box.install()
+    waits: list[float | None] = []
+    monkeypatch.setattr(subprocess, "Popen", hanging_popen(waits))
+    record_killpg(monkeypatch)
+
+    code, out, err, _elapsed = run_in_process(monkeypatch, capsys, box, box.run_args(timeout="30"), KILL_GRACE_SECONDS=11)
+
+    assert code == 2, (out, err)
+    assert waits == [11, None]
+
+
+def raise_for(name: str, error: OSError, original):
+    """Zastepnik metody Path: rzuca `error` tylko dla pliku o danej nazwie, reszta idzie do oryginalu."""
+
+    def replacement(self, *args, **kwargs):
+        if self.name == name:
+            raise error
+        return original(self, *args, **kwargs)
+
+    return replacement
+
+
+def test_run_unreadable_prompt_in_process_is_input_error_with_exact_message(tmp_path, monkeypatch, capsys):
+    box = Sandbox(tmp_path)
+    box.install()
+    monkeypatch.setattr(Path, "read_bytes", raise_for("prompt.txt", PermissionError(13, "Permission denied"), Path.read_bytes))
+
+    code, out, err, _elapsed = run_in_process(monkeypatch, capsys, box, box.run_args())
+
+    assert code == 2, (out, err)
+    assert out.splitlines() == ["CRITIC-RUN: status=error reason=input"]
+    assert err == f"critic_backend: nie można odczytać pliku promptu {box.prompt}: Permission denied\n"
+    assert box.exec_calls() == []
+
+
+def test_run_unreadable_verdict_in_process_is_verdict_error_and_out_does_not_remain(tmp_path, monkeypatch, capsys):
+    box = Sandbox(tmp_path)
+    box.install()
+    monkeypatch.setattr(Path, "read_bytes", raise_for("verdict.md", PermissionError(13, "Permission denied"), Path.read_bytes))
+
+    code, out, err, _elapsed = run_in_process(monkeypatch, capsys, box, box.run_args())
+
+    rejected = Path(f"{box.out}.rejected")
+    assert code == 2, (out, err)
+    assert out.splitlines() == ["CRITIC-RUN: status=error reason=verdict"]
+    assert err == f"critic_backend: nie można odczytać pliku werdyktu (Permission denied), kopia: {rejected}\n"
+    assert not box.out.exists()
+    assert rejected.read_text(encoding="utf-8") == VERDICT
+
+
+def test_run_stale_out_that_cannot_be_removed_is_input_error_and_codex_is_not_started(tmp_path, monkeypatch, capsys):
+    box = Sandbox(tmp_path)
+    box.install()
+    box.out.write_text("stary werdykt", encoding="utf-8")
+    monkeypatch.setattr(Path, "unlink", raise_for("verdict.md", PermissionError(13, "Permission denied"), Path.unlink))
+
+    code, out, err, _elapsed = run_in_process(monkeypatch, capsys, box, box.run_args())
+
+    assert code == 2, (out, err)
+    assert out.splitlines() == ["CRITIC-RUN: status=error reason=input"]
+    assert err == f"critic_backend: nie można usunąć poprzedniego wyniku: {box.out}\n"
+    assert box.out.read_text(encoding="utf-8") == "stary werdykt"
+    assert box.exec_calls() == []
+
+
+def test_run_rejected_verdict_that_cannot_be_kept_still_removes_out(tmp_path, monkeypatch, capsys):
+    box = Sandbox(tmp_path)
+    box.install(verdict_b64=b64("bez naglowka i punktacji\n"))
+
+    def failing_replace(src, dst):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+
+    code, out, err, _elapsed = run_in_process(monkeypatch, capsys, box, box.run_args())
+
+    assert code == 2, (out, err)
+    assert out.splitlines() == ["CRITIC-RUN: status=error reason=verdict"]
+    assert err == "critic_backend: werdykt nie ma nagłówka **Code Review** i punktacji N/100 (N w 0..100), kopii nie udało się zachować\n"
+    assert not box.out.exists(), "po bledzie werdyktu plik --out nie moze istniec, takze gdy kopii nie da sie zachowac"
+    assert not Path(f"{box.out}.rejected").exists()
+
+
+def test_run_with_unresolvable_out_path_still_runs_codex(tmp_path, monkeypatch, capsys):
+    # _same_file: out nie istnieje, wiec porownanie idzie przez resolve(); OSError z resolve() oznacza "to nie ten sam plik".
+    box = Sandbox(tmp_path)
+    box.install()
+    monkeypatch.setattr(Path, "resolve", raise_for("verdict.md", OSError(40, "Too many levels of symbolic links"), Path.resolve))
+
+    code, out, err, _elapsed = run_in_process(monkeypatch, capsys, box, box.run_args())
+
+    assert code == 0, (out, err)
+    assert out.splitlines()[-1] == f"CRITIC-RUN: status=ok out={box.out}"
+    assert len(box.exec_calls()) == 1
+
+
+def test_preflight_probe_that_cannot_start_gets_silent_hint_with_default_limit(tmp_path):
+    # _probe: `which` znajduje plik, ale interpreter nie istnieje - Popen rzuca OSError; limit w komunikacie to domyslne 30 s.
+    box = Sandbox(tmp_path)
+    box.install()
+    (box.bin / "codex").write_text("#!/nonexistent/interpreter\n", encoding="utf-8")
+
+    result = box.invoke("preflight")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        HINT_VERSION_SILENT.replace("w 1 s", "w 30 s"),
+        "CRITIC: backend=claude codex=none auth=missing model=inherit",
+    ]
+    no_traceback(result)

@@ -40,7 +40,7 @@ Przyczyna **nie została ustalona**. W tle działał wtedy proces `app-server da
 |---|---|
 | Jeden realny `codex exec` na potrzeby fixture (agent testowy) | Kod 0, ok. 26 s; wyjście zapisane w `tests/fixtures/codex/exec-critic.0.160.0.stdout.txt`. |
 | `python3 scripts/sync_skills.py --check` | Kod 0. |
-| `python3 scripts/validate_plugin_consistency.py` | `OK: plugin spojny.` |
+| `python3 scripts/validate_plugin_consistency.py` | `OK: plugin spojny.`, także z `--release`: pierwszy wpis changelogu to `### 1.26.0` (numer nadał Team Manager na polecenie użytkownika), zgodny z oboma manifestami. |
 | Trzy kopie `critic_backend.py` (źródło w `plugin/scripts/`, kopia w `plugin/skills/work/scripts/` i kopia skilla `work` pod `src/monolynx/static/skills/`) porównane przez `cmp` | Identyczne bajt w bajt. |
 
 ## Czego nie wykonano
