@@ -4,6 +4,64 @@ Dokument zbiera stan faktyczny prób dla kolejnych ticketów. Kolejność: najno
 
 ---
 
+# MON-274: krytyk przez Codex CLI w skillu `work`
+
+Data: 2026-10-13. Środowisko: macOS (Darwin 25.5.0), codex-cli 0.160.0 ze stanem `Logged in using ChatGPT`, Claude Code 2.1.296. Zakres: preflight krytyka, wywołanie krytyka wrapperem `critic_backend.py run`, to samo w sesji `--bg` w git worktree, dystrybucja skryptu. Sekcja opisuje **wyłącznie to, co faktycznie wykonano**; lista rzeczy niewykonanych stoi osobno, pod tabelami.
+
+## Preflight i przebieg krytyka
+
+| Gdzie | Co wykonano | Stan |
+|---|---|---|
+| Sesja główna Claude Code, korzeń repo | `python3 plugin/scripts/critic_backend.py preflight` | **Wykonano.** Ostatnia linia `CRITIC: backend=codex codex=0.160.0 auth=ok model=inherit`, kod 0, ok. 0,8 s. |
+| Sesja główna Claude Code, korzeń repo | Realny przebieg krytyka wrapperem z wygenerowanej kopii skilla: `plugin/skills/work/scripts/critic_backend.py run --prompt-file <plik w katalogu tymczasowym sesji> --out <plik w tym samym katalogu> --cwd <korzeń repo> --timeout 3000`, komenda uruchomiona w tle. Prompt to pełny prompt krytyka MON-274: rubryka wskazana ścieżką w repo, kontrakt skryptu, kryteria akceptacji, przydziały plików, baseline, wynik lintu i testów. Oceniane było niecommitowane drzewo robocze. | **Wykonano.** Kod 0, `CRITIC-RUN: status=ok out=<ścieżka>`, czas 415 s. Plik `--out` zawierał blok `**Code Review**`, trzy linie agentów, linie `REGULA:`, `Ogolna ocena: 60/100 (minimum z agentow)` i `Status: NEEDS WORK` (backend-developer 95, technical-writer 60, qa-tester 75). Hook nie zapytał o zgodę i nie odmówił. Zmienna `MONOLYNX_CRITIC_CODEX_MODEL` była pusta, więc model pochodził z `~/.codex/config.toml`. Uwagi z tego werdyktu wdrożono w kolejnej iteracji ticketu. |
+| Sesja `--bg` w git worktree | Start: `claude --bg --worktree MON-274-verify --name monolynx-MON-274-verify-sonnet --model sonnet "<polecenie przeczytania pliku z zadaniem>"`. Worktree `.claude/worktrees/MON-274-verify` (`git rev-parse --git-dir` -> `.git/worktrees/MON-274-verify`, `--git-common-dir` -> `.git`). Tryb uprawnień accept edits, czyli domyślny tej maszyny, bez flagi `--permission-mode`. Plugin 1.25.0 z aktywnym hookiem. Wrapper wołany z literalnej ścieżki POZA worktree. | **Wykonano**, trzy kroki niżej. Cała sesja trwała 1 min 55 s. |
+| Ta sama sesja `--bg`: preflight | `python3 <literalna ścieżka>/critic_backend.py preflight` | **Wykonano, wynik inny niż w sesji głównej.** Kod 0, linie `CRITIC-HINT: Codex nie jest zalogowany - krytykiem będzie Claude. Zaloguj: codex login` i `CRITIC: backend=claude codex=0.160.0 auth=missing model=inherit`, choć konto było zalogowane. Sonda `codex login status` nie odpowiedziała na czas; równolegle trwał przebieg krytyka z drugiego wiersza. Odstępstwo od reguły formy komendy: sesja dokleiła do preflightu `; echo "EXIT=$?"`, a komenda mimo to przeszła. |
+| Ta sama sesja `--bg`: zapis promptu | Zapis pliku promptu narzędziem zapisu plików poza worktree, w `~/.claude/jobs/<id sesji>/tmp/` | **Wykonano.** Zapis się udał, bez pytania i bez odmowy. |
+| Ta sama sesja `--bg`: wrapper | `critic_backend.py run --prompt-file <plik promptu> --out <plik w tym samym katalogu> --cwd <worktree> --timeout 300` z krótkim promptem-próbą formatu (nie pełnym promptem krytyka) | **Wykonano.** Komenda dopuszczona bez pytania i bez odmowy, `CRITIC-RUN: status=ok out=<ścieżka>`, werdykt z blokiem `**Code Review**` i `100/100`. Czasu samego wywołania nie zmierzono. |
+
+## Niestabilność sondy preflightu
+
+Po przebiegu z drugiego wiersza wykonano cztery kolejne preflighty w sesji głównej:
+
+| Próba | Wynik | Czas |
+|---|---|---|
+| 1 i 2 | `codex=none` (przekroczony limit czasu sondy `codex --version`) | po 30 s każda |
+| 3 | `backend=codex` | 31 s |
+| 4 | `backend=codex` | 0,8 s |
+| kolejne 12 | `backend=codex` | 0,1-0,6 s każda |
+
+Tryb wymuszony na realnym Codex, tylko preflight (host, 2026-10-13): przy `MONOLYNX_CRITIC=codex` obie sondy przekroczyły 30 s, a wynikiem było `CRITIC: backend=codex codex=none auth=missing model=inherit` z linią `CRITIC-HINT: Tryb wymuszony (MONOLYNX_CRITIC=codex): sonda codex --version nie odpowiedziała w 30 s albo nie dała się uruchomić; sonda codex login status nie odpowiedziała w 30 s albo nie dała się uruchomić - krytykiem pozostaje Codex.` Ta sama sytuacja w trybie detekcji daje `backend=claude`.
+
+Przyczyna **nie została ustalona**. W tle działał wtedy proces `app-server daemon pid-update-loop` Codex w wersji 0.162.1. Skutek jest bezpieczny: sonda bez odpowiedzi daje `backend=claude`, czyli krytyka Claude, nigdy pominięte review. Po tej obserwacji podpowiedź `CRITIC-HINT:` odróżnia brak odpowiedzi sondy od braku logowania (zmiana w skrypcie w tym samym tickecie), a skill mówi wprost, że taki wynik nie jest błędem do naprawiania ani powodem ponawiania preflightu.
+
+## Fixture i dystrybucja
+
+| Sprawdzenie | Wynik |
+|---|---|
+| Jeden realny `codex exec` na potrzeby fixture (agent testowy) | Kod 0, ok. 26 s; wyjście zapisane w `tests/fixtures/codex/exec-critic.0.160.0.stdout.txt`. |
+| `python3 scripts/sync_skills.py --check` | Kod 0. |
+| `python3 scripts/validate_plugin_consistency.py` | `OK: plugin spojny.` |
+| Trzy kopie `critic_backend.py` (źródło w `plugin/scripts/`, kopia w `plugin/skills/work/scripts/` i kopia skilla `work` pod `src/monolynx/static/skills/`) porównane przez `cmp` | Identyczne bajt w bajt. |
+
+## Czego nie wykonano
+
+- **Pełnego przebiegu `/monolynx:work` z `backend=codex`**, od preflightu do 7f. Ticket realizowała wersja 1.25.0 skilla, bez gałęzi Codex; formalnym krytykiem ticketu był Claude Opus w Agent Teams. Wykonano osobno preflight i wywołanie wrappera, nie cały workflow.
+- **Fallbacku na realnym błędzie Codex.** Timeout i kod 2 wrappera sprawdzają tylko testy jednostkowe z atrapą binarki.
+- **Odmowy uprawnień w sesji `--bg`.** W trybie accept edits nie wystąpiła. Tryb `auto` i sesja z `MONOLYNX_SPRINT_RUN=1` nie były sprawdzone.
+- **Wyboru modelu przez `MONOLYNX_CRITIC_CODEX_MODEL`** na realnym Codex; wszystkie przebiegi szły z `model=inherit`.
+- **Wywołania `run` w trybie wymuszonym `MONOLYNX_CRITIC=codex`.** W tym trybie na realnym Codex wykonano tylko preflight (sekcja "Niestabilność sondy preflightu"). Zachowanie `run` jest dla wartości `codex` takie samo jak w trybie detekcji i pokrywają je testy jednostkowe; wszystkie realne przebiegi `run` wyżej szły z pustą zmienną.
+- **Systemów innych niż macOS.**
+- **Stanu "niezalogowany" na realnym koncie.** Wynik `auth=missing` z sesji `--bg` pochodził z sondy bez odpowiedzi, nie z wylogowanego konta.
+
+## Granice tej sekcji
+
+- Dowód dotyczy dwóch elementów osobno: preflightu i jednego wywołania wrappera. Nie dowodzi, że model klienta poprawnie wykona całą gałąź Codex skilla w dowolnej sesji.
+- Pełny prompt krytyka przeszedł tylko w sesji głównej. W sesji `--bg` w worktree sprawdzono dopuszczenie komendy, zapis pliku poza worktree i format wyniku na krótkim prompcie.
+- Liczba 415 s to jeden pomiar (review ok. 20 plików, effort `high`), nie średnia.
+- Nie zmieniano uprawnień, konfiguracji Codex ani zaufania do hooków; nie wykonywano publikacji ani zapisów produkcyjnych.
+
+---
+
 # MON-184: agenci, pamięć i hooki w obu klientach
 
 Data: 2026-09-20. Zakres: definicje ról, lokalizacja trwałych reguł, ładowanie i zaufanie do hooków, wykrywanie braku aktywnej ochrony. Sekcja opisuje **wyłącznie to, co faktycznie wykonano**; wszystko, czego nikt nie uruchomił, jest oznaczone jako niezweryfikowane w przebiegu.

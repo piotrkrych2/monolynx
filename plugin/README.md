@@ -184,7 +184,7 @@ Poniższa macierz opisuje wymagania instrukcji, **nie potwierdza pełnego wykona
 | `wiki-lint` | MCP | MCP | Naprawy oddzielone od audytu |
 | `blog-post` | CLI albo MCP + pytania | CLI albo MCP + pytania | Uprawnienie `wiki:write` i uprawnienie do edycji bloga (`blog:write`, nadaje superuser); publikacja po jawnej zgodzie, nigdy w sesji w tle |
 | `wiki-sync-merge` | Git + MCP | Git + MCP | Wiedza z faktycznie scalonych zmian |
-| `work` | Dostępne role i delegowanie | Dostępne role i delegowanie | Repo, MCP, toolchain; brak agentów obsługiwany jawnie |
+| `work` | Dostępne role i delegowanie; krytyk przez Codex CLI, gdy `codex` jest zainstalowane i zalogowane | Dostępne role i delegowanie; bez krytyka przez Codex CLI | Repo, MCP, toolchain; brak agentów obsługiwany jawnie. Gałąź krytyka Codex istnieje tylko w Claude Code: skill uruchomiony w Codex nie odpala `codex exec` |
 | `work-simple` | Dostępne role i delegowanie | Dostępne role i delegowanie | Repo, MCP, toolchain; próg 3 SP bez zmian |
 | `retro` | MCP, opcjonalna pamięć Claude | MCP, dostępne źródła pamięci | Brak automatycznej migracji pamięci między klientami |
 | `sprint-end` | MCP + skille zależne | MCP + skille zależne | Potwierdzenie zamknięcia sprintu i zapisów |
@@ -310,6 +310,32 @@ Plugin dostarcza 7 agentów do delegowania pracy w odpowiednich rolach:
 Treść ról ma jedno źródło - `plugin/agents/*.md`. Kopie w `.claude/agents/` (czytane przez Claude Code także bez zainstalowanego pluginu) powstają z niego przez `python3 scripts/sync_agents.py`; `--check` wykrywa rozjazd dystrybucji.
 
 Skille nie zakładają z góry żadnego zestawu agentów: przed startem zespołu sprawdzają faktycznie dostępny mechanizm delegowania i role zdefiniowane w projekcie, a agenci pluginu są fallbackiem. Niezmienne są trzy rzeczy, niezależnie od klienta: rozłączny przydział plików per agent, raport od każdego agenta i **osobny krytyk** - recenzję zawsze wykonuje inne powołanie niż to, które pisało kod. Gdy w katalogu narzędzi nie ma żadnego delegowania, skille schodzą na tryb solo (jeden agent, rola po roli, review jako osobny przebieg według tej samej rubryki) i zapisują wprost, że **review nie jest niezależne** - w komentarzu planu, w komentarzu podsumowującym do ticketu i w podsumowaniu dla użytkownika. Tryb solo wybiera się wyłącznie po braku capability, nigdy po nazwie klienta.
+
+### Krytyk przez Codex CLI
+
+W Claude Code skill `work` może oddać review modelowi innego dostawcy. Krytyk i developerzy z tej samej rodziny modeli dzielą ślepe plamki, a recenzent z Codex daje niezależną ocenę bez zmiany rubryki i progu 82. Dotyczy to tylko `work`; `work-simple` zawsze używa krytyka Claude.
+
+Na starcie skill uruchamia raz preflight `python3 <katalog skilla>/scripts/critic_backend.py preflight` (źródło skryptu: `plugin/scripts/critic_backend.py`, kopie generuje `scripts/sync_skills.py`). Skrypt sprawdza obecność binarki `codex`, `codex --version` i `codex login status`, kończy się zawsze kodem 0 i wypisuje zamrożoną ostatnią linię:
+
+```
+CRITIC: backend=codex|claude codex=<wersja|none> auth=ok|missing model=<id|inherit>
+```
+
+Przy `backend=claude` linię wyżej stoi `CRITIC-HINT: <powód>` i skill pracuje dokładnie tak jak dotąd: krytyk w Agent Teams, `model="opus"`. Dotyczy to także sondy Codex, która nie odpowiedziała na czas (np. w trakcie aktualizacji Codex): to zwykły wynik preflightu, nie błąd do naprawiania. Kto jest pewny swojej instalacji, ustawia `MONOLYNX_CRITIC=codex`: w tym trybie wymuszonym o backendzie decydują tylko obecność binarki `codex` w PATH i poprawność modelu, a niepotwierdzona sonda daje linię `CRITIC-HINT: Tryb wymuszony (MONOLYNX_CRITIC=codex): ...` przy `backend=codex` (możliwa linia: `CRITIC: backend=codex codex=none auth=missing model=inherit`). Brak binarki albo niepoprawny model dają `backend=claude` także wtedy. Przy `backend=codex` krytyk nie jest członkiem zespołu. Po lincie i testach Team Manager zapisuje pełny prompt krytyka (rubryka, raporty, tabela rekoncyliacji) do pliku poza repozytorium i woła wrapper:
+
+```bash
+python3 <katalog skilla>/scripts/critic_backend.py run --prompt-file <plik promptu> --out <plik werdyktu> --cwd <korzeń repo albo worktree> --timeout <sekundy>
+```
+
+Wrapper uruchamia `codex exec` z promptem na stdin, w sandboxie `read-only`, w katalogu `--cwd`, z `-c model_reasoning_effort="high"` i bez `--worktree`, bo review dotyczy niecommitowanego drzewa roboczego. `--timeout` to liczba całkowita z zakresu 30..3600 (domyślnie 900); po jego przekroczeniu wrapper zabija całą grupę procesów. Prompt idzie plikiem, a nie argumentem, bo hook `bash_guard.py` ocenia treść argumentów komendy; hook nie ma żadnego wyjątku dla `codex`.
+
+| Kod | Ostatnia linia stdout | Znaczenie |
+|---|---|---|
+| `0` | `CRITIC-RUN: status=ok out=<ścieżka>` | Werdykt zapisany w pliku `--out`. Wrapper sprawdził tylko, że zawiera blok `**Code Review**` i punktację `X/100`; APPROVED albo NEEDS WORK rozstrzyga Team Manager według progu 82 |
+| `2` | `CRITIC-RUN: status=error reason=<timeout\|exit\|verdict\|input\|disabled\|missing>` | Werdyktu nie ma, plik `--out` nie istnieje. Przy `reason=verdict` odrzucona treść leży w `<out>.rejected` |
+| `64` | brak linii `CRITIC-RUN:` | Błąd użycia (brak flagi, `--timeout` poza zakresem); Codex nie był wołany |
+
+Każde nieudane wywołanie (kod 2, kod 64 nie do poprawienia albo odmowa uprawnień dla komendy wrappera, możliwa w sesji `--bg`) kończy się krytykiem Claude `opus`, uruchamianym jak w ścieżce bez Agent Teams, z komentarzem `**Krytyk: fallback na Claude Opus**` w tickecie i adnotacją w podsumowaniu. Review nigdy nie jest pomijane ani liczone jako APPROVED, nieudane wywołanie nie zużywa limitu poprawek, a w sesji w tle fallback nie jest powodem `SPRINT-RUN STOP`. Ponowna ocena po poprawce to świeże wywołanie wrappera z pełnym promptem, bo sesja Codex nic nie pamięta. Sesja Codex w sandboxie `read-only` nie pisze do Monolynx, więc score, log, czas pracy i zamknięcie joba krytyka w Pipelines zapisuje Team Manager.
 
 ### Rubryka krytyka
 
@@ -542,6 +568,8 @@ Ustawiane w `.claude/settings.json` lub `.claude/settings.local.json` (pole `env
 | `MONOLYNX_MUTATION_BUDGET` | `600` | Budżet czasu przebiegu `/monolynx:mutation-check` w sekundach. Maksimum 600 (limit narzędzia Bash); większa wartość jest skracana do 600 |
 | `MONOLYNX_BRIEF_GUARD` | `auto` | Tryb hooka `brief_guard`: `auto` - goły imperatyw dostaje skill `brief` z propozycją kontraktu; `block` - prompt odrzucony z odesłaniem do `/monolynx:brief`; `off` - wyłączony (patrz sekcja Hooki) |
 | `MONOLYNX_TRANSPORT` | - | `mcp` - skille pracują wyłącznie przez MCP: preflight zwraca `mode=mcp` bez pytania CLI o logowanie i bez podpowiedzi, a wrapper `monolynx_op.py` kończy każdą operację kodem 3 (`OP-FALLBACK`). Brak zmiennej i każda inna wartość: CLI `monolynx`, gdy jest zainstalowane i zalogowane, inaczej MCP (patrz sekcja „Transport: CLI albo MCP”) |
+| `MONOLYNX_CRITIC` | - | Backend krytyka w `/monolynx:work`, tylko w Claude Code. Pusta albo `auto` - detekcja: krytyk przez Codex CLI, gdy `codex` jest zainstalowane i zalogowane, inaczej krytyk Claude; `codex` - tryb wymuszony: krytyk przez Codex CLI, gdy binarka `codex` jest w PATH i model jest poprawny, także gdy sonda wersji albo logowania niczego nie potwierdziła (preflight wypisuje wtedy `CRITIC-HINT:` i zostaje przy Codex); `claude` - zawsze krytyk Claude `opus`, także przy zainstalowanym Codex. Każda inna wartość działa jak `claude` (preflight wypisuje wtedy podpowiedź `CRITIC-HINT:`). Wymuszenie dotyczy tylko preflightu: nieudane wywołanie krytyka Codex nadal kończy się krytykiem Claude. Nie dotyczy `work-simple` (patrz sekcja „Krytyk przez Codex CLI”) |
+| `MONOLYNX_CRITIC_CODEX_MODEL` | - | Model krytyka Codex, przekazywany jako `codex exec -m <model>`. Pusta - Codex bierze model ze swojej konfiguracji (`~/.codex/config.toml`). Wartość to identyfikator modelu Codex (litery, cyfry, `.`, `_`, `:`, `-`, najwyżej 64 znaki); aliasów `opus`/`sonnet` Codex nie przyjmuje. Wartość niepoprawna wyłącza krytyka Codex (`backend=claude` z podpowiedzią) |
 | `MONOLYNX_HOOK_ASK_UNSUPPORTED` | `false` | **Wyłącznie wartość `true`** (jak pozostałe flagi tego hooka) - `bash_guard.py` zamienia wtedy każdą decyzję `ask` na `deny` z wyjaśnieniem, że operację musi wykonać człowiek poza hookiem; każda inna wartość (w tym `1`) zostawia domyślne zachowanie. Opt-in dla klientów, które parsują `ask`, ale mimo to wykonują komendę (fail-open) - bez tej flagi zgody sesji głównej w takim kliencie nie są egzekwowane. Nie zmienia zachowania klientów, które `ask` obsługują (patrz sekcja Hooki) |
 
 Trzy zmienne od branchy mylą się najczęściej, bo brzmią podobnie, a dotyczą trzech różnych momentów. `MONOLYNX_BRANCH_MODE` waliduje **nazwę** brancha roboczego (`ticket` / `sprint` / `off`) i nic nie mówi o tym, z czego ten branch powstał. `MONOLYNX_BASE_BRANCH` to **punkt startu** przed pracą: z czego `work` i `work-simple` zakładają branch roboczy i worktree ticketu. `MONOLYNX_MR_TARGET` to **cel MR** po pracy: dokąd idzie merge request. To dwa momenty, ale jeden branch: ticket startuje z tego brancha, do którego wraca jego MR, więc projekt mergujący tickety do `develop` ustawia jedną zmienną, nie dwie: `MONOLYNX_MR_TARGET`, bo pusta `MONOLYNX_BASE_BRANCH` bierze jej wartość z łańcucha fallbacku, a cel MR w `work` i `work-simple` nie sięga po `MONOLYNX_BASE_BRANCH` (sama `MONOLYNX_BASE_BRANCH` ustala punkt startu i branch docelowy `mr-queue`, ale MR z `MONOLYNX_AUTOMR` poszedłby wtedy do domyślnego brancha repozytorium). Ustawione obie z różnymi wartościami (`MONOLYNX_BASE_BRANCH` różne od `MONOLYNX_MR_TARGET`) dają `ERROR`: preflight `sprint-run` zatrzymuje tick, a `mr_queue_state.py config-check` w preflighcie `mr-queue` kończy tick kodem 2 (MON-219). Twardy gate na branchu bazowym działa niezależnie od `MONOLYNX_BRANCH_MODE`: rozpoczęcie pracy wprost na branchu, który jest punktem startu dla innych, zawsze wymaga zgody.
@@ -588,11 +616,14 @@ Proces bez jawnego modelu bierze domyślny model konta, a subagent bez modelu dz
 | Sesja `/monolynx:work` odpalona ręcznie | model Twojej sesji | `/model` albo `claude --model` |
 | Researcher (`Explore`) w `work` | `sonnet` | treść skilla `work` (KROK 3b) |
 | Developer i agent testowy | `model:` z frontmatter agenta; brak pola -> `sonnet` | frontmatter agenta w `.claude/agents/` albo `plugin/agents/` |
-| Krytyk | `opus` | treść skilla `work` / `work-simple` (sekcja „Model subagentów”) |
+| Krytyk Claude (`work` przy `backend=claude`, krytyk zapasowy po nieudanym Codex, `work-simple` zawsze) | `opus` | treść skilla `work` / `work-simple` (sekcja „Model subagentów”) |
+| Krytyk Codex (`work` w Claude Code przy `backend=codex`) | model z `~/.codex/config.toml`, effort `high` | `MONOLYNX_CRITIC_CODEX_MODEL` (identyfikator modelu Codex, nie alias `opus`); `MONOLYNX_CRITIC=claude` wyłącza krytyka Codex |
 
 Zmienne `MONOLYNX_SPRINT_*MODEL` ustaw w środowisku procesu odpalającego pętlę albo w śledzonym `.claude/settings.json`: sesja w tle dziedziczy środowisko, a worktree nie widzi `.claude/settings.local.json`. Wartość to alias (`opus`, `sonnet`, `fable`) albo pełna nazwa modelu, tak jak przyjmuje ją `claude --model`.
 
 Tabela dotyczy procesów `claude`. Przy `MONOLYNX_SPRINT_RUNTIME=codex` model **nie trafia do CLI**: `codex exec -m` nie przyjmuje aliasów `opus`/`sonnet`, więc `sprint_run.sh` uruchamia tick bez `-m`, a Codex bierze model ze swojej konfiguracji (`~/.codex/config.toml`, `codex exec -c model=...`). `MONOLYNX_SPRINT_TICK_MODEL` i `MONOLYNX_SPRINT_MODEL` służą wtedy wyłącznie do logowania i nazewnictwa. Reguła `.claude/rules/session-name-model.md` (jawny model, model na końcu nazwy sesji) obowiązuje dalej dla procesów `claude` - sesje robocze ticketów nadal startują tak samo.
+
+Krytyk Codex w `work` nie jest subagentem `Agent()`, więc nie ma parametru `model`: wrapper `critic_backend.py` dodaje `-m` tylko przy ustawionej `MONOLYNX_CRITIC_CODEX_MODEL` i zawsze wymusza `-c model_reasoning_effort="high"`. O tym, który krytyk pracował, mówi pole `Krytyk:` komentarza planu, komentarz podsumowujący i podsumowanie dla użytkownika.
 
 ## Sprint bez sesji interaktywnej
 
@@ -1006,6 +1037,14 @@ W obu trybach błędem jest `### Unreleased` na innej pozycji niż pierwsza, pus
 - **Merge ticketu wprost do `main`**: numer nadaje mergujący na branchu MR, przed merge (dziś człowiek; `mr-queue` tego nie robi). Merge bez numeru czerwieni pipeline `main`, a `sprint-end` z branchem docelowym `main` działa wtedy jako siatka: przygotowuje MR wydania po fakcie.
 
 ## Changelog
+
+### Unreleased
+
+- MON-274: **krytyk przez Codex CLI w `/monolynx:work`**. W Claude Code skill uruchamia na starcie preflight `critic_backend.py preflight` (zamrożona linia `CRITIC: backend=codex|claude codex=<wersja|none> auth=ok|missing model=<id|inherit>`, zawsze kod 0). Gdy `codex` jest zainstalowane i zalogowane, krytyk nie jest członkiem Agent Teams: Team Manager zapisuje pełny prompt do pliku poza repozytorium i woła `critic_backend.py run --prompt-file <plik> --out <plik> --cwd <katalog> --timeout <s>`, a wrapper uruchamia `codex exec` w sandboxie `read-only` z effortem `high`. Rubryka, próg 82, format werdyktu i limit 3 poprawek bez zmian. Przy `backend=claude` przebieg jest taki sam jak dotąd (krytyk w Agent Teams, `model="opus"`). Zmiana dotyczy tylko `work`, nie `work-simple`.
+  - Nowy skrypt `plugin/scripts/critic_backend.py` (stdlib), kopiowany przez `scripts/sync_skills.py` do `scripts/` skilla `work`. Kody wyjścia `run`: 0 werdykt zapisany (`CRITIC-RUN: status=ok out=<ścieżka>`), 2 błąd (`CRITIC-RUN: status=error reason=<timeout|exit|verdict|input|disabled|missing>`), 64 błąd użycia. Werdykt bez bloku `**Code Review**` albo bez punktacji `X/100` to kod 2 i plik `<out>.rejected`, nigdy APPROVED.
+  - Fallback: błąd, timeout, kod 2 albo odmowa uprawnień kończą się krytykiem Claude `opus` z komentarzem `**Krytyk: fallback na Claude Opus**` w tickecie. Review nigdy nie jest pomijane, nieudane wywołanie nie zużywa limitu poprawek, a w sesji w tle fallback nie jest powodem `SPRINT-RUN STOP`. Hook `bash_guard.py` nie dostał wyjątku dla `codex`.
+  - Nowe zmienne: `MONOLYNX_CRITIC` (pusta albo `auto` - detekcja; `codex` - tryb wymuszony: krytyk Codex, gdy binarka jest w PATH i model jest poprawny, także przy niepotwierdzonej sondzie wersji albo logowania; `claude` - zawsze krytyk Claude) i `MONOLYNX_CRITIC_CODEX_MODEL` (model Codex; pusta - model z `~/.codex/config.toml`).
+  - Cała gałąź stoi w blokach `runtime:claude-code`: skill uruchomiony w Codex nie odpala `codex exec`. Przy krytyku Codex score, log, czas pracy i zamknięcie joba krytyka w Pipelines zapisuje Team Manager, bo sesja w sandboxie `read-only` nie pisze do Monolynx. Komentarz planu ma pole `Krytyk:`, a podsumowanie mówi, czym był krytyk i czy był fallback.
 
 ### 1.25.0
 

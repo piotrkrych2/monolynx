@@ -104,6 +104,13 @@ mcp__monolynx__create_pipeline_job(project_slug="<PROJECT-SLUG>", pipeline_id="<
 
 **Zapamietaj `job_id` kazdego agenta** - przekazesz go w prompcie agenta (sekcja 4).
 
+<!-- runtime:claude-code -->
+Krytyk Codex (preflight krytyka w KROK 1 skilla dał `backend=codex`): job
+krytyka tworzysz tak samo, z `name="krytyk"` i `agent_type="codex-critic"`.
+Jego `job_id` nie trafia do żadnego promptu - sesja Codex w sandboxie
+read-only nie pisze do Monolynx, więc job prowadzi Team Manager (sekcja 5).
+<!-- /runtime:claude-code -->
+
 ---
 
 ## 4. Blok do wklejenia w prompt agenta (KROK 6)
@@ -160,6 +167,31 @@ Swoj wlasny job zamyka na koncu: `append_job_log` z trescia review +
 `update_pipeline_job(status="success")`. W trybie Agent Teams "koniec" to
 wiadomosc "review zakonczone" od Team Managera (moga byc iteracje) - bez Teams
 kazde wywolanie krytyka zamyka job po sobie.
+
+<!-- runtime:claude-code -->
+**Krytyk Codex (`backend=codex`).** Sesja Codex pracuje w sandboxie read-only
+i nie ma tooli Monolynx, więc niczego z tej sekcji nie zapisuje sama - robi to
+Team Manager. Przed wywołaniem wrappera ustawia job krytyka na `running`. Po
+werdykcie z pliku zapisuje `score` do joba KAŻDEGO ocenianego agenta (to samo
+wywołanie `update_pipeline_job` co wyżej), dokleja treść werdyktu do loga joba
+krytyka (`append_job_log`, z linią `**Czas pracy: X min**` ze stopera Team
+Managera wokół wywołania wrappera) i zamyka job krytyka `status="success"`
+z summary, np. "Codex CLI (model: <id|inherit>): <najniższy score>/100".
+Przy ponownym review, przed kolejnym wywołaniem wrappera, podbija `attempt`
+joba krytyka i ustawia `status="running"`, a po werdykcie zamyka go ponownie.
+
+Fallback na krytyka Claude (nieudane wywołanie wrappera, 6.6a skilla): Team
+Manager dokleja do loga joba krytyka powód (`reason=` albo odmowa uprawnień;
+przy `reason=verdict` także odrzuconą treść) i ustawia `status="failed"`
+z tym powodem w summary. Nowego joba NIE tworzy: od razu podbija `attempt`
+tego samego joba, ustawia `status="running"` i wkleja jego `job_id` do bloku
+RAPORT DO PIPELINE krytyka Claude, który raportuje i zamyka job jak dotąd
+(score do jobów developerów też zapisuje on). WHY ten sam job: job zostawiony
+jako `failed` robi `failed` z całego stepu `coding` i z pipeline'u, choć review
+się odbyło. `agent_type` zostaje `codex-critic` (tego pola nie da się zmienić),
+dlatego summary końcowe mówi wprost, kto wydał werdykt, np. "Claude opus
+(fallback z Codex CLI, reason=timeout)".
+<!-- /runtime:claude-code -->
 
 ### Iteracja poprawkowa
 
