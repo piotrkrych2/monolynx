@@ -1038,7 +1038,7 @@ W obu trybach błędem jest `### Unreleased` na innej pozycji niż pierwsza, pus
 
 ## Changelog
 
-### Unreleased
+### 1.26.0
 
 - MON-274: **krytyk przez Codex CLI w `/monolynx:work`**. W Claude Code skill uruchamia na starcie preflight `critic_backend.py preflight` (zamrożona linia `CRITIC: backend=codex|claude codex=<wersja|none> auth=ok|missing model=<id|inherit>`, zawsze kod 0). Gdy `codex` jest zainstalowane i zalogowane, krytyk nie jest członkiem Agent Teams: Team Manager zapisuje pełny prompt do pliku poza repozytorium i woła `critic_backend.py run --prompt-file <plik> --out <plik> --cwd <katalog> --timeout <s>`, a wrapper uruchamia `codex exec` w sandboxie `read-only` z effortem `high`. Rubryka, próg 82, format werdyktu i limit 3 poprawek bez zmian. Przy `backend=claude` przebieg jest taki sam jak dotąd (krytyk w Agent Teams, `model="opus"`). Zmiana dotyczy tylko `work`, nie `work-simple`.
   - Nowy skrypt `plugin/scripts/critic_backend.py` (stdlib), kopiowany przez `scripts/sync_skills.py` do `scripts/` skilla `work`. Kody wyjścia `run`: 0 werdykt zapisany (`CRITIC-RUN: status=ok out=<ścieżka>`), 2 błąd (`CRITIC-RUN: status=error reason=<timeout|exit|verdict|input|disabled|missing>`), 64 błąd użycia. Werdykt bez bloku `**Code Review**` albo bez punktacji `X/100` to kod 2 i plik `<out>.rejected`, nigdy APPROVED.
