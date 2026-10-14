@@ -97,7 +97,9 @@ class MonolynxClient:
                     method="POST",
                 )
                 ctx = self._ssl_ctx if endpoint.startswith("https") else None
-                with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+                # WHY: replace_graph z clear_first na ~1500 węzłach trwa po stronie serwera ponad 120 s;
+                # krótszy timeout zrywał odpowiedź, choć zapis się kończył (pipeline 2943986216).
+                with urllib.request.urlopen(req, timeout=300, context=ctx) as resp:
                     if not self.session_id:
                         sid = resp.headers.get("Mcp-Session-Id")
                         if sid:
